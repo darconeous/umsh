@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-8ead25e2.js";
+            window.path_to_searchindex_js = "searchindex-c1ad69a0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-04265816.js"></script>
+        <script src="toc-c9a3e05f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -242,6 +242,40 @@ keys afterward.</p>
 <h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
 <p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
+<p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
+<h2 id="byte-order"><a class="header" href="#byte-order">Byte Order</a></h2>
+<p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
+<p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
+<h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
+<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker if there is additional data present after the options section.</p>
+<p>This encoding appears in:</p>
+<ul>
+<li><strong>MAC-layer packet options</strong> — routing, signal-quality thresholds, callsigns (see <a href="#packet-options">Packet Options</a>)</li>
+<li><strong>Text message options</strong> — message type, sender handle, fragmentation, colors (see <a href="#text-messages">Text Messages</a>)</li>
+<li><strong>Chat room payloads</strong> — room info responses, login parameters (see <a href="#chat-rooms">Chat Rooms</a>)</li>
+<li><strong>Node identity metadata</strong> — location, battery, uptime (see <a href="#node-identity">Node Identity</a>)</li>
+</ul>
+<p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
+<h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
+<p>ARNCE (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.</p>
+<p>UMSH uses ARNCE/HAM-64 for:</p>
+<ul>
+<li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
+<li><strong>Station callsign</strong> (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding</li>
+<li><strong>Region codes</strong> (packet option 1) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
+</ul>
+<h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
+<p>All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:</p>
+<ul>
+<li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
+<li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>
+<li>In node identity payloads, the node name is NUL-terminated (<code>0x00</code>).</li>
+</ul>
+<h2 id="base58-encoding"><a class="header" href="#base58-encoding">Base58 Encoding</a></h2>
+<p>Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.</p>
+<p>See <a href="#uri-formats">URI Formats</a> for the defined URI schemes.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="addressing"><a class="header" href="#addressing">Addressing</a></h1>
 <p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
 <p>The sections below describe the three addressing forms used across the protocol: destination hints, router hints, and source addresses.</p>
@@ -274,9 +308,6 @@ keys afterward.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
-<h2 id="byte-order"><a class="header" href="#byte-order">Byte Order</a></h2>
-<p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
-<p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
 <pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
 |  FCF   |  OPTIONS  |  HOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |

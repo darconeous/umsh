@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>FAQ - UMSH Protocol Specification</title>
+        <title>Common Patterns - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,53 +174,49 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
-<h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
-<p>To forge a MAC Ack, the attacker must supply a valid <code>PKTMIC</code>, which is derived from the MIC at the end of the original packet. This means the attacker must receive substantially the entire original packet. An attacker that can receive the full packet cannot simultaneously suppress it from the intended recipient — that would require full-duplex operation (transmitting a jamming signal while receiving the packet), which is not practical with commodity LoRa hardware. In practice, if the attacker heard enough of the packet to extract the PKTMIC, so did the destination.</p>
-<h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption">Doesn’t blind unicast have a circular dependency between the MIC and source decryption?</a></h3>
-<p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is the pairwise MIC computed over the payload using the sender/recipient shared secret. The receiver reads the MIC, uses it (together with the channel key) as the IV to decrypt <code>ENC_SRC</code>, and then derives the pairwise keys from the recovered source public key to authenticate and decrypt <code>ENC_PAYLOAD</code>. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="packet-types.html#blind-unicast-packet">Blind Unicast</a>).</p>
-<h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
-<p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="repeater-operation.html#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
-<h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
-<p>The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See <a href="beacons.html#path-discovery">Path Discovery</a> for the full procedure.</p>
-<h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>
-<p>The 4-byte frame counter wraps naturally at <code>2^32</code>. Replay detection uses modular arithmetic: <code>delta = (received - last_accepted) mod 2^32</code>. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case — it is handled identically to any other counter increment. See <a href="security.html#replay-detection">Replay Detection</a>.</p>
-<h3 id="can-a-multicast-channel-member-impersonate-another-member"><a class="header" href="#can-a-multicast-channel-member-impersonate-another-member">Can a multicast channel member impersonate another member?</a></h3>
-<p>Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
-<p>This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
-<h3 id="when-should-the-s-flag-full-source-address-be-set"><a class="header" href="#when-should-the-s-flag-full-source-address-be-set">When should the S flag (full source address) be set?</a></h3>
-<p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set <code>S</code> when:</p>
+                        <h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
+<p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
+<h2 id="byte-order"><a class="header" href="#byte-order">Byte Order</a></h2>
+<p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
+<p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
+<h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
+<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker if there is additional data present after the options section.</p>
+<p>This encoding appears in:</p>
 <ul>
-<li>This is a first-contact transmission and the receiver has never seen the sender’s public key before.</li>
-<li>The sender wants to allow any receiver to perform ECDH and authenticate the packet without prior state.</li>
-<li>The sender is using an ephemeral keypair (anonymous request pattern).</li>
+<li><strong>MAC-layer packet options</strong> — routing, signal-quality thresholds, callsigns (see <a href="packet-options.html">Packet Options</a>)</li>
+<li><strong>Text message options</strong> — message type, sender handle, fragmentation, colors (see <a href="app-text-messages.html">Text Messages</a>)</li>
+<li><strong>Chat room payloads</strong> — room info responses, login parameters (see <a href="app-chat-rooms.html">Chat Rooms</a>)</li>
+<li><strong>Node identity metadata</strong> — location, battery, uptime (see <a href="node-identity.html">Node Identity</a>)</li>
 </ul>
-<p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the 2-byte hint saves 30 bytes per packet, which is significant on LoRa.</p>
-<p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
-<h3 id="how-does-a-mac-ack-get-routed-back-to-the-original-sender"><a class="header" href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">How does a MAC Ack get routed back to the original sender?</a></h3>
-<p>A MAC Ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see <a href="repeater-operation.html#forwarding-procedure">Forwarding Procedure</a>).</p>
-<h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
-<p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, and the AES-SIV-inspired construction provides nonce-misuse resistance as an additional safety margin.</p>
-<h3 id="what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys"><a class="header" href="#what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys">What happens if a 2-byte channel identifier collides across different channel keys?</a></h3>
-<p>The 2-byte channel identifier is a hint, not a unique identifier. If two different channel keys happen to produce the same 2-byte channel ID, a receiver configured with both keys will attempt to process the packet with each candidate key. Only the correct key will produce a valid MIC, so the wrong candidate will be rejected during authentication. The cost is wasted computation, not incorrect behavior. With 2 bytes the collision probability is 1 in 65536, which is higher than a 4-byte hint but still negligible for deployments with a small number of configured channels.</p>
-<h3 id="why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm"><a class="header" href="#why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm">Why use an AES-SIV-inspired construction instead of AES-GCM?</a></h3>
-<p>AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. The SIV-style construction used by UMSH is nonce-misuse-resistant: even if a nonce is accidentally reused, the only consequence is that an observer can detect that two plaintexts are identical. Confidentiality and authenticity are otherwise preserved. This robustness is worth the minor overhead of computing the MIC before encryption.</p>
-<h3 id="how-does-deliver-to-a-region-then-flood-work"><a class="header" href="#how-does-deliver-to-a-region-then-flood-work">How does “deliver to a region, then flood” work?</a></h3>
-<p>A sender can include both a source-route option and a hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See <a href="repeater-operation.html#routing-implications">Routing Implications</a>.</p>
-<h3 id="can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism"><a class="header" href="#can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism">Can UMSH support anonymous requests, similar to MeshCore’s ANON_REQ mechanism?</a></h3>
-<p>Yes. A node can generate an ephemeral Ed25519 keypair, set the <code>S</code> flag, and use the ephemeral public key as the source address for a single request, then discard the private key immediately afterward. The recipient performs ECDH with the ephemeral public key as normal, encrypts a response to it, and sends it back. The requester’s long-term identity is never revealed. This pattern also provides forward secrecy for the exchange: once the ephemeral private key is discarded, the session cannot be decrypted even if the requester’s long-term key is later compromised. No dedicated packet type is required.</p>
-<h3 id="does-umsh-support-automatic-route-learning"><a class="header" href="#does-umsh-support-automatic-route-learning">Does UMSH support automatic route learning?</a></h3>
-<p>Yes. A node that wants to learn a source route to a peer sends any flooded packet (unicast, broadcast, or beacon) with the trace-route option present. Repeaters prepend their router hint as they forward. When the peer receives the packet, the trace-route option contains the accumulated path, ordered nearest-repeater-first, and can be used directly as a source-route option on reply packets. Both sides can learn routes simultaneously by including the trace-route option on their outbound packets and caching the results. See <a href="beacons.html#path-discovery">Path Discovery</a> for the full path-discovery procedure.</p>
+<p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="packet-structure.html#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
+<h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
+<p>ARNCE (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.</p>
+<p>UMSH uses ARNCE/HAM-64 for:</p>
+<ul>
+<li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
+<li><strong>Station callsign</strong> (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding</li>
+<li><strong>Region codes</strong> (packet option 1) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
+</ul>
+<h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
+<p>All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:</p>
+<ul>
+<li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
+<li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>
+<li>In node identity payloads, the node name is NUL-terminated (<code>0x00</code>).</li>
+</ul>
+<h2 id="base58-encoding"><a class="header" href="#base58-encoding">Base58 Encoding</a></h2>
+<p>Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.</p>
+<p>See <a href="uri-formats.html">URI Formats</a> for the defined URI schemes.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="limitations.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="meshcore-comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="addressing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -230,11 +226,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="limitations.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="meshcore-comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="addressing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

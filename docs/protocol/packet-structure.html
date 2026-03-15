@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-8ead25e2.js";
+            window.path_to_searchindex_js = "searchindex-c1ad69a0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-04265816.js"></script>
+        <script src="toc-c9a3e05f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -176,9 +176,6 @@
                     <main>
                         <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
-<h2 id="byte-order"><a class="header" href="#byte-order">Byte Order</a></h2>
-<p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
-<p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
 <pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
 |  FCF   |  OPTIONS  |  HOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
