@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-578a15cd.js";
+            window.path_to_searchindex_js = "searchindex-ea648b5e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-deced17f.js"></script>
+        <script src="toc-04265816.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1566,15 +1566,201 @@ the IV.</p>
 <tr><td>Source</td><td>2</td><td>32</td><td>1</td></tr>
 <tr><td>Security info</td><td>5</td><td>5</td><td>—</td></tr>
 <tr><td>MAC/MIC</td><td>16</td><td>16</td><td>2</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>6</strong></td></tr>
+<tr><td>ECB block padding</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>~14</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
-<p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.</p>
+<p>MeshCore’s use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore’s effective overhead rises from 6 bytes to approximately 14 bytes.</p>
+<p>MeshCore still achieves lower per-packet overhead than UMSH by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
+<p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of roughly 12 additional bytes compared to MeshCore’s effective overhead.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="test-vectors"><a class="header" href="#test-vectors">Test Vectors</a></h1>
+<p>This appendix contains byte-level packet examples for implementors. All values are in hexadecimal. Multi-byte numeric fields are big-endian.</p>
+<p>Cryptographic outputs (ciphertext, MIC values) are illustrative — they do not correspond to real key material. Implementations should verify field layout and byte counts, not the specific cryptographic values shown here.</p>
+<h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
+<p>The following fictional values are used consistently across examples:</p>
+<ul>
+<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code> (hint: <code>A1B2</code>)</li>
+<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code> (hint: <code>C3D4</code>)</li>
+<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
+</ul>
+<h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++-------+-----------+---+---+---+
+| VER   | PKT TYPE  | S | O | H |
++-------+-----------+---+---+---+
+</code></pre>
+<h3 id="scf-bit-layout-reference"><a class="header" href="#scf-bit-layout-reference">SCF Bit Layout Reference</a></h3>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---+-------+---+---------------+
+| E |  MIC  | S |   RESERVED    |
++---+-------+---+---------------+
+</code></pre>
+<h2 id="example-1-broadcast-beacon-s0"><a class="header" href="#example-1-broadcast-beacon-s0">Example 1: Broadcast Beacon (S=0)</a></h2>
+<p>A minimal beacon — a broadcast with no payload and no security.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>00</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">00 A1 B2
+</code></pre>
+<p>Total: 3 bytes.</p>
+<h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
+<p>A first-contact beacon including the sender’s full 32-byte public key.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>04</code></td></tr>
+<tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">04 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
+20
+</code></pre>
+<p>Total: 33 bytes.</p>
+<h2 id="example-3-unicast-packet-s0"><a class="header" href="#example-3-unicast-packet-s0">Example 3: Unicast Packet (S=0)</a></h2>
+<p>An encrypted unicast packet from Node A to Node B using source hints.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>10</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
+<tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
+<tr><td>Payload</td><td>Encrypted (5 bytes)</td><td><code>8B 3F C7 A2 15</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">10 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
+</code></pre>
+<p>Total: 31 bytes (1 + 2 + 2 + 5 + 5 + 16).</p>
+<h2 id="example-4-unicast-with-ack-requested-s1"><a class="header" href="#example-4-unicast-with-ack-requested-s1">Example 4: Unicast with Ack Requested (S=1)</a></h2>
+<p>A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included so the receiver can perform ECDH without prior state.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>1C</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
+<tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
+<tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
+<tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>55 AA 33</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>B0 B1 B2 B3 B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">1C C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
+0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
+1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
+B5 B6 B7 B8 B9 BA BB BC BD BE BF
+</code></pre>
+<p>Total: 59 bytes (1 + 2 + 32 + 5 + 3 + 16).</p>
+<h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
+<p>An encrypted multicast from Node A. The source hint and payload are encrypted together, concealing the sender from observers without the channel key.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
+<tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
+<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 7 bytes</td><td><code>D4 9C 71 E8 3A 5B 02</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">28 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
+</code></pre>
+<p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
+<h2 id="example-6-unencrypted-multicast-e0"><a class="header" href="#example-6-unencrypted-multicast-e0">Example 6: Unencrypted Multicast (E=0)</a></h2>
+<p>An authenticated but unencrypted multicast from Node A. The source hint appears in cleartext.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
+<tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
+<tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>Payload</td><td>Payload type 3 (text message) + “Hello”</td><td><code>03 48 65 6C 6C 6F</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">28 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
+</code></pre>
+<p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
+<h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
+<p>An encrypted unicast from Node A to Node B carrying two options: a region code and an empty trace-route option.</p>
+<p><strong>Options encoding:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th style="text-align: right">Number</th><th style="text-align: right">Delta</th><th style="text-align: right">Length</th><th>Encoding</th></tr>
+</thead>
+<tbody>
+<tr><td>Region Code</td><td style="text-align: right">1</td><td style="text-align: right">1</td><td style="text-align: right">2</td><td><code>12</code> then value <code>78 53</code></td></tr>
+<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">1</td><td style="text-align: right">0</td><td><code>10</code></td></tr>
+<tr><td>End marker</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td><code>FF</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The region code value <code>7853</code> encodes “SJC” in ARNCE/HAM-64.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=1, H=0</td><td><code>12</code></td></tr>
+<tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
+<tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
+<tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>8B 3F C7</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD DE DF</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">12 12 78 53 10 FF C3 D4 A1 B2 E0 00 00 00 0A 8B
+3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD
+DE DF
+</code></pre>
+<p>Total: 34 bytes (1 + 5 + 2 + 2 + 5 + 3 + 16).</p>
 
                     </main>
 

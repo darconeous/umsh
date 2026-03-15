@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-578a15cd.js";
+            window.path_to_searchindex_js = "searchindex-ea648b5e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-deced17f.js"></script>
+        <script src="toc-04265816.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -347,12 +347,14 @@
 <tr><td>Source</td><td>2</td><td>32</td><td>1</td></tr>
 <tr><td>Security info</td><td>5</td><td>5</td><td>—</td></tr>
 <tr><td>MAC/MIC</td><td>16</td><td>16</td><td>2</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>6</strong></td></tr>
+<tr><td>ECB block padding</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>~14</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
-<p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.</p>
+<p>MeshCore’s use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore’s effective overhead rises from 6 bytes to approximately 14 bytes.</p>
+<p>MeshCore still achieves lower per-packet overhead than UMSH by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
+<p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of roughly 12 additional bytes compared to MeshCore’s effective overhead.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
@@ -365,6 +367,9 @@
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
+                            <a rel="next prefetch" href="test-vectors.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -376,6 +381,9 @@
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
+                    <a rel="next prefetch" href="test-vectors.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
             </nav>
 
         </div>
