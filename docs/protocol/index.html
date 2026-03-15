@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,8 +175,17 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p>UMSH is a LoRa-oriented mesh protocol inspired by cryptographically addressed mesh systems such as MeshCore. In UMSH, endpoints are identified by public keys, and multicast communication is based on shared symmetric channel keys. At its core, UMSH defines a <strong>MAC layer</strong> — framing, addressing, encryption, authentication, and hop-by-hop forwarding. UMSH also defines application-layer protocols for text messaging, chat rooms, and node management that are built on top of the MAC layer. The MAC layer treats payloads opaquely and can equally carry UMSH-defined application protocols, third-party protocols such as 6LoWPAN or CoAP, or any other higher-layer content.</p>
-<p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as equivalent. Unless otherwise noted, “channel” refers to a multicast group secured by a shared symmetric key.</p>
+<p>UMSH is a LoRa-oriented mesh protocol inspired by cryptographically
+addressed mesh systems such as MeshCore. In UMSH, endpoints are identified
+by public keys, and multicast communication is based on shared symmetric
+channel keys. At its core, UMSH defines a <strong>MAC layer</strong> — framing,
+addressing, encryption, authentication, and hop-by-hop forwarding. UMSH
+also defines application-layer protocols for text messaging, chat rooms,
+and node management that are built on top of the MAC layer. The MAC
+layer treats payloads opaquely and can equally carry UMSH-defined
+application protocols, third-party protocols such as CoAP, or any other
+higher-layer content.</p>
+<p>A point-by-point <a href="meshcore-comparison.html">protocol comparison with MeshCore</a> is available.</p>
 <p>UMSH is designed to support:</p>
 <ul>
 <li>Public-key-addressed unicast</li>
@@ -185,24 +194,52 @@
 <li>End-to-end authentication across multi-hop paths</li>
 <li>Selective flooding and source-routed delivery</li>
 <li>Operation in both encrypted and amateur-radio-compliant unencrypted modes</li>
+<li>Ability to operate in a way that preserves perfect forward secrecy (PFS)</li>
+<li>Timestamp-free at the MAC layer</li>
 </ul>
 <h2 id="design-model"><a class="header" href="#design-model">Design Model</a></h2>
+<p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as
+equivalent. Unless otherwise noted, “channel” refers to a multicast
+group secured by a shared symmetric key.</p>
+<h3 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h3>
+<p>The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.</p>
+<p>This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).</p>
 <h3 id="nodes"><a class="header" href="#nodes">Nodes</a></h3>
-<p>Each node is identified by a 32-byte public key. That public key is the node’s long-term network identity.</p>
+<p>A <strong>node</strong> is a logical endpoint on the network, identified by a 32-byte
+Ed25519 public key. That public key is the node’s long-term network
+identity — it serves as both its address and its cryptographic credential.
+A single physical device may host multiple nodes (e.g., a repeater node
+and a chat node), each with its own keypair.</p>
+<p>A node’s public key must be known to communicate with it directly. Public
+keys can be learned through several mechanisms:</p>
+<ul>
+<li><strong>Beacons and advertisements</strong> — nodes periodically broadcast their
+presence, optionally including identity information (see <a href="node-identity.html">Node Identity</a>)</li>
+<li><strong>QR codes and URIs</strong> — public keys can be shared out-of-band via
+<code>umsh:n:</code> URIs (see <a href="uri-formats.html">URI Formats</a>)</li>
+<li><strong>First-contact packets</strong> — a sender can set the <code>S</code> flag to include
+its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
+</ul>
+<p>Once a node’s public key is known, it can be cached and subsequent packets
+can use a compact 2-byte source hint instead of the full key, saving 30
+bytes per packet.</p>
+<h4 id="node-metadata"><a class="header" href="#node-metadata">Node Metadata</a></h4>
+<p>Nodes may also advertise additional metadata — such as a human-readable name,
+role, capabilities, and location — via the <a href="node-identity.html">Node Identity</a>
+payload. Metadata can also be contained in QR codes and URIs. This metadata
+is carried at the application layer and is not required by the MAC layer.</p>
+<h4 id="perfect-forward-security"><a class="header" href="#perfect-forward-security">Perfect Forward Security</a></h4>
+<p>Nodes can be created on the fly to support perfect forward security. For example,
+two nodes could share the public keys of temporary special-purpose nodes that they
+have created just for communication between them, throwing away the private
+keys afterward.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
 <p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it.</p>
-<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently.</p>
-<h3 id="blind-modes"><a class="header" href="#blind-modes">Blind Modes</a></h3>
-<p>UMSH supports “blind” modes, where some addressing metadata is concealed from observers who do not possess the appropriate channel key:</p>
-<ul>
-<li><strong>Blind multicast</strong> hides the source address from non-members of the multicast channel.</li>
-<li><strong>Blind unicast</strong> is intended to hide both sender and destination from observers lacking the channel key, while still restricting payload access to the final recipient.</li>
-</ul>
-<h3 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h3>
-<p>The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.</p>
-<p>This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).</p>
+<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
+<h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
+<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.</p>
 
                     </main>
 

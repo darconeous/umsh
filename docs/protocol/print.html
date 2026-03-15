@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -176,8 +176,17 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p>UMSH is a LoRa-oriented mesh protocol inspired by cryptographically addressed mesh systems such as MeshCore. In UMSH, endpoints are identified by public keys, and multicast communication is based on shared symmetric channel keys. At its core, UMSH defines a <strong>MAC layer</strong> — framing, addressing, encryption, authentication, and hop-by-hop forwarding. UMSH also defines application-layer protocols for text messaging, chat rooms, and node management that are built on top of the MAC layer. The MAC layer treats payloads opaquely and can equally carry UMSH-defined application protocols, third-party protocols such as 6LoWPAN or CoAP, or any other higher-layer content.</p>
-<p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as equivalent. Unless otherwise noted, “channel” refers to a multicast group secured by a shared symmetric key.</p>
+<p>UMSH is a LoRa-oriented mesh protocol inspired by cryptographically
+addressed mesh systems such as MeshCore. In UMSH, endpoints are identified
+by public keys, and multicast communication is based on shared symmetric
+channel keys. At its core, UMSH defines a <strong>MAC layer</strong> — framing,
+addressing, encryption, authentication, and hop-by-hop forwarding. UMSH
+also defines application-layer protocols for text messaging, chat rooms,
+and node management that are built on top of the MAC layer. The MAC
+layer treats payloads opaquely and can equally carry UMSH-defined
+application protocols, third-party protocols such as CoAP, or any other
+higher-layer content.</p>
+<p>A point-by-point <a href="#comparison-with-meshcore">protocol comparison with MeshCore</a> is available.</p>
 <p>UMSH is designed to support:</p>
 <ul>
 <li>Public-key-addressed unicast</li>
@@ -186,27 +195,56 @@
 <li>End-to-end authentication across multi-hop paths</li>
 <li>Selective flooding and source-routed delivery</li>
 <li>Operation in both encrypted and amateur-radio-compliant unencrypted modes</li>
+<li>Ability to operate in a way that preserves perfect forward secrecy (PFS)</li>
+<li>Timestamp-free at the MAC layer</li>
 </ul>
 <h2 id="design-model"><a class="header" href="#design-model">Design Model</a></h2>
+<p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as
+equivalent. Unless otherwise noted, “channel” refers to a multicast
+group secured by a shared symmetric key.</p>
+<h3 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h3>
+<p>The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.</p>
+<p>This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).</p>
 <h3 id="nodes"><a class="header" href="#nodes">Nodes</a></h3>
-<p>Each node is identified by a 32-byte public key. That public key is the node’s long-term network identity.</p>
+<p>A <strong>node</strong> is a logical endpoint on the network, identified by a 32-byte
+Ed25519 public key. That public key is the node’s long-term network
+identity — it serves as both its address and its cryptographic credential.
+A single physical device may host multiple nodes (e.g., a repeater node
+and a chat node), each with its own keypair.</p>
+<p>A node’s public key must be known to communicate with it directly. Public
+keys can be learned through several mechanisms:</p>
+<ul>
+<li><strong>Beacons and advertisements</strong> — nodes periodically broadcast their
+presence, optionally including identity information (see <a href="#node-identity">Node Identity</a>)</li>
+<li><strong>QR codes and URIs</strong> — public keys can be shared out-of-band via
+<code>umsh:n:</code> URIs (see <a href="#uri-formats">URI Formats</a>)</li>
+<li><strong>First-contact packets</strong> — a sender can set the <code>S</code> flag to include
+its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
+</ul>
+<p>Once a node’s public key is known, it can be cached and subsequent packets
+can use a compact 2-byte source hint instead of the full key, saving 30
+bytes per packet.</p>
+<h4 id="node-metadata"><a class="header" href="#node-metadata">Node Metadata</a></h4>
+<p>Nodes may also advertise additional metadata — such as a human-readable name,
+role, capabilities, and location — via the <a href="#node-identity">Node Identity</a>
+payload. Metadata can also be contained in QR codes and URIs. This metadata
+is carried at the application layer and is not required by the MAC layer.</p>
+<h4 id="perfect-forward-security"><a class="header" href="#perfect-forward-security">Perfect Forward Security</a></h4>
+<p>Nodes can be created on the fly to support perfect forward security. For example,
+two nodes could share the public keys of temporary special-purpose nodes that they
+have created just for communication between them, throwing away the private
+keys afterward.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
 <p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it.</p>
-<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently.</p>
-<h3 id="blind-modes"><a class="header" href="#blind-modes">Blind Modes</a></h3>
-<p>UMSH supports “blind” modes, where some addressing metadata is concealed from observers who do not possess the appropriate channel key:</p>
-<ul>
-<li><strong>Blind multicast</strong> hides the source address from non-members of the multicast channel.</li>
-<li><strong>Blind unicast</strong> is intended to hide both sender and destination from observers lacking the channel key, while still restricting payload access to the final recipient.</li>
-</ul>
-<h3 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h3>
-<p>The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.</p>
-<p>This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).</p>
+<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
+<h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
+<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="addressing"><a class="header" href="#addressing">Addressing</a></h1>
-<p>UMSH uses compact hints in several places to reduce overhead.</p>
+<p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
+<p>The sections below describe the three addressing forms used across the protocol: destination hints, router hints, and source addresses.</p>
 <h2 id="destination-hint"><a class="header" href="#destination-hint">Destination Hint</a></h2>
 <p>A <strong>destination hint</strong> is defined as:</p>
 <ul>
@@ -232,7 +270,7 @@
 <li>the <strong>full 32-byte public key</strong>, when the <code>S</code> flag is set.</li>
 </ul>
 <p>The source hint is a compact reference used when the receiver is expected to already have the sender’s full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.</p>
-<p>In blind packet types, the source address is carried inside the ciphertext but still follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
@@ -251,7 +289,7 @@
 <li><code>HOPS</code> is present if the FCF hop-count flag is set</li>
 <li><code>DST</code> is a 2-byte destination hint</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
-<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set), unless hidden by a blind mode</li>
+<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
 <li><code>MIC</code> is present on authenticated/encrypted packet types and some acknowledgements</li>
 </ul>
@@ -282,8 +320,8 @@
 <tr><td style="text-align: right">1</td><td>MAC Ack</td></tr>
 <tr><td style="text-align: right">2</td><td>Unicast</td></tr>
 <tr><td style="text-align: right">3</td><td>Unicast, Ack-Requested</td></tr>
-<tr><td style="text-align: right">4</td><td>Multicast</td></tr>
-<tr><td style="text-align: right">5</td><td>Blind Multicast</td></tr>
+<tr><td style="text-align: right">4</td><td><em>RESERVED</em></td></tr>
+<tr><td style="text-align: right">5</td><td>Multicast</td></tr>
 <tr><td style="text-align: right">6</td><td>Blind Unicast</td></tr>
 <tr><td style="text-align: right">7</td><td>Blind Unicast, Ack-Requested</td></tr>
 </tbody>
@@ -369,10 +407,10 @@ up to 8 bytes (or less if the original MIC was smaller)</li>
 </ul>
 <h2 id="unicast-packet"><a class="header" href="#unicast-packet">Unicast Packet</a></h2>
 <p>Unicast packets are addressed by destination hint and carry the source address.</p>
-<pre><code class="language-text">+-----+-----------+------+-----+------+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
-+-----+-----------+------+-----+------+---------+---------+------+
-  1 B    variable   0/1 B  2 B  2/32B   5/7 B     var.   4-16 B
+<pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+
+| FCF | [OPTIONS] |[HOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
++-----+-----------+------+-----+-----+---------+---------+------+
+  1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
 </code></pre>
 <p><code>DST</code> is the first two bytes of the recipient’s public key.</p>
 <p>Receivers first use <code>DST</code> as a cheap filter, then use the source public key (or its cached equivalent when only a hint is present) and their own key to derive the shared secret and authenticate/decrypt the packet.</p>
@@ -384,38 +422,40 @@ up to 8 bytes (or less if the original MIC was smaller)</li>
 </code></pre>
 <p>Semantics differ, wire layout does not.</p>
 <h2 id="multicast-packet"><a class="header" href="#multicast-packet">Multicast Packet</a></h2>
-<p>Multicast packets carry a 2-byte channel identifier and source address.</p>
-<pre><code class="language-text">+-----+-----------+------+---------+------+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SRC  | SECINFO | PAYLOAD | MIC  |
-+-----+-----------+------+---------+------+---------+---------+------+
-  1 B    variable   0/1 B    2 B    2/32B   5/7 B     var.   4-16 B
-</code></pre>
-<p>The 2-byte channel identifier is a hint derived from the channel key.</p>
+<p>Multicast packets carry a 2-byte channel identifier derived from the channel key.</p>
 <h3 id="channel-identifier-derivation"><a class="header" href="#channel-identifier-derivation">Channel Identifier Derivation</a></h3>
 <pre><code class="language-text">channel_id = first_2_bytes( HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=2) )
 </code></pre>
-<h2 id="blind-multicast-packet"><a class="header" href="#blind-multicast-packet">Blind Multicast Packet</a></h2>
-<p>Blind multicast hides the source address from observers who do not know the channel key by encrypting the source together with the payload.</p>
-<pre><code class="language-text">+-----+-----------+------+---------+---------+---------------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENCRYPTED(SRC||PLD) | MIC  |
-+-----+-----------+------+---------+---------+---------------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B          var.           4-16 B
+<h3 id="encrypted-multicast-e--1"><a class="header" href="#encrypted-multicast-e--1">Encrypted Multicast (E = 1)</a></h3>
+<p>When encryption is enabled, the source address is encrypted together with the payload, concealing the sender’s identity from observers who do not possess the channel key.</p>
+<pre><code class="language-text">+-----+-----------+------+---------+---------+----------------------+------+
+| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
++-----+-----------+------+---------+---------+----------------------+------+
+  1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
 </code></pre>
 <p>The <code>SRC</code> inside the ciphertext follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 <p>Only a node with the correct channel key can recover the source address and payload.</p>
+<h3 id="unencrypted-multicast-e--0"><a class="header" href="#unencrypted-multicast-e--0">Unencrypted Multicast (E = 0)</a></h3>
+<p>When encryption is not enabled, the source address appears in cleartext, but in the same
+place that it appeared in encrypted multicast:</p>
+<pre><code class="language-text">+-----+-----------+------+---------+---------+------+---------+------+
+| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+------+---------+------+
+  1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
+</code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
-<pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+------------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_SRC(32) | ENC_PAYLOAD(var) | MIC  |
-+-----+-----------+------+---------+---------+-------------+------------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B      32 B            var.           4-16 B
+<pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
+| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+-------------+-------------+------+
+  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_SRC</code> is encrypted using the channel key and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel key and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
 <li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses the channel key and <code>MIC</code> to decrypt <code>ENC_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver uses the channel key and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
 <li>Receiver performs ECDH.</li>
@@ -423,11 +463,13 @@ up to 8 bytes (or less if the original MIC was smaller)</li>
 <li>Receiver authenticates and decrypts <code>ENC_PAYLOAD</code> using the pairwise keys.</li>
 <li>If authentication fails, the packet is rejected.</li>
 </ol>
+<p>Some repeaters may decline to forward blind unicast packets for unknown channels.</p>
 <h2 id="blind-unicast-with-ack-requested"><a class="header" href="#blind-unicast-with-ack-requested">Blind Unicast with Ack Requested</a></h2>
 <p>Same wire layout as blind unicast, but with ack-requested semantics.</p>
-<pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+------------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_SRC(32) | ENC_PAYLOAD(var) | MIC  |
-+-----+-----------+------+---------+---------+-------------+------------------+------+
+<pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
+| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+-------------+-------------+------+
+  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-options"><a class="header" href="#packet-options">Packet Options</a></h1>
@@ -572,6 +614,8 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <p>So the list is ordered most-recent repeater first.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security--cryptography"><a class="header" href="#security--cryptography">Security &amp; Cryptography</a></h1>
+<p>UMSH authenticates and optionally encrypts packets using a construction inspired by AES-SIV (RFC 5297). Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.</p>
+<p>Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.</p>
 <h2 id="security-information-secinfo"><a class="header" href="#security-information-secinfo">Security Information (SECINFO)</a></h2>
 <h3 id="secinfo-encoding"><a class="header" href="#secinfo-encoding">SECINFO Encoding</a></h3>
 <pre><code class="language-text">+--------+--------------------+----------------+
@@ -607,17 +651,34 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 </table>
 </div>
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
-<p>The 4-byte frame counter must increase monotonically for a given traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
+<p>The 4-byte frame counter must increase monotonically for a given shared secret and
+traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
+<p>The exact mechanism for how the frame counter is handled is implementation specitic,
+assuming that it always increases. For example, the frame counter may be unique for
+each source+destination node pair, or it may be a single frame counter for the entire
+device. On constrained devices, it may make sense to use a combination of the two:
+have a fixed set of counters (say, 32) that are initialized with random starting values,
+and derive a pseudo-random number from 0-31 from the shared secret to pick which of
+those counters is being used.</p>
 <h4 id="replay-detection"><a class="header" href="#replay-detection">Replay Detection</a></h4>
 <p>A receiver determines whether a frame counter is acceptable by computing:</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
 <p>If <code>delta</code> is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling.</p>
+<p>If we have communicated with this node before and the frame counter is wildly outside
+of our window (say, by several thousand frames at least), then the node should resync
+the the frame counter using an echo request <a href="#mac-commands">MAC command</a>.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>If the counter is written to non-volatile storage, care should be taken
+to avoid wearing out the underlying storage medium if it has a limited
+number of writes.</p>
+</blockquote>
 <p>Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see <a href="#echo-request">MAC Commands</a>) to learn a peer’s current counter expectations before resuming communication.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
-<p>The optional 2-byte salt is chosen randomly.</p>
+<p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
 <h3 id="unicast-key-agreement"><a class="header" href="#unicast-key-agreement">Unicast Key Agreement</a></h3>
 <p>For unicast and blind unicast:</p>
@@ -641,6 +702,8 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <p>The ECDH shared secret is:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
+<p>This shared secret is ised as the input keying material for deriving the cryptographic
+keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
 <p>For unicast and blind unicast, packet encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>
@@ -684,7 +747,7 @@ K_mic = okm[16..31]
 </ul>
 <p>The frame counter must increase monotonically for a given traffic direction. Receivers should use it for replay detection even though AES-SIV is resistant to nonce misuse.</p>
 <h3 id="multicast-packet-keys"><a class="header" href="#multicast-packet-keys">Multicast Packet Keys</a></h3>
-<p>For multicast and blind multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
+<p>For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
 <pre><code class="language-text">ikm  = channel_key
 salt = "UMSH-MCAST-SALT"
 info = "UMSH-MCAST-V1" || channel_id
@@ -725,7 +788,10 @@ K_mic = okm[16..31]
 </code></pre>
 <p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast source-address protection uses AES-128-CTR with the channel key and packet MIC as IV.</p>
+<p>Blind unicast packets encrypt the source address separately from the payload.</p>
+<p>The source address is encrypted using AES-128-CTR with the <em>channel key</em>
+(rather than a key derived from the shared secret) and uses the packet MIC as
+the IV.</p>
 <p>Let:</p>
 <ul>
 <li><code>channel_key</code> = multicast channel key</li>
@@ -737,21 +803,13 @@ K_mic = okm[16..31]
 </code></pre>
 <p>This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="blind-transmissions"><a class="header" href="#blind-transmissions">Blind Transmissions</a></h1>
-<h2 id="blind-multicast"><a class="header" href="#blind-multicast">Blind Multicast</a></h2>
-<p>Blind multicast uses a multicast channel in a way that conceals the source address from observers who do not possess the channel key.</p>
-<h2 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h2>
-<p>Blind unicast supports directed unicast delivery while hiding the sender and the destination from observers who do not possess the channel key, while still ensuring that only the actual recipient can decrypt the payload.</p>
-<p>The recipient must also possess the channel key for this to work.</p>
-<h2 id="forwarding-considerations"><a class="header" href="#forwarding-considerations">Forwarding Considerations</a></h2>
-<p>Some repeaters may decline to forward blind packets for unknown channels. For that reason, blind multicast may not always be desirable even when source concealment is preferred.</p>
-<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multicast-channels-1"><a class="header" href="#multicast-channels-1">Multicast Channels</a></h1>
 <p>A multicast channel is fundamentally a symmetric key shared among all participants.</p>
 <h2 id="channel-membership"><a class="header" href="#channel-membership">Channel Membership</a></h2>
 <p>Any node configured with a given channel key is considered joined to that channel and may receive packets sent to it.</p>
 <h2 id="channel-hint"><a class="header" href="#channel-hint">Channel Hint</a></h2>
 <p>A 2-byte channel hint is derived from the channel key and placed in multicast packets to help nodes identify likely matching channels without attempting every configured key.</p>
+<p>When encryption is enabled, the source address is encrypted inside the ciphertext along with the payload, concealing the sender’s identity from observers who do not possess the channel key. When encryption is not enabled, the source address appears in cleartext.</p>
 <h2 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h2>
 <p>Some channel keys may be derived directly from channel names. These are effectively public or semi-public channels:</p>
 <ul>
@@ -894,7 +952,8 @@ K_mic = okm[16..31]
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="payload-format"><a class="header" href="#payload-format">Payload Format</a></h1>
 <p>The UMSH payload carries higher-layer content — either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see <a href="#layer-separation">Layer Separation</a>).</p>
-<p>Payloads are typically prefixed by a 1-byte payload type identifier.</p>
+<p>Payloads are typically prefixed by a 1-byte payload type identifier. Values from 128-255
+(all values with the most significant bit set) are currently <em>RESERVED</em>.</p>
 <h2 id="payload-type-registry"><a class="header" href="#payload-type-registry">Payload Type Registry</a></h2>
 <div class="table-wrapper">
 <table>
@@ -906,9 +965,9 @@ K_mic = okm[16..31]
 <tr><td style="text-align: right">1</td><td>Node Identity</td></tr>
 <tr><td style="text-align: right">2</td><td>MAC Command</td></tr>
 <tr><td style="text-align: right">3</td><td>Text Message</td></tr>
-<tr><td style="text-align: right">4</td><td>Reserved for possible future IPv4 spec</td></tr>
+<tr><td style="text-align: right">4</td><td><em>RESERVED</em></td></tr>
 <tr><td style="text-align: right">5</td><td>Chat-Room Message</td></tr>
-<tr><td style="text-align: right">6</td><td>Reserved for possible future IPv6 spec</td></tr>
+<tr><td style="text-align: right">6</td><td><em>RESERVED</em></td></tr>
 <tr><td style="text-align: right">7</td><td>CoAP-over-UMSH</td></tr>
 <tr><td style="text-align: right">8</td><td>Node Management Command</td></tr>
 </tbody>
@@ -1005,6 +1064,185 @@ K_mic = okm[16..31]
 <h3 id="echo-response"><a class="header" href="#echo-response">Echo Response</a></h3>
 <p>Carries a response to a prior Echo Request, including any payload from the request.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="node-manament-protocol"><a class="header" href="#node-manament-protocol">Node Manament Protocol</a></h1>
+<p>TBD</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="text-messages"><a class="header" href="#text-messages">Text Messages</a></h1>
+<p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
+<p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
+<h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Message Type</td><td>0 or 1 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td>Sender Handle</td><td>UTF-8 string</td></tr>
+<tr><td style="text-align: right">2</td><td>Multi-Message</td><td>3 bytes (see below)</td></tr>
+<tr><td style="text-align: right">3</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
+<tr><td style="text-align: right">4</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="message-type"><a class="header" href="#message-type">Message Type</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Value</th><th>Name</th><th>Rendering</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Basic text</td><td>Displayed in a text bubble</td></tr>
+<tr><td style="text-align: right">1</td><td>Status text</td><td>Displayed inline as “[HANDLE] [MESSAGE]” (similar to IRC <code>/me</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>If absent or empty, the message type defaults to 0 (basic text).</p>
+<h3 id="sender-handle"><a class="header" href="#sender-handle">Sender Handle</a></h3>
+<p>A UTF-8 string containing the name or pseudonym of the sender. If not supplied, a handle may be inferred from previously received node metadata for the sender’s address.</p>
+<h3 id="multi-message"><a class="header" href="#multi-message">Multi-Message</a></h3>
+<p>Fragments a large message across multiple packets. The option value is 3 bytes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Byte</th><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Fragment Index</td><td>Position of this fragment in the reassembled message</td></tr>
+<tr><td style="text-align: right">1</td><td>Fragment Count</td><td>Total number of fragments (must not be zero or one)</td></tr>
+<tr><td style="text-align: right">2</td><td>Message Identifier</td><td>Shared by all fragments of the same message</td></tr>
+</tbody>
+</table>
+</div>
+<p>Rules:</p>
+<ul>
+<li>Messages smaller than 140 bytes MUST NOT be fragmented.</li>
+<li>The message identifier may be randomly chosen or simply incremented, but MUST NOT be reused within 5 minutes.</li>
+<li>Options from the first fragment apply to the entire reassembled message. Subsequent fragments cannot override options such as text color.</li>
+<li>During reassembly, missing fragments are rendered as <code>[FRAGMENT MISSING]</code>.</li>
+<li>Out-of-order reassembly SHOULD be supported for fragments received within 15–30 seconds.</li>
+</ul>
+<h3 id="background-color"><a class="header" href="#background-color">Background Color</a></h3>
+<p>Three bytes (red, green, blue) specifying a suggested background color for the text bubble. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the text color.</p>
+<h3 id="text-color"><a class="header" href="#text-color">Text Color</a></h3>
+<p>Three bytes (red, green, blue) specifying a suggested text color. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the background color.</p>
+<h2 id="message-body"><a class="header" href="#message-body">Message Body</a></h2>
+<p>The message body is a UTF-8 string.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="chat-rooms"><a class="header" href="#chat-rooms">Chat Rooms</a></h1>
+<p>A chat room is a special node that provides limited store-and-forward capability for text messages and potentially other types of data. Chat rooms may be polled or can push updates to joined members.</p>
+<h2 id="action-types"><a class="header" href="#action-types">Action Types</a></h2>
+<p>The first byte of the payload identifies the action type.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Value</th><th>Action</th><th>Direction</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Get Room Info</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">1</td><td>Room Info</td><td>Room → User</td></tr>
+<tr><td style="text-align: right">2</td><td>Login</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">3</td><td>Logout</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">4</td><td>Send Message</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">5</td><td>Fetch Messages</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">6</td><td>Fetch Users</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">7</td><td>Admin Commands</td><td>User → Room</td></tr>
+<tr><td style="text-align: right">8</td><td>Room Update</td><td>Room → User</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="get-room-info--room-info"><a class="header" href="#get-room-info--room-info">Get Room Info / Room Info</a></h2>
+<p>A user may send a Get Room Info action to a room node without being logged in. The room responds with a Room Info action containing CoAP-option-encoded metadata:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Room Name</td><td>UTF-8 string</td></tr>
+<tr><td style="text-align: right">1</td><td>Owner Information</td><td></td></tr>
+<tr><td style="text-align: right">2</td><td>Administrator</td><td>User ID; may appear more than once. May only be included for logged-in users</td></tr>
+<tr><td style="text-align: right">3</td><td>Active User Count</td><td></td></tr>
+<tr><td style="text-align: right">4</td><td>Max User Count</td><td></td></tr>
+<tr><td style="text-align: right">5</td><td>Message Queue Depth</td><td></td></tr>
+<tr><td style="text-align: right">6</td><td>Most Recent Message Timestamp</td><td></td></tr>
+<tr><td style="text-align: right">7</td><td>Oldest Retrievable Message Timestamp</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>If the options are terminated with a <code>0xFF</code> byte, the remainder of the response is a UTF-8 description of the room.</p>
+<h2 id="login"><a class="header" href="#login">Login</a></h2>
+<p>The login payload is CoAP-option-encoded:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Handle</td><td>If omitted, the room uses the previous handle or assigns one</td></tr>
+<tr><td style="text-align: right">1</td><td>Last Message Timestamp</td><td>If present, the room sends up to 10 missed messages since this time</td></tr>
+<tr><td style="text-align: right">2</td><td>Session Timeout</td><td>Requested inactivity timeout in minutes (1 byte)</td></tr>
+<tr><td style="text-align: right">3</td><td>Password</td><td>Required only if the room is password-protected and the user’s public key is not already known</td></tr>
+</tbody>
+</table>
+</div>
+<p>All options are optional. Behavior details:</p>
+<ul>
+<li>If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages can be retrieved with Fetch Messages.</li>
+<li>If the room is password-protected but already recognizes the user’s public key, the password is ignored. A room may forget a public key after prolonged inactivity, requiring a password on the next login.</li>
+<li>First-time logins must include the full 32-byte public key (S flag set).</li>
+</ul>
+<h2 id="logout"><a class="header" href="#logout">Logout</a></h2>
+<p>Logging out unsubscribes the user from push updates and removes them from the active user list. Previously sent messages remain stored and retrievable by other users up to the history limit.</p>
+<p>If the user is currently logged in, the room sends one final Room Update containing a system message indicating the user has left.</p>
+<h2 id="send-message"><a class="header" href="#send-message">Send Message</a></h2>
+<p>The payload uses the same format as the <a href="#text-messages">Text Message</a> protocol, except that the Sender Handle option is ignored (the room fills it in). Once received, the message is echoed back to the sender via a Room Update.</p>
+<h2 id="fetch-messages"><a class="header" href="#fetch-messages">Fetch Messages</a></h2>
+<p>Retrieves previous messages posted to the room, which may include system messages.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Timestamp</td><td style="text-align: right">4 bytes</td><td>Fetch messages up to and including this time</td></tr>
+<tr><td>Max Count</td><td style="text-align: right">1 byte</td><td>Maximum number of messages to return</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="fetch-users"><a class="header" href="#fetch-users">Fetch Users</a></h2>
+<p>Retrieves the currently active user list, possibly including their public keys.</p>
+<h2 id="admin-commands"><a class="header" href="#admin-commands">Admin Commands</a></h2>
+<p>TBD.</p>
+<h2 id="room-update"><a class="header" href="#room-update">Room Update</a></h2>
+<p>A Room Update contains a list of timestamped events from the room. All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room’s clock is synchronized. Regardless of absolute accuracy, the chronological ordering by timestamp is the canonical event ordering.</p>
+<p>Each event is formatted as a length-prefixed <a href="#text-messages">text message</a> with the following extensions:</p>
+<h3 id="additional-message-types"><a class="header" href="#additional-message-types">Additional Message Types</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Value</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">32</td><td>User Joined</td></tr>
+<tr><td style="text-align: right">33</td><td>User Left</td></tr>
+<tr><td style="text-align: right">34</td><td>Admin Message</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="additional-options"><a class="header" href="#additional-options">Additional Options</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">12</td><td>Timestamp Received</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Sender Handle option is automatically populated by the room.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="uri-formats"><a class="header" href="#uri-formats">URI Formats</a></h1>
 <p>UMSH defines URI forms for nodes, channels, and CoAP resources.</p>
 <h2 id="node-uris"><a class="header" href="#node-uris">Node URIs</a></h2>
@@ -1045,7 +1283,7 @@ K_mic = okm[16..31]
 <h2 id="required-amateur-radio-behavior"><a class="header" href="#required-amateur-radio-behavior">Required Amateur-Radio Behavior</a></h2>
 <ul>
 <li>Disable encryption</li>
-<li>Do not use blind packet types</li>
+<li>Do not use blind unicast packet types</li>
 <li>Add an operator callsign option to locally originated packets</li>
 </ul>
 <h2 id="repeater-rules-under-amateur-operation"><a class="header" href="#repeater-rules-under-amateur-operation">Repeater Rules Under Amateur Operation</a></h2>
@@ -1055,7 +1293,7 @@ K_mic = okm[16..31]
 <li>not forward encrypted packets</li>
 <li>update the station callsign option before retransmitting any packet forwarded under amateur-radio authority</li>
 </ul>
-<p>Because blind modes are primarily useful in conjunction with encryption, they are generally not useful in amateur-radio-compliant operation.</p>
+<p>Because blind unicast is primarily useful in conjunction with encryption, it is generally not useful in amateur-radio-compliant operation.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="limitations--open-items"><a class="header" href="#limitations--open-items">Limitations &amp; Open Items</a></h1>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known Limitations</a></h2>
@@ -1129,7 +1367,7 @@ K_mic = okm[16..31]
 <h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>
 <p>The 4-byte frame counter wraps naturally at <code>2^32</code>. Replay detection uses modular arithmetic: <code>delta = (received - last_accepted) mod 2^32</code>. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case — it is handled identically to any other counter increment. See <a href="#replay-detection">Replay Detection</a>.</p>
 <h3 id="can-a-multicast-channel-member-impersonate-another-member"><a class="header" href="#can-a-multicast-channel-member-impersonate-another-member">Can a multicast channel member impersonate another member?</a></h3>
-<p>Yes, for multicast and blind multicast. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
+<p>Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
 <p>This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
 <h3 id="when-should-the-s-flag-full-source-address-be-set"><a class="header" href="#when-should-the-s-flag-full-source-address-be-set">When should the S flag (full source address) be set?</a></h3>
 <p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set <code>S</code> when:</p>
@@ -1246,14 +1484,14 @@ K_mic = okm[16..31]
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Blind multicast</td><td>Yes (source encrypted inside ciphertext)</td><td>No</td></tr>
+<tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext when encryption enabled)</td><td>No</td></tr>
 <tr><td>Blind unicast</td><td>Yes (source encrypted with channel key, payload with pairwise key)</td><td>No</td></tr>
 <tr><td>Anonymous requests</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Dedicated ANON_REQ packet type</td></tr>
 <tr><td>Metadata concealment</td><td>Channel-key-based, hides sender and/or destination from non-members</td><td>Not supported</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides protocol-level privacy modes that conceal sender and destination information from observers who do not possess the relevant channel key. MeshCore does not define equivalent blind modes.</p>
+<p>UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.</p>
 <p>Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the <code>S</code> flag set — no dedicated packet type is needed. MeshCore defines a specific <code>ANON_REQ</code> payload type that carries the full 32-byte sender public key.</p>
 <h2 id="multicast"><a class="header" href="#multicast">Multicast</a></h2>
 <div class="table-wrapper">
@@ -1266,6 +1504,7 @@ K_mic = okm[16..31]
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
+<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
@@ -1331,7 +1570,7 @@ K_mic = okm[16..31]
 </tbody>
 </table>
 </div>
-<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind modes, no composable options).</p>
+<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
 <p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>

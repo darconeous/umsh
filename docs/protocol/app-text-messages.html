@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Addressing - UMSH Protocol Specification</title>
+        <title>Text Messages - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,45 +174,77 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="addressing"><a class="header" href="#addressing">Addressing</a></h1>
-<p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
-<p>The sections below describe the three addressing forms used across the protocol: destination hints, router hints, and source addresses.</p>
-<h2 id="destination-hint"><a class="header" href="#destination-hint">Destination Hint</a></h2>
-<p>A <strong>destination hint</strong> is defined as:</p>
+                        <h1 id="text-messages"><a class="header" href="#text-messages">Text Messages</a></h1>
+<p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
+<p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
+<h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Message Type</td><td>0 or 1 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td>Sender Handle</td><td>UTF-8 string</td></tr>
+<tr><td style="text-align: right">2</td><td>Multi-Message</td><td>3 bytes (see below)</td></tr>
+<tr><td style="text-align: right">3</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
+<tr><td style="text-align: right">4</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="message-type"><a class="header" href="#message-type">Message Type</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Value</th><th>Name</th><th>Rendering</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Basic text</td><td>Displayed in a text bubble</td></tr>
+<tr><td style="text-align: right">1</td><td>Status text</td><td>Displayed inline as “[HANDLE] [MESSAGE]” (similar to IRC <code>/me</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>If absent or empty, the message type defaults to 0 (basic text).</p>
+<h3 id="sender-handle"><a class="header" href="#sender-handle">Sender Handle</a></h3>
+<p>A UTF-8 string containing the name or pseudonym of the sender. If not supplied, a handle may be inferred from previously received node metadata for the sender’s address.</p>
+<h3 id="multi-message"><a class="header" href="#multi-message">Multi-Message</a></h3>
+<p>Fragments a large message across multiple packets. The option value is 3 bytes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Byte</th><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Fragment Index</td><td>Position of this fragment in the reassembled message</td></tr>
+<tr><td style="text-align: right">1</td><td>Fragment Count</td><td>Total number of fragments (must not be zero or one)</td></tr>
+<tr><td style="text-align: right">2</td><td>Message Identifier</td><td>Shared by all fragments of the same message</td></tr>
+</tbody>
+</table>
+</div>
+<p>Rules:</p>
 <ul>
-<li>the <strong>first two bytes of the destination node’s 32-byte public key</strong></li>
+<li>Messages smaller than 140 bytes MUST NOT be fragmented.</li>
+<li>The message identifier may be randomly chosen or simply incremented, but MUST NOT be reused within 5 minutes.</li>
+<li>Options from the first fragment apply to the entire reassembled message. Subsequent fragments cannot override options such as text color.</li>
+<li>During reassembly, missing fragments are rendered as <code>[FRAGMENT MISSING]</code>.</li>
+<li>Out-of-order reassembly SHOULD be supported for fragments received within 15–30 seconds.</li>
 </ul>
-<p>This hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.</p>
-<p>A receiver that sees a matching destination hint must still confirm that it is the intended destination by successfully processing the packet cryptographically.</p>
-<h2 id="router-hint"><a class="header" href="#router-hint">Router Hint</a></h2>
-<p>A <strong>router hint</strong> is defined as:</p>
-<ul>
-<li>the <strong>first byte of the repeater’s 32-byte public key</strong></li>
-</ul>
-<p>Router hints are used in:</p>
-<ul>
-<li>source-route options</li>
-<li>trace-route options</li>
-</ul>
-<p>Because router hints are only 1 byte, collisions are expected and acceptable. A router hint is therefore only a compact routing selector, not a globally unique repeater identifier.</p>
-<h2 id="source-address"><a class="header" href="#source-address">Source Address</a></h2>
-<p>A source address in a packet is either:</p>
-<ul>
-<li>a <strong>2-byte source hint</strong> (the first two bytes of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
-<li>the <strong>full 32-byte public key</strong>, when the <code>S</code> flag is set.</li>
-</ul>
-<p>The source hint is a compact reference used when the receiver is expected to already have the sender’s full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.</p>
-<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<h3 id="background-color"><a class="header" href="#background-color">Background Color</a></h3>
+<p>Three bytes (red, green, blue) specifying a suggested background color for the text bubble. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the text color.</p>
+<h3 id="text-color"><a class="header" href="#text-color">Text Color</a></h3>
+<p>Three bytes (red, green, blue) specifying a suggested text color. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the background color.</p>
+<h2 id="message-body"><a class="header" href="#message-body">Message Body</a></h2>
+<p>The message body is a UTF-8 string.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="app-node-management.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="packet-structure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="app-chat-rooms.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -222,11 +254,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="app-node-management.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="packet-structure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="app-chat-rooms.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

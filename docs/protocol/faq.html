@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,7 +186,7 @@
 <h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>
 <p>The 4-byte frame counter wraps naturally at <code>2^32</code>. Replay detection uses modular arithmetic: <code>delta = (received - last_accepted) mod 2^32</code>. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case — it is handled identically to any other counter increment. See <a href="security.html#replay-detection">Replay Detection</a>.</p>
 <h3 id="can-a-multicast-channel-member-impersonate-another-member"><a class="header" href="#can-a-multicast-channel-member-impersonate-another-member">Can a multicast channel member impersonate another member?</a></h3>
-<p>Yes, for multicast and blind multicast. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
+<p>Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
 <p>This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
 <h3 id="when-should-the-s-flag-full-source-address-be-set"><a class="header" href="#when-should-the-s-flag-full-source-address-be-set">When should the S flag (full source address) be set?</a></h3>
 <p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set <code>S</code> when:</p>

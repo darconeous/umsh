@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,6 +175,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="security--cryptography"><a class="header" href="#security--cryptography">Security &amp; Cryptography</a></h1>
+<p>UMSH authenticates and optionally encrypts packets using a construction inspired by AES-SIV (RFC 5297). Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.</p>
+<p>Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.</p>
 <h2 id="security-information-secinfo"><a class="header" href="#security-information-secinfo">Security Information (SECINFO)</a></h2>
 <h3 id="secinfo-encoding"><a class="header" href="#secinfo-encoding">SECINFO Encoding</a></h3>
 <pre><code class="language-text">+--------+--------------------+----------------+
@@ -210,17 +212,34 @@
 </table>
 </div>
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
-<p>The 4-byte frame counter must increase monotonically for a given traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
+<p>The 4-byte frame counter must increase monotonically for a given shared secret and
+traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
+<p>The exact mechanism for how the frame counter is handled is implementation specitic,
+assuming that it always increases. For example, the frame counter may be unique for
+each source+destination node pair, or it may be a single frame counter for the entire
+device. On constrained devices, it may make sense to use a combination of the two:
+have a fixed set of counters (say, 32) that are initialized with random starting values,
+and derive a pseudo-random number from 0-31 from the shared secret to pick which of
+those counters is being used.</p>
 <h4 id="replay-detection"><a class="header" href="#replay-detection">Replay Detection</a></h4>
 <p>A receiver determines whether a frame counter is acceptable by computing:</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
 <p>If <code>delta</code> is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling.</p>
+<p>If we have communicated with this node before and the frame counter is wildly outside
+of our window (say, by several thousand frames at least), then the node should resync
+the the frame counter using an echo request <a href="mac-commands.html">MAC command</a>.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>If the counter is written to non-volatile storage, care should be taken
+to avoid wearing out the underlying storage medium if it has a limited
+number of writes.</p>
+</blockquote>
 <p>Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see <a href="mac-commands.html#echo-request">MAC Commands</a>) to learn a peer’s current counter expectations before resuming communication.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
-<p>The optional 2-byte salt is chosen randomly.</p>
+<p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
 <h3 id="unicast-key-agreement"><a class="header" href="#unicast-key-agreement">Unicast Key Agreement</a></h3>
 <p>For unicast and blind unicast:</p>
@@ -244,6 +263,8 @@
 <p>The ECDH shared secret is:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
+<p>This shared secret is ised as the input keying material for deriving the cryptographic
+keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
 <p>For unicast and blind unicast, packet encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>
@@ -287,7 +308,7 @@ K_mic = okm[16..31]
 </ul>
 <p>The frame counter must increase monotonically for a given traffic direction. Receivers should use it for replay detection even though AES-SIV is resistant to nonce misuse.</p>
 <h3 id="multicast-packet-keys"><a class="header" href="#multicast-packet-keys">Multicast Packet Keys</a></h3>
-<p>For multicast and blind multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
+<p>For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
 <pre><code class="language-text">ikm  = channel_key
 salt = "UMSH-MCAST-SALT"
 info = "UMSH-MCAST-V1" || channel_id
@@ -328,7 +349,10 @@ K_mic = okm[16..31]
 </code></pre>
 <p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast source-address protection uses AES-128-CTR with the channel key and packet MIC as IV.</p>
+<p>Blind unicast packets encrypt the source address separately from the payload.</p>
+<p>The source address is encrypted using AES-128-CTR with the <em>channel key</em>
+(rather than a key derived from the shared secret) and uses the packet MIC as
+the IV.</p>
 <p>Let:</p>
 <ul>
 <li><code>channel_key</code> = multicast channel key</li>
@@ -348,7 +372,7 @@ K_mic = okm[16..31]
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="blind-transmissions.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="multicast-channels.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -362,7 +386,7 @@ K_mic = okm[16..31]
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="blind-transmissions.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="multicast-channels.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

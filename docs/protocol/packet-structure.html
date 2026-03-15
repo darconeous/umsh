@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,7 +191,7 @@
 <li><code>HOPS</code> is present if the FCF hop-count flag is set</li>
 <li><code>DST</code> is a 2-byte destination hint</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
-<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set), unless hidden by a blind mode</li>
+<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
 <li><code>MIC</code> is present on authenticated/encrypted packet types and some acknowledgements</li>
 </ul>
@@ -222,8 +222,8 @@
 <tr><td style="text-align: right">1</td><td>MAC Ack</td></tr>
 <tr><td style="text-align: right">2</td><td>Unicast</td></tr>
 <tr><td style="text-align: right">3</td><td>Unicast, Ack-Requested</td></tr>
-<tr><td style="text-align: right">4</td><td>Multicast</td></tr>
-<tr><td style="text-align: right">5</td><td>Blind Multicast</td></tr>
+<tr><td style="text-align: right">4</td><td><em>RESERVED</em></td></tr>
+<tr><td style="text-align: right">5</td><td>Multicast</td></tr>
 <tr><td style="text-align: right">6</td><td>Blind Unicast</td></tr>
 <tr><td style="text-align: right">7</td><td>Blind Unicast, Ack-Requested</td></tr>
 </tbody>

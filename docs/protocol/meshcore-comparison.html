@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61eba02a.js";
+            window.path_to_searchindex_js = "searchindex-578a15cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-896734cd.js"></script>
+        <script src="toc-deced17f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -265,14 +265,14 @@
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Blind multicast</td><td>Yes (source encrypted inside ciphertext)</td><td>No</td></tr>
+<tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext when encryption enabled)</td><td>No</td></tr>
 <tr><td>Blind unicast</td><td>Yes (source encrypted with channel key, payload with pairwise key)</td><td>No</td></tr>
 <tr><td>Anonymous requests</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Dedicated ANON_REQ packet type</td></tr>
 <tr><td>Metadata concealment</td><td>Channel-key-based, hides sender and/or destination from non-members</td><td>Not supported</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides protocol-level privacy modes that conceal sender and destination information from observers who do not possess the relevant channel key. MeshCore does not define equivalent blind modes.</p>
+<p>UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.</p>
 <p>Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the <code>S</code> flag set — no dedicated packet type is needed. MeshCore defines a specific <code>ANON_REQ</code> payload type that carries the full 32-byte sender public key.</p>
 <h2 id="multicast"><a class="header" href="#multicast">Multicast</a></h2>
 <div class="table-wrapper">
@@ -285,6 +285,7 @@
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
+<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
@@ -350,7 +351,7 @@
 </tbody>
 </table>
 </div>
-<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind modes, no composable options).</p>
+<p>MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
 <p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
