@@ -1,5 +1,9 @@
 # Security & Cryptography
 
+UMSH authenticates and optionally encrypts packets using a construction inspired by AES-SIV (RFC 5297). Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.
+
+Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.
+
 ## Security Information (SECINFO)
 
 ### SECINFO Encoding
@@ -38,7 +42,16 @@ MIC size encodings:
 
 ### Frame Counter
 
-The 4-byte frame counter must increase monotonically for a given traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
+The 4-byte frame counter must increase monotonically for a given shared secret and
+traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
+
+The exact mechanism for how the frame counter is handled is implementation specitic,
+assuming that it always increases. For example, the frame counter may be unique for
+each source+destination node pair, or it may be a single frame counter for the entire
+device. On constrained devices, it may make sense to use a combination of the two:
+have a fixed set of counters (say, 32) that are initialized with random starting values,
+and derive a pseudo-random number from 0-31 from the shared secret to pick which of
+those counters is being used. 
 
 #### Replay Detection
 
@@ -50,15 +63,24 @@ delta = (received_counter - last_accepted_counter) mod 2^32
 
 If `delta` is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling.
 
+If we have communicated with this node before and the frame counter is wildly outside
+of our window (say, by several thousand frames at least), then the node should resync
+the the frame counter using an echo request [MAC command](mac-commands.md).
+
 #### Counter Persistence
 
 How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.
+
+> [!CAUTION]
+> If the counter is written to non-volatile storage, care should be taken
+> to avoid wearing out the underlying storage medium if it has a limited
+> number of writes.
 
 Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see [MAC Commands](mac-commands.md#echo-request)) to learn a peer's current counter expectations before resuming communication.
 
 ### Salt
 
-The optional 2-byte salt is chosen randomly.
+The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.
 
 ## Cryptographic Processing
 
@@ -90,6 +112,9 @@ The ECDH shared secret is:
 ```text
 ss = X25519(local_x25519_private, remote_x25519_public)
 ```
+
+This shared secret is ised as the input keying material for deriving the cryptographic
+keys to secure and authenticate messages.
 
 ### HKDF Inputs for Unicast
 
@@ -152,7 +177,7 @@ The frame counter must increase monotonically for a given traffic direction. Rec
 
 ### Multicast Packet Keys
 
-For multicast and blind multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.
+For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.
 
 ```text
 ikm  = channel_key
@@ -212,7 +237,11 @@ Where `number` is the option's absolute option number (not a delta) and `length`
 
 ### Blind Unicast Source Encryption
 
-Blind unicast source-address protection uses AES-128-CTR with the channel key and packet MIC as IV.
+Blind unicast packets encrypt the source address separately from the payload.
+
+The source address is encrypted using AES-128-CTR with the *channel key*
+(rather than a key derived from the shared secret) and uses the packet MIC as
+the IV.
 
 Let:
 

@@ -10,6 +10,8 @@ Any node configured with a given channel key is considered joined to that channe
 
 A 2-byte channel hint is derived from the channel key and placed in multicast packets to help nodes identify likely matching channels without attempting every configured key.
 
+When encryption is enabled, the source address is encrypted inside the ciphertext along with the payload, concealing the sender's identity from observers who do not possess the channel key. When encryption is not enabled, the source address appears in cleartext.
+
 ## Named Channels
 
 Some channel keys may be derived directly from channel names. These are effectively public or semi-public channels:

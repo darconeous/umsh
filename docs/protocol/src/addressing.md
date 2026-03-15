@@ -1,6 +1,8 @@
 # Addressing
 
-UMSH uses compact hints in several places to reduce overhead.
+UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact **hint** representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.
+
+The sections below describe the three addressing forms used across the protocol: destination hints, router hints, and source addresses.
 
 ## Destination Hint
 
@@ -34,4 +36,4 @@ A source address in a packet is either:
 
 The source hint is a compact reference used when the receiver is expected to already have the sender's full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.
 
-In blind packet types, the source address is carried inside the ciphertext but still follows the `S` flag convention: a 2-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.
+In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the `S` flag convention: a 2-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.

@@ -5,7 +5,7 @@ When operating under amateur radio rules, UMSH should generally be used in a non
 ## Required Amateur-Radio Behavior
 
 - Disable encryption
-- Do not use blind packet types
+- Do not use blind unicast packet types
 - Add an operator callsign option to locally originated packets
 
 ## Repeater Rules Under Amateur Operation
@@ -16,4 +16,4 @@ A repeater operating under amateur-radio rules should:
 - not forward encrypted packets
 - update the station callsign option before retransmitting any packet forwarded under amateur-radio authority
 
-Because blind modes are primarily useful in conjunction with encryption, they are generally not useful in amateur-radio-compliant operation.
+Because blind unicast is primarily useful in conjunction with encryption, it is generally not useful in amateur-radio-compliant operation.

@@ -8,11 +8,7 @@
 - [Packet Structure](packet-structure.md)
 - [Frame Types](packet-types.md)
 - [Packet Options](packet-options.md)
-
-# Security
-
 - [Security & Cryptography](security.md)
-- [Blind Transmissions](blind-transmissions.md)
 
 # Networking
 
@@ -25,6 +21,9 @@
 - [Payload Format](payload-format.md)
 - [Node Identity](node-identity.md)
 - [MAC Commands](mac-commands.md)
+- [Node Management](app-node-management.md)
+- [Text Messages](app-text-messages.md)
+- [Chat Rooms](app-chat-rooms.md)
 - [URI Formats](uri-formats.md)
 
 # Appendices

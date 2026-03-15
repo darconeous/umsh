@@ -22,7 +22,7 @@ The 4-byte frame counter wraps naturally at `2^32`. Replay detection uses modula
 
 ### Can a multicast channel member impersonate another member?
 
-Yes, for multicast and blind multicast. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
+Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
 
 This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient's key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.
 

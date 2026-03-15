@@ -23,7 +23,7 @@ Where:
 - `HOPS` is present if the FCF hop-count flag is set
 - `DST` is a 2-byte destination hint
 - `CHANNEL` is a 2-byte channel identifier
-- `SRC` is a 2-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set), unless hidden by a blind mode
+- `SRC` is a 2-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
 - `SECINFO` is present on authenticated/encrypted packet types
 - `MIC` is present on authenticated/encrypted packet types and some acknowledgements
 
@@ -55,8 +55,8 @@ Where:
 | 1     | MAC Ack                      |
 | 2     | Unicast                      |
 | 3     | Unicast, Ack-Requested       |
-| 4     | Multicast                    |
-| 5     | Blind Multicast              |
+| 4     | *RESERVED*                   |
+| 5     | Multicast                    |
 | 6     | Blind Unicast                |
 | 7     | Blind Unicast, Ack-Requested |
 

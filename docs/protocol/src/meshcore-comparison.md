@@ -68,12 +68,12 @@ Both protocols support automatic route learning, but through different mechanism
 
 | Aspect | UMSH | MeshCore |
 |---|---|---|
-| Blind multicast | Yes (source encrypted inside ciphertext) | No |
+| Multicast source concealment | Yes (source encrypted inside ciphertext when encryption enabled) | No |
 | Blind unicast | Yes (source encrypted with channel key, payload with pairwise key) | No |
 | Anonymous requests | Ephemeral Ed25519 key with S=1 flag | Dedicated ANON_REQ packet type |
 | Metadata concealment | Channel-key-based, hides sender and/or destination from non-members | Not supported |
 
-UMSH provides protocol-level privacy modes that conceal sender and destination information from observers who do not possess the relevant channel key. MeshCore does not define equivalent blind modes.
+UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.
 
 Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the `S` flag set — no dedicated packet type is needed. MeshCore defines a specific `ANON_REQ` payload type that carries the full 32-byte sender public key.
 
@@ -85,6 +85,7 @@ Both protocols support anonymous first-contact requests, but through different m
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of key |
 | Group message auth | Channel-key-based CMAC | Channel-key-based HMAC (2-byte MAC) |
 | Sender authentication | Not cryptographically verified (symmetric key limitation) | Not cryptographically verified (same limitation) |
+| Source privacy | Source encrypted when encryption enabled | No |
 
 Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders — any channel member can forge a packet with any claimed source address.
 
@@ -142,7 +143,7 @@ Minimum overhead for a typical encrypted unicast message (no options, no hop cou
 | MAC/MIC | 16 | 16 | 2 |
 | **Total overhead** | **26** | **56** | **6** |
 
-MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind modes, no composable options).
+MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
 
 UMSH with `S=0` provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.
 
