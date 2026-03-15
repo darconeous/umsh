@@ -1,0 +1,9 @@
+[book]
+title = "UMSH Protocol Specification"
+authors = ["UMSH Contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
