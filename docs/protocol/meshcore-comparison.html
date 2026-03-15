@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-883c9394.js";
+            window.path_to_searchindex_js = "searchindex-8ead25e2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04265816.js"></script>
@@ -323,7 +323,6 @@
 </div>
 <p>UMSH maintains a clean boundary between the MAC layer and higher-layer protocols. The MAC layer defines framing, addressing, encryption, authentication, and forwarding, and treats payload content as opaque. UMSH also defines its own application-layer protocols (text messaging, chat rooms, node identity, node management), but these are architecturally separate from the MAC layer and carried in the payload alongside any other higher-layer protocol.</p>
 <p>MeshCore takes a more vertically integrated approach: the protocol directly defines payload types for text messages, node advertisements, login sequences, and multipart transfers without a clear separation between MAC and application concerns.</p>
-<p>The practical consequence is that UMSH’s MAC layer can carry any higher-layer protocol (6LoWPAN, CoAP, custom application formats) without modification, while MeshCore’s payload type system is tightly coupled to its built-in application set.</p>
 <h2 id="timestamps-and-time-dependency"><a class="header" href="#timestamps-and-time-dependency">Timestamps and Time Dependency</a></h2>
 <p>MeshCore relies on UNIX timestamps in several protocol-critical roles:</p>
 <ul>
