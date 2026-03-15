@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ea648b5e.js";
+            window.path_to_searchindex_js = "searchindex-23332071.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04265816.js"></script>
@@ -320,7 +320,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
 <p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
 <h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
-<p>An encrypted unicast from Node A to Node B carrying two options: a region code and an empty trace-route option.</p>
+<p>An encrypted unicast from Node A to Node B with a hop count of 4, a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
 <p><strong>Options encoding:</strong></p>
 <div class="table-wrapper">
 <table>
@@ -341,8 +341,9 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=1, H=0</td><td><code>12</code></td></tr>
+<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>13</code></td></tr>
 <tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
+<tr><td>HOPS</td><td>4</td><td><code>04</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -352,11 +353,11 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">12 12 78 53 10 FF C3 D4 A1 B2 E0 00 00 00 0A 8B
-3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD
-DE DF
+<pre><code class="language-text">13 12 78 53 10 FF 04 C3 D4 A1 B2 E0 00 00 00 0A
+8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
+DD DE DF
 </code></pre>
-<p>Total: 34 bytes (1 + 5 + 2 + 2 + 5 + 3 + 16).</p>
+<p>Total: 35 bytes (1 + 5 + 1 + 2 + 2 + 5 + 3 + 16).</p>
 
                     </main>
 
