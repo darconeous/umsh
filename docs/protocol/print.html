@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-eb031579.js";
+            window.path_to_searchindex_js = "searchindex-0b56055a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -1760,7 +1760,7 @@ the IV.</p>
 <tr><td>Authentication</td><td>AES-CMAC (16-byte MIC)</td><td>HMAC-SHA256 (32-byte tag)</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>X25519 ECDH</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256, domain-separated (K_enc, K_mic)</td><td>HKDF-SHA256, 64-byte output split into HMAC key + AES key</td></tr>
-<tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>No, but not really a problem (random IV; IV reuse leaks first-block equality)</td></tr>
+<tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection</td></tr>
 <tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum</td></tr>
 <tr><td>Ephemeral key overhead</td><td>N/A (stable pairwise keys)</td><td>32 bytes per packet (ephemeral X25519 pubkey for SINGLE destinations)</td></tr>
@@ -1768,8 +1768,7 @@ the IV.</p>
 </table>
 </div>
 <h3 id="encryption-mode"><a class="header" href="#encryption-mode">Encryption Mode</a></h3>
-<p>UMSH uses an AES-SIV-inspired construction where the MIC doubles as the CTR IV. This provides nonce-misuse resistance: even if the frame counter is accidentally reused, the construction degrades gracefully — identical plaintexts would produce identical ciphertexts (revealing repetition) but would not compromise the key or other messages.</p>
-<p>Reticulum uses AES-256-CBC with a random 16-byte IV. CBC mode is well-established but has known weaknesses: it requires correct padding (PKCS7), and is vulnerable to padding oracle attacks if error messages leak information. IV reuse in CBC leaks whether the first plaintext blocks of two messages are identical, though subsequent blocks remain protected by chaining. Reticulum mitigates IV reuse risk by generating random IVs.</p>
+<p>UMSH uses an AES-SIV-inspired construction where the MIC doubles as the CTR IV, providing nonce-misuse resistance. Reticulum uses AES-256-CBC with a random 16-byte IV. Both are sound constructions — the primary difference in practice is overhead: CBC requires transmitting a 16-byte IV and adds 1–16 bytes of PKCS7 padding, while UMSH’s SIV construction derives the IV from the MIC (which is already transmitted) and uses CTR mode which requires no padding.</p>
 <h3 id="authentication-and-integrity"><a class="header" href="#authentication-and-integrity">Authentication and Integrity</a></h3>
 <p>UMSH’s 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH’s choice is driven by the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
@@ -1927,11 +1926,11 @@ the IV.</p>
 <p>Note that Reticulum’s 500-byte MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum may require link-layer fragmentation that further reduces effective throughput.</p>
 <h2 id="summary-of-design-differences-1"><a class="header" href="#summary-of-design-differences-1">Summary of Design Differences</a></h2>
 <p>Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Its Python implementation provides a full-featured development environment but limits deployment to platforms that can run a Python runtime.</p>
-<p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, strong cryptography with nonce-misuse resistance, composable routing options, and strict layer separation. By defining a protocol specification rather than a specific implementation, UMSH can be deployed on bare-metal microcontrollers with minimal resources.</p>
+<p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. By defining a protocol specification rather than a specific implementation, UMSH can be deployed on bare-metal microcontrollers with minimal resources.</p>
 <p>Key tradeoffs:</p>
 <ul>
 <li><strong>Overhead</strong>: UMSH achieves roughly 60–70% lower per-packet overhead than Reticulum, maximizing payload capacity within tight LoRa frame budgets.</li>
-<li><strong>Cryptographic construction</strong>: UMSH’s SIV-style encryption provides nonce-misuse resistance; Reticulum’s CBC mode does not.</li>
+<li><strong>Cryptographic overhead</strong>: UMSH’s SIV construction avoids transmitting a separate IV and requires no padding; Reticulum’s CBC mode adds 17–32 bytes of IV and padding overhead per packet.</li>
 <li><strong>Routing flexibility</strong>: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes.</li>
 <li><strong>Privacy model</strong>: Reticulum provides initiator anonymity by default (no source address). UMSH provides source addresses by default with opt-in privacy modes.</li>
 <li><strong>Multicast</strong>: UMSH supports multi-hop multicast. Reticulum’s group communication is currently single-hop only.</li>
