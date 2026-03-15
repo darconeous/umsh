@@ -141,11 +141,14 @@ Minimum overhead for a typical encrypted unicast message (no options, no hop cou
 | Source | 2 | 32 | 1 |
 | Security info | 5 | 5 | — |
 | MAC/MIC | 16 | 16 | 2 |
-| **Total overhead** | **26** | **56** | **6** |
+| ECB block padding | — | — | 0–15 (avg ~8) |
+| **Total overhead** | **26** | **56** | **~14** |
 
-MeshCore achieves dramatically lower per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. This leaves more room for payload in the constrained LoRa frame budget (~200-250 bytes). However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
+MeshCore's use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore's effective overhead rises from 6 bytes to approximately 14 bytes.
 
-UMSH with `S=0` provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of 20 additional bytes compared to MeshCore.
+MeshCore still achieves lower per-packet overhead than UMSH by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
+
+UMSH with `S=0` provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of roughly 12 additional bytes compared to MeshCore's effective overhead.
 
 ## Summary of Design Differences
 
