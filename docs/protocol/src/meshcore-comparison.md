@@ -96,7 +96,7 @@ Both protocols share the fundamental limitation that symmetric-key multicast can
 | Payload typing | 1-byte payload type prefix | 4-bit payload type in header |
 | Structured data | CoAP-over-UMSH (block-wise transfer) | Multipart packets |
 | Node identity | Identity payload with role, capabilities, name, options, optional EdDSA signature | Advertisement payload with public key, timestamp, EdDSA signature, appdata |
-| URI scheme | `umsh:n:`, `umsh:ck:`, `umsh:cs:`, `coap-umsh://` | Not defined |
+| URI scheme | `umsh:n:`, `umsh:ck:`, `umsh:cs:`, `coap-umsh://` | `meshcore://` (contacts and channels) |
 | Amateur radio | Operator/station callsign options, explicit unencrypted mode | Not defined |
 
 UMSH's payload types identify which higher-layer protocol is carried inside the payload — whether UMSH-defined (text messages, chat rooms, node identity) or third-party (CoAP, 6LoWPAN). The MAC layer treats all payloads identically. MeshCore's payload types define application-level semantics directly at the protocol level, without a clean separation between MAC and application concerns. UMSH defines a CoAP-over-UMSH transport (payload type 7) that inherits CoAP's block-wise transfer for payloads larger than a single LoRa frame. MeshCore defines a multipart packet type for segmented transfers at the protocol level.
@@ -114,8 +114,6 @@ UMSH's payload types identify which higher-layer protocol is carried inside the 
 UMSH maintains a clean boundary between the MAC layer and higher-layer protocols. The MAC layer defines framing, addressing, encryption, authentication, and forwarding, and treats payload content as opaque. UMSH also defines its own application-layer protocols (text messaging, chat rooms, node identity, node management), but these are architecturally separate from the MAC layer and carried in the payload alongside any other higher-layer protocol.
 
 MeshCore takes a more vertically integrated approach: the protocol directly defines payload types for text messages, node advertisements, login sequences, and multipart transfers without a clear separation between MAC and application concerns.
-
-The practical consequence is that UMSH's MAC layer can carry any higher-layer protocol (6LoWPAN, CoAP, custom application formats) without modification, while MeshCore's payload type system is tightly coupled to its built-in application set.
 
 ## Timestamps and Time Dependency
 

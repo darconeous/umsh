@@ -149,7 +149,7 @@ Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).
 
 ## Example 7: Unicast with Options
 
-An encrypted unicast from Node A to Node B carrying two options: a region code and an empty trace-route option.
+An encrypted unicast from Node A to Node B with a hop count of 4, a region code option, and an empty trace-route option (to be populated by repeaters during flooding).
 
 **Options encoding:**
 
@@ -163,8 +163,9 @@ The region code value `7853` encodes "SJC" in ARNCE/HAM-64.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=2 (unicast), S=0, O=1, H=0 | `12` |
+| FCF | VER=0, TYPE=2 (unicast), S=0, O=1, H=1 | `13` |
 | Options | Region code (1) + trace route (2) + end marker | `12 78 53 10 FF` |
+| HOPS | 4 | `04` |
 | DST | Node B hint | `C3 D4` |
 | SRC | Node A hint | `A1 B2` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
@@ -173,9 +174,9 @@ The region code value `7853` encodes "SJC" in ARNCE/HAM-64.
 | MIC | 16 bytes | `D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD DE DF` |
 
 ```text
-12 12 78 53 10 FF C3 D4 A1 B2 E0 00 00 00 0A 8B
-3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD
-DE DF
+13 12 78 53 10 FF 04 C3 D4 A1 B2 E0 00 00 00 0A
+8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
+DD DE DF
 ```
 
-Total: 34 bytes (1 + 5 + 2 + 2 + 5 + 3 + 16).
+Total: 35 bytes (1 + 5 + 1 + 2 + 2 + 5 + 3 + 16).
