@@ -221,7 +221,7 @@ On a 255-byte LoRa frame:
 
 With a 16-byte MIC, UMSH provides roughly 40–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH's 14 bytes of total overhead leaves 241 bytes for payload — over 60% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.
 
-Note that Reticulum's 500-byte MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum may require link-layer fragmentation that further reduces effective throughput.
+Note that Reticulum's current 500-byte MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum may require link-layer fragmentation that further reduces effective throughput. The source comment at [`Reticulum.py:88–89`](https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py#L88-L89) indicates a future minimum of 251 bytes is planned, which would fit within a standard LoRa frame and eliminate the need for fragmentation on most links.
 
 ## Summary of Design Differences
 
