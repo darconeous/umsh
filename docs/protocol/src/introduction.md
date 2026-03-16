@@ -25,6 +25,24 @@ UMSH is designed to support:
 - Timestamp-free at the MAC layer
 - Low-power operation
 
+## Use Cases
+
+UMSH is designed for deployments where LoRa's range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.
+
+**Intended use cases include:**
+
+- **Off-grid text communication** — chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.
+- **Emergency and disaster communications** — resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.
+- **IoT and sensor telemetry** — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.
+- **Amateur radio mesh networking** — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.
+- **Privacy-sensitive communication** — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.
+- **Embedded and constrained deployments** — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+
+**UMSH is not designed for:**
+
+- High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.
+- Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.
+
 ## Design Model
 
 This document treats the terms **channel** and **multicast group** as

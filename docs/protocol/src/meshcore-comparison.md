@@ -150,6 +150,33 @@ MeshCore achieves low per-packet overhead by using 1-byte addresses, a 2-byte MA
 
 UMSH with `S=0` and a 16-byte MIC provides the strongest security configuration at 26 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore's 1-in-2^16 with its 2-byte MAC) while matching MeshCore's effective overhead.
 
+## Power Consumption
+
+Address hint width has a direct effect on power consumption in battery-constrained LoRa nodes.
+
+When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.
+
+The problem is collisions. In a network of many nodes, some fraction of packets addressed to *other* nodes will collide with your own hint and trigger unnecessary cryptographic work. The collision rate depends on the hint width:
+
+| Protocol | Address hint width | False-positive rate per packet |
+|---|---|---|
+| MeshCore | 8 bits (1 byte) | ~1 in 256 |
+| UMSH | 16 bits (2 bytes) | ~1 in 65536 |
+
+UMSH's 2-byte hints reduce spurious cryptographic wake-ups by a factor of ~256 compared to MeshCore. In a busy mesh where a node receives hundreds of packets per hour intended for others, this difference accumulates. Each avoided verification means less CPU time, fewer memory accesses, and a faster return to sleep — all of which reduce battery drain.
+
+The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that any packet addressed to an unknown channel matches a channel you are not a member of. UMSH's 2-byte channel identifier reduces this to 1-in-65536.
+
+The overhead cost of wider hints is exactly 1 byte per address field per packet — a modest price for a 256× reduction in false-positive cryptographic work.
+
+### Repeater Power
+
+Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.
+
+For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the hop count and duplicate suppression cache. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.
+
+MeshCore does not define equivalent signal-quality filtering. Every repeater in range of a flooded packet will retransmit it (subject to hop count), regardless of link quality. This can result in retransmissions over marginal links that consume transmit power without meaningfully extending coverage.
+
 ## Summary of Design Differences
 
 MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.
