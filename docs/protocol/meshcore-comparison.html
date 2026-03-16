@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7a62da71.js";
+            window.path_to_searchindex_js = "searchindex-10d52197.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -219,7 +219,7 @@
 <tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
 <tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
-<tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>No (ECB mode is deterministic)</td></tr>
+<tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>UNIX-timestamp-based (requires clock synchronization)</td></tr>
 </tbody>
 </table>

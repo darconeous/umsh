@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7a62da71.js";
+            window.path_to_searchindex_js = "searchindex-10d52197.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -214,6 +214,23 @@
 </table>
 </div>
 <p>The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
+<h4 id="mic-size-selection-guidance"><a class="header" href="#mic-size-selection-guidance">MIC Size Selection Guidance</a></h4>
+<p>Shorter MICs save bytes on the wire but reduce forgery resistance and increase the probability of duplicate-suppression collisions in repeater caches (see <a href="repeater-operation.html#duplicate-suppression">Duplicate Suppression</a>). The following guidelines help choose an appropriate MIC size:</p>
+<ul>
+<li>
+<p><strong>16 bytes</strong> (default): Recommended for long-term stable identities where the same pairwise keys may be used for months or years. The cost of a successful forgery is high (attacker gains persistent access to impersonate a node), and the 2^-128 forgery probability makes brute-force infeasible regardless of how many packets an attacker can attempt.</p>
+</li>
+<li>
+<p><strong>8 bytes</strong>: A reasonable middle ground for most communication. Provides 2^-64 forgery probability — well beyond practical brute-force for LoRa’s low packet rates — while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.</p>
+</li>
+<li>
+<p><strong>4 bytes</strong>: Appropriate for short-lived contexts where the keys will be discarded soon, such as <a href="mac-commands.html#pfs-session-request-6">PFS sessions</a> or one-time exchanges using ephemeral keypairs. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.</p>
+</li>
+<li>
+<p><strong>12 bytes</strong>: Available as an intermediate option when 8 bytes feels too tight but 16 bytes is more overhead than warranted. Provides 2^-96 forgery probability.</p>
+</li>
+</ul>
+<p>As a general principle: the longer the keys will be in use and the higher the value of the traffic they protect, the larger the MIC should be. For ephemeral keys that will be erased within minutes, a small MIC is sufficient. For a node’s long-term identity keys, prefer the full 16 bytes.</p>
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
