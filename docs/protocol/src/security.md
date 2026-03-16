@@ -30,15 +30,20 @@ Where:
 - `E` = encrypted payload flag
 - `MIC` = MIC size code
 - `S` = salt included
+- `RESERVED` = must all be set to zero
+
+If the `RESERVED` bits read as anything other than zero, the packet MUST be dropped.
 
 MIC size encodings:
 
-| Value | MIC Length | Status                  |
-|------:|------------|-------------------------|
-| 0     | 4 bytes    | reserved / unsupported  |
-| 1     | 8 bytes    | reserved / unsupported  |
-| 2     | 12 bytes   | reserved / unsupported  |
-| 3     | 16 bytes   | supported               |
+| Value | MIC Length |
+|------:|------------|
+| 0     | 4 bytes    |
+| 1     | 8 bytes    |
+| 2     | 12 bytes   |
+| 3     | 16 bytes   |
+
+The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.
 
 ### Frame Counter
 
@@ -197,12 +202,31 @@ When encryption is enabled, UMSH uses a construction inspired by **AES-SIV** (RF
 
 The processing is:
 
-1. Compute the MIC over the AAD and plaintext using `K_mic` via **AES-CMAC**.
-2. Encrypt the plaintext using **AES-128-CTR** with `K_enc`, using the MIC as the CTR IV.
+1. Compute the full 16-byte AES-CMAC over the AAD and plaintext using `K_mic`.
+2. Truncate the CMAC to the MIC length specified by the SCF.
+3. Construct the CTR IV from the MIC (see [CTR IV Construction](#ctr-iv-construction)).
+4. Encrypt the plaintext using **AES-128-CTR** with `K_enc` and the constructed IV.
 
-The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field. Only the 16-byte MIC mode is currently supported.
+The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field.
 
-A key design goal is robustness against nonce reuse. Because the MIC is used as the CTR IV (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.
+A key design goal is robustness against nonce reuse. Because the CTR IV is derived from the MIC (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.
+
+### CTR IV Construction
+
+The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:
+
+```text
+IV = truncate_or_pad_to_16( MIC || SECINFO )
+```
+
+For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC — identical to standard AES-SIV. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability that compensates for the increased probability of truncated-MIC collisions.
+
+| MIC Length | SECINFO (5 B) | SECINFO (7 B) | SECINFO bytes in IV |
+|---:|---|---|---|
+| 16 B | truncate to 16 | truncate to 16 | 0 (IV = MIC) |
+| 12 B | truncate to 16 | truncate to 16 | 4 or 2 |
+| 8 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
+| 4 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
 
 ### Unencrypted Packets
 
@@ -240,19 +264,19 @@ Where `number` is the option's absolute option number (not a delta) and `length`
 Blind unicast packets encrypt the source address separately from the payload.
 
 The source address is encrypted using AES-128-CTR with the *channel key*
-(rather than a key derived from the shared secret) and uses the packet MIC as
-the IV.
+(rather than a key derived from the shared secret), using the CTR IV
+constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
 
 Let:
 
 - `channel_key` = multicast channel key
-- `MIC` = final packet MIC (16 bytes)
+- `IV` = CTR IV constructed from the packet MIC and SECINFO
 - `SRC` = 32-byte source public key
 
 Then:
 
 ```text
-ENC_SRC = AES-128-CTR( key=channel_key, iv=MIC[0..15], plaintext=SRC )
+ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
 ```
 
 This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.

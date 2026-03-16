@@ -22,7 +22,7 @@ Before forwarding a packet, the repeater checks the MIC cache:
 
 To avoid racy reforward behavior, the repeater should insert the MIC into the cache as soon as it accepts the packet for forwarding, not after transmission completes.
 
-Because duplicate suppression depends directly on the MIC, practical deployments should strongly prefer 16-byte MICs.
+Because duplicate suppression depends directly on the MIC, shorter MIC sizes increase the probability of false-positive collisions in the cache. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.
 
 ## Forwarding Procedure
 

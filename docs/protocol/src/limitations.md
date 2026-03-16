@@ -31,11 +31,8 @@ The following areas remain provisional or deployment-defined:
 5. **MAC Ack PKTMIC width**
    - 8 bytes is recommended, but this can be fixed explicitly by the protocol if desired.
 
-6. **MIC sizes other than 16 bytes**
-   - Enumerated but not yet supported.
-
-7. **Channel-name-to-key derivation**
+6. **Channel-name-to-key derivation**
    - The exact derivation function for named channels is not yet specified in this draft.
 
-8. **Routing-Critical option attribute**
+7. **Routing-Critical option attribute**
    - A third option attribute for routing-critical semantics is planned but not yet defined (see [Packet Options](packet-options.md)).

@@ -32,7 +32,7 @@ UMSH separates routing metadata into composable options, allowing packets to car
 | Aspect | UMSH | MeshCore |
 |---|---|---|
 | Encryption algorithm | AES-128-CTR (SIV-style: MIC used as CTR IV) | AES-128-ECB |
-| Authentication | AES-CMAC (16-byte MIC) | HMAC-SHA256 (truncated to 2-byte MAC) |
+| Authentication | AES-CMAC (4/8/12/16-byte MIC) | HMAC-SHA256 (truncated to 2-byte MAC) |
 | Key derivation | HKDF-SHA256 with domain-separated keys (K_enc, K_mic) | Raw ECDH shared secret used directly |
 | Key separation | Separate 16-byte encryption and 16-byte MIC keys | Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes) |
 | Nonce misuse resistance | Yes (SIV construction) | No (ECB mode is deterministic) |
@@ -131,22 +131,24 @@ This distinction matters for deployments where nodes may lack reliable time sour
 
 Minimum overhead for a typical encrypted unicast message (no options, no hop count):
 
-| Field | UMSH (S=0) | UMSH (S=1) | MeshCore |
-|---|---|---|---|
-| Header/FCF | 1 | 1 | 1 |
-| Path length | — | — | 1 |
-| Destination | 2 | 2 | 1 |
-| Source | 2 | 32 | 1 |
-| Security info | 5 | 5 | — |
-| MAC/MIC | 16 | 16 | 2 |
-| ECB block padding | — | — | 0–15 (avg ~8) |
-| **Total overhead** | **26** | **56** | **~14** |
+| Field | UMSH (S=0, 16B MIC) | UMSH (S=0, 4B MIC) | UMSH (S=1) | MeshCore |
+|---|---|---|---|---|
+| Header/FCF | 1 | 1 | 1 | 1 |
+| Path length | — | — | — | 1 |
+| Destination | 2 | 2 | 2 | 1 |
+| Source | 2 | 2 | 32 | 1 |
+| Security info | 5 | 5 | 5 | — |
+| MAC/MIC | 16 | 4 | 4–16 | 2 |
+| ECB block padding | — | — | — | 0–15 (avg ~8) |
+| **Total overhead** | **26** | **14** | **44–56** | **~14** |
+
+UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography](security.md#security-control-field)). With a 4-byte MIC and `S=0`, UMSH matches MeshCore's effective overhead while providing AES-SIV encryption, HKDF key separation, and monotonic frame counter replay protection.
 
 MeshCore's use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore's effective overhead rises from 6 bytes to approximately 14 bytes.
 
-MeshCore still achieves lower per-packet overhead than UMSH by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
+MeshCore achieves low per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
 
-UMSH with `S=0` provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of roughly 12 additional bytes compared to MeshCore's effective overhead.
+UMSH with `S=0` and a 16-byte MIC provides the strongest security configuration at 26 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore's 1-in-2^16 with its 2-byte MAC) while matching MeshCore's effective overhead.
 
 ## Summary of Design Differences
 

@@ -50,8 +50,9 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 ### Region Code (option 1)
 - Type: 2-byte region identifier
-- Semantics: restricts forwarding to repeaters configured for the specified region.
-- A repeater that does not recognize or is not configured for the region must not forward the packet.
+- Semantics: restricts flood-routing to repeaters configured for the specified region.
+- A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.
+- This option is not enforced until the source route list is exhausted.
 - The encoding of region identifiers is TBD, but may be something like the following:
   - For regions defined by the nearest airport, encode the airport's IATA code into
     a 16-bit value using ARNCE/HAM-64. e.g. SJC -> 0x7853, MFR -> 0x5242
@@ -87,7 +88,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 ### Station Callsign (option 7)
 - Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
 - Semantics: identifies the transmitting station's amateur radio callsign.
-- If absent, the station callsign is assumed to equal the source callsign.
+- If absent, the station callsign is assumed to equal the source callsign (if present)
 - This option is critical because repeaters must replace or remove it during forwarding.
 - Use: required only when operating under amateur radio rules.
 
