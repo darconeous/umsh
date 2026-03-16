@@ -35,7 +35,7 @@ UMSH separates routing metadata into composable options, allowing packets to car
 | Authentication | AES-CMAC (4/8/12/16-byte MIC) | HMAC-SHA256 (truncated to 2-byte MAC) |
 | Key derivation | HKDF-SHA256 with domain-separated keys (K_enc, K_mic) | Raw ECDH shared secret used directly |
 | Key separation | Separate 16-byte encryption and 16-byte MIC keys | Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes) |
-| Nonce misuse resistance | Yes (SIV construction) | No (ECB mode is deterministic) |
+| Nonce misuse resistance | Yes (SIV construction) | N/A (ECB mode is deterministic) |
 | Replay protection | 4-byte monotonic frame counter (timestamp-free) | UNIX-timestamp-based (requires clock synchronization) |
 
 The cryptographic gap is substantial:

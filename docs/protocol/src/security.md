@@ -45,6 +45,20 @@ MIC size encodings:
 
 The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.
 
+#### MIC Size Selection Guidance
+
+Shorter MICs save bytes on the wire but reduce forgery resistance and increase the probability of duplicate-suppression collisions in repeater caches (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)). The following guidelines help choose an appropriate MIC size:
+
+- **16 bytes** (default): Recommended for long-term stable identities where the same pairwise keys may be used for months or years. The cost of a successful forgery is high (attacker gains persistent access to impersonate a node), and the 2^-128 forgery probability makes brute-force infeasible regardless of how many packets an attacker can attempt.
+
+- **8 bytes**: A reasonable middle ground for most communication. Provides 2^-64 forgery probability — well beyond practical brute-force for LoRa's low packet rates — while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.
+
+- **4 bytes**: Appropriate for short-lived contexts where the keys will be discarded soon, such as [PFS sessions](mac-commands.md#pfs-session-request-6) or one-time exchanges using ephemeral keypairs. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.
+
+- **12 bytes**: Available as an intermediate option when 8 bytes feels too tight but 16 bytes is more overhead than warranted. Provides 2^-96 forgery probability.
+
+As a general principle: the longer the keys will be in use and the higher the value of the traffic they protect, the larger the MIC should be. For ephemeral keys that will be erased within minutes, a small MIC is sufficient. For a node's long-term identity keys, prefer the full 16 bytes.
+
 ### Frame Counter
 
 The 4-byte frame counter must increase monotonically for a given shared secret and
