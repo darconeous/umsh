@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f20d2650.js";
+            window.path_to_searchindex_js = "searchindex-fd574cb8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -378,6 +378,32 @@
 <p>Meshtastic’s nonce is derived from header fields (packet ID + sender node number) rather than transmitted, saving bytes compared to protocols that transmit the IV. However, the fixed 16-byte cleartext header and protobuf encoding overhead partially offset this advantage.</p>
 <p>UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (26 vs ~22 bytes), but UMSH’s overhead includes full authentication that Meshtastic’s channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 14 bytes of overhead — lower than Meshtastic — while still providing authentication that Meshtastic channel traffic does not have.</p>
 <p>Meshtastic PKC direct messages add approximately 20 bytes of overhead beyond channel encryption (ECDH-derived key, CCM nonce, and authentication tag), bringing total overhead to roughly 42 bytes for authenticated direct messages.</p>
+<h2 id="power-consumption"><a class="header" href="#power-consumption">Power Consumption</a></h2>
+<p>Power consumption on a battery-constrained LoRa node is driven by two factors: how long the radio is active (airtime), and how much CPU work is required after each received packet.</p>
+<h3 id="channel-filtering-and-false-positives"><a class="header" href="#channel-filtering-and-false-positives">Channel Filtering and False Positives</a></h3>
+<p>In a LoRa mesh, broadcast and multicast traffic (position reports, telemetry, channel messages) outnumber unicast packets. For this traffic, the only pre-crypto filter available is the channel identifier. When a packet’s channel identifier matches a channel the node does not belong to, the node must attempt decryption to confirm the mismatch — a false positive.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Protocol</th><th>Channel identifier width</th><th>False-positive rate per broadcast packet</th></tr>
+</thead>
+<tbody>
+<tr><td>Meshtastic</td><td>8 bits (1-byte DJB2 hash)</td><td>~1 in 256</td></tr>
+<tr><td>UMSH</td><td>16 bits (2-byte derived hint)</td><td>~1 in 65536</td></tr>
+</tbody>
+</table>
+</div>
+<p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-256-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
+<h3 id="unicast-filtering"><a class="header" href="#unicast-filtering">Unicast Filtering</a></h3>
+<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 2-byte destination hint has a ~1-in-65536 false-positive rate; when a collision occurs, it requires an ECDH-derived key lookup and CMAC verification before the packet can be discarded.</p>
+<p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for not exposing node identity to passive observers.</p>
+<h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
+<p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header scales from 1 byte upward depending on which optional fields are present. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>
+<h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
+<p>Both protocols use flood routing as their primary delivery mechanism, so nodes configured as repeaters must receive and retransmit packets. Transmit is the most power-intensive radio operation on a LoRa node. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating and incur no forwarding transmit cost.</p>
+<p>Meshtastic’s managed flood uses SNR-based contention windows: after receiving a packet, each potential relay waits a random delay inversely proportional to its received SNR before retransmitting. If it hears a better-positioned node retransmit first, it suppresses its own retransmission. This heuristic reduces the number of redundant rebroadcasts compared to simple flooding and saves transmit power across the network.</p>
+<p>UMSH’s signal-quality filtering options (minimum RSSI and minimum SNR) allow the original sender to set explicit thresholds: a repeater that received the packet below the threshold must not retransmit it. This gives the sender direct control over which links are used for forwarding, avoiding transmit power wasted on paths unlikely to deliver the packet. Meshtastic’s SNR-based approach is automatic but implicit; UMSH’s approach is explicit but requires the sender to configure appropriate thresholds.</p>
+<p>UMSH repeaters do not need to decrypt or verify the payload before forwarding — the MAC layer treats payloads opaquely. Meshtastic repeaters also forward without decryption for channel traffic.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>Meshtastic is a full-featured, batteries-included mesh communication system with a large and active user community. It provides a rich application layer (position sharing, telemetry, store-and-forward, TAK integration), broad hardware support, and an easy on-ramp for non-technical users. Its channel-based encryption model is simple to configure and deploy.</p>
 <p>UMSH is a protocol specification focused on cryptographic robustness, compact encoding, and architectural cleanliness. It authenticates all traffic, provides privacy modes for metadata concealment, and maintains strict layer separation that allows it to carry arbitrary higher-layer protocols.</p>
