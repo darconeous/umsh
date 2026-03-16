@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0b56055a.js";
+            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -279,7 +279,7 @@
 </tbody>
 </table>
 </div>
-<p>The ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
+<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="pfs-session-response-7"><a class="header" href="#pfs-session-response-7">PFS Session Response (7)</a></h2>
 <p>Sent in response to a PFS Session Request. The responder generates its own ephemeral Ed25519 keypair and returns the public key. Once both sides have exchanged ephemeral keys, communication proceeds using the new keypair.</p>
 <div class="table-wrapper">
@@ -293,6 +293,7 @@
 </tbody>
 </table>
 </div>
+<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides discard the ephemeral private keys and revert to using their long-term keys.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
