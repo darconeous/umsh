@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -561,8 +561,9 @@ place that it appeared in encrypted multicast:</p>
 <h3 id="region-code-option-1"><a class="header" href="#region-code-option-1">Region Code (option 1)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
-<li>Semantics: restricts forwarding to repeaters configured for the specified region.</li>
-<li>A repeater that does not recognize or is not configured for the region must not forward the packet.</li>
+<li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
+<li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
+<li>This option is not enforced until the source route list is exhausted.</li>
 <li>The encoding of region identifiers is TBD, but may be something like the following:
 <ul>
 <li>For regions defined by the nearest airport, encode the airport’s IATA code into
@@ -609,7 +610,7 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <ul>
 <li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
 <li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
-<li>If absent, the station callsign is assumed to equal the source callsign.</li>
+<li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
 <li>This option is critical because repeaters must replace or remove it during forwarding.</li>
 <li>Use: required only when operating under amateur radio rules.</li>
 </ul>
@@ -668,21 +669,24 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <li><code>E</code> = encrypted payload flag</li>
 <li><code>MIC</code> = MIC size code</li>
 <li><code>S</code> = salt included</li>
+<li><code>RESERVED</code> = must all be set to zero</li>
 </ul>
+<p>If the <code>RESERVED</code> bits read as anything other than zero, the packet MUST be dropped.</p>
 <p>MIC size encodings:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Value</th><th>MIC Length</th><th>Status</th></tr>
+<tr><th style="text-align: right">Value</th><th>MIC Length</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>4 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">1</td><td>8 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">2</td><td>12 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">3</td><td>16 bytes</td><td>supported</td></tr>
+<tr><td style="text-align: right">0</td><td>4 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td>8 bytes</td></tr>
+<tr><td style="text-align: right">2</td><td>12 bytes</td></tr>
+<tr><td style="text-align: right">3</td><td>16 bytes</td></tr>
 </tbody>
 </table>
 </div>
+<p>The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
@@ -794,11 +798,31 @@ K_mic = okm[16..31]
 <p>When encryption is enabled, UMSH uses a construction inspired by <strong>AES-SIV</strong> (RFC 5297), with the MIC and encryption steps separated to allow future support for different MIC lengths.</p>
 <p>The processing is:</p>
 <ol>
-<li>Compute the MIC over the AAD and plaintext using <code>K_mic</code> via <strong>AES-CMAC</strong>.</li>
-<li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code>, using the MIC as the CTR IV.</li>
+<li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code>.</li>
+<li>Truncate the CMAC to the MIC length specified by the SCF.</li>
+<li>Construct the CTR IV from the MIC (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</li>
+<li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code> and the constructed IV.</li>
 </ol>
-<p>The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field. Only the 16-byte MIC mode is currently supported.</p>
-<p>A key design goal is robustness against nonce reuse. Because the MIC is used as the CTR IV (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.</p>
+<p>The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field.</p>
+<p>A key design goal is robustness against nonce reuse. Because the CTR IV is derived from the MIC (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.</p>
+<h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
+<p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:</p>
+<pre><code class="language-text">IV = truncate_or_pad_to_16( MIC || SECINFO )
+</code></pre>
+<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC — identical to standard AES-SIV. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability that compensates for the increased probability of truncated-MIC collisions.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">MIC Length</th><th>SECINFO (5 B)</th><th>SECINFO (7 B)</th><th>SECINFO bytes in IV</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = MIC)</td></tr>
+<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4 or 2</td></tr>
+<tr><td style="text-align: right">8 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
+<tr><td style="text-align: right">4 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
+</tbody>
+</table>
+</div>
 <h3 id="unencrypted-packets"><a class="header" href="#unencrypted-packets">Unencrypted Packets</a></h3>
 <p>When encryption is disabled, the MIC is calculated using <strong>CMAC</strong> with <code>K_mic</code>.</p>
 <h3 id="associated-data"><a class="header" href="#associated-data">Associated Data</a></h3>
@@ -823,34 +847,51 @@ K_mic = okm[16..31]
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
 <p>Blind unicast packets encrypt the source address separately from the payload.</p>
 <p>The source address is encrypted using AES-128-CTR with the <em>channel key</em>
-(rather than a key derived from the shared secret) and uses the packet MIC as
-the IV.</p>
+(rather than a key derived from the shared secret), using the CTR IV
+constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
 <li><code>channel_key</code> = multicast channel key</li>
-<li><code>MIC</code> = final packet MIC (16 bytes)</li>
+<li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>SRC</code> = 32-byte source public key</li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=MIC[0..15], plaintext=SRC )
+<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
 </code></pre>
 <p>This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multicast-channels-1"><a class="header" href="#multicast-channels-1">Multicast Channels</a></h1>
-<p>A multicast channel is fundamentally a symmetric key shared among all participants.</p>
-<h2 id="channel-membership"><a class="header" href="#channel-membership">Channel Membership</a></h2>
-<p>Any node configured with a given channel key is considered joined to that channel and may receive packets sent to it.</p>
-<h2 id="channel-hint"><a class="header" href="#channel-hint">Channel Hint</a></h2>
-<p>A 2-byte channel hint is derived from the channel key and placed in multicast packets to help nodes identify likely matching channels without attempting every configured key.</p>
-<p>When encryption is enabled, the source address is encrypted inside the ciphertext along with the payload, concealing the sender’s identity from observers who do not possess the channel key. When encryption is not enabled, the source address appears in cleartext.</p>
-<h2 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h2>
-<p>Some channel keys may be derived directly from channel names. These are effectively public or semi-public channels:</p>
+<p>A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.</p>
+<h2 id="channel-keys"><a class="header" href="#channel-keys">Channel Keys</a></h2>
+<p>A channel key is a 16-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>).</p>
+<p>Channel keys are distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="#channel-uris">URI Formats</a>), or any other secure channel.</p>
+<p>UMSH does not currently define an in-band key distribution protocol.</p>
+<h2 id="channel-identifier"><a class="header" href="#channel-identifier">Channel Identifier</a></h2>
+<p>Each channel is identified on the wire by a 2-byte channel identifier <a href="#channel-identifier-derivation">derived from the channel key</a>. This identifier is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, channel identifiers are not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification.</p>
+<h2 id="encrypted-and-unencrypted-modes"><a class="header" href="#encrypted-and-unencrypted-modes">Encrypted and Unencrypted Modes</a></h2>
+<p>Multicast packets may be sent with or without encryption, controlled by the <code>E</code> flag in the Security Control Field.</p>
 <ul>
-<li>Anyone who knows the name can derive the key</li>
-<li>Long, high-entropy names may provide some practical obscurity, but this should not be treated as strong secrecy unless the derivation method and entropy support it</li>
+<li>
+<p><strong>Encrypted</strong> (E=1): The source address is encrypted together with the payload, concealing the sender’s identity from observers who do not possess the channel key. Only channel members can recover the source address and payload. See <a href="#encrypted-multicast-e--1">Encrypted Multicast</a> for the packet layout.</p>
+</li>
+<li>
+<p><strong>Unencrypted</strong> (E=0): The source address and payload appear in cleartext, but the packet is still authenticated with a MIC derived from the channel key. This mode is useful for amateur radio operation or other contexts where encryption is not permitted. See <a href="#unencrypted-multicast-e--0">Unencrypted Multicast</a> for the packet layout.</p>
+</li>
 </ul>
-<h2 id="multicast-payload-reuse"><a class="header" href="#multicast-payload-reuse">Multicast Payload Reuse</a></h2>
-<p>Application-layer multicast communication generally reuses the same payload types used for ordinary one-to-one communication. For example, group chat can use the same message payload formats as direct chat.</p>
+<h2 id="multi-hop-delivery"><a class="header" href="#multi-hop-delivery">Multi-Hop Delivery</a></h2>
+<p>Multicast packets are delivered via flood forwarding, bounded by the optional hop count field. Repeaters forward multicast packets according to the standard <a href="#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
+<h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
+<p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see <a href="#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
+<h2 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h2>
+<p>Channel keys may be derived from human-readable channel names rather than distributed as raw keys. A named channel is identified by a <code>umsh:cs:</code> URI (see <a href="#channel-uris">URI Formats</a>):</p>
+<pre><code class="language-text">umsh:cs:Public
+</code></pre>
+<p>Named channels are effectively public or semi-public — anyone who knows the name can derive the key. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
+<p>The exact key derivation function for named channels is not yet specified (see <a href="#open-items-and-provisional-areas">Open Items</a>).</p>
+<h2 id="relationship-to-blind-unicast"><a class="header" href="#relationship-to-blind-unicast">Relationship to Blind Unicast</a></h2>
+<p>Channels also enable <a href="#blind-unicast-packet">blind unicast</a>, which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.</p>
+<h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
+<p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="#text-messages">text message</a> and <a href="#chat-rooms">chat room</a> payload formats as direct messaging.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
@@ -870,7 +911,7 @@ the IV.</p>
 <li>once the repeater decides the packet is eligible, insert the MIC into the cache</li>
 </ul>
 <p>To avoid racy reforward behavior, the repeater should insert the MIC into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
-<p>Because duplicate suppression depends directly on the MIC, practical deployments should strongly prefer 16-byte MICs.</p>
+<p>Because duplicate suppression depends directly on the MIC, shorter MIC sizes increase the probability of false-positive collisions in the cache. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
 <h2 id="forwarding-procedure"><a class="header" href="#forwarding-procedure">Forwarding Procedure</a></h2>
 <ol>
 <li>
@@ -1465,12 +1506,6 @@ the IV.</p>
 </ul>
 </li>
 <li>
-<p><strong>MIC sizes other than 16 bytes</strong></p>
-<ul>
-<li>Enumerated but not yet supported.</li>
-</ul>
-</li>
-<li>
 <p><strong>Channel-name-to-key derivation</strong></p>
 <ul>
 <li>The exact derivation function for named channels is not yet specified in this draft.</li>
@@ -1511,6 +1546,7 @@ the IV.</p>
 <p>A MAC Ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see <a href="#forwarding-procedure">Forwarding Procedure</a>).</p>
 <h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
 <p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, and the AES-SIV-inspired construction provides nonce-misuse resistance as an additional safety margin.</p>
+<p>When forward secrecy is needed, UMSH provides <a href="#pfs-session-request-6">PFS sessions</a> — a lightweight handshake where both nodes exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and ephemeral private keys are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.</p>
 <h3 id="what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys"><a class="header" href="#what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys">What happens if a 2-byte channel identifier collides across different channel keys?</a></h3>
 <p>The 2-byte channel identifier is a hint, not a unique identifier. If two different channel keys happen to produce the same 2-byte channel ID, a receiver configured with both keys will attempt to process the packet with each candidate key. Only the correct key will produce a valid MIC, so the wrong candidate will be rejected during authentication. The cost is wasted computation, not incorrect behavior. With 2 bytes the collision probability is 1 in 65536, which is higher than a 4-byte hint but still negligible for deployments with a small number of configured channels.</p>
 <h3 id="why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm"><a class="header" href="#why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm">Why use an AES-SIV-inspired construction instead of AES-GCM?</a></h3>
@@ -1564,7 +1600,7 @@ the IV.</p>
 </thead>
 <tbody>
 <tr><td>Encryption algorithm</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-128-ECB</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
+<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
 <tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>No (ECB mode is deterministic)</td></tr>
@@ -1685,23 +1721,24 @@ the IV.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>UMSH (S=0)</th><th>UMSH (S=1)</th><th>MeshCore</th></tr>
+<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>UMSH (S=1)</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Header/FCF</td><td>1</td><td>1</td><td>1</td></tr>
-<tr><td>Path length</td><td>—</td><td>—</td><td>1</td></tr>
-<tr><td>Destination</td><td>2</td><td>2</td><td>1</td></tr>
-<tr><td>Source</td><td>2</td><td>32</td><td>1</td></tr>
-<tr><td>Security info</td><td>5</td><td>5</td><td>—</td></tr>
-<tr><td>MAC/MIC</td><td>16</td><td>16</td><td>2</td></tr>
-<tr><td>ECB block padding</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>~14</strong></td></tr>
+<tr><td>Header/FCF</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+<tr><td>Path length</td><td>—</td><td>—</td><td>—</td><td>1</td></tr>
+<tr><td>Destination</td><td>2</td><td>2</td><td>2</td><td>1</td></tr>
+<tr><td>Source</td><td>2</td><td>2</td><td>32</td><td>1</td></tr>
+<tr><td>Security info</td><td>5</td><td>5</td><td>5</td><td>—</td></tr>
+<tr><td>MAC/MIC</td><td>16</td><td>4</td><td>4–16</td><td>2</td></tr>
+<tr><td>ECB block padding</td><td>—</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>44–56</strong></td><td><strong>~14</strong></td></tr>
 </tbody>
 </table>
 </div>
+<p>UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see <a href="#security-control-field">Security &amp; Cryptography</a>). With a 4-byte MIC and <code>S=0</code>, UMSH matches MeshCore’s effective overhead while providing AES-SIV encryption, HKDF key separation, and monotonic frame counter replay protection.</p>
 <p>MeshCore’s use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore’s effective overhead rises from 6 bytes to approximately 14 bytes.</p>
-<p>MeshCore still achieves lower per-packet overhead than UMSH by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
-<p>UMSH with <code>S=0</code> provides a middle ground: 26 bytes of overhead with full AES-SIV security, monotonic frame counter replay protection, and 16-byte MIC integrity — at the cost of roughly 12 additional bytes compared to MeshCore’s effective overhead.</p>
+<p>MeshCore achieves low per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
+<p>UMSH with <code>S=0</code> and a 16-byte MIC provides the strongest security configuration at 26 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore’s 1-in-2^16 with its 2-byte MAC) while matching MeshCore’s effective overhead.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
@@ -1764,7 +1801,7 @@ the IV.</p>
 <tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection</td></tr>
 <tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum</td></tr>
-<tr><td>Ephemeral key overhead</td><td>N/A (stable pairwise keys)</td><td>32 bytes per packet (ephemeral X25519 pubkey for SINGLE destinations)</td></tr>
+<tr><td>Forward secrecy</td><td>Optional PFS sessions via MAC commands (per-session ephemeral keys)</td><td>Per-packet ephemeral key for SINGLE; optional ratchets for LINK</td></tr>
 </tbody>
 </table>
 </div>
@@ -1773,8 +1810,9 @@ the IV.</p>
 <h3 id="authentication-and-integrity"><a class="header" href="#authentication-and-integrity">Authentication and Integrity</a></h3>
 <p>UMSH’s 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH’s choice is driven by the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
-<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead.</p>
-<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost. For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys but without per-message forward secrecy unless the optional ratchet mechanism is enabled.</p>
+<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="#pfs-session-request-6">PFS session MAC commands</a> that allow two nodes to exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions require a 3-packet handshake (request, response, acknowledgement) but add no per-packet overhead once established.</p>
+<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet. For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys. Reticulum also offers an optional ratchet mechanism that rotates keys at configurable intervals (minimum 1800 seconds), providing periodic forward secrecy within a link.</p>
+<p>Both protocols offer forward secrecy, but with different granularity and overhead tradeoffs. Reticulum’s SINGLE mode provides per-packet forward secrecy at 32 bytes per packet; UMSH’s PFS sessions provide per-session forward secrecy at zero per-packet overhead after setup.</p>
 <h3 id="replay-protection"><a class="header" href="#replay-protection">Replay Protection</a></h3>
 <p>UMSH uses explicit 4-byte monotonic frame counters, which provide deterministic, stateless replay detection with a well-defined forward window. A receiver can immediately reject a replayed packet by comparing the counter to its stored state.</p>
 <p>Reticulum detects duplicates by caching packet hashes. This approach works but has different tradeoffs: it requires maintaining a hash cache of bounded size, and once a packet ages out of the cache, it could potentially be replayed. The cache size and eviction policy are implementation-defined.</p>
@@ -1783,19 +1821,19 @@ the IV.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Component</th><th>UMSH (S=0)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th>Component</th><th>UMSH (16B MIC)</th><th>UMSH (4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
-<tr><td>SECINFO</td><td>5 B</td><td>—</td><td>—</td></tr>
-<tr><td>MIC / HMAC</td><td>16 B</td><td>32 B</td><td>32 B</td></tr>
-<tr><td>IV</td><td>—</td><td>16 B</td><td>16 B</td></tr>
-<tr><td>Ephemeral pubkey</td><td>—</td><td>32 B</td><td>—</td></tr>
-<tr><td>CBC padding</td><td>—</td><td>1–16 B (avg ~8)</td><td>1–16 B (avg ~8)</td></tr>
-<tr><td><strong>Subtotal (crypto)</strong></td><td><strong>21 B</strong></td><td><strong>~88 B</strong></td><td><strong>~56 B</strong></td></tr>
+<tr><td>SECINFO</td><td>5 B</td><td>5 B</td><td>—</td><td>—</td></tr>
+<tr><td>MIC / HMAC</td><td>16 B</td><td>4 B</td><td>32 B</td><td>32 B</td></tr>
+<tr><td>IV</td><td>—</td><td>—</td><td>16 B</td><td>16 B</td></tr>
+<tr><td>Ephemeral pubkey</td><td>—</td><td>—</td><td>32 B</td><td>—</td></tr>
+<tr><td>CBC padding</td><td>—</td><td>—</td><td>1–16 B (avg ~8)</td><td>1–16 B (avg ~8)</td></tr>
+<tr><td><strong>Subtotal (crypto)</strong></td><td><strong>21 B</strong></td><td><strong>9 B</strong></td><td><strong>~88 B</strong></td><td><strong>~56 B</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>On a 255-byte LoRa frame, UMSH’s 21 bytes of crypto overhead leaves substantially more room for payload than Reticulum’s 56–88 bytes.</p>
+<p>UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see <a href="#security-control-field">Security &amp; Cryptography</a>), allowing deployments to trade integrity margin for payload capacity. Even with a 16-byte MIC, UMSH’s 21 bytes of crypto overhead is far less than Reticulum’s 56–88 bytes.</p>
 <h2 id="routing-1"><a class="header" href="#routing-1">Routing</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1895,20 +1933,20 @@ the IV.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>UMSH (S=0)</th><th>UMSH (S=1)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
 <tr><td>Header/FCF</td><td>1</td><td>1</td><td>2</td><td>2</td></tr>
 <tr><td>Destination</td><td>2</td><td>2</td><td>16</td><td>16</td></tr>
 <tr><td>Transport ID</td><td>—</td><td>—</td><td>—</td><td>16 (if routed)</td></tr>
-<tr><td>Source</td><td>2</td><td>32</td><td>—</td><td>—</td></tr>
+<tr><td>Source</td><td>2</td><td>2</td><td>—</td><td>—</td></tr>
 <tr><td>Context byte</td><td>—</td><td>—</td><td>1</td><td>1</td></tr>
 <tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
 <tr><td>Ephemeral pubkey</td><td>—</td><td>—</td><td>32</td><td>—</td></tr>
 <tr><td>IV</td><td>—</td><td>—</td><td>16</td><td>16</td></tr>
-<tr><td>MIC / HMAC</td><td>16</td><td>16</td><td>32</td><td>32</td></tr>
+<tr><td>MIC / HMAC</td><td>16</td><td>4</td><td>32</td><td>32</td></tr>
 <tr><td>CBC padding</td><td>—</td><td>—</td><td>1–16</td><td>1–16</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -1916,21 +1954,21 @@ the IV.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th></th><th>UMSH (S=0)</th><th>UMSH (S=1)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th></th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>Available payload</strong></td><td><strong>229 B</strong></td><td><strong>199 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
+<tr><td><strong>Available payload</strong></td><td><strong>229 B</strong></td><td><strong>241 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides roughly 40–55% more payload capacity than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
+<p>With a 16-byte MIC, UMSH provides roughly 40–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH’s 14 bytes of total overhead leaves 241 bytes for payload — over 60% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
 <p>Note that Reticulum’s 500-byte MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum may require link-layer fragmentation that further reduces effective throughput.</p>
 <h2 id="summary-of-design-differences-1"><a class="header" href="#summary-of-design-differences-1">Summary of Design Differences</a></h2>
 <p>Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Its Python implementation provides a full-featured development environment but limits deployment to platforms that can run a Python runtime.</p>
 <p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. By defining a protocol specification rather than a specific implementation, UMSH can be deployed on bare-metal microcontrollers with minimal resources.</p>
 <p>Key tradeoffs:</p>
 <ul>
-<li><strong>Overhead</strong>: UMSH achieves roughly 60–70% lower per-packet overhead than Reticulum, maximizing payload capacity within tight LoRa frame budgets.</li>
+<li><strong>Overhead</strong>: UMSH achieves 60–85% lower per-packet overhead than Reticulum (depending on MIC size), maximizing payload capacity within tight LoRa frame budgets.</li>
 <li><strong>Cryptographic overhead</strong>: UMSH’s SIV construction avoids transmitting a separate IV and requires no padding; Reticulum’s CBC mode adds 17–32 bytes of IV and padding overhead per packet.</li>
 <li><strong>Routing flexibility</strong>: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes.</li>
 <li><strong>Privacy model</strong>: Reticulum provides initiator anonymity by default (no source address). UMSH provides source addresses by default with opt-in privacy modes.</li>

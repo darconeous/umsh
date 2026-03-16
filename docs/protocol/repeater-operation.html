@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -192,7 +192,7 @@
 <li>once the repeater decides the packet is eligible, insert the MIC into the cache</li>
 </ul>
 <p>To avoid racy reforward behavior, the repeater should insert the MIC into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
-<p>Because duplicate suppression depends directly on the MIC, practical deployments should strongly prefer 16-byte MICs.</p>
+<p>Because duplicate suppression depends directly on the MIC, shorter MIC sizes increase the probability of false-positive collisions in the cache. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
 <h2 id="forwarding-procedure"><a class="header" href="#forwarding-procedure">Forwarding Procedure</a></h2>
 <ol>
 <li>

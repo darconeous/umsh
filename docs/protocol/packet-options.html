@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -230,8 +230,9 @@
 <h3 id="region-code-option-1"><a class="header" href="#region-code-option-1">Region Code (option 1)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
-<li>Semantics: restricts forwarding to repeaters configured for the specified region.</li>
-<li>A repeater that does not recognize or is not configured for the region must not forward the packet.</li>
+<li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
+<li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
+<li>This option is not enforced until the source route list is exhausted.</li>
 <li>The encoding of region identifiers is TBD, but may be something like the following:
 <ul>
 <li>For regions defined by the nearest airport, encode the airport’s IATA code into
@@ -278,7 +279,7 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <ul>
 <li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
 <li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
-<li>If absent, the station callsign is assumed to equal the source callsign.</li>
+<li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
 <li>This option is critical because repeaters must replace or remove it during forwarding.</li>
 <li>Use: required only when operating under amateur radio rules.</li>
 </ul>

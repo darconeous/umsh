@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -196,21 +196,24 @@
 <li><code>E</code> = encrypted payload flag</li>
 <li><code>MIC</code> = MIC size code</li>
 <li><code>S</code> = salt included</li>
+<li><code>RESERVED</code> = must all be set to zero</li>
 </ul>
+<p>If the <code>RESERVED</code> bits read as anything other than zero, the packet MUST be dropped.</p>
 <p>MIC size encodings:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Value</th><th>MIC Length</th><th>Status</th></tr>
+<tr><th style="text-align: right">Value</th><th>MIC Length</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>4 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">1</td><td>8 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">2</td><td>12 bytes</td><td>reserved / unsupported</td></tr>
-<tr><td style="text-align: right">3</td><td>16 bytes</td><td>supported</td></tr>
+<tr><td style="text-align: right">0</td><td>4 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td>8 bytes</td></tr>
+<tr><td style="text-align: right">2</td><td>12 bytes</td></tr>
+<tr><td style="text-align: right">3</td><td>16 bytes</td></tr>
 </tbody>
 </table>
 </div>
+<p>The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
@@ -322,11 +325,31 @@ K_mic = okm[16..31]
 <p>When encryption is enabled, UMSH uses a construction inspired by <strong>AES-SIV</strong> (RFC 5297), with the MIC and encryption steps separated to allow future support for different MIC lengths.</p>
 <p>The processing is:</p>
 <ol>
-<li>Compute the MIC over the AAD and plaintext using <code>K_mic</code> via <strong>AES-CMAC</strong>.</li>
-<li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code>, using the MIC as the CTR IV.</li>
+<li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code>.</li>
+<li>Truncate the CMAC to the MIC length specified by the SCF.</li>
+<li>Construct the CTR IV from the MIC (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</li>
+<li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code> and the constructed IV.</li>
 </ol>
-<p>The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field. Only the 16-byte MIC mode is currently supported.</p>
-<p>A key design goal is robustness against nonce reuse. Because the MIC is used as the CTR IV (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.</p>
+<p>The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field.</p>
+<p>A key design goal is robustness against nonce reuse. Because the CTR IV is derived from the MIC (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.</p>
+<h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
+<p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:</p>
+<pre><code class="language-text">IV = truncate_or_pad_to_16( MIC || SECINFO )
+</code></pre>
+<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC — identical to standard AES-SIV. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability that compensates for the increased probability of truncated-MIC collisions.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">MIC Length</th><th>SECINFO (5 B)</th><th>SECINFO (7 B)</th><th>SECINFO bytes in IV</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = MIC)</td></tr>
+<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4 or 2</td></tr>
+<tr><td style="text-align: right">8 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
+<tr><td style="text-align: right">4 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
+</tbody>
+</table>
+</div>
 <h3 id="unencrypted-packets"><a class="header" href="#unencrypted-packets">Unencrypted Packets</a></h3>
 <p>When encryption is disabled, the MIC is calculated using <strong>CMAC</strong> with <code>K_mic</code>.</p>
 <h3 id="associated-data"><a class="header" href="#associated-data">Associated Data</a></h3>
@@ -351,16 +374,16 @@ K_mic = okm[16..31]
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
 <p>Blind unicast packets encrypt the source address separately from the payload.</p>
 <p>The source address is encrypted using AES-128-CTR with the <em>channel key</em>
-(rather than a key derived from the shared secret) and uses the packet MIC as
-the IV.</p>
+(rather than a key derived from the shared secret), using the CTR IV
+constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
 <li><code>channel_key</code> = multicast channel key</li>
-<li><code>MIC</code> = final packet MIC (16 bytes)</li>
+<li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>SRC</code> = 32-byte source public key</li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=MIC[0..15], plaintext=SRC )
+<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
 </code></pre>
 <p>This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
 

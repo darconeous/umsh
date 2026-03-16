@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -232,7 +232,7 @@
 <tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection</td></tr>
 <tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum</td></tr>
-<tr><td>Ephemeral key overhead</td><td>N/A (stable pairwise keys)</td><td>32 bytes per packet (ephemeral X25519 pubkey for SINGLE destinations)</td></tr>
+<tr><td>Forward secrecy</td><td>Optional PFS sessions via MAC commands (per-session ephemeral keys)</td><td>Per-packet ephemeral key for SINGLE; optional ratchets for LINK</td></tr>
 </tbody>
 </table>
 </div>
@@ -241,8 +241,9 @@
 <h3 id="authentication-and-integrity"><a class="header" href="#authentication-and-integrity">Authentication and Integrity</a></h3>
 <p>UMSH’s 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH’s choice is driven by the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
-<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead.</p>
-<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost. For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys but without per-message forward secrecy unless the optional ratchet mechanism is enabled.</p>
+<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="mac-commands.html#pfs-session-request-6">PFS session MAC commands</a> that allow two nodes to exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions require a 3-packet handshake (request, response, acknowledgement) but add no per-packet overhead once established.</p>
+<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet. For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys. Reticulum also offers an optional ratchet mechanism that rotates keys at configurable intervals (minimum 1800 seconds), providing periodic forward secrecy within a link.</p>
+<p>Both protocols offer forward secrecy, but with different granularity and overhead tradeoffs. Reticulum’s SINGLE mode provides per-packet forward secrecy at 32 bytes per packet; UMSH’s PFS sessions provide per-session forward secrecy at zero per-packet overhead after setup.</p>
 <h3 id="replay-protection"><a class="header" href="#replay-protection">Replay Protection</a></h3>
 <p>UMSH uses explicit 4-byte monotonic frame counters, which provide deterministic, stateless replay detection with a well-defined forward window. A receiver can immediately reject a replayed packet by comparing the counter to its stored state.</p>
 <p>Reticulum detects duplicates by caching packet hashes. This approach works but has different tradeoffs: it requires maintaining a hash cache of bounded size, and once a packet ages out of the cache, it could potentially be replayed. The cache size and eviction policy are implementation-defined.</p>
@@ -251,19 +252,19 @@
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Component</th><th>UMSH (S=0)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th>Component</th><th>UMSH (16B MIC)</th><th>UMSH (4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
-<tr><td>SECINFO</td><td>5 B</td><td>—</td><td>—</td></tr>
-<tr><td>MIC / HMAC</td><td>16 B</td><td>32 B</td><td>32 B</td></tr>
-<tr><td>IV</td><td>—</td><td>16 B</td><td>16 B</td></tr>
-<tr><td>Ephemeral pubkey</td><td>—</td><td>32 B</td><td>—</td></tr>
-<tr><td>CBC padding</td><td>—</td><td>1–16 B (avg ~8)</td><td>1–16 B (avg ~8)</td></tr>
-<tr><td><strong>Subtotal (crypto)</strong></td><td><strong>21 B</strong></td><td><strong>~88 B</strong></td><td><strong>~56 B</strong></td></tr>
+<tr><td>SECINFO</td><td>5 B</td><td>5 B</td><td>—</td><td>—</td></tr>
+<tr><td>MIC / HMAC</td><td>16 B</td><td>4 B</td><td>32 B</td><td>32 B</td></tr>
+<tr><td>IV</td><td>—</td><td>—</td><td>16 B</td><td>16 B</td></tr>
+<tr><td>Ephemeral pubkey</td><td>—</td><td>—</td><td>32 B</td><td>—</td></tr>
+<tr><td>CBC padding</td><td>—</td><td>—</td><td>1–16 B (avg ~8)</td><td>1–16 B (avg ~8)</td></tr>
+<tr><td><strong>Subtotal (crypto)</strong></td><td><strong>21 B</strong></td><td><strong>9 B</strong></td><td><strong>~88 B</strong></td><td><strong>~56 B</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>On a 255-byte LoRa frame, UMSH’s 21 bytes of crypto overhead leaves substantially more room for payload than Reticulum’s 56–88 bytes.</p>
+<p>UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see <a href="security.html#security-control-field">Security &amp; Cryptography</a>), allowing deployments to trade integrity margin for payload capacity. Even with a 16-byte MIC, UMSH’s 21 bytes of crypto overhead is far less than Reticulum’s 56–88 bytes.</p>
 <h2 id="routing"><a class="header" href="#routing">Routing</a></h2>
 <div class="table-wrapper">
 <table>
@@ -363,20 +364,20 @@
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>UMSH (S=0)</th><th>UMSH (S=1)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
 <tr><td>Header/FCF</td><td>1</td><td>1</td><td>2</td><td>2</td></tr>
 <tr><td>Destination</td><td>2</td><td>2</td><td>16</td><td>16</td></tr>
 <tr><td>Transport ID</td><td>—</td><td>—</td><td>—</td><td>16 (if routed)</td></tr>
-<tr><td>Source</td><td>2</td><td>32</td><td>—</td><td>—</td></tr>
+<tr><td>Source</td><td>2</td><td>2</td><td>—</td><td>—</td></tr>
 <tr><td>Context byte</td><td>—</td><td>—</td><td>1</td><td>1</td></tr>
 <tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
 <tr><td>Ephemeral pubkey</td><td>—</td><td>—</td><td>32</td><td>—</td></tr>
 <tr><td>IV</td><td>—</td><td>—</td><td>16</td><td>16</td></tr>
-<tr><td>MIC / HMAC</td><td>16</td><td>16</td><td>32</td><td>32</td></tr>
+<tr><td>MIC / HMAC</td><td>16</td><td>4</td><td>32</td><td>32</td></tr>
 <tr><td>CBC padding</td><td>—</td><td>—</td><td>1–16</td><td>1–16</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>56</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -384,21 +385,21 @@
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th></th><th>UMSH (S=0)</th><th>UMSH (S=1)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
+<tr><th></th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>Available payload</strong></td><td><strong>229 B</strong></td><td><strong>199 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
+<tr><td><strong>Available payload</strong></td><td><strong>229 B</strong></td><td><strong>241 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides roughly 40–55% more payload capacity than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
+<p>With a 16-byte MIC, UMSH provides roughly 40–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH’s 14 bytes of total overhead leaves 241 bytes for payload — over 60% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
 <p>Note that Reticulum’s 500-byte MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum may require link-layer fragmentation that further reduces effective throughput.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Its Python implementation provides a full-featured development environment but limits deployment to platforms that can run a Python runtime.</p>
 <p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. By defining a protocol specification rather than a specific implementation, UMSH can be deployed on bare-metal microcontrollers with minimal resources.</p>
 <p>Key tradeoffs:</p>
 <ul>
-<li><strong>Overhead</strong>: UMSH achieves roughly 60–70% lower per-packet overhead than Reticulum, maximizing payload capacity within tight LoRa frame budgets.</li>
+<li><strong>Overhead</strong>: UMSH achieves 60–85% lower per-packet overhead than Reticulum (depending on MIC size), maximizing payload capacity within tight LoRa frame budgets.</li>
 <li><strong>Cryptographic overhead</strong>: UMSH’s SIV construction avoids transmitting a separate IV and requires no padding; Reticulum’s CBC mode adds 17–32 bytes of IV and padding overhead per packet.</li>
 <li><strong>Routing flexibility</strong>: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes.</li>
 <li><strong>Privacy model</strong>: Reticulum provides initiator anonymity by default (no source address). UMSH provides source addresses by default with opt-in privacy modes.</li>

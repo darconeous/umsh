@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7ff2b9c9.js";
+            window.path_to_searchindex_js = "searchindex-7a62da71.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8be055f3.js"></script>
@@ -175,20 +175,37 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h1>
-<p>A multicast channel is fundamentally a symmetric key shared among all participants.</p>
-<h2 id="channel-membership"><a class="header" href="#channel-membership">Channel Membership</a></h2>
-<p>Any node configured with a given channel key is considered joined to that channel and may receive packets sent to it.</p>
-<h2 id="channel-hint"><a class="header" href="#channel-hint">Channel Hint</a></h2>
-<p>A 2-byte channel hint is derived from the channel key and placed in multicast packets to help nodes identify likely matching channels without attempting every configured key.</p>
-<p>When encryption is enabled, the source address is encrypted inside the ciphertext along with the payload, concealing the sender’s identity from observers who do not possess the channel key. When encryption is not enabled, the source address appears in cleartext.</p>
-<h2 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h2>
-<p>Some channel keys may be derived directly from channel names. These are effectively public or semi-public channels:</p>
+<p>A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.</p>
+<h2 id="channel-keys"><a class="header" href="#channel-keys">Channel Keys</a></h2>
+<p>A channel key is a 16-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>).</p>
+<p>Channel keys are distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="uri-formats.html#channel-uris">URI Formats</a>), or any other secure channel.</p>
+<p>UMSH does not currently define an in-band key distribution protocol.</p>
+<h2 id="channel-identifier"><a class="header" href="#channel-identifier">Channel Identifier</a></h2>
+<p>Each channel is identified on the wire by a 2-byte channel identifier <a href="packet-types.html#channel-identifier-derivation">derived from the channel key</a>. This identifier is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, channel identifiers are not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification.</p>
+<h2 id="encrypted-and-unencrypted-modes"><a class="header" href="#encrypted-and-unencrypted-modes">Encrypted and Unencrypted Modes</a></h2>
+<p>Multicast packets may be sent with or without encryption, controlled by the <code>E</code> flag in the Security Control Field.</p>
 <ul>
-<li>Anyone who knows the name can derive the key</li>
-<li>Long, high-entropy names may provide some practical obscurity, but this should not be treated as strong secrecy unless the derivation method and entropy support it</li>
+<li>
+<p><strong>Encrypted</strong> (E=1): The source address is encrypted together with the payload, concealing the sender’s identity from observers who do not possess the channel key. Only channel members can recover the source address and payload. See <a href="packet-types.html#encrypted-multicast-e--1">Encrypted Multicast</a> for the packet layout.</p>
+</li>
+<li>
+<p><strong>Unencrypted</strong> (E=0): The source address and payload appear in cleartext, but the packet is still authenticated with a MIC derived from the channel key. This mode is useful for amateur radio operation or other contexts where encryption is not permitted. See <a href="packet-types.html#unencrypted-multicast-e--0">Unencrypted Multicast</a> for the packet layout.</p>
+</li>
 </ul>
-<h2 id="multicast-payload-reuse"><a class="header" href="#multicast-payload-reuse">Multicast Payload Reuse</a></h2>
-<p>Application-layer multicast communication generally reuses the same payload types used for ordinary one-to-one communication. For example, group chat can use the same message payload formats as direct chat.</p>
+<h2 id="multi-hop-delivery"><a class="header" href="#multi-hop-delivery">Multi-Hop Delivery</a></h2>
+<p>Multicast packets are delivered via flood forwarding, bounded by the optional hop count field. Repeaters forward multicast packets according to the standard <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
+<h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
+<p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
+<h2 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h2>
+<p>Channel keys may be derived from human-readable channel names rather than distributed as raw keys. A named channel is identified by a <code>umsh:cs:</code> URI (see <a href="uri-formats.html#channel-uris">URI Formats</a>):</p>
+<pre><code class="language-text">umsh:cs:Public
+</code></pre>
+<p>Named channels are effectively public or semi-public — anyone who knows the name can derive the key. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
+<p>The exact key derivation function for named channels is not yet specified (see <a href="limitations.html#open-items-and-provisional-areas">Open Items</a>).</p>
+<h2 id="relationship-to-blind-unicast"><a class="header" href="#relationship-to-blind-unicast">Relationship to Blind Unicast</a></h2>
+<p>Channels also enable <a href="packet-types.html#blind-unicast-packet">blind unicast</a>, which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.</p>
+<h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
+<p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="app-text-messages.html">text message</a> and <a href="app-chat-rooms.html">chat room</a> payload formats as direct messaging.</p>
 
                     </main>
 
