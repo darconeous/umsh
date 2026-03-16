@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-de4b13c6.js";
+            window.path_to_searchindex_js = "searchindex-6fdd2f15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -175,7 +175,24 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="comparison-with-reticulum"><a class="header" href="#comparison-with-reticulum">Comparison with Reticulum</a></h1>
-<p>This section compares UMSH with <a href="https://reticulum.network/">Reticulum</a>, a cryptography-based networking stack designed for operation over a wide range of mediums, including LoRa. The comparison is based on Reticulum v0.9.x and its <a href="https://reticulum.network/manual/">manual</a> and <a href="https://github.com/markqvist/Reticulum">source code</a>.</p>
+<p>This section compares UMSH with <a href="https://reticulum.network/">Reticulum</a>, a cryptography-based networking stack designed for operation over a wide range of mediums, including LoRa. The comparison is based on Reticulum v0.9.6 (commit <a href="https://github.com/markqvist/Reticulum/commit/5387264dcb5c5cca34ca6677239ce9f6f1adef0b"><code>5387264</code></a>) and its <a href="https://reticulum.network/manual/">manual</a> and <a href="https://github.com/markqvist/Reticulum/tree/5387264dcb5c5cca34ca6677239ce9f6f1adef0b">source code</a>.</p>
+<p>The Reticulum claims in this document can be independently verified against the following source files:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Relevant claims</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py"><code>RNS/Reticulum.py</code></a></td><td>MTU, header sizes, announce bandwidth cap, IFAC derivation</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Packet.py"><code>RNS/Packet.py</code></a></td><td>Packet types, header layout, context values</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py"><code>RNS/Identity.py</code></a></td><td>Key sizes, ECDH, HKDF derivation, ephemeral keys, announce format</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py"><code>RNS/Destination.py</code></a></td><td>Destination types, destination hash construction, GROUP limitations, ratchet interval</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py"><code>RNS/Transport.py</code></a></td><td>Routing, replay protection via packet hash cache, max hop cap, IFAC generation</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Cryptography/Token.py"><code>RNS/Cryptography/Token.py</code></a></td><td>AES-256-CBC, PKCS7, HMAC-SHA256, IV handling, timestamp removal</td></tr>
+<tr><td><a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Link.py"><code>RNS/Link.py</code></a></td><td>LINK session ECDH, symmetric key persistence</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="protocol-scope"><a class="header" href="#protocol-scope">Protocol Scope</a></h2>
 <p>The most fundamental difference between UMSH and Reticulum is their scope.</p>
 <p>UMSH defines a <strong>MAC layer</strong> with cleanly separated application protocols. The MAC layer handles framing, addressing, encryption, authentication, and forwarding, and treats payloads opaquely. Application protocols (text messaging, chat rooms, node management) are architecturally separate and carried in the payload alongside any other higher-layer content such as CoAP or 6LoWPAN.</p>
@@ -188,15 +205,15 @@
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>512-bit keyset: 256-bit X25519 + 256-bit Ed25519</td></tr>
-<tr><td>Address in packets</td><td>2-byte hint (S=0) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash</td></tr>
+<tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>512-bit keyset: 256-bit X25519 + 256-bit Ed25519 (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L59"><code>Identity.py:59</code></a>, <code>KEYSIZE = 256*2</code>)</td></tr>
+<tr><td>Address in packets</td><td>2-byte hint (S=0) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
 <tr><td>Source address</td><td>2-byte hint or 32-byte key</td><td>Not included (no source address in packets)</td></tr>
 <tr><td>Destination address</td><td>2-byte destination hint</td><td>16-byte destination hash</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact 2-byte hints as prefilters for efficient matching. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes from the SHA-256 of the destination’s identity and “aspect” name (a hierarchical dotted string like <code>app.sensor.temperature</code>). These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
+<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact 2-byte hints as prefilters for efficient matching. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py#L116"><code>Destination.py:116</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L82"><code>Identity.py:82</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
 <p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a 2-byte hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers explicit <a href="introduction.html#blind-unicast">blind unicast</a> as an opt-in privacy mode that encrypts the source address.</p>
 <h2 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h2>
 <div class="table-wrapper">
@@ -206,12 +223,12 @@
 </thead>
 <tbody>
 <tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>2-byte header (flags + hop count)</td></tr>
-<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>4 (DATA, ANNOUNCE, LINKREQUEST, PROOF)</td></tr>
-<tr><td>Destination types</td><td>Implicit in packet type (unicast, multicast, broadcast, blind)</td><td>4 (SINGLE, GROUP, PLAIN, LINK)</td></tr>
+<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>4: DATA, ANNOUNCE, LINKREQUEST, PROOF (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Packet.py#L60-L63"><code>Packet.py:60–63</code></a>)</td></tr>
+<tr><td>Destination types</td><td>Implicit in packet type (unicast, multicast, broadcast, blind)</td><td>4: SINGLE, GROUP, PLAIN, LINK (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py#L63-L66"><code>Destination.py:63–66</code></a>)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Transport ID field (16 bytes) in HEADER_2</td></tr>
 <tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 1-byte field</td></tr>
-<tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500 bytes (hard protocol limit)</td></tr>
-<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes (HEADER_1) or 35 bytes (HEADER_2)</td></tr>
+<tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500 bytes (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py#L90"><code>Reticulum.py:90</code></a>, <code>MTU = 500</code>)</td></tr>
+<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -225,14 +242,14 @@
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-256-CBC with PKCS7 padding</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (16-byte MIC)</td><td>HMAC-SHA256 (32-byte tag)</td></tr>
-<tr><td>Key exchange</td><td>X25519 ECDH</td><td>X25519 ECDH</td></tr>
-<tr><td>Key derivation</td><td>HKDF-SHA256, domain-separated (K_enc, K_mic)</td><td>HKDF-SHA256, 64-byte output split into HMAC key + AES key</td></tr>
-<tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection</td></tr>
-<tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum</td></tr>
-<tr><td>Forward secrecy</td><td>Optional PFS sessions via MAC commands (per-session ephemeral keys)</td><td>Per-packet ephemeral key for SINGLE; optional ratchets for LINK</td></tr>
+<tr><td>Encryption</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-256-CBC with PKCS7 padding (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Cryptography/Token.py#L91"><code>Token.py:91</code></a>)</td></tr>
+<tr><td>Authentication</td><td>AES-CMAC (16-byte MIC)</td><td>HMAC-SHA256 (32-byte tag) (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Cryptography/Token.py#L50"><code>Token.py:50</code></a>, <code>TOKEN_OVERHEAD = 48</code>)</td></tr>
+<tr><td>Key exchange</td><td>X25519 ECDH</td><td>X25519 ECDH (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L680"><code>Identity.py:680</code></a>)</td></tr>
+<tr><td>Key derivation</td><td>HKDF-SHA256, domain-separated (K_enc, K_mic)</td><td>HKDF-SHA256, 64-byte output split into HMAC key + AES key (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L89"><code>Identity.py:89</code></a>, <code>DERIVED_KEY_LENGTH = 512//8</code>)</td></tr>
+<tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Cryptography/Token.py#L89"><code>Token.py:89</code></a>, <code>os.urandom(16)</code>)</td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L98"><code>Transport.py:98</code></a>, <code>packet_hashlist</code>)</td></tr>
+<tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum (LINK); +32 bytes ephemeral pubkey for SINGLE</td></tr>
+<tr><td>Forward secrecy</td><td>Optional PFS sessions via MAC commands (per-session ephemeral keys)</td><td>Per-packet ephemeral key for SINGLE (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L663"><code>Identity.py:663</code></a>); optional ratchets for LINK (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py#L90"><code>Destination.py:90</code></a>, <code>RATCHET_INTERVAL = 30*60</code>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -242,11 +259,11 @@
 <p>UMSH’s 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH’s choice is driven by the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
 <p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="mac-commands.html#pfs-session-request-6">PFS session MAC commands</a> that allow two nodes to exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions require a 3-packet handshake (request, response, acknowledgement) but add no per-packet overhead once established.</p>
-<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet. For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys. Reticulum also offers an optional ratchet mechanism that rotates keys at configurable intervals (minimum 1800 seconds), providing periodic forward secrecy within a link.</p>
+<p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Identity.py#L672"><code>Identity.py:672</code></a>, <code>ephemeral_key = X25519PrivateKey.generate()</code>). For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Link.py#L356"><code>Link.py:356</code></a>, <code>self.shared_key = self.prv.exchange(self.peer_pub)</code>). Reticulum also offers an optional ratchet mechanism that rotates keys at configurable intervals (minimum 1800 seconds), providing periodic forward secrecy within a link (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py#L90"><code>Destination.py:90</code></a>, <code>RATCHET_INTERVAL = 30*60</code>).</p>
 <p>Both protocols offer forward secrecy, but with different granularity and overhead tradeoffs. Reticulum’s SINGLE mode provides per-packet forward secrecy at 32 bytes per packet; UMSH’s PFS sessions provide per-session forward secrecy at zero per-packet overhead after setup.</p>
 <h3 id="replay-protection"><a class="header" href="#replay-protection">Replay Protection</a></h3>
 <p>UMSH uses explicit 4-byte monotonic frame counters, which provide deterministic, stateless replay detection with a well-defined forward window. A receiver can immediately reject a replayed packet by comparing the counter to its stored state.</p>
-<p>Reticulum detects duplicates by caching packet hashes. This approach works but has different tradeoffs: it requires maintaining a hash cache of bounded size, and once a packet ages out of the cache, it could potentially be replayed. The cache size and eviction policy are implementation-defined.</p>
+<p>Reticulum detects duplicates by caching packet hashes (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L98"><code>Transport.py:98</code></a>, <code>packet_hashlist = set()</code>). This approach works but has different tradeoffs: it requires maintaining a hash cache, and once the cache fills it is evicted in bulk via a two-generation rolling scheme — when the active set exceeds 500,000 entries it is archived and a fresh set starts accumulating (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L514-L517"><code>Transport.py:514–517</code></a>, cap: <a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L152"><code>Transport.py:152</code></a>, <code>hashlist_maxsize = 1000000</code>). A replayed packet that was seen in neither the current nor the previous generation would not be detected.</p>
 <h3 id="cryptographic-overhead"><a class="header" href="#cryptographic-overhead">Cryptographic Overhead</a></h3>
 <p>For an encrypted unicast message, the total cryptographic overhead differs significantly:</p>
 <div class="table-wrapper">
@@ -277,16 +294,17 @@
 <tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
 <tr><td>Transport/directed routing</td><td>N/A</td><td>Transport nodes with next-hop forwarding</td></tr>
 <tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Announce flooding + path request/response</td></tr>
-<tr><td>Max hops</td><td>Limited by hop-count byte (255)</td><td>128</td></tr>
+<tr><td>Max hops</td><td>Limited by hop-count byte (255)</td><td>128 (default announce propagation cap; <a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L61"><code>Transport.py:61</code></a>, <code>PATHFINDER_M</code>)</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
-<tr><td>Announce bandwidth cap</td><td>Not defined (implementation policy)</td><td>2% of interface bandwidth</td></tr>
+<tr><td>Announce bandwidth cap</td><td>Not defined (implementation policy)</td><td>2% of interface bandwidth (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Reticulum.py#L115"><code>Reticulum.py:115</code></a>, <code>ANNOUNCE_CAP = 2</code>)</td></tr>
 </tbody>
 </table>
 </div>
 <p>UMSH and Reticulum take fundamentally different approaches to routing.</p>
 <p>UMSH provides <strong>source routing</strong> — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient can reverse the trace to obtain a source route back to the sender.</p>
-<p>Reticulum uses <strong>next-hop routing</strong> via Transport Nodes — dedicated forwarding nodes that maintain path tables learned from announces. Regular nodes do not forward packets. When no path is known, a 51-byte path request is flooded; transport nodes with cached paths respond. This approach is more automatic but requires designated infrastructure nodes and does not support sender-specified routing.</p>
+<p>Reticulum uses <strong>next-hop routing</strong> via Transport Nodes — dedicated forwarding nodes that maintain path tables learned from announces. Regular nodes do not forward packets. When no path is known, a path request is flooded (51 bytes in non-transport mode: 19-byte HEADER_1 + 16-byte destination hash + 16-byte request tag; <a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L2410"><code>Transport.py:2410</code></a>, <code>request_path()</code>); transport nodes with cached paths respond. This approach is more automatic but requires designated infrastructure nodes and does not support sender-specified routing.</p>
+<p>Reticulum’s default maximum announce propagation is 128 hops (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L61"><code>Transport.py:61</code></a>, <code>PATHFINDER_M</code>). This is a configurable policy default, not a hard packet-level constraint — the hop count field is one byte and could technically carry values up to 255.</p>
 <p>UMSH’s signal-quality filtering (minimum RSSI and SNR options) allows packets to avoid weak links, which is valuable in LoRa networks where marginal links waste airtime on packets that are unlikely to be received reliably. Reticulum does not define equivalent mechanisms at the protocol level.</p>
 <h2 id="privacy-and-anonymity"><a class="header" href="#privacy-and-anonymity">Privacy and Anonymity</a></h2>
 <div class="table-wrapper">
@@ -307,7 +325,7 @@
 <p>The two protocols achieve privacy through different structural choices.</p>
 <p>Reticulum omits the source address from all packets, providing initiator anonymity as a default property of the protocol. The tradeoff is that recipients must establish context through other means (announces, link establishment) before they can identify who is communicating with them.</p>
 <p>UMSH includes source addresses by default but provides explicit privacy modes. Blind unicast encrypts the source address with a channel key so that only channel members can identify the sender. Encrypted multicast conceals the source inside the ciphertext. These are opt-in features that allow nodes to choose their privacy posture per packet.</p>
-<p>Reticulum’s IFAC (Interface Access Code) mechanism provides network-level access control: packets are signed with a shared Ed25519 identity derived from a passphrase, and interfaces reject packets with invalid signatures. UMSH does not define an equivalent mechanism.</p>
+<p>Reticulum’s IFAC (Interface Access Code) mechanism provides network-level access control: a shared 64-byte keypair (X25519 + Ed25519) is derived from the network name and/or passphrase via <code>HKDF-SHA256(SHA-256(network_name) || SHA-256(passphrase))</code>. Each packet is signed with the Ed25519 key, and a configurable-length tail of that signature (1–64 bytes) is appended to the packet as the IFAC code (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Transport.py#L797-L813"><code>Transport.py:797–813</code></a>). Interfaces reject packets with invalid IFAC codes. UMSH does not define an equivalent mechanism.</p>
 <h2 id="multicast-and-group-communication"><a class="header" href="#multicast-and-group-communication">Multicast and Group Communication</a></h2>
 <div class="table-wrapper">
 <table>
@@ -324,7 +342,7 @@
 </tbody>
 </table>
 </div>
-<p>UMSH supports multi-hop multicast via flood forwarding with hop-count limits. Reticulum’s GROUP destinations are currently limited to single-hop broadcast — multi-hop group communication is listed as future work. This is a significant limitation for LoRa mesh networks where multi-hop coverage is essential.</p>
+<p>UMSH supports multi-hop multicast via flood forwarding with hop-count limits. Reticulum’s GROUP destinations (<a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Destination.py#L64"><code>Destination.py:64</code></a>) are currently limited to single-hop broadcast — the manual states: “Packets to this type of destination are not currently transported over multiple hops, although a planned upgrade to Reticulum will allow globally reachable group destinations.” This is a significant limitation for LoRa mesh networks where multi-hop coverage is essential.</p>
 <h2 id="application-layer"><a class="header" href="#application-layer">Application Layer</a></h2>
 <div class="table-wrapper">
 <table>
@@ -332,7 +350,7 @@
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>1-byte context field (20+ defined values)</td></tr>
+<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>1-byte context field (21 defined values; <a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Packet.py#L71-L90"><code>Packet.py:71–90</code></a>)</td></tr>
 <tr><td>Structured data</td><td>CoAP-over-UMSH (block-wise transfer)</td><td>Resources API (multi-packet reliable transfer)</td></tr>
 <tr><td>Node identity</td><td>Identity payload with role, capabilities, name, options</td><td>Announce packets with public key, name hash, app data, Ed25519 signature</td></tr>
 <tr><td>Service discovery</td><td>Beacon broadcasts</td><td>Aspect-based naming + announce propagation</td></tr>
@@ -352,7 +370,7 @@
 </thead>
 <tbody>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash cache</td></tr>
-<tr><td>Timestamps in headers</td><td>None</td><td>None (explicitly removed from Fernet-derived token format)</td></tr>
+<tr><td>Timestamps in headers</td><td>None</td><td>None (explicitly removed from Fernet-derived token format; <a href="https://github.com/markqvist/Reticulum/blob/5387264dcb5c5cca34ca6677239ce9f6f1adef0b/RNS/Cryptography/Token.py#L41-L48"><code>Token.py:41–48</code></a>)</td></tr>
 <tr><td>Clock synchronization required</td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
