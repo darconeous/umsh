@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fd574cb8.js";
+            window.path_to_searchindex_js = "searchindex-95fadb4b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -197,6 +197,22 @@ higher-layer content.</p>
 <li>Ability to operate in a way that preserves perfect forward secrecy (PFS)</li>
 <li>Timestamp-free at the MAC layer</li>
 <li>Low-power operation</li>
+</ul>
+<h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
+<p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
+<p><strong>Intended use cases include:</strong></p>
+<ul>
+<li><strong>Off-grid text communication</strong> — chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.</li>
+<li><strong>Emergency and disaster communications</strong> — resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.</li>
+<li><strong>IoT and sensor telemetry</strong> — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.</li>
+<li><strong>Amateur radio mesh networking</strong> — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.</li>
+<li><strong>Privacy-sensitive communication</strong> — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.</li>
+<li><strong>Embedded and constrained deployments</strong> — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.</li>
+</ul>
+<p><strong>UMSH is not designed for:</strong></p>
+<ul>
+<li>High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.</li>
+<li>Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.</li>
 </ul>
 <h2 id="design-model"><a class="header" href="#design-model">Design Model</a></h2>
 <p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as
