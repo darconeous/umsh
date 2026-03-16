@@ -33,5 +33,6 @@
 - [Limitations & Open Items](limitations.md)
 - [FAQ](faq.md)
 - [Comparison with MeshCore](meshcore-comparison.md)
+- [Comparison with Meshtastic](meshtastic-comparison.md)
 - [Comparison with Reticulum](reticulum-comparison.md)
 - [Test Vectors](test-vectors.md)

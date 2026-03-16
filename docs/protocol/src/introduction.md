@@ -11,7 +11,7 @@ layer treats payloads opaquely and can equally carry UMSH-defined
 application protocols, third-party protocols such as CoAP, or any other
 higher-layer content.
 
-Point-by-point protocol comparisons with [MeshCore](meshcore-comparison.md) and [Reticulum](reticulum-comparison.md) are available.
+Point-by-point protocol comparisons with [MeshCore](meshcore-comparison.md), [Meshtastic](meshtastic-comparison.md), and [Reticulum](reticulum-comparison.md) are available.
 
 UMSH is designed to support:
 
