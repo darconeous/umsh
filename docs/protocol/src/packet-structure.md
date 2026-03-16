@@ -2,12 +2,6 @@
 
 All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.
 
-## Byte Order
-
-Multi-byte numeric fields are transmitted in **big-endian** (most-significant byte first), also known as **network byte order**. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.
-
-Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.
-
 ## Top-Level Packet Layout
 
 ```text

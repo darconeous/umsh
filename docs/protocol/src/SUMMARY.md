@@ -4,6 +4,7 @@
 
 # Protocol Structure
 
+- [Common Patterns](common-patterns.md)
 - [Addressing](addressing.md)
 - [Packet Structure](packet-structure.md)
 - [Frame Types](packet-types.md)
@@ -32,4 +33,5 @@
 - [Limitations & Open Items](limitations.md)
 - [FAQ](faq.md)
 - [Comparison with MeshCore](meshcore-comparison.md)
+- [Comparison with Reticulum](reticulum-comparison.md)
 - [Test Vectors](test-vectors.md)

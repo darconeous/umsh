@@ -11,7 +11,7 @@ layer treats payloads opaquely and can equally carry UMSH-defined
 application protocols, third-party protocols such as CoAP, or any other
 higher-layer content.
 
-A point-by-point [protocol comparison with MeshCore](meshcore-comparison.md) is available.
+Point-by-point protocol comparisons with [MeshCore](meshcore-comparison.md) and [Reticulum](reticulum-comparison.md) are available.
 
 UMSH is designed to support:
 
@@ -23,6 +23,7 @@ UMSH is designed to support:
 - Operation in both encrypted and amateur-radio-compliant unencrypted modes
 - Ability to operate in a way that preserves perfect forward secrecy (PFS)
 - Timestamp-free at the MAC layer
+- Low-power operation
 
 ## Design Model
 
