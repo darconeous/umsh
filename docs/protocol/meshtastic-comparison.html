@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Comparison with MeshCore - UMSH Protocol Specification</title>
+        <title>Comparison with Meshtastic - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,200 +174,234 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="comparison-with-meshcore"><a class="header" href="#comparison-with-meshcore">Comparison with MeshCore</a></h1>
-<p>This section compares UMSH with <a href="https://github.com/meshcore-dev/MeshCore">MeshCore</a>, a LoRa mesh protocol with similar goals. The comparison is based on MeshCore firmware v1.12.0 and its primary source code and documentation.</p>
+                        <h1 id="comparison-with-meshtastic"><a class="header" href="#comparison-with-meshtastic">Comparison with Meshtastic</a></h1>
+<p>This section compares UMSH with <a href="https://meshtastic.org/">Meshtastic</a>, a popular open-source LoRa mesh project. The comparison is based on Meshtastic firmware v2.5+ and its <a href="https://meshtastic.org/docs/">documentation</a> and <a href="https://buf.build/meshtastic/protobufs">protobuf definitions</a>.</p>
+<p>Meshtastic and UMSH occupy different positions in the design space. Meshtastic is a mature, widely deployed application-focused system optimized for ease of use and broad hardware support. UMSH is a protocol specification focused on cryptographic rigor, compact encoding, and clean layer separation. The comparison below highlights the technical differences without implying that one set of tradeoffs is universally better than the other.</p>
 <h2 id="identity-and-addressing"><a class="header" href="#identity-and-addressing">Identity and Addressing</a></h2>
-<p>Both protocols use Ed25519 public keys as node identities and perform X25519 ECDH for pairwise key agreement.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>32-byte Ed25519 public key</td></tr>
-<tr><td>Source address in packets</td><td>2-byte hint (S=0) or full 32-byte key (S=1)</td><td>1-byte hash (first byte of public key)</td></tr>
-<tr><td>Destination address</td><td>2-byte hint</td><td>1-byte hash</td></tr>
-<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of channel key</td></tr>
+<tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number derived from Bluetooth MAC address</td></tr>
+<tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Optional Curve25519 keypair (PKC, v2.5+), not used for addressing</td></tr>
+<tr><td>Source address in packets</td><td>2-byte hint or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Destination address</td><td>2-byte hint</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
+<tr><td>Address spoofing resistance</td><td>Cryptographic — pairwise keys are derived from public keys</td><td>None — node numbers are hardware-derived and trivially spoofable</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH uses 2-byte hints for both source and destination, with an explicit <code>S</code> flag to include the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated <code>ANON_REQ</code> packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves one additional byte per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.</p>
+<p>UMSH identifies nodes by their Ed25519 public keys, which serve as both the address and the cryptographic credential. A node’s identity is inseparable from its ability to authenticate and decrypt. Meshtastic identifies nodes by a 32-bit number derived from the device’s Bluetooth MAC address. This number is not cryptographically bound to any key — any device can claim any node number.</p>
+<p>Meshtastic added optional Curve25519 keypairs in v2.5 for direct message encryption, but these are not used for addressing. The node number remains the primary identifier, and channel-encrypted traffic has no per-node authentication regardless of whether PKC keys are configured.</p>
 <h2 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>1-byte header with version, type, route mode</td></tr>
-<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>16 payload types (via 4-bit field)</td></tr>
-<tr><td>Routing info</td><td>CoAP-style options (source route, trace route, region, RSSI/SNR thresholds)</td><td>Path field (up to 64 bytes), transport codes</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Implicit via path length</td></tr>
-<tr><td>Region support</td><td>Optional region code option</td><td>Transport codes (2 × 16-bit)</td></tr>
+<tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>16-byte fixed header (always cleartext)</td></tr>
+<tr><td>Payload encoding</td><td>Raw bytes with 1-byte payload type prefix</td><td>Protobuf-encoded <code>Data</code> message</td></tr>
+<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>Implicit in protobuf <code>portnum</code> field (~30+ application types)</td></tr>
+<tr><td>Routing info</td><td>CoAP-style composable options</td><td>Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte)</td></tr>
+<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
+<tr><td>Max LoRa payload</td><td>~255 bytes</td><td>255 bytes (233 bytes application payload after header and encoding overhead)</td></tr>
+<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>16 bytes (always)</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH separates routing metadata into composable options, allowing packets to carry source routes, trace routes, signal-quality thresholds, and region codes independently. MeshCore uses a simpler flat structure with a path field and route-type bits.</p>
+<p>UMSH uses a compact 1-byte Frame Control Field with optional expansion — the header scales from 1 byte (minimal broadcast) to the full addressing and security fields as needed. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.</p>
+<p>Meshtastic’s header is always transmitted in cleartext, exposing sender and recipient node numbers, packet IDs, and channel hashes to any passive observer. UMSH’s addressing fields are compact hints that do not directly reveal node identity, and in blind unicast or encrypted multicast modes, the source address is encrypted.</p>
+<p>Meshtastic encodes application payloads using Protocol Buffers (protobuf), which adds encoding overhead but provides a flexible, self-describing serialization format. UMSH uses raw byte payloads with a 1-byte type prefix, minimizing encoding overhead at the cost of less built-in structure.</p>
 <h2 id="cryptography"><a class="header" href="#cryptography">Cryptography</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (PKC DM)</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption algorithm</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-128-ECB</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
-<tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
-<tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
-<tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>UNIX-timestamp-based (requires clock synchronization)</td></tr>
+<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-256-CTR</td><td>AES-CCM</td></tr>
+<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>CCM auth tag</td></tr>
+<tr><td>Key exchange</td><td>X25519 ECDH</td><td>Pre-shared key</td><td>Curve25519 ECDH</td></tr>
+<tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
+<tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>8-byte random nonce</td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td><td>Not defined</td></tr>
+<tr><td>Forward secrecy</td><td>Optional PFS sessions</td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
-<p>The cryptographic gap is substantial:</p>
+<h3 id="channel-encryption"><a class="header" href="#channel-encryption">Channel Encryption</a></h3>
+<p>The most significant cryptographic difference is that Meshtastic’s channel-encrypted packets have <strong>no authentication</strong>. AES-CTR provides confidentiality but no integrity protection. This means:</p>
 <ul>
-<li>
-<p><strong>AES-128-ECB</strong> is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-128-CTR with a synthetic IV (as used by UMSH) does not have this weakness.</p>
-</li>
-<li>
-<p><strong>2-byte MAC truncation</strong> in MeshCore means an attacker has a 1-in-65536 chance of forging a valid MAC per attempt, which is marginal for a protocol where an attacker can observe and replay packets at will. UMSH’s 16-byte MIC provides a forgery probability of 2^-128.</p>
-</li>
-<li>
-<p><strong>No key separation</strong> in MeshCore means the same bytes of the ECDH shared secret serve as both the AES key and the beginning of the HMAC key. UMSH derives independent keys via HKDF with domain-specific labels, which is the standard practice for preventing cross-protocol or cross-purpose key reuse.</p>
-</li>
-<li>
-<p><strong>MAC verification timing</strong>: MeshCore’s <code>MACThenDecrypt</code> function uses <code>memcmp</code> to compare HMAC values, which is not constant-time and introduces a timing side channel. This is primarily a concern in contexts where an attacker can measure verification timing with sufficient precision.</p>
-</li>
+<li>An attacker who knows the channel key can modify ciphertext in transit (CTR mode bit-flipping), and the recipient has no way to detect the tampering.</li>
+<li>Any node with the channel key can forge packets claiming to be from any other node, since there is no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to anything.</li>
 </ul>
+<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see <a href="security.html#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic’s complete absence of authentication on channel traffic.</p>
+<h3 id="pkc-direct-messages"><a class="header" href="#pkc-direct-messages">PKC Direct Messages</a></h3>
+<p>Meshtastic v2.5+ added Curve25519 ECDH with AES-CCM for direct messages, providing both confidentiality and authentication. This is a substantial improvement over channel-only encryption, but applies only to direct messages — all broadcast traffic (position, telemetry, channel text) remains unauthenticated.</p>
+<p>UMSH authenticates all traffic uniformly — unicast, multicast, and broadcast — using the same CMAC-based construction. There is no distinction between “authenticated” and “unauthenticated” packet classes.</p>
+<h3 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h3>
+<p>Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
+<p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.</p>
+<h3 id="default-key"><a class="header" href="#default-key">Default Key</a></h3>
+<p>Meshtastic ships with a well-known default channel key (<code>"AQ=="</code>). Devices using the default key have effectively no encryption. UMSH does not define a default key — channel keys must be explicitly configured.</p>
 <h2 id="routing"><a class="header" href="#routing">Routing</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (ROUTE_TYPE_FLOOD)</td></tr>
-<tr><td>Direct/source routing</td><td>Yes, via source-route option</td><td>Yes (ROUTE_TYPE_DIRECT)</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>Not supported</td></tr>
-<tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Dedicated PATH payload type</td></tr>
-<tr><td>Route learning</td><td>Trace-route accumulates hints during flooding</td><td>Explicit returned-path messages</td></tr>
-<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
-<tr><td>Region-scoped flooding</td><td>Region code option</td><td>Transport codes</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
+<tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
+<tr><td>Next-hop routing</td><td>N/A</td><td>Yes (learned from ACK paths, v2.6+)</td></tr>
+<tr><td>Max hops</td><td>255 (1-byte hop count)</td><td>7 (3-bit hop limit)</td></tr>
+<tr><td>Duplicate detection</td><td>MIC cache</td><td>Packet ID cache (32-bit random IDs)</td></tr>
+<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based rebroadcast priority (implicit)</td></tr>
+<tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
+<tr><td>Traceroute</td><td>Trace-route option on any packet</td><td>Dedicated TRACEROUTE_APP port</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH’s hybrid routing model allows a single packet to be source-routed to a specific area and then flood locally, which is useful for reaching a node in a known geographic region without flooding the entire mesh. MeshCore treats flood and direct routing as mutually exclusive modes selected by route-type bits.</p>
-<p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient can use the accumulated trace directly as a source route. MeshCore uses a dedicated returned-path message type.</p>
-<h2 id="privacy-and-blind-modes"><a class="header" href="#privacy-and-blind-modes">Privacy and Blind Modes</a></h2>
+<p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
+<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s optional 1-byte hop count allows up to 255 hops, and source routing allows packets to traverse specific paths without flooding.</p>
+<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes.</p>
+<h2 id="privacy"><a class="header" href="#privacy">Privacy</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext when encryption enabled)</td><td>No</td></tr>
-<tr><td>Blind unicast</td><td>Yes (source encrypted with channel key, payload with pairwise key)</td><td>No</td></tr>
-<tr><td>Anonymous requests</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Dedicated ANON_REQ packet type</td></tr>
-<tr><td>Metadata concealment</td><td>Channel-key-based, hides sender and/or destination from non-members</td><td>Not supported</td></tr>
+<tr><td>Header confidentiality</td><td>Addressing fields are compact hints; blind modes encrypt source/destination</td><td>Header always cleartext — sender, recipient, packet ID, channel hash exposed</td></tr>
+<tr><td>Source concealment</td><td>Encrypted multicast, blind unicast</td><td>Not supported</td></tr>
+<tr><td>Destination concealment</td><td>Blind unicast</td><td>Not supported</td></tr>
+<tr><td>Node ID linkability</td><td>Public key (can use ephemeral keys)</td><td>Hardware MAC-derived (persistent identifier)</td></tr>
+<tr><td>Anonymous first contact</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Not supported</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.</p>
-<p>Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the <code>S</code> flag set — no dedicated packet type is needed. MeshCore defines a specific <code>ANON_REQ</code> payload type that carries the full 32-byte sender public key.</p>
-<h2 id="multicast"><a class="header" href="#multicast">Multicast</a></h2>
+<p>Meshtastic’s 16-byte cleartext header exposes the full sender and recipient node numbers on every packet. A passive observer with a LoRa receiver can identify who is communicating with whom, build traffic graphs, and track individual devices over time — even without the channel key. Node numbers are derived from hardware MAC addresses, making them persistent identifiers tied to physical devices.</p>
+<p>UMSH’s 2-byte hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
+<h2 id="multicast-and-group-communication"><a class="header" href="#multicast-and-group-communication">Multicast and Group Communication</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Channel key size</td><td>16 bytes</td><td>Variable (shared secret)</td></tr>
-<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
-<tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
-<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No</td></tr>
+<tr><td>Channel key size</td><td>16 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
+<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
+<tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
+<tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
+<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No (source in cleartext header)</td></tr>
+<tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Yes (name + PSK configured together)</td></tr>
 </tbody>
 </table>
 </div>
-<p>Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders — any channel member can forge a packet with any claimed source address.</p>
+<p>Both protocols support multiple channels with independent keys. Meshtastic limits nodes to 8 simultaneous channels. Meshtastic’s 1-byte channel hash has a high collision probability (1 in 256), requiring trial decryption when collisions occur. UMSH’s 2-byte channel identifier reduces this to 1 in 65536.</p>
 <h2 id="application-layer"><a class="header" href="#application-layer">Application Layer</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>4-bit payload type in header</td></tr>
-<tr><td>Structured data</td><td>CoAP-over-UMSH (block-wise transfer)</td><td>Multipart packets</td></tr>
-<tr><td>Node identity</td><td>Identity payload with role, capabilities, name, options, optional EdDSA signature</td><td>Advertisement payload with public key, timestamp, EdDSA signature, appdata</td></tr>
-<tr><td>URI scheme</td><td><code>umsh:n:</code>, <code>umsh:ck:</code>, <code>umsh:cs:</code>, <code>coap-umsh://</code></td><td><code>meshcore://</code> (contacts and channels)</td></tr>
+<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>Protobuf <code>portnum</code> field (~30+ types)</td></tr>
+<tr><td>Payload encoding</td><td>Raw bytes</td><td>Protocol Buffers</td></tr>
+<tr><td>Structured data</td><td>CoAP-over-UMSH (block-wise transfer)</td><td>Protobuf with defined message schemas</td></tr>
+<tr><td>Text messaging</td><td>UMSH text message payload</td><td>TEXT_MESSAGE_APP (portnum 1)</td></tr>
+<tr><td>Position/telemetry</td><td>Not defined (delegated to higher-layer protocols)</td><td>Built-in POSITION_APP, TELEMETRY_APP</td></tr>
+<tr><td>Node identity</td><td>Identity payload with role, capabilities, name</td><td>NODEINFO_APP with User protobuf</td></tr>
+<tr><td>Remote administration</td><td>Node management MAC commands</td><td>ADMIN_APP (portnum 6)</td></tr>
+<tr><td>Audio</td><td>Not defined</td><td>AUDIO_APP (codec2, 2.4 GHz only)</td></tr>
+<tr><td>Store and forward</td><td>Not defined</td><td>STORE_FORWARD_APP</td></tr>
 <tr><td>Amateur radio</td><td>Operator/station callsign options, explicit unencrypted mode</td><td>Not defined</td></tr>
+<tr><td>Implementation</td><td>Protocol spec (language-agnostic)</td><td>C++ firmware + protobuf definitions</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH’s payload types identify which higher-layer protocol is carried inside the payload — whether UMSH-defined (text messages, chat rooms, node identity) or third-party (CoAP, 6LoWPAN). The MAC layer treats all payloads identically. MeshCore’s payload types define application-level semantics directly at the protocol level, without a clean separation between MAC and application concerns. UMSH defines a CoAP-over-UMSH transport (payload type 7) that inherits CoAP’s block-wise transfer for payloads larger than a single LoRa frame. MeshCore defines a multipart packet type for segmented transfers at the protocol level.</p>
+<p>Meshtastic defines a rich application layer with built-in support for position sharing, telemetry, waypoints, audio, store-and-forward, and TAK integration. These are tightly integrated into the firmware and protobuf schema.</p>
+<p>UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This approach is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without protocol changes.</p>
 <h2 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Protocol scope</td><td>MAC layer with cleanly separated application protocols</td><td>Combined MAC, network, and application layer</td></tr>
-<tr><td>Payload interpretation</td><td>Opaque at MAC layer — application protocols defined separately</td><td>Protocol defines payload types with application semantics (text messages, advertisements, login, etc.)</td></tr>
-<tr><td>Fragmentation</td><td>Delegated to higher-layer protocols in the payload</td><td>Multipart packet type defined at protocol level</td></tr>
-<tr><td>Node identity / advertisements</td><td>Application-layer payload (see <a href="node-identity.html">Node Identity</a>)</td><td>Protocol-level advertisement packet with mandatory fields</td></tr>
-<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="security.html#frame-counter">Frame Counter</a>)</td><td>Relies on UNIX timestamps for replay protection, advertisement freshness, and login sequencing</td></tr>
+<tr><td>Protocol scope</td><td>MAC layer with separate application protocols</td><td>Monolithic — radio, routing, and application layers interleaved</td></tr>
+<tr><td>Payload interpretation</td><td>Opaque at MAC layer</td><td>Protobuf <code>Data</code> message decoded at every layer</td></tr>
+<tr><td>Fragmentation</td><td>Delegated to higher-layer protocols</td><td>Not defined (single-frame limit)</td></tr>
+<tr><td>Application coupling</td><td>Application protocols are architecturally separate</td><td>~30+ application types defined in core protobuf schema</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH maintains a clean boundary between the MAC layer and higher-layer protocols. The MAC layer defines framing, addressing, encryption, authentication, and forwarding, and treats payload content as opaque. UMSH also defines its own application-layer protocols (text messaging, chat rooms, node identity, node management), but these are architecturally separate from the MAC layer and carried in the payload alongside any other higher-layer protocol.</p>
-<p>MeshCore takes a more vertically integrated approach: the protocol directly defines payload types for text messages, node advertisements, login sequences, and multipart transfers without a clear separation between MAC and application concerns.</p>
+<p>UMSH maintains a clean boundary between the MAC layer and application protocols. The MAC layer treats payloads opaquely and can carry any higher-layer protocol. Meshtastic’s protobuf-defined <code>Data</code> message structure spans from radio-level fields to application payloads in a single schema, with no clean separation between layers.</p>
 <h2 id="timestamps-and-time-dependency"><a class="header" href="#timestamps-and-time-dependency">Timestamps and Time Dependency</a></h2>
-<p>MeshCore relies on UNIX timestamps in several protocol-critical roles:</p>
-<ul>
-<li><strong>Replay protection</strong>: MeshCore uses timestamps rather than sequence counters to detect replayed packets. This requires nodes to maintain a reasonably accurate clock.</li>
-<li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp used to determine which advertisement is most recent.</li>
-<li><strong>Login sequencing</strong>: The login handshake incorporates timestamps.</li>
-</ul>
-<p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="security.html#frame-counter">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="node-identity.html">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
-<p>This distinction matters for deployments where nodes may lack reliable time sources — battery-powered sensors, nodes without GPS or NTP access, or devices that reboot frequently. UMSH’s counter-based approach works correctly regardless of clock accuracy, while MeshCore’s timestamp-based approach requires nodes to agree on approximate wall-clock time.</p>
-<h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
-<p>Minimum overhead for a typical encrypted unicast message (no options, no hop count):</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>UMSH (S=1)</th><th>MeshCore</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Header/FCF</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
-<tr><td>Path length</td><td>—</td><td>—</td><td>—</td><td>1</td></tr>
-<tr><td>Destination</td><td>2</td><td>2</td><td>2</td><td>1</td></tr>
-<tr><td>Source</td><td>2</td><td>2</td><td>32</td><td>1</td></tr>
-<tr><td>Security info</td><td>5</td><td>5</td><td>5</td><td>—</td></tr>
-<tr><td>MAC/MIC</td><td>16</td><td>4</td><td>4–16</td><td>2</td></tr>
-<tr><td>ECB block padding</td><td>—</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>44–56</strong></td><td><strong>~14</strong></td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td></tr>
+<tr><td>Timestamps in packets</td><td>None at MAC layer</td><td><code>rx_time</code> metadata (not used for protocol decisions)</td></tr>
+<tr><td>Clock synchronization required</td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see <a href="security.html#security-control-field">Security &amp; Cryptography</a>). With a 4-byte MIC and <code>S=0</code>, UMSH matches MeshCore’s effective overhead while providing AES-SIV encryption, HKDF key separation, and monotonic frame counter replay protection.</p>
-<p>MeshCore’s use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore’s effective overhead rises from 6 bytes to approximately 14 bytes.</p>
-<p>MeshCore achieves low per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).</p>
-<p>UMSH with <code>S=0</code> and a 16-byte MIC provides the strongest security configuration at 26 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore’s 1-in-2^16 with its 2-byte MAC) while matching MeshCore’s effective overhead.</p>
+<p>Neither protocol requires clock synchronization for core operation. Meshtastic includes reception timestamps as metadata but does not use them for routing or replay protection. Both protocols detect duplicates without relying on wall-clock time — UMSH via monotonic frame counters, Meshtastic via random packet ID caching.</p>
+<h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
+<p>Minimum overhead for a typical encrypted unicast message:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Meshtastic (channel)</th><th>Meshtastic (PKC DM)</th></tr>
+</thead>
+<tbody>
+<tr><td>Header/FCF</td><td>1</td><td>1</td><td>16</td><td>16</td></tr>
+<tr><td>Destination</td><td>2</td><td>2</td><td>(in header)</td><td>(in header)</td></tr>
+<tr><td>Source</td><td>2</td><td>2</td><td>(in header)</td><td>(in header)</td></tr>
+<tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
+<tr><td>MIC / auth tag</td><td>16</td><td>4</td><td>—</td><td>~12</td></tr>
+<tr><td>Nonce / IV</td><td>—</td><td>—</td><td>(derived, not transmitted)</td><td>(8 in payload)</td></tr>
+<tr><td>Protobuf overhead</td><td>—</td><td>—</td><td>~6</td><td>~6</td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>~22</strong></td><td><strong>~42</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>Meshtastic’s nonce is derived from header fields (packet ID + sender node number) rather than transmitted, saving bytes compared to protocols that transmit the IV. However, the fixed 16-byte cleartext header and protobuf encoding overhead partially offset this advantage.</p>
+<p>UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (26 vs ~22 bytes), but UMSH’s overhead includes full authentication that Meshtastic’s channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 14 bytes of overhead — lower than Meshtastic — while still providing authentication that Meshtastic channel traffic does not have.</p>
+<p>Meshtastic PKC direct messages add approximately 20 bytes of overhead beyond channel encryption (ECDH-derived key, CCM nonce, and authentication tag), bringing total overhead to roughly 42 bytes for authenticated direct messages.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
-<p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
-<p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
+<p>Meshtastic is a full-featured, batteries-included mesh communication system with a large and active user community. It provides a rich application layer (position sharing, telemetry, store-and-forward, TAK integration), broad hardware support, and an easy on-ramp for non-technical users. Its channel-based encryption model is simple to configure and deploy.</p>
+<p>UMSH is a protocol specification focused on cryptographic robustness, compact encoding, and architectural cleanliness. It authenticates all traffic, provides privacy modes for metadata concealment, and maintains strict layer separation that allows it to carry arbitrary higher-layer protocols.</p>
+<p>Key tradeoffs:</p>
+<ul>
+<li><strong>Authentication</strong>: UMSH authenticates every packet. Meshtastic’s channel traffic has no authentication — only PKC direct messages (v2.5+) are authenticated.</li>
+<li><strong>Privacy</strong>: UMSH provides compact addressing hints and opt-in blind modes. Meshtastic exposes full sender and recipient identifiers in cleartext headers on every packet.</li>
+<li><strong>Identity model</strong>: UMSH uses cryptographic public keys as addresses. Meshtastic uses hardware-derived node numbers that are not cryptographically bound to any key.</li>
+<li><strong>Overhead</strong>: Comparable in the common case (~14–26 bytes for UMSH vs ~22 bytes for Meshtastic channel), but UMSH’s overhead includes authentication.</li>
+<li><strong>Application richness</strong>: Meshtastic provides a far richer built-in application layer. UMSH delegates richer functionality to higher-layer protocols.</li>
+<li><strong>Layer separation</strong>: UMSH cleanly separates MAC and application concerns. Meshtastic is a monolithic system where protocol and application are interleaved.</li>
+<li><strong>Implementation</strong>: Meshtastic is a mature C++ firmware with broad device support. UMSH is an implementation-agnostic protocol specification that can target bare-metal microcontrollers.</li>
+<li><strong>Ease of deployment</strong>: Meshtastic is designed for immediate use with consumer hardware. UMSH requires implementation effort and explicit key configuration.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="faq.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="meshcore-comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="meshtastic-comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="reticulum-comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -377,11 +411,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="faq.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="meshcore-comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="meshtastic-comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="reticulum-comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
