@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-29dc5460.js";
+            window.path_to_searchindex_js = "searchindex-1e10781e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -267,42 +267,34 @@
 </table>
 </div>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
-<p>Initiates a perfect-forward-security session between two nodes. The sender generates an ephemeral Ed25519 keypair and sends the public key along with session parameters. If accepted, both nodes use their ephemeral keys for subsequent communication, ensuring that compromise of long-term keys cannot retroactively expose session traffic.</p>
+<p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="security.html#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Ephemeral public key</td><td style="text-align: right">32 bytes</td><td>Sender’s newly generated Ed25519 public key for this session</td></tr>
+<tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Sender’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
 <tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Requested session lifetime in minutes (0 = no expiration)</td></tr>
 </tbody>
 </table>
 </div>
-<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="pfs-session-response-7"><a class="header" href="#pfs-session-response-7">PFS Session Response (7)</a></h2>
-<p>Sent in response to a PFS Session Request. The responder generates its own ephemeral Ed25519 keypair and returns the public key. Once both sides have exchanged ephemeral keys, communication proceeds using the new keypair.</p>
+<p>Sent in response to a PFS Session Request. The responder generates its own ephemeral node address, returns it along with the accepted duration, and both sides derive session keys from the ephemeral addresses. See <a href="security.html#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Ephemeral public key</td><td style="text-align: right">32 bytes</td><td>Responder’s newly generated Ed25519 public key for this session</td></tr>
+<tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Responder’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
 <tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Accepted session lifetime in minutes</td></tr>
 </tbody>
 </table>
 </div>
-<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
-<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides discard the ephemeral private keys and revert to using their long-term keys.</p>
+<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
-<p>A PFS session also ends automatically when:</p>
-<ul>
-<li>the agreed session duration expires</li>
-<li>either device reboots</li>
-</ul>
-<p>Ephemeral private keys should be securely erased when the session ends, regardless of the reason.</p>
 
                     </main>
 

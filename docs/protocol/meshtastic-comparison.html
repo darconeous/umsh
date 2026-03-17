@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-29dc5460.js";
+            window.path_to_searchindex_js = "searchindex-1e10781e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -228,7 +228,7 @@
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
 <tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>8-byte random nonce</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td><td>Not defined</td></tr>
-<tr><td>Forward secrecy</td><td>Optional PFS sessions</td><td>No</td><td>No</td></tr>
+<tr><td>Forward secrecy</td><td><a href="security.html#perfect-forward-secrecy-sessions">Optional PFS sessions</a></td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
 </div>

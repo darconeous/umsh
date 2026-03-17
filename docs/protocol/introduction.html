@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-29dc5460.js";
+            window.path_to_searchindex_js = "searchindex-1e10781e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -194,7 +194,7 @@ higher-layer content.</p>
 <li>End-to-end authentication across multi-hop paths</li>
 <li>Selective flooding and source-routed delivery</li>
 <li>Operation in both encrypted and amateur-radio-compliant unencrypted modes</li>
-<li>Ability to operate in a way that preserves perfect forward secrecy (PFS)</li>
+<li>Ability to operate in a way that preserves <a href="security.html#perfect-forward-secrecy-sessions">perfect forward secrecy (PFS)</a></li>
 <li>Timestamp-free at the MAC layer</li>
 <li>Low-power operation</li>
 </ul>
@@ -245,11 +245,8 @@ bytes per packet.</p>
 role, capabilities, and location — via the <a href="node-identity.html">Node Identity</a>
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
-<h4 id="perfect-forward-security"><a class="header" href="#perfect-forward-security">Perfect Forward Security</a></h4>
-<p>Nodes can be created on the fly to support perfect forward security. For example,
-two nodes could share the public keys of temporary special-purpose nodes that they
-have created just for communication between them, throwing away the private
-keys afterward.</p>
+<h4 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h4>
+<p>UMSH supports <a href="security.html#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>

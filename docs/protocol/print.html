@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-29dc5460.js";
+            window.path_to_searchindex_js = "searchindex-1e10781e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -195,7 +195,7 @@ higher-layer content.</p>
 <li>End-to-end authentication across multi-hop paths</li>
 <li>Selective flooding and source-routed delivery</li>
 <li>Operation in both encrypted and amateur-radio-compliant unencrypted modes</li>
-<li>Ability to operate in a way that preserves perfect forward secrecy (PFS)</li>
+<li>Ability to operate in a way that preserves <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy (PFS)</a></li>
 <li>Timestamp-free at the MAC layer</li>
 <li>Low-power operation</li>
 </ul>
@@ -246,11 +246,8 @@ bytes per packet.</p>
 role, capabilities, and location — via the <a href="#node-identity">Node Identity</a>
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
-<h4 id="perfect-forward-security"><a class="header" href="#perfect-forward-security">Perfect Forward Security</a></h4>
-<p>Nodes can be created on the fly to support perfect forward security. For example,
-two nodes could share the public keys of temporary special-purpose nodes that they
-have created just for communication between them, throwing away the private
-keys afterward.</p>
+<h4 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h4>
+<p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
@@ -713,7 +710,7 @@ e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Souther
 <p><strong>8 bytes</strong>: A reasonable middle ground for most communication. Provides 2^-64 forgery probability — well beyond practical brute-force for LoRa’s low packet rates — while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.</p>
 </li>
 <li>
-<p><strong>4 bytes</strong>: Appropriate for short-lived contexts where the keys will be discarded soon, such as <a href="#pfs-session-request-6">PFS sessions</a> or one-time exchanges using ephemeral keypairs. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.</p>
+<p><strong>4 bytes</strong>: Appropriate for short-lived contexts where the keys will be discarded soon, such as <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> or one-time exchanges using ephemeral node addresses. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.</p>
 </li>
 <li>
 <p><strong>12 bytes</strong>: Available as an intermediate option when 8 bytes feels too tight but 16 bytes is more overhead than warranted. Provides 2^-96 forgery probability.</p>
@@ -892,6 +889,41 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
 </code></pre>
 <p>This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
+<h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
+<p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
+<h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>
+<p>A PFS session is established via a two-message exchange over the existing authenticated unicast channel:</p>
+<ol>
+<li>
+<p><strong>Initiator</strong>: Generates a fresh ephemeral node address. Sends a <a href="#pfs-session-request-6">PFS Session Request</a> carrying the ephemeral address and a requested session duration. The request is authenticated with the initiator’s long-term keys.</p>
+</li>
+<li>
+<p><strong>Responder</strong>: Generates its own fresh ephemeral node address. Sends a <a href="#pfs-session-response-7">PFS Session Response</a> carrying the responder’s ephemeral address and the accepted session duration. The response is authenticated with the responder’s long-term keys.</p>
+</li>
+</ol>
+<p>After this exchange, both sides hold each other’s ephemeral addresses and can independently derive the session keys. No further setup messages are required. The first data packet sent by the initiator using the ephemeral address hints serves as an implicit acknowledgement to the responder that the response was received and the session is active.</p>
+<h3 id="session-key-derivation"><a class="header" href="#session-key-derivation">Session Key Derivation</a></h3>
+<p>A PFS session is cryptographically identical to a normal UMSH unicast session in every respect — the only difference is that the participating node addresses are ephemeral rather than long-term. Key derivation follows the exact same process as <a href="#unicast-key-agreement">Unicast Key Agreement</a>.</p>
+<p>The PFS property arises not from any difference in how the keys are derived, but from the fact that the private keys for the ephemeral addresses are never stored durably and are securely erased when the session ends.</p>
+<p>An ephemeral node address is a fully functional temporary UMSH node identity: it has an address hint, can be addressed directly, and its private key is converted to X25519 for ECDH the same way a long-term identity is.</p>
+<p>Because a PFS session is indistinguishable from an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing, no changes to any application-layer protocol, and adds zero per-packet overhead. Once the two-message handshake completes, every subsequent packet in the session is exactly the size it would have been without PFS.</p>
+<h3 id="wire-level-privacy"><a class="header" href="#wire-level-privacy">Wire-Level Privacy</a></h3>
+<p>While a PFS session is active, packet hint fields are derived from the ephemeral node address rather than the long-term address. A passive observer sees packets flowing between two unfamiliar node IDs that appear only for the duration of the session. The only packets that expose the long-term node IDs are the two handshake messages (PFS Session Request and PFS Session Response), which are themselves protected by the long-term pairwise keys.</p>
+<p>Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.</p>
+<p>However, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address — including ephemeral ones — so that session traffic is not correlated with long-term traffic through counter continuity.</p>
+<p>From the application layer’s perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.</p>
+<h3 id="session-lifetime"><a class="header" href="#session-lifetime">Session Lifetime</a></h3>
+<p>A PFS session ends when any of the following occur:</p>
+<ul>
+<li>The agreed session duration expires.</li>
+<li>Either party sends an <a href="#end-pfs-session-8">End PFS Session</a> command.</li>
+<li>Either device reboots.</li>
+</ul>
+<p>Upon session end, both sides <strong>must securely erase/zeroize the private keys for their ephemeral addresses</strong>. Without those private keys, the session’s ECDH shared secret cannot be reconstructed, and the session traffic cannot be decrypted even by an attacker who later obtains the long-term private keys. This erasure is the mechanism that provides forward secrecy.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.</p>
+</blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multicast-channels-1"><a class="header" href="#multicast-channels-1">Multicast Channels</a></h1>
 <p>A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.</p>
@@ -1230,42 +1262,34 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 </table>
 </div>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
-<p>Initiates a perfect-forward-security session between two nodes. The sender generates an ephemeral Ed25519 keypair and sends the public key along with session parameters. If accepted, both nodes use their ephemeral keys for subsequent communication, ensuring that compromise of long-term keys cannot retroactively expose session traffic.</p>
+<p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Ephemeral public key</td><td style="text-align: right">32 bytes</td><td>Sender’s newly generated Ed25519 public key for this session</td></tr>
+<tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Sender’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
 <tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Requested session lifetime in minutes (0 = no expiration)</td></tr>
 </tbody>
 </table>
 </div>
-<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="pfs-session-response-7"><a class="header" href="#pfs-session-response-7">PFS Session Response (7)</a></h2>
-<p>Sent in response to a PFS Session Request. The responder generates its own ephemeral Ed25519 keypair and returns the public key. Once both sides have exchanged ephemeral keys, communication proceeds using the new keypair.</p>
+<p>Sent in response to a PFS Session Request. The responder generates its own ephemeral node address, returns it along with the accepted duration, and both sides derive session keys from the ephemeral addresses. See <a href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Ephemeral public key</td><td style="text-align: right">32 bytes</td><td>Responder’s newly generated Ed25519 public key for this session</td></tr>
+<tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Responder’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
 <tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Accepted session lifetime in minutes</td></tr>
 </tbody>
 </table>
 </div>
-<p>This ephemeral keypair is associated with the sender’s long-term identity for the duration of the session.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
-<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides discard the ephemeral private keys and revert to using their long-term keys.</p>
+<p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
-<p>A PFS session also ends automatically when:</p>
-<ul>
-<li>the agreed session duration expires</li>
-<li>either device reboots</li>
-</ul>
-<p>Ephemeral private keys should be securely erased when the session ends, regardless of the reason.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-manament-protocol"><a class="header" href="#node-manament-protocol">Node Manament Protocol</a></h1>
 <p>TBD</p>
@@ -1579,7 +1603,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <p>A MAC Ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see <a href="#forwarding-procedure">Forwarding Procedure</a>).</p>
 <h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
 <p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, and the AES-SIV-inspired construction provides nonce-misuse resistance as an additional safety margin.</p>
-<p>When forward secrecy is needed, UMSH provides <a href="#pfs-session-request-6">PFS sessions</a> — a lightweight handshake where both nodes exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and ephemeral private keys are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.</p>
+<p>When forward secrecy is needed, UMSH provides <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> — a two-message handshake where both nodes exchange ephemeral node addresses and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and the private keys for the ephemeral addresses are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.</p>
 <h3 id="what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys"><a class="header" href="#what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys">What happens if a 2-byte channel identifier collides across different channel keys?</a></h3>
 <p>The 2-byte channel identifier is a hint, not a unique identifier. If two different channel keys happen to produce the same 2-byte channel ID, a receiver configured with both keys will attempt to process the packet with each candidate key. Only the correct key will produce a valid MIC, so the wrong candidate will be rejected during authentication. The cost is wasted computation, not incorrect behavior. With 2 bytes the collision probability is 1 in 65536, which is higher than a 4-byte hint but still negligible for deployments with a small number of configured channels.</p>
 <h3 id="why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm"><a class="header" href="#why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm">Why use an AES-SIV-inspired construction instead of AES-GCM?</a></h3>
@@ -1852,7 +1876,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
 <tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>8-byte random nonce</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td><td>Not defined</td></tr>
-<tr><td>Forward secrecy</td><td>Optional PFS sessions</td><td>No</td><td>No</td></tr>
+<tr><td>Forward secrecy</td><td><a href="#perfect-forward-secrecy-sessions">Optional PFS sessions</a></td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
@@ -2128,7 +2152,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <h3 id="authentication-and-integrity"><a class="header" href="#authentication-and-integrity">Authentication and Integrity</a></h3>
 <p>UMSH’s 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH’s choice is driven by the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
-<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="#pfs-session-request-6">PFS session MAC commands</a> that allow two nodes to exchange ephemeral Ed25519 keypairs and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions require a 3-packet handshake (request, response, acknowledgement) but add no per-packet overhead once established.</p>
+<p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> in which both nodes exchange ephemeral node addresses via a two-message handshake and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions add no per-packet overhead once established.</p>
 <p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L574"><code>Identity.py:574</code></a>, <code>ephemeral_key = X25519PrivateKey.generate()</code>). For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L340"><code>Link.py:340</code></a>, <code>self.shared_key = self.prv.exchange(self.peer_pub)</code>). Reticulum also offers a ratchet mechanism that rotates keys at a configurable minimum interval (default 30 minutes, adjustable per-destination via <code>Destination.set_ratchet_interval()</code> (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L514"><code>Destination.py:514</code></a>)), providing periodic forward secrecy within a link (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L90"><code>Destination.py:90</code></a>, <code>RATCHET_INTERVAL = 30*60</code>). Up to 512 ratchet keys are stored per destination, each expiring after 30 days. Ratchet key presence is signalled via a context flag in announce packets, allowing senders to use the most recent ratchet key in place of the static identity key, providing forward secrecy for single-packet communication without the full 32-byte ephemeral pubkey overhead.</p>
 <p>Both protocols offer forward secrecy, but with different granularity and overhead tradeoffs. Reticulum’s SINGLE mode provides per-packet forward secrecy at 32 bytes per packet; UMSH’s PFS sessions provide per-session forward secrecy at zero per-packet overhead after setup.</p>
 <h3 id="replay-protection"><a class="header" href="#replay-protection">Replay Protection</a></h3>
