@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-60b30c78.js";
+            window.path_to_searchindex_js = "searchindex-29dc5460.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -245,8 +245,6 @@
 <h3 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h3>
 <p>Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
 <p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.</p>
-<h3 id="default-key"><a class="header" href="#default-key">Default Key</a></h3>
-<p>Meshtastic ships with a well-known default channel key (<code>"AQ=="</code>). Devices using the default key have effectively no encryption. UMSH does not define a default key — channel keys must be explicitly configured.</p>
 <h2 id="routing"><a class="header" href="#routing">Routing</a></h2>
 <div class="table-wrapper">
 <table>
