@@ -47,7 +47,7 @@ Meshtastic encodes application payloads using Protocol Buffers (protobuf), which
 | Key derivation | HKDF-SHA256 with domain separation | PSK used directly | SHA-256 of ECDH shared secret |
 | Nonce construction | Frame counter + optional salt in SECINFO | Packet ID + sender node number | 8-byte random nonce |
 | Replay protection | 4-byte monotonic frame counter | 32-bit random packet ID (duplicate cache) | Not defined |
-| Forward secrecy | Optional PFS sessions | No | No |
+| Forward secrecy | [Optional PFS sessions](security.md#perfect-forward-secrecy-sessions) | No | No |
 
 ### Channel Encryption
 
@@ -69,10 +69,6 @@ UMSH authenticates all traffic uniformly — unicast, multicast, and broadcast �
 Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.
 
 UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.
-
-### Default Key
-
-Meshtastic ships with a well-known default channel key (`"AQ=="`). Devices using the default key have effectively no encryption. UMSH does not define a default key — channel keys must be explicitly configured.
 
 ## Routing
 

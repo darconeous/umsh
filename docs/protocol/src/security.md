@@ -53,7 +53,7 @@ Shorter MICs save bytes on the wire but reduce forgery resistance and increase t
 
 - **8 bytes**: A reasonable middle ground for most communication. Provides 2^-64 forgery probability — well beyond practical brute-force for LoRa's low packet rates — while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.
 
-- **4 bytes**: Appropriate for short-lived contexts where the keys will be discarded soon, such as [PFS sessions](mac-commands.md#pfs-session-request-6) or one-time exchanges using ephemeral keypairs. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.
+- **4 bytes**: Appropriate for short-lived contexts where the keys will be discarded soon, such as [PFS sessions](#perfect-forward-secrecy-sessions) or one-time exchanges using ephemeral node addresses. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.
 
 - **12 bytes**: Available as an intermediate option when 8 bytes feels too tight but 16 bytes is more overhead than warranted. Provides 2^-96 forgery probability.
 
@@ -294,3 +294,51 @@ ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
 ```
 
 This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.
+
+## Perfect Forward Secrecy Sessions
+
+UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the [PFS Session MAC commands](mac-commands.md#pfs-session-request-6). Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were long-term node identities. Compromise of either node's long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session's ECDH shared secret is irrecoverable. 
+
+### Handshake
+
+A PFS session is established via a two-message exchange over the existing authenticated unicast channel:
+
+1. **Initiator**: Generates a fresh ephemeral node address. Sends a [PFS Session Request](mac-commands.md#pfs-session-request-6) carrying the new ephemeral address and a requested session duration. The request is authenticated with the initiator's long-term keys.
+
+2. **Responder**: Generates its own fresh ephemeral node address. Sends a [PFS Session Response](mac-commands.md#pfs-session-response-7) carrying the responder's ephemeral address and the accepted session duration. The response is authenticated with the responder's long-term keys.
+
+After this exchange, both sides hold each other's ephemeral addresses and can independently derive the session keys. No further setup messages are required. The first data packet sent by the initiator using the ephemeral address hints serves as an implicit acknowledgement to the responder that the response was received and the session is active.
+
+### Session Key Derivation
+
+A PFS session is cryptographically identical to a normal UMSH unicast session in every respect — the only difference is that the participating node addresses are ephemeral rather than long-term. Key derivation follows the exact same process as [Unicast Key Agreement](#unicast-key-agreement).
+
+The PFS property arises not from any difference in how the keys are derived, but from the fact that the private keys for the ephemeral addresses are never stored durably and are securely erased when the session ends.
+
+An ephemeral node address is a fully functional temporary UMSH node identity: it has an address hint, can be addressed directly, and its private key is converted to X25519 for ECDH the same way a long-term identity is.
+
+Because a PFS session is indistinguishable from an ordinary unicast session at the MAC layer, it requires no changes to MAC-layer processing, no changes to any application-layer protocol, and adds zero per-packet overhead. Once the two-message handshake completes, every subsequent packet in the session is exactly the size it would have been without PFS.
+
+### Wire-Level Privacy
+
+While a PFS session is active, packet hint fields are derived from the ephemeral node address rather than the long-term address. A passive observer sees packets flowing between two unfamiliar node IDs that appear only for the duration of the session. The only packets that expose the long-term node IDs are the two handshake messages (PFS Session Request and PFS Session Response), which are themselves protected by the long-term pairwise keys.
+
+Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.
+
+However, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address — including ephemeral ones — so that session traffic is not correlated with long-term traffic through counter continuity.
+
+From the application layer's perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.
+
+### Session Lifetime
+
+A PFS session ends when any of the following occur:
+
+- The agreed session duration expires.
+- Either party sends an [End PFS Session](mac-commands.md#end-pfs-session-8) command.
+- Either device reboots.
+
+Upon session end, both sides **must securely erase/zeroize the private keys for their ephemeral addresses**. Without those private keys, the session's ECDH shared secret cannot be reconstructed, and the session traffic cannot be decrypted even by an attacker who later obtains the long-term private keys. This erasure is the mechanism that provides forward secrecy.
+
+> [!CAUTION]
+> Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.
+

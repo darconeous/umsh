@@ -21,7 +21,7 @@ UMSH is designed to support:
 - End-to-end authentication across multi-hop paths
 - Selective flooding and source-routed delivery
 - Operation in both encrypted and amateur-radio-compliant unencrypted modes
-- Ability to operate in a way that preserves perfect forward secrecy (PFS)
+- Ability to operate in a way that preserves [perfect forward secrecy (PFS)](security.md#perfect-forward-secrecy-sessions)
 - Timestamp-free at the MAC layer
 - Low-power operation
 
@@ -84,12 +84,9 @@ role, capabilities, and location — via the [Node Identity](node-identity.md)
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.
 
-#### Perfect Forward Security
+#### Perfect Forward Secrecy
 
-Nodes can be created on the fly to support perfect forward security. For example,
-two nodes could share the public keys of temporary special-purpose nodes that they
-have created just for communication between them, throwing away the private
-keys afterward. 
+UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions) via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
 
 ### Unicast
 
