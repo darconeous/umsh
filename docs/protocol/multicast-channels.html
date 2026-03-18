@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6058d694.js";
+            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -207,17 +207,17 @@
 <p>For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="uri-formats.html#channel-uris">URI Formats</a>), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.</p>
 <h3 id="managed-channels"><a class="header" href="#managed-channels">Managed Channels</a></h3>
 <p>A managed channel is administered by a designated managing node that controls membership. Unlike named and private channels, a managed channel supports adding and removing individual members without requiring all remaining members to re-join manually.</p>
+<blockquote>
+<p><strong>Note:</strong> The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected — managed channels use the same multicast packet format and cryptographic processing as any other channel.</p>
+</blockquote>
 <p>To join a managed channel, a node provides its public key to the managing node — either out-of-band or via an in-band join request that the manager can accept or deny. Once accepted, the new member receives the current channel key and channel metadata from the managing node.</p>
 <p>The managing node periodically rotates the channel key. When a key rotation occurs, each current member receives the new key along with the time at which it becomes active, allowing a coordinated switchover. Because the <a href="packet-types.html#channel-identifier-derivation">channel identifier</a> is derived from the channel key, a key rotation also changes the channel’s on-wire identifier; the application layer masks this from the user so the channel appears to be the same.</p>
 <p>To remove a member, the managing node distributes a new key to all members <em>except</em> the excluded node. The excluded node still holds the old key but cannot decrypt traffic encrypted under the new one.</p>
 <p>Members that are offline during a key rotation can request the current key from the managing node when they reconnect.</p>
-<blockquote>
-<p><strong>Note:</strong> The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected — managed channels use the same multicast packet format and cryptographic processing as any other channel. Management is an application-layer concern.</p>
-</blockquote>
 <h2 id="relationship-to-blind-unicast"><a class="header" href="#relationship-to-blind-unicast">Relationship to Blind Unicast</a></h2>
 <p>Channels also enable <a href="packet-types.html#blind-unicast-packet">blind unicast</a>, which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.</p>
 <h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
-<p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="app-text-messages.html">text message</a> and <a href="app-chat-rooms.html">chat room</a> payload formats as direct messaging.</p>
+<p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="app-text-messages.html">text message</a> and <a href="app-chat-rooms.html">chat room</a> payload formats as direct messaging. However, not all application types are allowed over multicast.</p>
 
                     </main>
 
