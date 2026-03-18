@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-74157380.js";
+            window.path_to_searchindex_js = "searchindex-b17a1e56.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-75795e16.js"></script>
@@ -957,11 +957,8 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <p>Channels also enable <a href="#blind-unicast-packet">blind unicast</a>, which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.</p>
 <h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
 <p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="#text-messages">text message</a> and <a href="#chat-rooms">chat room</a> payload formats as direct messaging.</p>
-<h1 id="managed-channels"><a class="header" href="#managed-channels">Managed Channels</a></h1>
-<p>Managed channels are channels that are managed by a node that determines who can be a member of the channel and dynamically remove or add other nodes to it (assuming that they support joining managed channels).</p>
-<p>A node can join a managed channel by either being added out-of-band or with a password. Once joined, the joining node receives the signed current channel information, including the channel key.</p>
-<p>The managing node will periodically change the channel key. Each member of the managed channel will be given the new channel key along with a timestamp at which it will become active. If a member node is offline when the new key is distributed, they can check in with the managing node to obtain the new key.</p>
-<p>If a member needs to be removed from the group, a new key is distributed</p>
+<h1 id="manageddynamic-channels"><a class="header" href="#manageddynamic-channels">Managed/Dynamic Channels</a></h1>
+<p>TBD</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
