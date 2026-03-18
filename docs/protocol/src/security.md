@@ -115,6 +115,12 @@ For unicast and blind unicast:
 
 ### Ed25519 to X25519 Conversion
 
+UMSH uses a single Ed25519 keypair per node as both its identity (for addressing) and the basis for key agreement. Standard cryptographic guidance recommends separate keys for signing and key agreement, so this choice warrants justification.
+
+The Ed25519 and X25519 curves are birationally equivalent (both are defined over Curve25519), and the conversion between Edwards and Montgomery form is a well-understood, deterministic mapping. Using a single keypair for both purposes is not itself insecure — it is the approach taken by, among others, the Signal protocol's X3DH key agreement and libsodium's `crypto_sign_ed25519_pk_to_curve25519` API.
+
+The alternative — carrying separate Ed25519 (signing) and X25519 (key agreement) keys per node — would require a cryptographic binding between the two. Each node must distribute an additional 32-byte X25519 public key alongside its Ed25519 key, and the binding must be authenticated (e.g. by including the X25519 key in a signed advertisement). Every recipient must then verify that binding before trusting the key agreement key. On a LoRa link where the entire frame budget is ~255 bytes, even 32 extra bytes per identity exchange is a significant cost. By deriving X25519 keys from Ed25519 keys, UMSH eliminates this overhead entirely: the node address *is* the key agreement key, with no additional key distribution required.
+
 UMSH assumes standard Edwards-to-Montgomery conversion:
 
 - sender Ed25519 private key → sender X25519 private key
@@ -297,7 +303,7 @@ This allows a receiver possessing the channel key to recover the source address 
 
 ## Perfect Forward Secrecy Sessions
 
-UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the [PFS Session MAC commands](mac-commands.md#pfs-session-request-6). Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were long-term node identities. Compromise of either node's long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session's ECDH shared secret is irrecoverable. 
+UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the [PFS Session MAC commands](mac-commands.md#pfs-session-request-6). Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node's long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session's ECDH shared secret is irrecoverable. 
 
 ### Handshake
 
