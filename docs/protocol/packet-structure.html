@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9d35b158.js";
+            window.path_to_searchindex_js = "searchindex-30d4af89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -190,7 +190,7 @@
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
-<li><code>MIC</code> is present on authenticated/encrypted packet types and some acknowledgements</li>
+<li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry an <a href="security.html#ack-tag-construction">ack tag</a> instead</li>
 </ul>
 <h2 id="frame-control-field"><a class="header" href="#frame-control-field">Frame Control Field</a></h2>
 <p>The Frame Control Field is one byte:</p>

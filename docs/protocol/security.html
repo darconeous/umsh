@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9d35b158.js";
+            window.path_to_searchindex_js = "searchindex-30d4af89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -391,6 +391,23 @@ K_mic = okm[16..31]
    1 B      1 B     var.
 </code></pre>
 <p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
+<h3 id="ack-tag-construction"><a class="header" href="#ack-tag-construction">Ack Tag Construction</a></h3>
+<p>When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an <strong>ack tag</strong> — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.</p>
+<p>The ack tag is computed as follows:</p>
+<ol>
+<li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code> (this is the same computation used to produce the packet MIC, before any truncation).</li>
+<li>Encrypt the 16-byte CMAC with a single AES-128-ECB block encryption using the pairwise <code>K_enc</code>.</li>
+<li>Truncate the result to 8 bytes.</li>
+</ol>
+<pre><code class="language-text">ack_tag = truncate_to_8( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>K_enc</code> is the <strong>pairwise</strong> encryption key derived from the sender/recipient ECDH shared secret (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), even for blind unicast packets</li>
+<li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
+</ul>
+<p>The ack tag is never transmitted in the original packet — it appears only in the <a href="packet-types.html#mac-ack-packet">MAC Ack</a> response. Because it requires knowledge of <code>K_enc</code>, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.</p>
+<p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
 <p>Blind unicast packets encrypt the source address separately from the payload.</p>
 <p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>

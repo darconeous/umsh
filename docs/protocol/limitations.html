@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9d35b158.js";
+            window.path_to_searchindex_js = "searchindex-30d4af89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -187,25 +187,19 @@
 <li>
 <p><strong>Region-code namespace</strong></p>
 <ul>
-<li>Region encoding and allocation are deployment-defined.</li>
+<li>The protocol defines a region code option (see <a href="packet-options.html#region-code-option-1">Packet Options</a>) but does not specify a canonical registry of region codes. Deployments must agree on region code assignments out-of-band. A future revision may define a standard allocation scheme.</li>
 </ul>
 </li>
 <li>
 <p><strong>Destination-hint collisions</strong></p>
 <ul>
-<li>Destination hints are only a prefilter and are expected to collide.</li>
+<li>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="addressing.html#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</li>
 </ul>
 </li>
 <li>
 <p><strong>Duplicate cache sizing</strong></p>
 <ul>
-<li>The MIC cache depth and eviction details are implementation configurable.</li>
-</ul>
-</li>
-<li>
-<p><strong>MAC Ack PKTMIC width</strong></p>
-<ul>
-<li>8 bytes is recommended, but this can be fixed explicitly by the protocol if desired.</li>
+<li>The protocol does not specify minimum cache sizes or eviction policies for the MIC-based duplicate suppression cache (see <a href="repeater-operation.html#duplicate-suppression">Duplicate Suppression</a>). Undersized caches may cause duplicate forwarding; oversized caches waste memory on constrained devices. Guidance on sizing relative to network traffic rates may be added in a future revision.</li>
 </ul>
 </li>
 <li>

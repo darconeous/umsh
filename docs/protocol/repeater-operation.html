@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9d35b158.js";
+            window.path_to_searchindex_js = "searchindex-30d4af89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -275,6 +275,8 @@
 </ul>
 </li>
 </ol>
+<h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
+<p>Repeaters do not generate MAC acks — acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a repeater can confirm that its forwarded packet was successfully received by the next hop by overhearing the next repeater’s retransmission of the same packet. If the repeater does not hear a subsequent retransmission within a reasonable window, it may infer that the next hop did not receive the packet, though no retry mechanism is defined at the MAC layer.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
 <p>This forwarding model allows hybrid routing behavior.</p>
 <p>For example, a packet can be source-routed to a specific repeater and also carry a hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>

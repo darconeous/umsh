@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9d35b158.js";
+            window.path_to_searchindex_js = "searchindex-30d4af89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -189,7 +189,7 @@
 <ul>
 <li>If the packet is a MAC Ack:
 <ul>
-<li>If this node was not expecting the ack, drop.</li>
+<li>If this node was not expecting the ack, stop.</li>
 <li>Otherwise, handle the ack and stop.</li>
 </ul>
 </li>
@@ -201,7 +201,7 @@
 <li>If the packet is a broadcast, continue.</li>
 <li>If the packet carries a destination hint that matches this node, continue.</li>
 <li>If the packet carries a channel hint matching a configured channel, continue.</li>
-<li>Otherwise, drop.</li>
+<li>Otherwise, stop.</li>
 </ul>
 <p>A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. The packet may also be forwarded according to the normal <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a> if the node is acting as a repeater.</p>
 </li>
@@ -210,21 +210,22 @@
 <p>4.1. If the packet is a blind unicast:</p>
 <ul>
 <li>Decrypt the source address using the channel’s derived encryption key <code>K_enc</code>.</li>
-<li>If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, drop.</li>
+<li>If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, stop.</li>
 </ul>
 <p>4.2. Attempt decryption and MIC verification for each candidate channel key.</p>
 <ul>
 <li>For blind unicast, this may require re-decrypting the source address for each candidate channel from step 4.1.</li>
-<li>If no candidate channel succeeds, drop.</li>
+<li>If no candidate channel succeeds, stop.</li>
 </ul>
 </li>
 <li>
 <p><strong>Unicast processing</strong></p>
-<p>5.1. If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, drop.</p>
+<p>5.1. If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, stop.</p>
 <p>5.2. Attempt MIC verification (and decryption if encrypted) for each candidate source address.</p>
 <ul>
-<li>If no candidate succeeds, drop.</li>
+<li>If no candidate succeeds, stop.</li>
 </ul>
+<p>5.3. If the source address is blacklisted, drop.</p>
 </li>
 <li>
 <p><strong>Payload type validation</strong></p>
@@ -235,8 +236,7 @@
 <li>
 <p><strong>Ack Processing</strong></p>
 <ul>
-<li>If the packet type requests an ACK, prepare an ACK and add it
-to the outbound queue.</li>
+<li>If the packet type requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack tag</a> from the full 16-byte CMAC and pairwise <code>K_enc</code>, prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
 </ul>
 </li>
 <li>
