@@ -164,7 +164,7 @@ Reticulum v1.1.0 also introduced a distributed blackhole list: specific identiti
 
 | Aspect | UMSH | Reticulum |
 |---|---|---|
-| Channel key size | 16 bytes | 32 bytes (AES-256) |
+| Channel key size | 32 bytes | 32 bytes (AES-256) |
 | Channel identifier | 2-byte derived hint | 16-byte destination hash |
 | Multi-hop multicast | Yes (flood with hop count) | No (single-hop broadcast only) |
 | Group message auth | Channel-key-based CMAC (16-byte MIC) | Channel-key-based HMAC-SHA256 (32-byte tag) |

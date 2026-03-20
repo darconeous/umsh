@@ -4,7 +4,7 @@ A multicast channel is a group communication primitive based on a shared symmetr
 
 ## Channel Keys
 
-A channel key is a 16-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see [Multicast Packet Keys](security.md#multicast-packet-keys)).
+A channel key is a 32-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see [Multicast Packet Keys](security.md#multicast-packet-keys)).
 
 How a node obtains a channel key depends on the type of channel — see [Joining a Channel](#joining-a-channel) below.
 

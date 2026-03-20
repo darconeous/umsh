@@ -19,6 +19,24 @@ Payloads are typically prefixed by a 1-byte payload type identifier. Values from
 | 7     | CoAP-over-UMSH                         |
 | 8     | Node Management Command                |
 
+## Payload and Packet Type Compatibility
+
+Not all payload types are valid with all packet types. A receiver should drop a packet whose payload type is not compatible with its packet type. For the purposes of this table, blind unicast follows the same rules as unicast.
+
+| Payload Type        | Unicast | Multicast | Broadcast |
+|---------------------|:-------:|:---------:|:---------:|
+| Empty payload       | Yes     | Yes       | Yes       |
+| Node Identity       | Yes     | Yes       | Yes       |
+| MAC Command         | Yes     | Note 1    | No        |
+| Text Message        | Yes     | Yes       | No        |
+| Chat-Room Message   | Yes     | No        | No        |
+| CoAP-over-UMSH      | Yes     | Yes       | No        |
+| Node Management Cmd | Yes     | Yes       | No        |
+
+Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads and node identities.
+
+**Note 1:** Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.
+
 ## In-Band Node Management
 
 Nodes may optionally support remote management via **Node Management Command** payloads.

@@ -279,27 +279,48 @@ Static options are not included in their wire delta-length form. Instead, each s
 
 Where `number` is the option's absolute option number (not a delta) and `length` is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.
 
+### Ack Tag Construction
+
+When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an **ack tag** — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.
+
+The ack tag is computed as follows:
+
+1. Compute the full 16-byte AES-CMAC over the AAD and plaintext using `K_mic` (this is the same computation used to produce the packet MIC, before any truncation).
+2. Encrypt the 16-byte CMAC with a single AES-128-ECB block encryption using the pairwise `K_enc`.
+3. Truncate the result to 8 bytes.
+
+```text
+ack_tag = truncate_to_8( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
+```
+
+Where:
+
+- `K_enc` is the **pairwise** encryption key derived from the sender/recipient ECDH shared secret (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), even for blind unicast packets
+- `full_16B_CMAC` is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length
+
+The ack tag is never transmitted in the original packet — it appears only in the [MAC Ack](packet-types.md#mac-ack-packet) response. Because it requires knowledge of `K_enc`, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.
+
+AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
+
 ### Blind Unicast Source Encryption
 
 Blind unicast packets encrypt the source address separately from the payload.
 
-The source address is encrypted using AES-128-CTR with the *channel key*
-(rather than a key derived from the shared secret), using the CTR IV
-constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
+The source address is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
 
 Let:
 
-- `channel_key` = multicast channel key
+- `K_enc` = channel encryption key derived from the channel key via HKDF
 - `IV` = CTR IV constructed from the packet MIC and SECINFO
 - `SRC` = 32-byte source public key
 
 Then:
 
 ```text
-ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
+ENC_SRC = AES-128-CTR( key=K_enc, iv=IV, plaintext=SRC )
 ```
 
-This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.
+This allows a receiver possessing the channel key to derive `K_enc`, recover the source address, and then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.
 
 ## Perfect Forward Secrecy Sessions
 

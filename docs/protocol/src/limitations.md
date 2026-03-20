@@ -17,22 +17,28 @@ This is a fundamental property of symmetric-key multicast and is shared by other
 The following areas remain provisional or deployment-defined:
 
 1. **Region-code namespace**
-   - Region encoding and allocation are deployment-defined.
+   - The protocol defines a region code option (see [Packet Options](packet-options.md#region-code-option-1)) but does not specify a canonical registry of region codes. Deployments must agree on region code assignments out-of-band. A future revision may define a standard allocation scheme.
 
 2. **Destination-hint collisions**
-   - Destination hints are only a prefilter and are expected to collide.
+   - Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see [Addressing](addressing.md#destination-hint)). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.
 
-3. **Router-hint collisions**
-   - Router hints are only one byte and are expected to collide.
+3. **Duplicate cache sizing**
+   - The protocol does not specify minimum cache sizes or eviction policies for the MIC-based duplicate suppression cache (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)). Undersized caches may cause duplicate forwarding; oversized caches waste memory on constrained devices. Guidance on sizing relative to network traffic rates may be added in a future revision.
 
-4. **Duplicate cache sizing**
-   - The MIC cache depth and eviction details are implementation configurable.
-
-5. **MAC Ack PKTMIC width**
-   - 8 bytes is recommended, but this can be fixed explicitly by the protocol if desired.
-
-6. **Channel-name-to-key derivation**
+4. **Channel-name-to-key derivation**
    - The exact derivation function for named channels is not yet specified in this draft.
 
-7. **Routing-Critical option attribute**
+5. **Routing-Critical option attribute**
    - A third option attribute for routing-critical semantics is planned but not yet defined (see [Packet Options](packet-options.md)).
+
+6. **Protocol version statement**
+   - The FCF includes a `VER` field, but the introduction does not state which protocol version this document describes.
+
+7. **"Optional payload encryption" clarification**
+   - The introduction lists "Optional payload encryption" as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).
+
+8. **"Low-power operation" specificity**
+   - The introduction lists "Low-power operation" as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.
+
+9. **PFS subsection placement in introduction**
+   - Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.

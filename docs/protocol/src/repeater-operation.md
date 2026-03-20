@@ -29,6 +29,9 @@ Because duplicate suppression depends directly on the MIC, shorter MIC sizes inc
 1. **Duplicate suppression**
    - If this packet was forwarded recently, do not forward.
 
+2. **Locally-Handled Unicast**
+   - If this packet was a unicast (bind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward.
+
 2. **RSSI threshold check**
    - If either the packet or repeater imposes a minimum RSSI:
      - If the received RSSI is below the effective threshold, do not forward.
@@ -59,6 +62,10 @@ Because duplicate suppression depends directly on the MIC, shorter MIC sizes inc
 
 9. **Retransmit**
    - Forward the modified packet.
+
+## Forwarding Confirmation
+
+Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a repeater can confirm that its forwarded packet was successfully received by the next hop by overhearing the next repeater's retransmission of the same packet. If the repeater does not hear a subsequent retransmission within a reasonable window, it may infer that the next hop did not receive the packet, though no retry mechanism is defined at the MAC layer.
 
 ## Routing Implications
 

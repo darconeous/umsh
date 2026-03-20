@@ -81,7 +81,7 @@ Both protocols support anonymous first-contact requests, but through different m
 
 | Aspect | UMSH | MeshCore |
 |---|---|---|
-| Channel key size | 16 bytes | Variable (shared secret) |
+| Channel key size | 32 bytes | Variable (shared secret) |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of key |
 | Group message auth | Channel-key-based CMAC | Channel-key-based HMAC (2-byte MAC) |
 | Sender authentication | Not cryptographically verified (symmetric key limitation) | Not cryptographically verified (same limitation) |

@@ -13,6 +13,7 @@
 
 # Networking
 
+- [Packet Processing](packet-processing.md)
 - [Multicast Channels](multicast-channels.md)
 - [Repeater Operation](repeater-operation.md)
 - [Beacons & Path Discovery](beacons.md)

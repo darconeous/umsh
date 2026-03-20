@@ -2,7 +2,7 @@
 
 ### Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?
 
-To forge a MAC Ack, the attacker must supply a valid `PKTMIC`, which is derived from the MIC at the end of the original packet. This means the attacker must receive substantially the entire original packet. An attacker that can receive the full packet cannot simultaneously suppress it from the intended recipient — that would require full-duplex operation (transmitting a jamming signal while receiving the packet), which is not practical with commodity LoRa hardware. In practice, if the attacker heard enough of the packet to extract the PKTMIC, so did the destination.
+No. A MAC Ack contains an [ack tag](security.md#ack-tag-construction) — an 8-byte value derived by encrypting the full 16-byte CMAC with the pairwise `K_enc`. Computing a valid ack tag requires knowledge of the pairwise encryption key, which in turn requires the ECDH shared secret between the sender and recipient. A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without `K_enc`. Ack forgery is therefore as hard as breaking the pairwise key agreement.
 
 ### Doesn't blind unicast have a circular dependency between the MIC and source decryption?
 
@@ -40,7 +40,9 @@ Receivers that see an unknown source hint on an authenticated packet should trea
 
 ### How does a MAC Ack get routed back to the original sender?
 
-A MAC Ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see [Forwarding Procedure](repeater-operation.md#forwarding-procedure)).
+MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see [Forwarding Procedure](repeater-operation.md#forwarding-procedure)).
+
+Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop's retransmission of the same packet (see [Forwarding Confirmation](repeater-operation.md#forwarding-confirmation)).
 
 ### Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?
 

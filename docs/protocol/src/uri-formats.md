@@ -24,18 +24,18 @@ This allows a node identity bundle to be embedded in a QR code.
 
 ## Channel URIs
 
-Internally, channels are identified by a 16-byte shared key.
+Internally, channels are identified by a 32-byte shared key.
 
 Example direct-key URI:
 
 ```text
-umsh:ck:J9axNdS22exxS8H9C8nj7w
+umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP
 ```
 
 Additional metadata may be attached as URI parameters:
 
 ```text
-umsh:ck:J9axNdS22exxS8H9C8nj7w?n=MyPrivateChannel;mh=6;r=Eugine
+umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugine
 ```
 
 Where, for example:

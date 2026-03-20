@@ -70,7 +70,7 @@ keys can be learned through several mechanisms:
   presence, optionally including identity information (see [Node Identity](node-identity.md))
 - **QR codes and URIs** — public keys can be shared out-of-band via
   `umsh:n:` URIs (see [URI Formats](uri-formats.md))
-- **First-contact packets** — a sender can set the `S` flag to include
+- **First-contact packets** — a sender can set the [`S` flag](packet-structure.md#frame-control-field) to include
   its full public key in any packet, allowing the receiver to learn it directly from the wire
 
 Once a node's public key is known, it can be cached and subsequent packets
@@ -90,15 +90,15 @@ UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sess
 
 ### Unicast
 
-Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.
+Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see [Frame Types](packet-types.md) and [Security & Cryptography](security.md)).
 
 ### Multicast Channels
 
-A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it.
+A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See [Multicast Channels](multicast-channels.md) for channel configuration and membership details.
 
 A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.
 
 ### Blind Unicast
 
-**Blind unicast** hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.
+**Blind unicast** hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Source Encryption](security.md#blind-unicast-source-encryption) for details.
 

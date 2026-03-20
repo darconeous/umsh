@@ -108,7 +108,7 @@ UMSH's 2-byte hints reveal far less information to passive observers, and blind 
 
 | Aspect | UMSH | Meshtastic |
 |---|---|---|
-| Channel key size | 16 bytes | 1, 16, or 32 bytes (PSK) |
+| Channel key size | 32 bytes | 1, 16, or 32 bytes (PSK) |
 | Channel identifier | 2-byte derived hint | 1-byte DJB2 hash of channel name |
 | Channels per node | Unlimited (implementation-defined) | Up to 8 |
 | Multi-hop multicast | Yes (flood with hop count) | Yes (managed flood with hop limit) |

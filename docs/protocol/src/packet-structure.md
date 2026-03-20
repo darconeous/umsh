@@ -19,7 +19,7 @@ Where:
 - `CHANNEL` is a 2-byte channel identifier
 - `SRC` is a 2-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
 - `SECINFO` is present on authenticated/encrypted packet types
-- `MIC` is present on authenticated/encrypted packet types and some acknowledgements
+- `MIC` is present on authenticated/encrypted packet types; MAC acks carry an [ack tag](security.md#ack-tag-construction) instead
 
 ## Frame Control Field
 
@@ -45,14 +45,14 @@ Where:
 
 | Value | Name                         |
 |------:|------------------------------|
-| 0     | Broadcast                    |
-| 1     | MAC Ack                      |
-| 2     | Unicast                      |
-| 3     | Unicast, Ack-Requested       |
-| 4     | *RESERVED*                   |
-| 5     | Multicast                    |
-| 6     | Blind Unicast                |
-| 7     | Blind Unicast, Ack-Requested |
+| 0     | `BCST`: Broadcast                    |
+| 1     | `MACK`: MAC Ack                      |
+| 2     | `UNIC`: Unicast                      |
+| 3     | `UACK`: Unicast, Ack-Requested       |
+| 4     | `MCST`: Multicast                    |
+| 5     | *RESERVED*                           |
+| 6     | `BUNI`: Blind Unicast                |
+| 7     | `BUAK`: Blind Unicast, Ack-Requested |
 
 ## Common Optional Fields
 
@@ -80,7 +80,7 @@ Followed by optional extended delta bytes, optional extended length bytes, and t
 +---------------+---------------+
 | Extended Delta (0-2 bytes)    |
 +-------------------------------+
-| Extended Length (0-2 bytes)    |
+| Extended Length (0-2 bytes)   |
 +-------------------------------+
 | Option Value (0 or more bytes)|
 +-------------------------------+
@@ -109,8 +109,8 @@ Two options — option 3 (1-byte value) followed by option 9 (2-byte value):
 +------+-------+  +------+-------+-------+  +------+
 | 0x31 |  val  |  | 0x62 |  val  |  val  |  | 0xFF |
 +------+-------+  +------+-------+-------+  +------+
- delta=3 option 3   delta=6 option 9          marker
- len=1   value(1B)  len=2   value (2B)
+ delta=3 opt 3     delta=6 opt 9             marker
+ len=1   val (1B)  len=2   val (2B)
 ```
 
 ### Flood Hop Count

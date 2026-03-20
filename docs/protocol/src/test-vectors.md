@@ -10,7 +10,7 @@ The following fictional values are used consistently across examples:
 
 - **Node A** public key: `A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20` (hint: `A1B2`)
 - **Node B** public key: `C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40` (hint: `C3D4`)
-- **Channel key**: `5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A` (channel hint: `7E5F`)
+- **Channel key**: `5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A` (channel hint: `7E5F`)
 
 ### FCF Bit Layout Reference
 
@@ -112,7 +112,7 @@ An encrypted multicast from Node A. The source hint and payload are encrypted to
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=5 (multicast), S=0, O=0, H=0 | `28` |
+| FCF | VER=0, TYPE=4 (multicast), S=0, O=0, H=0 | `20` |
 | CHANNEL | Channel hint | `7E 5F` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 5 | `00 00 00 05` |
@@ -120,7 +120,7 @@ An encrypted multicast from Node A. The source hint and payload are encrypted to
 | MIC | 16 bytes | `AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99` |
 
 ```text
-28 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 ```
 
@@ -132,7 +132,7 @@ An authenticated but unencrypted multicast from Node A. The source hint appears 
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=5 (multicast), S=0, O=0, H=0 | `28` |
+| FCF | VER=0, TYPE=4 (multicast), S=0, O=0, H=0 | `20` |
 | CHANNEL | Channel hint | `7E 5F` |
 | SCF | E=0, MIC=3 (16-byte), S=0 | `60` |
 | Frame Counter | 3 | `00 00 00 03` |
@@ -141,7 +141,7 @@ An authenticated but unencrypted multicast from Node A. The source hint appears 
 | MIC | 16 bytes | `11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00` |
 
 ```text
-28 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 ```
 
