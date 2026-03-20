@@ -42,7 +42,15 @@ umsh:cs:Public
 
 Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.
 
-The exact key derivation function for named channels is not yet specified (see [Open Items](limitations.md#open-items-and-provisional-areas)).
+The channel key is derived from the channel name using HKDF-Extract:
+
+```text
+channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+```
+
+Where `channel_name` is the name portion of the `umsh:cs:` URI (everything after `umsh:cs:`), after percent-decoding, encoded as a UTF-8 byte string. For example, given `umsh:cs:Public`, the input is the UTF-8 encoding of `Public`. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard [Multicast Packet Keys](security.md#multicast-packet-keys) derivation to produce `K_enc` and `K_mic`.
+
+HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.
 
 ### Private Channels
 

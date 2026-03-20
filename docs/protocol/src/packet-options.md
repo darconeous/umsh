@@ -53,12 +53,31 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 - Semantics: restricts flood-routing to repeaters configured for the specified region.
 - A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.
 - This option is not enforced until the source route list is exhausted.
-- The encoding of region identifiers is TBD, but may be something like the following:
-  - For regions defined by the nearest airport, encode the airport's IATA code into
-    a 16-bit value using ARNCE/HAM-64. e.g. SJC -> 0x7853, MFR -> 0x5242
-  - For other regions (super regions, cities without an airport, etc), it would be
-    the most-significant two bytes of the SHA256 of the name of the region.
-    e.g. "Rogue Valley" -> 0xdf6f, "SF Bay Area" -> 0x31d9, "Southern Oregon" -> 0x6af2.
+
+#### Region Code Encoding
+
+Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:
+
+**Airport-based regions.** For regions defined by proximity to an airport, encode the airport's 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:
+
+| IATA Code | Region Code |
+|---|---|
+| SJC | `0x7853` |
+| MFR | `0x5242` |
+
+**Named regions.** For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:
+
+| Region Name | SHA-256 prefix | Region Code |
+|---|---|---|
+| Rogue Valley | `0xdf6f...` | `0xdf6f` |
+| SF Bay Area | `0x31d9...` | `0x31d9` |
+| Southern Oregon | `0x6af2...` | `0x6af2` |
+
+IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.
+
+These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).
+
+The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
 
 ### Trace Route (option 2)
 - Semantics: if present, repeaters prepend their own repeater hint before retransmitting.
