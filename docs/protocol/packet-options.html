@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-30d4af89.js";
+            window.path_to_searchindex_js = "searchindex-d68eaf2f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -233,16 +233,37 @@
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
-<li>The encoding of region identifiers is TBD, but may be something like the following:
-<ul>
-<li>For regions defined by the nearest airport, encode the airport’s IATA code into
-a 16-bit value using ARNCE/HAM-64. e.g. SJC -&gt; 0x7853, MFR -&gt; 0x5242</li>
-<li>For other regions (super regions, cities without an airport, etc), it would be
-the most-significant two bytes of the SHA256 of the name of the region.
-e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Southern Oregon” -&gt; 0x6af2.</li>
 </ul>
-</li>
-</ul>
+<h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
+<p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
+<p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>IATA Code</th><th>Region Code</th></tr>
+</thead>
+<tbody>
+<tr><td>SJC</td><td><code>0x7853</code></td></tr>
+<tr><td>MFR</td><td><code>0x5242</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Region Name</th><th>SHA-256 prefix</th><th>Region Code</th></tr>
+</thead>
+<tbody>
+<tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
+<tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
+<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0x6af2</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.</p>
+<p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
+<p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
 <ul>
 <li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>

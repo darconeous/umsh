@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-30d4af89.js";
+            window.path_to_searchindex_js = "searchindex-d68eaf2f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -202,7 +202,11 @@
 <pre><code class="language-text">umsh:cs:Public
 </code></pre>
 <p>Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
-<p>The exact key derivation function for named channels is not yet specified (see <a href="limitations.html#open-items-and-provisional-areas">Open Items</a>).</p>
+<p>The channel key is derived from the channel name using HKDF-Extract:</p>
+<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+</code></pre>
+<p>Where <code>channel_name</code> is the name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>), after percent-decoding, encoded as a UTF-8 byte string. For example, given <code>umsh:cs:Public</code>, the input is the UTF-8 encoding of <code>Public</code>. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<p>HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.</p>
 <h3 id="private-channels"><a class="header" href="#private-channels">Private Channels</a></h3>
 <p>For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="uri-formats.html#channel-uris">URI Formats</a>), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.</p>
 <h3 id="managed-channels"><a class="header" href="#managed-channels">Managed Channels</a></h3>

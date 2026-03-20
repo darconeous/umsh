@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-30d4af89.js";
+            window.path_to_searchindex_js = "searchindex-d68eaf2f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a28c63.js"></script>
@@ -580,16 +580,37 @@ place that it appeared in encrypted multicast:</p>
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
-<li>The encoding of region identifiers is TBD, but may be something like the following:
-<ul>
-<li>For regions defined by the nearest airport, encode the airport’s IATA code into
-a 16-bit value using ARNCE/HAM-64. e.g. SJC -&gt; 0x7853, MFR -&gt; 0x5242</li>
-<li>For other regions (super regions, cities without an airport, etc), it would be
-the most-significant two bytes of the SHA256 of the name of the region.
-e.g. “Rogue Valley” -&gt; 0xdf6f, “SF Bay Area” -&gt; 0x31d9, “Southern Oregon” -&gt; 0x6af2.</li>
 </ul>
-</li>
-</ul>
+<h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
+<p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
+<p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>IATA Code</th><th>Region Code</th></tr>
+</thead>
+<tbody>
+<tr><td>SJC</td><td><code>0x7853</code></td></tr>
+<tr><td>MFR</td><td><code>0x5242</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Region Name</th><th>SHA-256 prefix</th><th>Region Code</th></tr>
+</thead>
+<tbody>
+<tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
+<tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
+<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0x6af2</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.</p>
+<p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
+<p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
 <ul>
 <li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>
@@ -1047,7 +1068,11 @@ K_mic = okm[16..31]
 <pre><code class="language-text">umsh:cs:Public
 </code></pre>
 <p>Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
-<p>The exact key derivation function for named channels is not yet specified (see <a href="#open-items-and-provisional-areas">Open Items</a>).</p>
+<p>The channel key is derived from the channel name using HKDF-Extract:</p>
+<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+</code></pre>
+<p>Where <code>channel_name</code> is the name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>), after percent-decoding, encoded as a UTF-8 byte string. For example, given <code>umsh:cs:Public</code>, the input is the UTF-8 encoding of <code>Public</code>. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<p>HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.</p>
 <h3 id="private-channels"><a class="header" href="#private-channels">Private Channels</a></h3>
 <p>For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="#channel-uris">URI Formats</a>), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.</p>
 <h3 id="managed-channels"><a class="header" href="#managed-channels">Managed Channels</a></h3>
@@ -1667,12 +1692,6 @@ K_mic = okm[16..31]
 <p>The following areas remain provisional or deployment-defined:</p>
 <ol>
 <li>
-<p><strong>Region-code namespace</strong></p>
-<ul>
-<li>The protocol defines a region code option (see <a href="#region-code-option-1">Packet Options</a>) but does not specify a canonical registry of region codes. Deployments must agree on region code assignments out-of-band. A future revision may define a standard allocation scheme.</li>
-</ul>
-</li>
-<li>
 <p><strong>Destination-hint collisions</strong></p>
 <ul>
 <li>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</li>
@@ -1682,12 +1701,6 @@ K_mic = okm[16..31]
 <p><strong>Duplicate cache sizing</strong></p>
 <ul>
 <li>The protocol does not specify minimum cache sizes or eviction policies for the MIC-based duplicate suppression cache (see <a href="#duplicate-suppression">Duplicate Suppression</a>). Undersized caches may cause duplicate forwarding; oversized caches waste memory on constrained devices. Guidance on sizing relative to network traffic rates may be added in a future revision.</li>
-</ul>
-</li>
-<li>
-<p><strong>Channel-name-to-key derivation</strong></p>
-<ul>
-<li>The exact derivation function for named channels is not yet specified in this draft.</li>
 </ul>
 </li>
 <li>
