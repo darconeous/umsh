@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -215,14 +215,14 @@
 <tr><th style="text-align: right">Value</th><th>Name</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>Broadcast</td></tr>
-<tr><td style="text-align: right">1</td><td>MAC Ack</td></tr>
-<tr><td style="text-align: right">2</td><td>Unicast</td></tr>
-<tr><td style="text-align: right">3</td><td>Unicast, Ack-Requested</td></tr>
-<tr><td style="text-align: right">4</td><td><em>RESERVED</em></td></tr>
-<tr><td style="text-align: right">5</td><td>Multicast</td></tr>
-<tr><td style="text-align: right">6</td><td>Blind Unicast</td></tr>
-<tr><td style="text-align: right">7</td><td>Blind Unicast, Ack-Requested</td></tr>
+<tr><td style="text-align: right">0</td><td><code>BCST</code>: Broadcast</td></tr>
+<tr><td style="text-align: right">1</td><td><code>MACK</code>: MAC Ack</td></tr>
+<tr><td style="text-align: right">2</td><td><code>UNIC</code>: Unicast</td></tr>
+<tr><td style="text-align: right">3</td><td><code>UACK</code>: Unicast, Ack-Requested</td></tr>
+<tr><td style="text-align: right">4</td><td><code>MCST</code>: Multicast</td></tr>
+<tr><td style="text-align: right">5</td><td><em>RESERVED</em></td></tr>
+<tr><td style="text-align: right">6</td><td><code>BUNI</code>: Blind Unicast</td></tr>
+<tr><td style="text-align: right">7</td><td><code>BUAK</code>: Blind Unicast, Ack-Requested</td></tr>
 </tbody>
 </table>
 </div>
@@ -243,7 +243,7 @@
 +---------------+---------------+
 | Extended Delta (0-2 bytes)    |
 +-------------------------------+
-| Extended Length (0-2 bytes)    |
+| Extended Length (0-2 bytes)   |
 +-------------------------------+
 | Option Value (0 or more bytes)|
 +-------------------------------+
@@ -270,8 +270,8 @@
 <pre><code class="language-text">+------+-------+  +------+-------+-------+  +------+
 | 0x31 |  val  |  | 0x62 |  val  |  val  |  | 0xFF |
 +------+-------+  +------+-------+-------+  +------+
- delta=3 option 3   delta=6 option 9          marker
- len=1   value(1B)  len=2   value (2B)
+ delta=3 opt 3     delta=6 opt 9             marker
+ len=1   val (1B)  len=2   val (2B)
 </code></pre>
 <h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
 <p>If present, <code>HOPS</code> is a single unsigned byte:</p>

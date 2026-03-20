@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -241,12 +241,13 @@ place that it appeared in encrypted multicast:</p>
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel key and the <code>MIC</code> as IV (see <a href="security.html#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc</code> (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="security.html#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
+<li>Receiver derives <code>K_enc</code> from the candidate channel key via HKDF.</li>
 <li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses the channel key and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver uses <code>K_enc</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
 <li>Receiver performs ECDH.</li>

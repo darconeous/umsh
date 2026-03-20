@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,12 +197,6 @@
 </ul>
 </li>
 <li>
-<p><strong>Router-hint collisions</strong></p>
-<ul>
-<li>Router hints are only one byte and are expected to collide.</li>
-</ul>
-</li>
-<li>
 <p><strong>Duplicate cache sizing</strong></p>
 <ul>
 <li>The MIC cache depth and eviction details are implementation configurable.</li>
@@ -224,6 +218,30 @@
 <p><strong>Routing-Critical option attribute</strong></p>
 <ul>
 <li>A third option attribute for routing-critical semantics is planned but not yet defined (see <a href="packet-options.html">Packet Options</a>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Protocol version statement</strong></p>
+<ul>
+<li>The FCF includes a <code>VER</code> field, but the introduction does not state which protocol version this document describes.</li>
+</ul>
+</li>
+<li>
+<p><strong>“Optional payload encryption” clarification</strong></p>
+<ul>
+<li>The introduction lists “Optional payload encryption” as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).</li>
+</ul>
+</li>
+<li>
+<p><strong>“Low-power operation” specificity</strong></p>
+<ul>
+<li>The introduction lists “Low-power operation” as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.</li>
+</ul>
+</li>
+<li>
+<p><strong>PFS subsection placement in introduction</strong></p>
+<ul>
+<li>Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.</li>
 </ul>
 </li>
 </ol>

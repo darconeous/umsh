@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -234,7 +234,7 @@ keys can be learned through several mechanisms:</p>
 presence, optionally including identity information (see <a href="node-identity.html">Node Identity</a>)</li>
 <li><strong>QR codes and URIs</strong> — public keys can be shared out-of-band via
 <code>umsh:n:</code> URIs (see <a href="uri-formats.html">URI Formats</a>)</li>
-<li><strong>First-contact packets</strong> — a sender can set the <code>S</code> flag to include
+<li><strong>First-contact packets</strong> — a sender can set the <a href="packet-structure.html#frame-control-field"><code>S</code> flag</a> to include
 its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
 </ul>
 <p>Once a node’s public key is known, it can be cached and subsequent packets
@@ -248,12 +248,12 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h4 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h4>
 <p>UMSH supports <a href="security.html#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
-<p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
+<p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="packet-types.html">Frame Types</a> and <a href="security.html">Security &amp; Cryptography</a>).</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
-<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it.</p>
+<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See <a href="multicast-channels.html">Multicast Channels</a> for channel configuration and membership details.</p>
 <p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
 <h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
-<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.</p>
+<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See <a href="packet-types.html#blind-unicast-packet">Blind Unicast Packet</a> and <a href="security.html#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</p>
 
                     </main>
 

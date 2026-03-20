@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -235,7 +235,7 @@ keys can be learned through several mechanisms:</p>
 presence, optionally including identity information (see <a href="#node-identity">Node Identity</a>)</li>
 <li><strong>QR codes and URIs</strong> — public keys can be shared out-of-band via
 <code>umsh:n:</code> URIs (see <a href="#uri-formats">URI Formats</a>)</li>
-<li><strong>First-contact packets</strong> — a sender can set the <code>S</code> flag to include
+<li><strong>First-contact packets</strong> — a sender can set the <a href="#frame-control-field"><code>S</code> flag</a> to include
 its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
 </ul>
 <p>Once a node’s public key is known, it can be cached and subsequent packets
@@ -249,12 +249,12 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h4 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h4>
 <p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
-<p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement.</p>
+<p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="#frame-types">Frame Types</a> and <a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
-<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it.</p>
+<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See <a href="#multicast-channels-1">Multicast Channels</a> for channel configuration and membership details.</p>
 <p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
 <h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
-<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key.</p>
+<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
 <p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
@@ -362,14 +362,14 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <tr><th style="text-align: right">Value</th><th>Name</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>Broadcast</td></tr>
-<tr><td style="text-align: right">1</td><td>MAC Ack</td></tr>
-<tr><td style="text-align: right">2</td><td>Unicast</td></tr>
-<tr><td style="text-align: right">3</td><td>Unicast, Ack-Requested</td></tr>
-<tr><td style="text-align: right">4</td><td><em>RESERVED</em></td></tr>
-<tr><td style="text-align: right">5</td><td>Multicast</td></tr>
-<tr><td style="text-align: right">6</td><td>Blind Unicast</td></tr>
-<tr><td style="text-align: right">7</td><td>Blind Unicast, Ack-Requested</td></tr>
+<tr><td style="text-align: right">0</td><td><code>BCST</code>: Broadcast</td></tr>
+<tr><td style="text-align: right">1</td><td><code>MACK</code>: MAC Ack</td></tr>
+<tr><td style="text-align: right">2</td><td><code>UNIC</code>: Unicast</td></tr>
+<tr><td style="text-align: right">3</td><td><code>UACK</code>: Unicast, Ack-Requested</td></tr>
+<tr><td style="text-align: right">4</td><td><code>MCST</code>: Multicast</td></tr>
+<tr><td style="text-align: right">5</td><td><em>RESERVED</em></td></tr>
+<tr><td style="text-align: right">6</td><td><code>BUNI</code>: Blind Unicast</td></tr>
+<tr><td style="text-align: right">7</td><td><code>BUAK</code>: Blind Unicast, Ack-Requested</td></tr>
 </tbody>
 </table>
 </div>
@@ -390,7 +390,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 +---------------+---------------+
 | Extended Delta (0-2 bytes)    |
 +-------------------------------+
-| Extended Length (0-2 bytes)    |
+| Extended Length (0-2 bytes)   |
 +-------------------------------+
 | Option Value (0 or more bytes)|
 +-------------------------------+
@@ -417,8 +417,8 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <pre><code class="language-text">+------+-------+  +------+-------+-------+  +------+
 | 0x31 |  val  |  | 0x62 |  val  |  val  |  | 0xFF |
 +------+-------+  +------+-------+-------+  +------+
- delta=3 option 3   delta=6 option 9          marker
- len=1   value(1B)  len=2   value (2B)
+ delta=3 opt 3     delta=6 opt 9             marker
+ len=1   val (1B)  len=2   val (2B)
 </code></pre>
 <h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
 <p>If present, <code>HOPS</code> is a single unsigned byte:</p>
@@ -496,12 +496,13 @@ place that it appeared in encrypted multicast:</p>
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel key and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
+<li>Receiver derives <code>K_enc</code> from the candidate channel key via HKDF.</li>
 <li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses the channel key and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver uses <code>K_enc</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
 <li>Receiver performs ECDH.</li>
@@ -879,19 +880,17 @@ K_mic = okm[16..31]
 <p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
 <p>Blind unicast packets encrypt the source address separately from the payload.</p>
-<p>The source address is encrypted using AES-128-CTR with the <em>channel key</em>
-(rather than a key derived from the shared secret), using the CTR IV
-constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
-<li><code>channel_key</code> = multicast channel key</li>
+<li><code>K_enc</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>SRC</code> = 32-byte source public key</li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=channel_key, iv=IV, plaintext=SRC )
+<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc, iv=IV, plaintext=SRC )
 </code></pre>
-<p>This allows a receiver possessing the channel key to recover the source address first, then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
+<p>This allows a receiver possessing the channel key to derive <code>K_enc</code>, recover the source address, and then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
 <p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
 <h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>
@@ -928,10 +927,83 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <p>Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="packet-processing"><a class="header" href="#packet-processing">Packet Processing</a></h1>
+<p>This chapter describes how a receiving node processes an incoming packet. This procedure applies to all nodes, not just repeaters. Repeater-specific forwarding logic is described separately in <a href="#repeater-operation">Repeater Operation</a>.</p>
+<h2 id="receive-procedure"><a class="header" href="#receive-procedure">Receive Procedure</a></h2>
+<ol>
+<li>
+<p><strong>Well-formedness check</strong></p>
+<ul>
+<li>If the packet is malformed (invalid FCF, truncated fields, non-zero reserved bits in the SCF), drop.</li>
+</ul>
+</li>
+<li>
+<p><strong>MAC Ack handling</strong></p>
+<ul>
+<li>If the packet is a MAC Ack:
+<ul>
+<li>If this node was not expecting the ack, drop.</li>
+<li>Otherwise, handle the ack and stop.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>Address matching</strong></p>
+<ul>
+<li>If the packet is a broadcast, continue.</li>
+<li>If the packet carries a destination hint that matches this node, continue.</li>
+<li>If the packet carries a channel hint matching a configured channel, continue.</li>
+<li>Otherwise, drop.</li>
+</ul>
+<p>A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. The packet may also be forwarded according to the normal <a href="#forwarding-procedure">forwarding procedure</a> if the node is acting as a repeater.</p>
+</li>
+<li>
+<p><strong>Channel processing</strong> (multicast and blind unicast)</p>
+<p>4.1. If the packet is a blind unicast:</p>
+<ul>
+<li>Decrypt the source address using the channel’s derived encryption key <code>K_enc</code>.</li>
+<li>If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, drop.</li>
+</ul>
+<p>4.2. Attempt decryption and MIC verification for each candidate channel key.</p>
+<ul>
+<li>For blind unicast, this may require re-decrypting the source address for each candidate channel from step 4.1.</li>
+<li>If no candidate channel succeeds, drop.</li>
+</ul>
+</li>
+<li>
+<p><strong>Unicast processing</strong></p>
+<p>5.1. If the source address is a hint (<code>S=0</code>), look up candidate public keys matching the hint. If no candidates exist, drop.</p>
+<p>5.2. Attempt MIC verification (and decryption if encrypted) for each candidate source address.</p>
+<ul>
+<li>If no candidate succeeds, drop.</li>
+</ul>
+</li>
+<li>
+<p><strong>Payload type validation</strong></p>
+<ul>
+<li>If the payload type is not allowed for this packet type (see <a href="#payload-and-packet-type-compatibility">Payload and Packet Type Compatibility</a>), drop.</li>
+</ul>
+</li>
+<li>
+<p><strong>Ack Processing</strong></p>
+<ul>
+<li>If the packet type requests an ACK, prepare an ACK and add it
+to the outbound queue.</li>
+</ul>
+</li>
+<li>
+<p><strong>Application processing</strong></p>
+<ul>
+<li>Continue processing the application payload.</li>
+</ul>
+</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multicast-channels-1"><a class="header" href="#multicast-channels-1">Multicast Channels</a></h1>
 <p>A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.</p>
 <h2 id="channel-keys"><a class="header" href="#channel-keys">Channel Keys</a></h2>
-<p>A channel key is a 16-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>).</p>
+<p>A channel key is a 32-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>).</p>
 <p>How a node obtains a channel key depends on the type of channel — see <a href="#joining-a-channel">Joining a Channel</a> below.</p>
 <h2 id="channel-identifier"><a class="header" href="#channel-identifier">Channel Identifier</a></h2>
 <p>Each channel is identified on the wire by a 2-byte channel identifier <a href="#channel-identifier-derivation">derived from the channel key</a>. This identifier is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, channel identifiers are not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification.</p>
@@ -998,6 +1070,12 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <p><strong>Duplicate suppression</strong></p>
 <ul>
 <li>If this packet was forwarded recently, do not forward.</li>
+</ul>
+</li>
+<li>
+<p><strong>Locally-Handled Unicast</strong></p>
+<ul>
+<li>If this packet was a unicast (bind or direct) packet that was fully handled and processed according to <a href="#packet-processing">Packet Processing</a>, do not forward.</li>
 </ul>
 </li>
 <li>
@@ -1127,6 +1205,26 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 </tbody>
 </table>
 </div>
+<h2 id="payload-and-packet-type-compatibility"><a class="header" href="#payload-and-packet-type-compatibility">Payload and Packet Type Compatibility</a></h2>
+<p>Not all payload types are valid with all packet types. A receiver should drop a packet whose payload type is not compatible with its packet type. For the purposes of this table, blind unicast follows the same rules as unicast.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Payload Type</th><th style="text-align: center">Unicast</th><th style="text-align: center">Multicast</th><th style="text-align: center">Broadcast</th></tr>
+</thead>
+<tbody>
+<tr><td>Empty payload</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Node Identity</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>MAC Command</td><td style="text-align: center">Yes</td><td style="text-align: center">Note 1</td><td style="text-align: center">No</td></tr>
+<tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads and node identities.</p>
+<p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
 <p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads.</p>
 <p>Support for in-band management is protocol-defined but implementation-optional.</p>
@@ -1498,12 +1596,12 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 </code></pre>
 <p>This allows a node identity bundle to be embedded in a QR code.</p>
 <h2 id="channel-uris"><a class="header" href="#channel-uris">Channel URIs</a></h2>
-<p>Internally, channels are identified by a 16-byte shared key.</p>
+<p>Internally, channels are identified by a 32-byte shared key.</p>
 <p>Example direct-key URI:</p>
-<pre><code class="language-text">umsh:ck:J9axNdS22exxS8H9C8nj7w
+<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP
 </code></pre>
 <p>Additional metadata may be attached as URI parameters:</p>
-<pre><code class="language-text">umsh:ck:J9axNdS22exxS8H9C8nj7w?n=MyPrivateChannel;mh=6;r=Eugine
+<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugine
 </code></pre>
 <p>Where, for example:</p>
 <ul>
@@ -1560,12 +1658,6 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 </ul>
 </li>
 <li>
-<p><strong>Router-hint collisions</strong></p>
-<ul>
-<li>Router hints are only one byte and are expected to collide.</li>
-</ul>
-</li>
-<li>
 <p><strong>Duplicate cache sizing</strong></p>
 <ul>
 <li>The MIC cache depth and eviction details are implementation configurable.</li>
@@ -1587,6 +1679,30 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <p><strong>Routing-Critical option attribute</strong></p>
 <ul>
 <li>A third option attribute for routing-critical semantics is planned but not yet defined (see <a href="#packet-options">Packet Options</a>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Protocol version statement</strong></p>
+<ul>
+<li>The FCF includes a <code>VER</code> field, but the introduction does not state which protocol version this document describes.</li>
+</ul>
+</li>
+<li>
+<p><strong>“Optional payload encryption” clarification</strong></p>
+<ul>
+<li>The introduction lists “Optional payload encryption” as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).</li>
+</ul>
+</li>
+<li>
+<p><strong>“Low-power operation” specificity</strong></p>
+<ul>
+<li>The introduction lists “Low-power operation” as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.</li>
+</ul>
+</li>
+<li>
+<p><strong>PFS subsection placement in introduction</strong></p>
+<ul>
+<li>Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.</li>
 </ul>
 </li>
 </ol>
@@ -1737,7 +1853,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Channel key size</td><td>16 bytes</td><td>Variable (shared secret)</td></tr>
+<tr><td>Channel key size</td><td>32 bytes</td><td>Variable (shared secret)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
@@ -1954,7 +2070,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Channel key size</td><td>16 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
+<tr><td>Channel key size</td><td>32 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
@@ -2247,7 +2363,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Channel key size</td><td>16 bytes</td><td>32 bytes (AES-256)</td></tr>
+<tr><td>Channel key size</td><td>32 bytes</td><td>32 bytes (AES-256)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>No (single-hop broadcast only)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC (16-byte MIC)</td><td>Channel-key-based HMAC-SHA256 (32-byte tag)</td></tr>
@@ -2370,7 +2486,7 @@ constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">
 <ul>
 <li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code> (hint: <code>A1B2</code>)</li>
 <li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code> (hint: <code>C3D4</code>)</li>
-<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
+<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
 </ul>
 <h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
@@ -2472,7 +2588,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
@@ -2481,7 +2597,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">28 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+<pre><code class="language-text">20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
 <p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
@@ -2493,7 +2609,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
@@ -2503,7 +2619,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">28 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+<pre><code class="language-text">20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 </code></pre>
 <p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>

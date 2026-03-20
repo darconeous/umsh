@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,6 +199,12 @@
 <p><strong>Duplicate suppression</strong></p>
 <ul>
 <li>If this packet was forwarded recently, do not forward.</li>
+</ul>
+</li>
+<li>
+<p><strong>Locally-Handled Unicast</strong></p>
+<ul>
+<li>If this packet was a unicast (bind or direct) packet that was fully handled and processed according to <a href="packet-processing.html">Packet Processing</a>, do not forward.</li>
 </ul>
 </li>
 <li>

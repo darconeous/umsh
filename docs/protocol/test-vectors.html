@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,7 +182,7 @@
 <ul>
 <li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code> (hint: <code>A1B2</code>)</li>
 <li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code> (hint: <code>C3D4</code>)</li>
-<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
+<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
 </ul>
 <h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
@@ -284,7 +284,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
@@ -293,7 +293,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">28 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+<pre><code class="language-text">20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
 <p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
@@ -305,7 +305,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=5 (multicast), S=0, O=0, H=0</td><td><code>28</code></td></tr>
+<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
@@ -315,7 +315,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">28 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+<pre><code class="language-text">20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 </code></pre>
 <p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>

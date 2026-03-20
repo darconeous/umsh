@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81c0e8c2.js";
+            window.path_to_searchindex_js = "searchindex-9d35b158.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-75795e16.js"></script>
+        <script src="toc-e4a28c63.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,6 +197,26 @@
 </tbody>
 </table>
 </div>
+<h2 id="payload-and-packet-type-compatibility"><a class="header" href="#payload-and-packet-type-compatibility">Payload and Packet Type Compatibility</a></h2>
+<p>Not all payload types are valid with all packet types. A receiver should drop a packet whose payload type is not compatible with its packet type. For the purposes of this table, blind unicast follows the same rules as unicast.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Payload Type</th><th style="text-align: center">Unicast</th><th style="text-align: center">Multicast</th><th style="text-align: center">Broadcast</th></tr>
+</thead>
+<tbody>
+<tr><td>Empty payload</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Node Identity</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>MAC Command</td><td style="text-align: center">Yes</td><td style="text-align: center">Note 1</td><td style="text-align: center">No</td></tr>
+<tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads and node identities.</p>
+<p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
 <p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads.</p>
 <p>Support for in-band management is protocol-defined but implementation-optional.</p>
