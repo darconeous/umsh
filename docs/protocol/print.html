@@ -272,7 +272,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 </ul>
 <p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
 <h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
-<p>ARNCE (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.</p>
+<p><a href="https://github.com/arngll/arnce-spec/blob/main/n6drc-arnce.md#introduction">ARNCE</a> (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.</p>
 <p>UMSH uses ARNCE/HAM-64 for:</p>
 <ul>
 <li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
