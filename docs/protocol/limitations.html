@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -183,33 +183,6 @@
 <p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
 <h3 id="destination-hint-collisions"><a class="header" href="#destination-hint-collisions">Destination-Hint Collisions</a></h3>
 <p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="addressing.html#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</p>
-<h2 id="open-items"><a class="header" href="#open-items">Open Items</a></h2>
-<ol>
-<li>
-<p><strong>Protocol version statement</strong></p>
-<ul>
-<li>The FCF includes a <code>VER</code> field, but the introduction does not state which protocol version this document describes.</li>
-</ul>
-</li>
-<li>
-<p><strong>“Optional payload encryption” clarification</strong></p>
-<ul>
-<li>The introduction lists “Optional payload encryption” as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).</li>
-</ul>
-</li>
-<li>
-<p><strong>“Low-power operation” specificity</strong></p>
-<ul>
-<li>The introduction lists “Low-power operation” as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.</li>
-</ul>
-</li>
-<li>
-<p><strong>PFS subsection placement in introduction</strong></p>
-<ul>
-<li>Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.</li>
-</ul>
-</li>
-</ol>
 
                     </main>
 

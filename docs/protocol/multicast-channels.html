@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -192,7 +192,7 @@
 </li>
 </ul>
 <h2 id="multi-hop-delivery"><a class="header" href="#multi-hop-delivery">Multi-Hop Delivery</a></h2>
-<p>Multicast packets are delivered via flood forwarding, bounded by the optional hop count field. Repeaters forward multicast packets according to the standard <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
+<p>Multicast packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward multicast packets according to the standard <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
 <h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
 <p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
 <h2 id="joining-a-channel"><a class="header" href="#joining-a-channel">Joining a Channel</a></h2>

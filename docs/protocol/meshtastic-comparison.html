@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -206,7 +206,7 @@
 <tr><td>Payload encoding</td><td>Raw bytes with 1-byte payload type prefix</td><td>Protobuf-encoded <code>Data</code> message</td></tr>
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>Implicit in protobuf <code>portnum</code> field (~30+ application types)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte)</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
 <tr><td>Max LoRa payload</td><td>~255 bytes</td><td>255 bytes (233 bytes application payload after header and encoding overhead)</td></tr>
 <tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>16 bytes (always)</td></tr>
 </tbody>
@@ -252,12 +252,14 @@
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
 <tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>No</td></tr>
 <tr><td>Next-hop routing</td><td>N/A</td><td>Yes (learned from ACK paths, v2.6+)</td></tr>
-<tr><td>Max hops</td><td>255 (1-byte hop count)</td><td>7 (3-bit hop limit)</td></tr>
+<tr><td>Max hops</td><td>15 flood + “many” source-routed</td><td>7 (3-bit hop limit)</td></tr>
 <tr><td>Duplicate detection</td><td>MIC cache</td><td>Packet ID cache (32-bit random IDs)</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (hop-by-hop retries with backoff)</td><td>Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>SNR-based contention windows</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based rebroadcast priority (implicit)</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
 <tr><td>Traceroute</td><td>Trace-route option on any packet</td><td>Dedicated TRACEROUTE_APP port</td></tr>
@@ -265,8 +267,10 @@
 </table>
 </div>
 <p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
-<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s optional 1-byte hop count allows up to 255 hops, and source routing allows packets to traverse specific paths without flooding.</p>
-<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes.</p>
+<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).</p>
+<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="beacons.html#route-learning">Route Learning</a>).</p>
+<p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
+<p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
 <h2 id="privacy"><a class="header" href="#privacy">Privacy</a></h2>
 <div class="table-wrapper">
 <table>
@@ -294,7 +298,7 @@
 <tr><td>Channel key size</td><td>32 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
-<tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
+<tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No (source in cleartext header)</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Yes (name + PSK configured together)</td></tr>

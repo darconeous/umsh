@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -192,7 +192,7 @@
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>
 <li>
-<p><strong>Outbound discovery</strong>: Node A sends a unicast packet to Node B with the trace-route option present and an appropriate hop count. The packet floods through the mesh; repeaters prepend their router hints to the trace-route option as they forward.</p>
+<p><strong>Outbound discovery</strong>: Node A sends a unicast packet to Node B with the trace-route option present and an appropriate flood hop count. The packet floods through the mesh; repeaters prepend their router hints to the trace-route option as they forward.</p>
 </li>
 <li>
 <p><strong>Path learning</strong>: When Node B receives the packet, the trace-route option contains the sequence of repeater hints traversed, ordered most-recent first. Node B can use this list directly as a candidate source route back to Node A.</p>
@@ -205,6 +205,13 @@
 </li>
 </ol>
 <p>Because router hints are only one byte, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
+<h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
+<p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
+<ul>
+<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches the reversed trace route as a source route for future packets to the sender. This is the primary mechanism for learning precise multi-hop paths.</li>
+<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
+</ul>
+<p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 
                     </main>
 

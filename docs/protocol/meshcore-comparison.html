@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -202,7 +202,7 @@
 <tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>1-byte header with version, type, route mode</td></tr>
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>16 payload types (via 4-bit field)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style options (source route, trace route, region, RSSI/SNR thresholds)</td><td>Path field (up to 64 bytes), transport codes</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Implicit via path length</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Implicit via path length</td></tr>
 <tr><td>Region support</td><td>Optional region code option</td><td>Transport codes (2 × 16-bit)</td></tr>
 </tbody>
 </table>
@@ -220,7 +220,7 @@
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
 <tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>UNIX-timestamp-based (requires clock synchronization)</td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (128 entries); timestamps at application layer</td></tr>
 </tbody>
 </table>
 </div>
@@ -246,18 +246,21 @@
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (ROUTE_TYPE_FLOOD)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (ROUTE_TYPE_FLOOD)</td></tr>
 <tr><td>Direct/source routing</td><td>Yes, via source-route option</td><td>Yes (ROUTE_TYPE_DIRECT)</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>Not supported</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>Not supported</td></tr>
 <tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Dedicated PATH payload type</td></tr>
-<tr><td>Route learning</td><td>Trace-route accumulates hints during flooding</td><td>Explicit returned-path messages</td></tr>
-<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
+<tr><td>Route learning</td><td>Trace-route option accumulates hints during flooding; reversed into source route by recipient</td><td>Explicit returned-path messages</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (retries with backoff)</td><td>Not defined</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>Listen-before-talk with random backoff; SNR-based flood retransmit delay</td></tr>
+<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based retransmit prioritization (implicit, no explicit thresholds)</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Transport codes</td></tr>
 </tbody>
 </table>
 </div>
 <p>UMSH’s hybrid routing model allows a single packet to be source-routed to a specific area and then flood locally, which is useful for reaching a node in a known geographic region without flooding the entire mesh. MeshCore treats flood and direct routing as mutually exclusive modes selected by route-type bits.</p>
-<p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient can use the accumulated trace directly as a source route. MeshCore uses a dedicated returned-path message type.</p>
+<p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender — replies, acknowledgments, and new messages alike (see <a href="beacons.html#route-learning">Route Learning</a>). MeshCore uses a dedicated returned-path message type.</p>
+<p>Both protocols define channel access mechanisms. MeshCore checks for preamble or signal detection before transmitting and defers with a randomized backoff (120–360 ms) if the channel is busy, with a forced-transmit safety valve after 4 seconds. Flood retransmissions use a random delay proportional to airtime and a score-based priority derived from received SNR. UMSH uses CAD with random backoff and SNR-based contention windows for collision avoidance. UMSH additionally defines hop-by-hop forwarding confirmation with retries, providing reliability across the forwarding chain that MeshCore does not offer.</p>
 <h2 id="privacy-and-blind-modes"><a class="header" href="#privacy-and-blind-modes">Privacy and Blind Modes</a></h2>
 <div class="table-wrapper">
 <table>
@@ -317,7 +320,7 @@
 <tr><td>Payload interpretation</td><td>Opaque at MAC layer — application protocols defined separately</td><td>Protocol defines payload types with application semantics (text messages, advertisements, login, etc.)</td></tr>
 <tr><td>Fragmentation</td><td>Delegated to higher-layer protocols in the payload</td><td>Multipart packet type defined at protocol level</td></tr>
 <tr><td>Node identity / advertisements</td><td>Application-layer payload (see <a href="node-identity.html">Node Identity</a>)</td><td>Protocol-level advertisement packet with mandatory fields</td></tr>
-<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="security.html#frame-counter">Frame Counter</a>)</td><td>Relies on UNIX timestamps for replay protection, advertisement freshness, and login sequencing</td></tr>
+<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="security.html#frame-counter">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; relies on UNIX timestamps for advertisement freshness and login sequencing</td></tr>
 </tbody>
 </table>
 </div>
@@ -326,14 +329,14 @@
 <h2 id="timestamps-and-time-dependency"><a class="header" href="#timestamps-and-time-dependency">Timestamps and Time Dependency</a></h2>
 <p>MeshCore relies on UNIX timestamps in several protocol-critical roles:</p>
 <ul>
-<li><strong>Replay protection</strong>: MeshCore uses timestamps rather than sequence counters to detect replayed packets. This requires nodes to maintain a reasonably accurate clock.</li>
+<li><strong>Replay protection</strong>: MeshCore uses a fixed-size circular buffer of packet hashes (128 entries) for short-term duplicate detection. Once the buffer wraps, previously seen packets can no longer be detected as duplicates. Application-layer timestamps provide additional protection for some message types, but there is no MAC-layer replay protection counter.</li>
 <li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp used to determine which advertisement is most recent.</li>
 <li><strong>Login sequencing</strong>: The login handshake incorporates timestamps.</li>
 </ul>
 <p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="security.html#frame-counter">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="node-identity.html">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
-<p>This distinction matters for deployments where nodes may lack reliable time sources — battery-powered sensors, nodes without GPS or NTP access, or devices that reboot frequently. UMSH’s counter-based approach works correctly regardless of clock accuracy, while MeshCore’s timestamp-based approach requires nodes to agree on approximate wall-clock time.</p>
+<p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on clock accuracy and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity — in a busy mesh, the 128-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s reliance on timestamps for advertisement freshness and login sequencing additionally requires nodes to maintain reasonably accurate clocks.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
-<p>Minimum overhead for a typical encrypted unicast message (no options, no hop count):</p>
+<p>Minimum overhead for a typical encrypted unicast message (no options, no flood hop count):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -375,10 +378,10 @@
 <p>The overhead cost of wider hints is exactly 1 byte per address field per packet — a modest price for a 256× reduction in false-positive cryptographic work.</p>
 <h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
 <p>Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.</p>
-<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the hop count and duplicate suppression cache. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
-<p>MeshCore does not define equivalent signal-quality filtering. Every repeater in range of a flooded packet will retransmit it (subject to hop count), regardless of link quality. This can result in retransmissions over marginal links that consume transmit power without meaningfully extending coverage.</p>
+<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the flood hop count and duplicate suppression cache. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
+<p>MeshCore’s SNR-based retransmit delay implicitly prioritizes better-positioned repeaters — nodes with stronger reception retransmit sooner, which can suppress weaker nodes via duplicate detection. However, no packet is ever dropped due to poor signal quality; every repeater in range of a flooded packet will eventually retransmit it (subject to hop count), regardless of link quality. UMSH’s explicit signal-quality thresholds allow the sender to prevent retransmission over weak links entirely, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
-<p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
+<p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on a fixed-size duplicate cache for deduplication and UNIX timestamps for advertisement freshness.</p>
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
 
                     </main>

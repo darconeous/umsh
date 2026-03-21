@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -178,14 +178,14 @@
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
 <pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  |  HOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
 +--------+-----------+--------+--------------+----------+-----------+---------+------+
    1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
 </code></pre>
 <p>Where:</p>
 <ul>
 <li><code>OPTIONS</code> are present if the FCF options flag is set</li>
-<li><code>HOPS</code> is present if the FCF hop-count flag is set</li>
+<li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
 <li><code>DST</code> is a 2-byte destination hint</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
@@ -202,11 +202,11 @@
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>VER</code> = protocol version</li>
+<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a 2-byte source hint is used instead)</li>
 <li><code>O</code> = options present</li>
-<li><code>H</code> = hop count present</li>
+<li><code>H</code> = flood hop count present</li>
 </ul>
 <h3 id="packet-type-values"><a class="header" href="#packet-type-values">Packet Type Values</a></h3>
 <div class="table-wrapper">
@@ -274,13 +274,20 @@
  len=1   val (1B)  len=2   val (2B)
 </code></pre>
 <h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
-<p>If present, <code>HOPS</code> is a single unsigned byte:</p>
-<pre><code class="language-text">+--------+
-| HOPS   |
-+--------+
-  1 byte
+<p>If present, <code>FHOPS</code> is a single byte containing two 4-bit fields:</p>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---------------+---------------+
+| FHOPS_REM     | FHOPS_ACC     |
++---------------+---------------+
+     4 bits          4 bits
 </code></pre>
-<p>This is used for flood-limited forwarding.</p>
+<p>Where:</p>
+<ul>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
+</ul>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
+<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 
                     </main>
 

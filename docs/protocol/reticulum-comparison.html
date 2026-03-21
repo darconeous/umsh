@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -228,7 +228,7 @@
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>4: DATA, ANNOUNCE, LINKREQUEST, PROOF (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Packet.py#L60-L63"><code>Packet.py:60–63</code></a>)</td></tr>
 <tr><td>Destination types</td><td>Implicit in packet type (unicast, multicast, broadcast, blind)</td><td>4: SINGLE, GROUP, PLAIN, LINK (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L63-L66"><code>Destination.py:63–66</code></a>)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Transport ID field (16 bytes) in HEADER_2</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 1-byte field</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 1-byte field</td></tr>
 <tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500-byte network MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91"><code>Reticulum.py:91</code></a>, <code>MTU = 500</code>); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links</td></tr>
 <tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>)</td></tr>
 </tbody>
@@ -292,12 +292,14 @@
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (broadcast propagation)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (broadcast propagation)</td></tr>
 <tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>No</td></tr>
 <tr><td>Transport/directed routing</td><td>N/A</td><td>Transport nodes with next-hop forwarding</td></tr>
 <tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Announce flooding + path request/response</td></tr>
-<tr><td>Max hops</td><td>Limited by hop-count byte (255)</td><td>128 (hard-coded announce propagation cap, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>)</td></tr>
+<tr><td>Max hops</td><td>15 flood + unlimited source-routed</td><td>128 (hard-coded announce propagation cap, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>)</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (retries with backoff)</td><td>No — forwarding is fire-and-forget; reliability is end-to-end via cryptographic proofs</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>Not defined at protocol level; RNode firmware implements CSMA with persistence probability for LoRa interfaces</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
 <tr><td>Announce bandwidth cap</td><td>Not defined (implementation policy)</td><td>Default 2% of interface bandwidth (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L115"><code>Reticulum.py:115</code></a>, <code>ANNOUNCE_CAP = 2</code>), configurable per-interface via <code>announce_cap</code> key</td></tr>
@@ -306,7 +308,8 @@
 </table>
 </div>
 <p>UMSH and Reticulum take fundamentally different approaches to routing.</p>
-<p>UMSH provides <strong>source routing</strong> — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient can reverse the trace to obtain a source route back to the sender.</p>
+<p>UMSH provides <strong>source routing</strong> — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="beacons.html#route-learning">Route Learning</a>).</p>
+<p>UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.</p>
 <p>Reticulum uses <strong>next-hop routing</strong> via Transport Nodes — dedicated forwarding nodes that maintain path tables learned from announces. Regular nodes do not forward packets. When no path is known, a path request is flooded (51 bytes in non-transport mode: 19-byte HEADER_1 + 16-byte destination hash + 16-byte request tag); transport nodes with cached paths respond. This approach is more automatic but requires designated infrastructure nodes and does not support sender-specified routing.</p>
 <p>Reticulum’s maximum announce propagation is 128 hops (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>). This constant is hard-coded; the hop count field is one byte and could technically carry values up to 255, but transport logic enforces the 128-hop limit.</p>
 <p>Reticulum v1.1.0 introduced on-network interface discovery: nodes can broadcast structured discovery announces (containing interface type, LoRa parameters, IFAC credentials, and GPS coordinates) to the <code>rnstransport.discovery.interface</code> destination. Other nodes can receive these announces and automatically connect to trusted remote interfaces. This capability requires the LXMF module and uses proof-of-work stamps to prevent spam. UMSH does not define an equivalent mechanism.</p>
@@ -343,14 +346,14 @@
 <tbody>
 <tr><td>Channel key size</td><td>32 bytes</td><td>32 bytes (AES-256)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
-<tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>No (single-hop broadcast only)</td></tr>
+<tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>No (single-hop broadcast only)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC (16-byte MIC)</td><td>Channel-key-based HMAC-SHA256 (32-byte tag)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No source address to conceal</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Not defined</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH supports multi-hop multicast via flood forwarding with hop-count limits. Reticulum’s GROUP destinations are currently limited to single-hop broadcast — the <a href="https://reticulum.network/manual/understanding.html#destinations">manual states</a>:</p>
+<p>UMSH supports multi-hop multicast via flood forwarding with flood hop count limits. Reticulum’s GROUP destinations are currently limited to single-hop broadcast — the <a href="https://reticulum.network/manual/understanding.html#destinations">manual states</a>:</p>
 <blockquote>
 <p>Packets to this type of destination are not currently transported over multiple hops, although a planned upgrade to Reticulum will allow globally reachable group destinations.</p>
 </blockquote>

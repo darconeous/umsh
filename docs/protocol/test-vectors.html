@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -204,12 +204,12 @@
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>00</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>C0</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">00 A1 B2
+<pre><code class="language-text">C0 A1 B2
 </code></pre>
 <p>Total: 3 bytes.</p>
 <h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
@@ -220,12 +220,12 @@
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>04</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>C4</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">04 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+<pre><code class="language-text">C4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
 20
 </code></pre>
@@ -238,7 +238,7 @@
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>10</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>D0</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -248,7 +248,7 @@
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">10 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+<pre><code class="language-text">D0 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </code></pre>
 <p>Total: 31 bytes (1 + 2 + 2 + 5 + 5 + 16).</p>
@@ -260,7 +260,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>1C</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>DC</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -270,7 +270,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">1C C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
+<pre><code class="language-text">DC C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
 B5 B6 B7 B8 B9 BA BB BC BD BE BF
@@ -284,7 +284,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
@@ -293,7 +293,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
 <p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
@@ -305,7 +305,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
@@ -315,12 +315,12 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 </code></pre>
 <p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
 <h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
-<p>An encrypted unicast from Node A to Node B with a hop count of 4, a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
+<p>An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
 <p><strong>Options encoding:</strong></p>
 <div class="table-wrapper">
 <table>
@@ -341,9 +341,9 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>13</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
 <tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
-<tr><td>HOPS</td><td>4</td><td><code>04</code></td></tr>
+<tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -353,7 +353,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">13 12 78 53 10 FF 04 C3 D4 A1 B2 E0 00 00 00 0A
+<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 A1 B2 E0 00 00 00 0A
 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
 DD DE DF
 </code></pre>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -185,8 +185,8 @@
 </ul>
 <p>The cache key is derived from the packet as follows:</p>
 <ul>
-<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the hop count, it remains stable across forwarding hops.</li>
-<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
+<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.</li>
+<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
 </ul>
 <p>Before forwarding a packet, the repeater checks the cache:</p>
 <ul>
@@ -215,21 +215,13 @@
 <li>
 <p><strong>RSSI threshold check</strong></p>
 <ul>
-<li>If either the packet or repeater imposes a minimum RSSI:
-<ul>
-<li>If the received RSSI is below the effective threshold, do not forward.</li>
-</ul>
-</li>
+<li>If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.</li>
 </ul>
 </li>
 <li>
 <p><strong>SNR threshold check</strong></p>
 <ul>
-<li>If either the packet or repeater imposes a minimum SNR:
-<ul>
-<li>If the received SNR is below the effective threshold, do not forward.</li>
-</ul>
-</li>
+<li>If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.</li>
 </ul>
 </li>
 <li>
@@ -261,7 +253,7 @@
 <li>If the source-route option is now empty:
 <ul>
 <li>If the packet has a region code option and this repeater is not configured for that region, do not forward.</li>
-<li>If the packet has a non-zero hop count, decrement it.</li>
+<li>If the packet has a flood hop count field with <code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.</li>
 <li>Otherwise, do not forward.</li>
 </ul>
 </li>
@@ -270,7 +262,7 @@
 <li>
 <p><strong>Trace route processing</strong></p>
 <ul>
-<li>If the packet contains a trace-route option, prepend this repeater’s hint.</li>
+<li>If the packet contains a trace-route option, prepend this repeater’s hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.</li>
 </ul>
 </li>
 <li>
@@ -292,7 +284,7 @@
 <p>If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in <a href="channel-access.html#backoff-procedure">Channel Access</a>.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
 <p>This forwarding model allows hybrid routing behavior.</p>
-<p>For example, a packet can be source-routed to a specific repeater and also carry a hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
+<p>For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by <code>FHOPS_REM</code>. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
 
                     </main>
 

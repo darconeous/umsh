@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -197,7 +197,6 @@ higher-layer content.</p>
 <li>Operation in both encrypted and amateur-radio-compliant unencrypted modes</li>
 <li>Ability to operate in a way that preserves <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy (PFS)</a></li>
 <li>Timestamp-free at the MAC layer</li>
-<li>Low-power operation</li>
 </ul>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
 <p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
@@ -246,8 +245,6 @@ bytes per packet.</p>
 role, capabilities, and location — via the <a href="#node-identity">Node Identity</a>
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
-<h4 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h4>
-<p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="#frame-types">Frame Types</a> and <a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
 <h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
@@ -255,6 +252,8 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
 <h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
 <p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</p>
+<h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
+<p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
 <p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
@@ -325,14 +324,14 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
 <pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  |  HOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
 +--------+-----------+--------+--------------+----------+-----------+---------+------+
    1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
 </code></pre>
 <p>Where:</p>
 <ul>
 <li><code>OPTIONS</code> are present if the FCF options flag is set</li>
-<li><code>HOPS</code> is present if the FCF hop-count flag is set</li>
+<li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
 <li><code>DST</code> is a 2-byte destination hint</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
@@ -349,11 +348,11 @@ is carried at the application layer and is not required by the MAC layer.</p>
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>VER</code> = protocol version</li>
+<li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a 2-byte source hint is used instead)</li>
 <li><code>O</code> = options present</li>
-<li><code>H</code> = hop count present</li>
+<li><code>H</code> = flood hop count present</li>
 </ul>
 <h3 id="packet-type-values"><a class="header" href="#packet-type-values">Packet Type Values</a></h3>
 <div class="table-wrapper">
@@ -421,19 +420,26 @@ is carried at the application layer and is not required by the MAC layer.</p>
  len=1   val (1B)  len=2   val (2B)
 </code></pre>
 <h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
-<p>If present, <code>HOPS</code> is a single unsigned byte:</p>
-<pre><code class="language-text">+--------+
-| HOPS   |
-+--------+
-  1 byte
+<p>If present, <code>FHOPS</code> is a single byte containing two 4-bit fields:</p>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---------------+---------------+
+| FHOPS_REM     | FHOPS_ACC     |
++---------------+---------------+
+     4 bits          4 bits
 </code></pre>
-<p>This is used for flood-limited forwarding.</p>
+<p>Where:</p>
+<ul>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
+</ul>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="#routing-implications">Routing Implications</a>).</p>
+<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="frame-types"><a class="header" href="#frame-types">Frame Types</a></h1>
 <h2 id="broadcast-packet"><a class="header" href="#broadcast-packet">Broadcast Packet</a></h2>
 <p>Broadcast packets carry a source and payload, but no security info.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+---------+
-| FCF | [OPTIONS] |[HOPS]| SRC | PAYLOAD |
+| FCF | [OPTIONS] |[FHOPS]| SRC | PAYLOAD |
 +-----+-----------+------+-----+---------+
   1 B    variable   0/1 B 2/32B   var.
 </code></pre>
@@ -442,7 +448,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>A MAC acknowledgement is generated by the <strong>final destination</strong> — the node that successfully processes and accepts the original packet. Repeaters do not generate MAC acks; they forward ack packets like any other packet type.</p>
 <p>The ack identifies the original sender by destination hint and carries an <strong>ack tag</strong> — a cryptographically derived value that the sender can verify. See <a href="#ack-tag-construction">Ack Tag Construction</a> for the derivation.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+---------+
-| FCF | [OPTIONS] |[HOPS]| DST | ACK TAG |
+| FCF | [OPTIONS] |[FHOPS]| DST | ACK TAG |
 +-----+-----------+------+-----+---------+
   1 B    variable   0/1 B  2 B    8 B
 </code></pre>
@@ -452,11 +458,11 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <li><code>ACK TAG</code> is an 8-byte value derived from the original packet’s MIC and the pairwise encryption key (see <a href="#ack-tag-construction">Ack Tag Construction</a>)</li>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
-<p>The ack is routed back to the original sender either via a source route (e.g., the reverse of a trace route learned from the inbound packet) or by flooding bounded by a hop count. See the <a href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">FAQ</a> for details.</p>
+<p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a flood scoped by <code>FHOPS_ACC</code>, or both. See <a href="#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
 <h2 id="unicast-packet"><a class="header" href="#unicast-packet">Unicast Packet</a></h2>
 <p>Unicast packets are addressed by destination hint and carry the source address.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+-----+---------+---------+------+
   1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
 </code></pre>
@@ -465,7 +471,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h2 id="unicast-packet-with-ack-requested"><a class="header" href="#unicast-packet-with-ack-requested">Unicast Packet with Ack Requested</a></h2>
 <p>This is identical to unicast, but the packet-type value signals that a MAC acknowledgement is requested.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+------+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+------+---------+---------+------+
 </code></pre>
 <p>Semantics differ, wire layout does not.</p>
@@ -477,7 +483,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h3 id="encrypted-multicast-e--1"><a class="header" href="#encrypted-multicast-e--1">Encrypted Multicast (E = 1)</a></h3>
 <p>When encryption is enabled, the source address is encrypted together with the payload, concealing the sender’s identity from observers who do not possess the channel key.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+----------------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
 +-----+-----------+------+---------+---------+----------------------+------+
   1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
 </code></pre>
@@ -487,14 +493,14 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>When encryption is not enabled, the source address appears in cleartext, but in the same
 place that it appeared in encrypted multicast:</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+------+---------+------+
   1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
 </code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
@@ -516,7 +522,7 @@ place that it appeared in encrypted multicast:</p>
 <h2 id="blind-unicast-with-ack-requested"><a class="header" href="#blind-unicast-with-ack-requested">Blind Unicast with Ack Requested</a></h2>
 <p>Same wire layout as blind unicast, but with ack-requested semantics.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
@@ -754,10 +760,7 @@ those counters is being used.</p>
 <p>A receiver determines whether a frame counter is acceptable by computing:</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
-<p>If <code>delta</code> is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling.</p>
-<p>If we have communicated with this node before and the frame counter is wildly outside
-of our window (say, by several thousand frames at least), then the node should resync
-the the frame counter using an echo request <a href="#mac-commands">MAC command</a>.</p>
+<p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>2048</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">
@@ -766,7 +769,8 @@ the the frame counter using an echo request <a href="#mac-commands">MAC command<
 to avoid wearing out the underlying storage medium if it has a limited
 number of writes.</p>
 </blockquote>
-<p>Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see <a href="#echo-request">MAC Commands</a>) to learn a peer’s current counter expectations before resuming communication.</p>
+<h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
+<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
 <p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
@@ -891,7 +895,7 @@ K_mic = okm[16..31]
 <li><strong>SRC</strong> (2 or 32 bytes) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
-<p>Dynamic options and the hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
+<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
 <pre><code class="language-text">+--------+--------+-------+
@@ -1057,7 +1061,7 @@ K_mic = okm[16..31]
 </li>
 </ul>
 <h2 id="multi-hop-delivery"><a class="header" href="#multi-hop-delivery">Multi-Hop Delivery</a></h2>
-<p>Multicast packets are delivered via flood forwarding, bounded by the optional hop count field. Repeaters forward multicast packets according to the standard <a href="#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
+<p>Multicast packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward multicast packets according to the standard <a href="#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
 <h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
 <p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see <a href="#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
 <h2 id="joining-a-channel"><a class="header" href="#joining-a-channel">Joining a Channel</a></h2>
@@ -1136,8 +1140,8 @@ delay = uniform_random(0, W)
 </ul>
 <p>The cache key is derived from the packet as follows:</p>
 <ul>
-<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the hop count, it remains stable across forwarding hops.</li>
-<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
+<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.</li>
+<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
 </ul>
 <p>Before forwarding a packet, the repeater checks the cache:</p>
 <ul>
@@ -1166,21 +1170,13 @@ delay = uniform_random(0, W)
 <li>
 <p><strong>RSSI threshold check</strong></p>
 <ul>
-<li>If either the packet or repeater imposes a minimum RSSI:
-<ul>
-<li>If the received RSSI is below the effective threshold, do not forward.</li>
-</ul>
-</li>
+<li>If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.</li>
 </ul>
 </li>
 <li>
 <p><strong>SNR threshold check</strong></p>
 <ul>
-<li>If either the packet or repeater imposes a minimum SNR:
-<ul>
-<li>If the received SNR is below the effective threshold, do not forward.</li>
-</ul>
-</li>
+<li>If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.</li>
 </ul>
 </li>
 <li>
@@ -1212,7 +1208,7 @@ delay = uniform_random(0, W)
 <li>If the source-route option is now empty:
 <ul>
 <li>If the packet has a region code option and this repeater is not configured for that region, do not forward.</li>
-<li>If the packet has a non-zero hop count, decrement it.</li>
+<li>If the packet has a flood hop count field with <code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.</li>
 <li>Otherwise, do not forward.</li>
 </ul>
 </li>
@@ -1221,7 +1217,7 @@ delay = uniform_random(0, W)
 <li>
 <p><strong>Trace route processing</strong></p>
 <ul>
-<li>If the packet contains a trace-route option, prepend this repeater’s hint.</li>
+<li>If the packet contains a trace-route option, prepend this repeater’s hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.</li>
 </ul>
 </li>
 <li>
@@ -1243,7 +1239,7 @@ delay = uniform_random(0, W)
 <p>If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in <a href="#backoff-procedure">Channel Access</a>.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
 <p>This forwarding model allows hybrid routing behavior.</p>
-<p>For example, a packet can be source-routed to a specific repeater and also carry a hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
+<p>For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by <code>FHOPS_REM</code>. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="beacons--path-discovery"><a class="header" href="#beacons--path-discovery">Beacons &amp; Path Discovery</a></h1>
 <h2 id="beacons"><a class="header" href="#beacons">Beacons</a></h2>
@@ -1263,7 +1259,7 @@ delay = uniform_random(0, W)
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>
 <li>
-<p><strong>Outbound discovery</strong>: Node A sends a unicast packet to Node B with the trace-route option present and an appropriate hop count. The packet floods through the mesh; repeaters prepend their router hints to the trace-route option as they forward.</p>
+<p><strong>Outbound discovery</strong>: Node A sends a unicast packet to Node B with the trace-route option present and an appropriate flood hop count. The packet floods through the mesh; repeaters prepend their router hints to the trace-route option as they forward.</p>
 </li>
 <li>
 <p><strong>Path learning</strong>: When Node B receives the packet, the trace-route option contains the sequence of repeater hints traversed, ordered most-recent first. Node B can use this list directly as a candidate source route back to Node A.</p>
@@ -1276,6 +1272,13 @@ delay = uniform_random(0, W)
 </li>
 </ol>
 <p>Because router hints are only one byte, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
+<h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
+<p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
+<ul>
+<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches the reversed trace route as a source route for future packets to the sender. This is the primary mechanism for learning precise multi-hop paths.</li>
+<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
+</ul>
+<p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="payload-format"><a class="header" href="#payload-format">Payload Format</a></h1>
 <p>The UMSH payload carries higher-layer content — either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see <a href="#layer-separation">Layer Separation</a>).</p>
@@ -1739,33 +1742,6 @@ delay = uniform_random(0, W)
 <p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
 <h3 id="destination-hint-collisions"><a class="header" href="#destination-hint-collisions">Destination-Hint Collisions</a></h3>
 <p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</p>
-<h2 id="open-items"><a class="header" href="#open-items">Open Items</a></h2>
-<ol>
-<li>
-<p><strong>Protocol version statement</strong></p>
-<ul>
-<li>The FCF includes a <code>VER</code> field, but the introduction does not state which protocol version this document describes.</li>
-</ul>
-</li>
-<li>
-<p><strong>“Optional payload encryption” clarification</strong></p>
-<ul>
-<li>The introduction lists “Optional payload encryption” as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).</li>
-</ul>
-</li>
-<li>
-<p><strong>“Low-power operation” specificity</strong></p>
-<ul>
-<li>The introduction lists “Low-power operation” as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.</li>
-</ul>
-</li>
-<li>
-<p><strong>PFS subsection placement in introduction</strong></p>
-<ul>
-<li>Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.</li>
-</ul>
-</li>
-</ol>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
@@ -1773,7 +1749,7 @@ delay = uniform_random(0, W)
 <h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption">Doesn’t blind unicast have a circular dependency between the MIC and source decryption?</a></h3>
 <p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is the pairwise MIC computed over the payload using the sender/recipient shared secret. The receiver reads the MIC, uses it (together with the channel key) as the IV to decrypt <code>ENC_SRC</code>, and then derives the pairwise keys from the recovered source public key to authenticate and decrypt <code>ENC_PAYLOAD</code>. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
-<p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
+<p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
 <h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
 <p>The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See <a href="#path-discovery">Path Discovery</a> for the full procedure.</p>
 <h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>
@@ -1791,7 +1767,7 @@ delay = uniform_random(0, W)
 <p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the 2-byte hint saves 30 bytes per packet, which is significant on LoRa.</p>
 <p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
 <h3 id="how-does-a-mac-ack-get-routed-back-to-the-original-sender"><a class="header" href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">How does a MAC Ack get routed back to the original sender?</a></h3>
-<p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see <a href="#forwarding-procedure">Forwarding Procedure</a>).</p>
+<p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet’s trace route, or a flood scoped by <code>FHOPS_ACC</code>. This is the same <a href="#route-learning">route learning</a> mechanism used for all communication, not an ack-specific feature.</p>
 <p>Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop’s retransmission of the same packet (see <a href="#forwarding-confirmation">Forwarding Confirmation</a>).</p>
 <h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
 <p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, and the AES-SIV-inspired construction provides nonce-misuse resistance as an additional safety margin.</p>
@@ -1801,7 +1777,7 @@ delay = uniform_random(0, W)
 <h3 id="why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm"><a class="header" href="#why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm">Why use an AES-SIV-inspired construction instead of AES-GCM?</a></h3>
 <p>AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. The SIV-style construction used by UMSH is nonce-misuse-resistant: even if a nonce is accidentally reused, the only consequence is that an observer can detect that two plaintexts are identical. Confidentiality and authenticity are otherwise preserved. This robustness is worth the minor overhead of computing the MIC before encryption.</p>
 <h3 id="how-does-deliver-to-a-region-then-flood-work"><a class="header" href="#how-does-deliver-to-a-region-then-flood-work">How does “deliver to a region, then flood” work?</a></h3>
-<p>A sender can include both a source-route option and a hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See <a href="#routing-implications">Routing Implications</a>.</p>
+<p>A sender can include both a source-route option and a flood hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by <code>FHOPS_REM</code>. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See <a href="#routing-implications">Routing Implications</a>.</p>
 <h3 id="can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism"><a class="header" href="#can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism">Can UMSH support anonymous requests, similar to MeshCore’s ANON_REQ mechanism?</a></h3>
 <p>Yes. A node can generate an ephemeral Ed25519 keypair, set the <code>S</code> flag, and use the ephemeral public key as the source address for a single request, then discard the private key immediately afterward. The recipient performs ECDH with the ephemeral public key as normal, encrypts a response to it, and sends it back. The requester’s long-term identity is never revealed. This pattern also provides forward secrecy for the exchange: once the ephemeral private key is discarded, the session cannot be decrypted even if the requester’s long-term key is later compromised. No dedicated packet type is required.</p>
 <h3 id="does-umsh-support-automatic-route-learning"><a class="header" href="#does-umsh-support-automatic-route-learning">Does UMSH support automatic route learning?</a></h3>
@@ -1835,7 +1811,7 @@ delay = uniform_random(0, W)
 <tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>1-byte header with version, type, route mode</td></tr>
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>16 payload types (via 4-bit field)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style options (source route, trace route, region, RSSI/SNR thresholds)</td><td>Path field (up to 64 bytes), transport codes</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Implicit via path length</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Implicit via path length</td></tr>
 <tr><td>Region support</td><td>Optional region code option</td><td>Transport codes (2 × 16-bit)</td></tr>
 </tbody>
 </table>
@@ -1853,7 +1829,7 @@ delay = uniform_random(0, W)
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
 <tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>UNIX-timestamp-based (requires clock synchronization)</td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (128 entries); timestamps at application layer</td></tr>
 </tbody>
 </table>
 </div>
@@ -1879,18 +1855,21 @@ delay = uniform_random(0, W)
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (ROUTE_TYPE_FLOOD)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (ROUTE_TYPE_FLOOD)</td></tr>
 <tr><td>Direct/source routing</td><td>Yes, via source-route option</td><td>Yes (ROUTE_TYPE_DIRECT)</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>Not supported</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>Not supported</td></tr>
 <tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Dedicated PATH payload type</td></tr>
-<tr><td>Route learning</td><td>Trace-route accumulates hints during flooding</td><td>Explicit returned-path messages</td></tr>
-<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
+<tr><td>Route learning</td><td>Trace-route option accumulates hints during flooding; reversed into source route by recipient</td><td>Explicit returned-path messages</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (retries with backoff)</td><td>Not defined</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>Listen-before-talk with random backoff; SNR-based flood retransmit delay</td></tr>
+<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based retransmit prioritization (implicit, no explicit thresholds)</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Transport codes</td></tr>
 </tbody>
 </table>
 </div>
 <p>UMSH’s hybrid routing model allows a single packet to be source-routed to a specific area and then flood locally, which is useful for reaching a node in a known geographic region without flooding the entire mesh. MeshCore treats flood and direct routing as mutually exclusive modes selected by route-type bits.</p>
-<p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient can use the accumulated trace directly as a source route. MeshCore uses a dedicated returned-path message type.</p>
+<p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender — replies, acknowledgments, and new messages alike (see <a href="#route-learning">Route Learning</a>). MeshCore uses a dedicated returned-path message type.</p>
+<p>Both protocols define channel access mechanisms. MeshCore checks for preamble or signal detection before transmitting and defers with a randomized backoff (120–360 ms) if the channel is busy, with a forced-transmit safety valve after 4 seconds. Flood retransmissions use a random delay proportional to airtime and a score-based priority derived from received SNR. UMSH uses CAD with random backoff and SNR-based contention windows for collision avoidance. UMSH additionally defines hop-by-hop forwarding confirmation with retries, providing reliability across the forwarding chain that MeshCore does not offer.</p>
 <h2 id="privacy-and-blind-modes"><a class="header" href="#privacy-and-blind-modes">Privacy and Blind Modes</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1950,7 +1929,7 @@ delay = uniform_random(0, W)
 <tr><td>Payload interpretation</td><td>Opaque at MAC layer — application protocols defined separately</td><td>Protocol defines payload types with application semantics (text messages, advertisements, login, etc.)</td></tr>
 <tr><td>Fragmentation</td><td>Delegated to higher-layer protocols in the payload</td><td>Multipart packet type defined at protocol level</td></tr>
 <tr><td>Node identity / advertisements</td><td>Application-layer payload (see <a href="#node-identity">Node Identity</a>)</td><td>Protocol-level advertisement packet with mandatory fields</td></tr>
-<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="#frame-counter">Frame Counter</a>)</td><td>Relies on UNIX timestamps for replay protection, advertisement freshness, and login sequencing</td></tr>
+<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="#frame-counter">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; relies on UNIX timestamps for advertisement freshness and login sequencing</td></tr>
 </tbody>
 </table>
 </div>
@@ -1959,14 +1938,14 @@ delay = uniform_random(0, W)
 <h2 id="timestamps-and-time-dependency"><a class="header" href="#timestamps-and-time-dependency">Timestamps and Time Dependency</a></h2>
 <p>MeshCore relies on UNIX timestamps in several protocol-critical roles:</p>
 <ul>
-<li><strong>Replay protection</strong>: MeshCore uses timestamps rather than sequence counters to detect replayed packets. This requires nodes to maintain a reasonably accurate clock.</li>
+<li><strong>Replay protection</strong>: MeshCore uses a fixed-size circular buffer of packet hashes (128 entries) for short-term duplicate detection. Once the buffer wraps, previously seen packets can no longer be detected as duplicates. Application-layer timestamps provide additional protection for some message types, but there is no MAC-layer replay protection counter.</li>
 <li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp used to determine which advertisement is most recent.</li>
 <li><strong>Login sequencing</strong>: The login handshake incorporates timestamps.</li>
 </ul>
 <p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="#frame-counter">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="#node-identity">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
-<p>This distinction matters for deployments where nodes may lack reliable time sources — battery-powered sensors, nodes without GPS or NTP access, or devices that reboot frequently. UMSH’s counter-based approach works correctly regardless of clock accuracy, while MeshCore’s timestamp-based approach requires nodes to agree on approximate wall-clock time.</p>
+<p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on clock accuracy and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity — in a busy mesh, the 128-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s reliance on timestamps for advertisement freshness and login sequencing additionally requires nodes to maintain reasonably accurate clocks.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
-<p>Minimum overhead for a typical encrypted unicast message (no options, no hop count):</p>
+<p>Minimum overhead for a typical encrypted unicast message (no options, no flood hop count):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2008,10 +1987,10 @@ delay = uniform_random(0, W)
 <p>The overhead cost of wider hints is exactly 1 byte per address field per packet — a modest price for a 256× reduction in false-positive cryptographic work.</p>
 <h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
 <p>Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.</p>
-<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the hop count and duplicate suppression cache. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
-<p>MeshCore does not define equivalent signal-quality filtering. Every repeater in range of a flooded packet will retransmit it (subject to hop count), regardless of link quality. This can result in retransmissions over marginal links that consume transmit power without meaningfully extending coverage.</p>
+<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the flood hop count and duplicate suppression cache. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
+<p>MeshCore’s SNR-based retransmit delay implicitly prioritizes better-positioned repeaters — nodes with stronger reception retransmit sooner, which can suppress weaker nodes via duplicate detection. However, no packet is ever dropped due to poor signal quality; every repeater in range of a flooded packet will eventually retransmit it (subject to hop count), regardless of link quality. UMSH’s explicit signal-quality thresholds allow the sender to prevent retransmission over weak links entirely, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
-<p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on UNIX timestamps for replay protection and advertisement freshness.</p>
+<p>MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on a fixed-size duplicate cache for deduplication and UNIX timestamps for advertisement freshness.</p>
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="comparison-with-meshtastic"><a class="header" href="#comparison-with-meshtastic">Comparison with Meshtastic</a></h1>
@@ -2046,7 +2025,7 @@ delay = uniform_random(0, W)
 <tr><td>Payload encoding</td><td>Raw bytes with 1-byte payload type prefix</td><td>Protobuf-encoded <code>Data</code> message</td></tr>
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>Implicit in protobuf <code>portnum</code> field (~30+ application types)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte)</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
 <tr><td>Max LoRa payload</td><td>~255 bytes</td><td>255 bytes (233 bytes application payload after header and encoding overhead)</td></tr>
 <tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>16 bytes (always)</td></tr>
 </tbody>
@@ -2092,12 +2071,14 @@ delay = uniform_random(0, W)
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
 <tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>No</td></tr>
 <tr><td>Next-hop routing</td><td>N/A</td><td>Yes (learned from ACK paths, v2.6+)</td></tr>
-<tr><td>Max hops</td><td>255 (1-byte hop count)</td><td>7 (3-bit hop limit)</td></tr>
+<tr><td>Max hops</td><td>15 flood + “many” source-routed</td><td>7 (3-bit hop limit)</td></tr>
 <tr><td>Duplicate detection</td><td>MIC cache</td><td>Packet ID cache (32-bit random IDs)</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (hop-by-hop retries with backoff)</td><td>Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>SNR-based contention windows</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based rebroadcast priority (implicit)</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
 <tr><td>Traceroute</td><td>Trace-route option on any packet</td><td>Dedicated TRACEROUTE_APP port</td></tr>
@@ -2105,8 +2086,10 @@ delay = uniform_random(0, W)
 </table>
 </div>
 <p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
-<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s optional 1-byte hop count allows up to 255 hops, and source routing allows packets to traverse specific paths without flooding.</p>
-<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes.</p>
+<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).</p>
+<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="#route-learning">Route Learning</a>).</p>
+<p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
+<p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
 <h2 id="privacy"><a class="header" href="#privacy">Privacy</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2134,7 +2117,7 @@ delay = uniform_random(0, W)
 <tr><td>Channel key size</td><td>32 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
-<tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
+<tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No (source in cleartext header)</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Yes (name + PSK configured together)</td></tr>
@@ -2311,7 +2294,7 @@ delay = uniform_random(0, W)
 <tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>4: DATA, ANNOUNCE, LINKREQUEST, PROOF (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Packet.py#L60-L63"><code>Packet.py:60–63</code></a>)</td></tr>
 <tr><td>Destination types</td><td>Implicit in packet type (unicast, multicast, broadcast, blind)</td><td>4: SINGLE, GROUP, PLAIN, LINK (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L63-L66"><code>Destination.py:63–66</code></a>)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Transport ID field (16 bytes) in HEADER_2</td></tr>
-<tr><td>Hop count</td><td>Optional 1-byte field</td><td>Mandatory 1-byte field</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 1-byte field</td></tr>
 <tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500-byte network MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91"><code>Reticulum.py:91</code></a>, <code>MTU = 500</code>); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links</td></tr>
 <tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>)</td></tr>
 </tbody>
@@ -2375,12 +2358,14 @@ delay = uniform_random(0, W)
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Flood routing</td><td>Yes, bounded by hop count</td><td>Yes (broadcast propagation)</td></tr>
+<tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (broadcast propagation)</td></tr>
 <tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + hop count in same packet</td><td>No</td></tr>
+<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>No</td></tr>
 <tr><td>Transport/directed routing</td><td>N/A</td><td>Transport nodes with next-hop forwarding</td></tr>
 <tr><td>Path discovery</td><td>Trace-route option on any flooded packet</td><td>Announce flooding + path request/response</td></tr>
-<tr><td>Max hops</td><td>Limited by hop-count byte (255)</td><td>128 (hard-coded announce propagation cap, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>)</td></tr>
+<tr><td>Max hops</td><td>15 flood + unlimited source-routed</td><td>128 (hard-coded announce propagation cap, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>)</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (retries with backoff)</td><td>No — forwarding is fire-and-forget; reliability is end-to-end via cryptographic proofs</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>Not defined at protocol level; RNode firmware implements CSMA with persistence probability for LoRa interfaces</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>Not defined at protocol level</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
 <tr><td>Announce bandwidth cap</td><td>Not defined (implementation policy)</td><td>Default 2% of interface bandwidth (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L115"><code>Reticulum.py:115</code></a>, <code>ANNOUNCE_CAP = 2</code>), configurable per-interface via <code>announce_cap</code> key</td></tr>
@@ -2389,7 +2374,8 @@ delay = uniform_random(0, W)
 </table>
 </div>
 <p>UMSH and Reticulum take fundamentally different approaches to routing.</p>
-<p>UMSH provides <strong>source routing</strong> — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient can reverse the trace to obtain a source route back to the sender.</p>
+<p>UMSH provides <strong>source routing</strong> — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="#route-learning">Route Learning</a>).</p>
+<p>UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.</p>
 <p>Reticulum uses <strong>next-hop routing</strong> via Transport Nodes — dedicated forwarding nodes that maintain path tables learned from announces. Regular nodes do not forward packets. When no path is known, a path request is flooded (51 bytes in non-transport mode: 19-byte HEADER_1 + 16-byte destination hash + 16-byte request tag); transport nodes with cached paths respond. This approach is more automatic but requires designated infrastructure nodes and does not support sender-specified routing.</p>
 <p>Reticulum’s maximum announce propagation is 128 hops (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>). This constant is hard-coded; the hop count field is one byte and could technically carry values up to 255, but transport logic enforces the 128-hop limit.</p>
 <p>Reticulum v1.1.0 introduced on-network interface discovery: nodes can broadcast structured discovery announces (containing interface type, LoRa parameters, IFAC credentials, and GPS coordinates) to the <code>rnstransport.discovery.interface</code> destination. Other nodes can receive these announces and automatically connect to trusted remote interfaces. This capability requires the LXMF module and uses proof-of-work stamps to prevent spam. UMSH does not define an equivalent mechanism.</p>
@@ -2426,14 +2412,14 @@ delay = uniform_random(0, W)
 <tbody>
 <tr><td>Channel key size</td><td>32 bytes</td><td>32 bytes (AES-256)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
-<tr><td>Multi-hop multicast</td><td>Yes (flood with hop count)</td><td>No (single-hop broadcast only)</td></tr>
+<tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>No (single-hop broadcast only)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC (16-byte MIC)</td><td>Channel-key-based HMAC-SHA256 (32-byte tag)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No source address to conceal</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Not defined</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH supports multi-hop multicast via flood forwarding with hop-count limits. Reticulum’s GROUP destinations are currently limited to single-hop broadcast — the <a href="https://reticulum.network/manual/understanding.html#destinations">manual states</a>:</p>
+<p>UMSH supports multi-hop multicast via flood forwarding with flood hop count limits. Reticulum’s GROUP destinations are currently limited to single-hop broadcast — the <a href="https://reticulum.network/manual/understanding.html#destinations">manual states</a>:</p>
 <blockquote>
 <p>Packets to this type of destination are not currently transported over multiple hops, although a planned upgrade to Reticulum will allow globally reachable group destinations.</p>
 </blockquote>
@@ -2569,12 +2555,12 @@ delay = uniform_random(0, W)
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>00</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>C0</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">00 A1 B2
+<pre><code class="language-text">C0 A1 B2
 </code></pre>
 <p>Total: 3 bytes.</p>
 <h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
@@ -2585,12 +2571,12 @@ delay = uniform_random(0, W)
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>04</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>C4</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">04 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+<pre><code class="language-text">C4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
 20
 </code></pre>
@@ -2603,7 +2589,7 @@ delay = uniform_random(0, W)
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>10</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>D0</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -2613,7 +2599,7 @@ delay = uniform_random(0, W)
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">10 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+<pre><code class="language-text">D0 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </code></pre>
 <p>Total: 31 bytes (1 + 2 + 2 + 5 + 5 + 16).</p>
@@ -2625,7 +2611,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>1C</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>DC</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -2635,7 +2621,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">1C C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
+<pre><code class="language-text">DC C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
 B5 B6 B7 B8 B9 BA BB BC BD BE BF
@@ -2649,7 +2635,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
@@ -2658,7 +2644,7 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
 <p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
@@ -2670,7 +2656,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>20</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
@@ -2680,12 +2666,12 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 </code></pre>
 <p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
 <h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
-<p>An encrypted unicast from Node A to Node B with a hop count of 4, a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
+<p>An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
 <p><strong>Options encoding:</strong></p>
 <div class="table-wrapper">
 <table>
@@ -2706,9 +2692,9 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><th>Field</th><th>Value</th><th>Hex</th></tr>
 </thead>
 <tbody>
-<tr><td>FCF</td><td>VER=0, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>13</code></td></tr>
+<tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
 <tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
-<tr><td>HOPS</td><td>4</td><td><code>04</code></td></tr>
+<tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
@@ -2718,7 +2704,7 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">13 12 78 53 10 FF 04 C3 D4 A1 B2 E0 00 00 00 0A
+<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 A1 B2 E0 00 00 00 0A
 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
 DD DE DF
 </code></pre>

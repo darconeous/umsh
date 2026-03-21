@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c068eb39.js";
+            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -245,10 +245,7 @@ those counters is being used.</p>
 <p>A receiver determines whether a frame counter is acceptable by computing:</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
-<p>If <code>delta</code> is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling.</p>
-<p>If we have communicated with this node before and the frame counter is wildly outside
-of our window (say, by several thousand frames at least), then the node should resync
-the the frame counter using an echo request <a href="mac-commands.html">MAC command</a>.</p>
+<p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>2048</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">
@@ -257,7 +254,8 @@ the the frame counter using an echo request <a href="mac-commands.html">MAC comm
 to avoid wearing out the underlying storage medium if it has a limited
 number of writes.</p>
 </blockquote>
-<p>Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see <a href="mac-commands.html#echo-request">MAC Commands</a>) to learn a peer’s current counter expectations before resuming communication.</p>
+<h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
+<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="mac-commands.html#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
 <p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
@@ -382,7 +380,7 @@ K_mic = okm[16..31]
 <li><strong>SRC</strong> (2 or 32 bytes) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
-<p>Dynamic options and the hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
+<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
 <pre><code class="language-text">+--------+--------+-------+
