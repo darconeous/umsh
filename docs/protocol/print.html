@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-80707e4e.js";
+            window.path_to_searchindex_js = "searchindex-dd3ed338.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -261,7 +261,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
 <p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
-<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while remaining backward compatability.</p>
+<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatability.</p>
 <p>Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker if there is additional data present after the options section.</p>
 <p>This encoding appears in:</p>
 <ul>
