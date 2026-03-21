@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0a82acd1.js";
+            window.path_to_searchindex_js = "searchindex-80707e4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47903931.js"></script>
@@ -258,7 +258,7 @@
 <tr><td>Next-hop routing</td><td>N/A</td><td>Yes (learned from ACK paths, v2.6+)</td></tr>
 <tr><td>Max hops</td><td>15 flood + “many” source-routed</td><td>7 (3-bit hop limit)</td></tr>
 <tr><td>Duplicate detection</td><td>MIC cache</td><td>Packet ID cache (32-bit random IDs)</td></tr>
-<tr><td>Forwarding confirmation</td><td>Yes (hop-by-hop retries with backoff)</td><td>Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop</td></tr>
+<tr><td>Forwarding confirmation</td><td>Yes (hop-by-hop retries with backoff when source routing)</td><td>Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop</td></tr>
 <tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>SNR-based contention windows</td></tr>
 <tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based rebroadcast priority (implicit)</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
