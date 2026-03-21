@@ -80,11 +80,7 @@ A receiver determines whether a frame counter is acceptable by computing:
 delta = (received_counter - last_accepted_counter) mod 2^32
 ```
 
-If `delta` is zero or exceeds a reasonable forward window (implementation-defined), the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling.
-
-If we have communicated with this node before and the frame counter is wildly outside
-of our window (say, by several thousand frames at least), then the node should resync
-the the frame counter using an echo request [MAC command](mac-commands.md).
+If `delta` is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling. The suggested default forward window is **2048**. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.
 
 #### Counter Persistence
 
@@ -95,7 +91,10 @@ How a node persists and recovers its frame counter across reboots is implementat
 > to avoid wearing out the underlying storage medium if it has a limited
 > number of writes.
 
-Nodes that cannot guarantee counter continuity across restarts may use the Echo Request MAC command (see [MAC Commands](mac-commands.md#echo-request)) to learn a peer's current counter expectations before resuming communication.
+#### Counter Resynchronization
+
+On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer's frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see [MAC Commands](mac-commands.md#echo-request)) to determine the peer's current counter value and re-establish a valid baseline.
+
 
 ### Salt
 
@@ -264,7 +263,7 @@ The AAD is constructed by concatenating the following fields in order:
 4. **SRC** (2 or 32 bytes) — included only when the source field is outside the ciphertext
 5. **SECINFO** (5 or 7 bytes)
 
-Dynamic options and the hop count are excluded from the AAD because they may be modified by repeaters during forwarding.
+Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.
 
 #### Static Option Encoding in AAD
 

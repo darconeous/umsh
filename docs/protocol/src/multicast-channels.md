@@ -22,7 +22,7 @@ Multicast packets may be sent with or without encryption, controlled by the `E` 
 
 ## Multi-Hop Delivery
 
-Multicast packets are delivered via flood forwarding, bounded by the optional hop count field. Repeaters forward multicast packets according to the standard [forwarding procedure](repeater-operation.md#forwarding-procedure), including duplicate suppression, signal-quality filtering, and region-scoped flooding.
+Multicast packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward multicast packets according to the standard [forwarding procedure](repeater-operation.md#forwarding-procedure), including duplicate suppression, signal-quality filtering, and region-scoped flooding.
 
 ## Sender Authentication
 

@@ -27,7 +27,7 @@ Meshtastic added optional Curve25519 keypairs in v2.5 for direct message encrypt
 | Payload encoding | Raw bytes with 1-byte payload type prefix | Protobuf-encoded `Data` message |
 | Packet types | 8 (via 3-bit field in FCF) | Implicit in protobuf `portnum` field (~30+ application types) |
 | Routing info | CoAP-style composable options | Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte) |
-| Hop count | Optional 1-byte field | Mandatory 3-bit field (max 7 hops) |
+| Flood hop count | Split 4-bit FHOPS field (max 15) | Mandatory 3-bit field (max 7 hops) |
 | Max LoRa payload | ~255 bytes | 255 bytes (233 bytes application payload after header and encoding overhead) |
 | Minimum header overhead | 1 byte (broadcast, no options) | 16 bytes (always) |
 
@@ -74,21 +74,27 @@ UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encrypt
 
 | Aspect | UMSH | Meshtastic |
 |---|---|---|
-| Flood routing | Yes, bounded by hop count | Yes (managed flood with SNR-based priority) |
+| Flood routing | Yes, bounded by flood hop count | Yes (managed flood with SNR-based priority) |
 | Source routing | Yes, via source-route option | No |
-| Hybrid routing | Source route + hop count in same packet | No |
+| Hybrid routing | Source route + flood hop count in same packet | No |
 | Next-hop routing | N/A | Yes (learned from ACK paths, v2.6+) |
-| Max hops | 255 (1-byte hop count) | 7 (3-bit hop limit) |
+| Max hops | 15 flood + "many" source-routed | 7 (3-bit hop limit) |
 | Duplicate detection | MIC cache | Packet ID cache (32-bit random IDs) |
+| Forwarding confirmation | Yes (hop-by-hop retries with backoff when source routing) | Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop |
+| Channel access | CAD with random backoff; SNR-based contention windows | SNR-based contention windows |
 | Signal-quality filtering | Min RSSI and min SNR options | SNR-based rebroadcast priority (implicit) |
 | Region-scoped flooding | Region code option | Not defined |
 | Traceroute | Trace-route option on any packet | Dedicated TRACEROUTE_APP port |
 
 Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic's managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.
 
-Meshtastic's 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH's optional 1-byte hop count allows up to 255 hops, and source routing allows packets to traverse specific paths without flooding.
+Meshtastic's 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH's 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).
 
-Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes.
+Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+
+Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.
+
+Both protocols provide forwarding confirmation, but with different scope. Meshtastic's sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.
 
 ## Privacy
 
@@ -111,7 +117,7 @@ UMSH's 2-byte hints reveal far less information to passive observers, and blind 
 | Channel key size | 32 bytes | 1, 16, or 32 bytes (PSK) |
 | Channel identifier | 2-byte derived hint | 1-byte DJB2 hash of channel name |
 | Channels per node | Unlimited (implementation-defined) | Up to 8 |
-| Multi-hop multicast | Yes (flood with hop count) | Yes (managed flood with hop limit) |
+| Multi-hop multicast | Yes (flood with flood hop count) | Yes (managed flood with hop limit) |
 | Group message auth | Channel-key-based CMAC | None (AES-CTR only) |
 | Source privacy | Source encrypted when encryption enabled | No (source in cleartext header) |
 | Named channels | Yes (key derived from name) | Yes (name + PSK configured together) |

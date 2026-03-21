@@ -48,7 +48,7 @@ Reticulum does not include a source address in any packet. This provides initiat
 | Packet types | 8 (via 3-bit field in FCF) | 4: DATA, ANNOUNCE, LINKREQUEST, PROOF ([`Packet.py:60–63`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Packet.py#L60-L63)) |
 | Destination types | Implicit in packet type (unicast, multicast, broadcast, blind) | 4: SINGLE, GROUP, PLAIN, LINK ([`Destination.py:63–66`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L63-L66)) |
 | Routing info | CoAP-style composable options | Transport ID field (16 bytes) in HEADER_2 |
-| Hop count | Optional 1-byte field | Mandatory 1-byte field |
+| Flood hop count | Split 4-bit FHOPS field (max 15) | Mandatory 1-byte field |
 | MTU | LoRa frame size (typically 255 bytes) | 500-byte network MTU ([`Reticulum.py:91`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91), `MTU = 500`); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links |
 | Minimum header overhead | 1 byte (broadcast, no options) | 19 bytes HEADER_1 or 35 bytes HEADER_2 ([`Reticulum.py:148–149`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149), `HEADER_MINSIZE`/`HEADER_MAXSIZE`) |
 
@@ -113,12 +113,14 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 
 | Aspect | UMSH | Reticulum |
 |---|---|---|
-| Flood routing | Yes, bounded by hop count | Yes (broadcast propagation) |
+| Flood routing | Yes, bounded by flood hop count | Yes (broadcast propagation) |
 | Source routing | Yes, via source-route option | No |
-| Hybrid routing | Source route + hop count in same packet | No |
+| Hybrid routing | Source route + flood hop count in same packet | No |
 | Transport/directed routing | N/A | Transport nodes with next-hop forwarding |
 | Path discovery | Trace-route option on any flooded packet | Announce flooding + path request/response |
-| Max hops | Limited by hop-count byte (255) | 128 (hard-coded announce propagation cap, [`Transport.py:41`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41), `PATHFINDER_M`) |
+| Max hops | 15 flood + unlimited source-routed | 128 (hard-coded announce propagation cap, [`Transport.py:41`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41), `PATHFINDER_M`) |
+| Forwarding confirmation | Yes (retries with backoff) | No — forwarding is fire-and-forget; reliability is end-to-end via cryptographic proofs |
+| Channel access | CAD with random backoff; SNR-based contention windows | Not defined at protocol level; RNode firmware implements CSMA with persistence probability for LoRa interfaces |
 | Signal-quality filtering | Min RSSI and min SNR options | Not defined at protocol level |
 | Region-scoped flooding | Region code option | Not defined |
 | Announce bandwidth cap | Not defined (implementation policy) | Default 2% of interface bandwidth ([`Reticulum.py:115`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L115), `ANNOUNCE_CAP = 2`), configurable per-interface via `announce_cap` key |
@@ -126,7 +128,9 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 
 UMSH and Reticulum take fundamentally different approaches to routing.
 
-UMSH provides **source routing** — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient can reverse the trace to obtain a source route back to the sender.
+UMSH provides **source routing** — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+
+UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.
 
 Reticulum uses **next-hop routing** via Transport Nodes — dedicated forwarding nodes that maintain path tables learned from announces. Regular nodes do not forward packets. When no path is known, a path request is flooded (51 bytes in non-transport mode: 19-byte HEADER_1 + 16-byte destination hash + 16-byte request tag); transport nodes with cached paths respond. This approach is more automatic but requires designated infrastructure nodes and does not support sender-specified routing.
 
@@ -166,12 +170,12 @@ Reticulum v1.1.0 also introduced a distributed blackhole list: specific identiti
 |---|---|---|
 | Channel key size | 32 bytes | 32 bytes (AES-256) |
 | Channel identifier | 2-byte derived hint | 16-byte destination hash |
-| Multi-hop multicast | Yes (flood with hop count) | No (single-hop broadcast only) |
+| Multi-hop multicast | Yes (flood with flood hop count) | No (single-hop broadcast only) |
 | Group message auth | Channel-key-based CMAC (16-byte MIC) | Channel-key-based HMAC-SHA256 (32-byte tag) |
 | Source privacy | Source encrypted when encryption enabled | No source address to conceal |
 | Named channels | Yes (key derived from name) | Not defined |
 
-UMSH supports multi-hop multicast via flood forwarding with hop-count limits. Reticulum's GROUP destinations are currently limited to single-hop broadcast — the [manual states](https://reticulum.network/manual/understanding.html#destinations):
+UMSH supports multi-hop multicast via flood forwarding with flood hop count limits. Reticulum's GROUP destinations are currently limited to single-hop broadcast — the [manual states](https://reticulum.network/manual/understanding.html#destinations):
 
 > Packets to this type of destination are not currently transported over multiple hops, although a planned upgrade to Reticulum will allow globally reachable group destinations.
 

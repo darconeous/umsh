@@ -10,7 +10,7 @@ No. The `MIC` field is located at the end of the packet and can be read directly
 
 ### Can source-routed packets loop if router hints collide?
 
-No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
+No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
 
 ### Why doesn't UMSH define a dedicated path-discovery packet type?
 
@@ -40,7 +40,7 @@ Receivers that see an unknown source hint on an authenticated packet should trea
 
 ### How does a MAC Ack get routed back to the original sender?
 
-MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack carries a destination hint and a PKTMIC reference, and like any other packet type it supports the standard optional header fields — including source-route options, hop count, and region code option. If the responding node has a known source route to the original sender (e.g., learned via trace-route on the inbound packet), it can source-route the ack back along that path. Otherwise, the ack floods through the mesh bounded by the hop count, following the same forwarding procedure as any other packet (see [Forwarding Procedure](repeater-operation.md#forwarding-procedure)).
+MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet's trace route, or a flood scoped by `FHOPS_ACC`. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
 
 Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop's retransmission of the same packet (see [Forwarding Confirmation](repeater-operation.md#forwarding-confirmation)).
 
@@ -60,7 +60,7 @@ AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with
 
 ### How does "deliver to a region, then flood" work?
 
-A sender can include both a source-route option and a hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See [Routing Implications](repeater-operation.md#routing-implications).
+A sender can include both a source-route option and a flood hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by `FHOPS_REM`. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See [Routing Implications](repeater-operation.md#routing-implications).
 
 ### Can UMSH support anonymous requests, similar to MeshCore's ANON_REQ mechanism?
 

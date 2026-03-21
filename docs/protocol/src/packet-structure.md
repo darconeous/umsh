@@ -6,7 +6,7 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 
 ```text
 +--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  |  HOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
 +--------+-----------+--------+--------------+----------+-----------+---------+------+
    1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
 ```
@@ -14,7 +14,7 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 Where:
 
 - `OPTIONS` are present if the FCF options flag is set
-- `HOPS` is present if the FCF hop-count flag is set
+- `FHOPS` is present if the FCF flood hop count flag is set
 - `DST` is a 2-byte destination hint
 - `CHANNEL` is a 2-byte channel identifier
 - `SRC` is a 2-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
@@ -35,11 +35,11 @@ The Frame Control Field is one byte:
 
 Where:
 
-- `VER` = protocol version
+- `VER` = protocol version (this specification defines version **3**, i.e., both bits set)
 - `PKT TYPE` = packet type
 - `S` = full 32-byte source address included (when clear, a 2-byte source hint is used instead)
 - `O` = options present
-- `H` = hop count present
+- `H` = flood hop count present
 
 ### Packet Type Values
 
@@ -115,13 +115,21 @@ Two options — option 3 (1-byte value) followed by option 9 (2-byte value):
 
 ### Flood Hop Count
 
-If present, `HOPS` is a single unsigned byte:
+If present, `FHOPS` is a single byte containing two 4-bit fields:
 
 ```text
-+--------+
-| HOPS   |
-+--------+
-  1 byte
+  7   6   5   4   3   2   1   0
++---------------+---------------+
+| FHOPS_REM     | FHOPS_ACC     |
++---------------+---------------+
+     4 bits          4 bits
 ```
 
-This is used for flood-limited forwarding.
+Where:
+
+- `FHOPS_REM` (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.
+- `FHOPS_ACC` (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.
+
+The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
+
+`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed, which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.

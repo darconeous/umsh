@@ -13,8 +13,8 @@ Parameters:
 
 The cache key is derived from the packet as follows:
 
-- **Authenticated packets** (unicast, multicast, blind unicast): the cache key is the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the hop count, it remains stable across forwarding hops.
-- **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
+- **Authenticated packets** (unicast, multicast, blind unicast): the cache key is the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.
+- **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
 
 Before forwarding a packet, the repeater checks the cache:
 
@@ -39,12 +39,10 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
    - If this packet was a unicast (bind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward.
 
 2. **RSSI threshold check**
-   - If either the packet or repeater imposes a minimum RSSI:
-     - If the received RSSI is below the effective threshold, do not forward.
+   - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
 
 3. **SNR threshold check**
-   - If either the packet or repeater imposes a minimum SNR:
-     - If the received SNR is below the effective threshold, do not forward.
+   - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
 
 4. **Unknown critical options**
    - If the packet contains any critical option the repeater does not understand, do not forward.
@@ -60,11 +58,11 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 7. **Transition from source-routing to flooding**
    - If the source-route option is now empty:
      - If the packet has a region code option and this repeater is not configured for that region, do not forward.
-     - If the packet has a non-zero hop count, decrement it.
+     - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
      - Otherwise, do not forward.
 
 8. **Trace route processing**
-   - If the packet contains a trace-route option, prepend this repeater's hint.
+   - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
 9. **Retransmit**
    - Forward the modified packet.
@@ -87,4 +85,4 @@ If the listening window expires without a retransmission, the node SHOULD retran
 
 This forwarding model allows hybrid routing behavior.
 
-For example, a packet can be source-routed to a specific repeater and also carry a hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This permits "delivery-to-region, then flood" behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.
+For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by `FHOPS_REM`. This permits "delivery-to-region, then flood" behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.

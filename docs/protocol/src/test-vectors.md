@@ -36,11 +36,11 @@ A minimal beacon — a broadcast with no payload and no security.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=0 (broadcast), S=0, O=0, H=0 | `00` |
+| FCF | VER=3, TYPE=0 (broadcast), S=0, O=0, H=0 | `C0` |
 | SRC | Node A hint | `A1 B2` |
 
 ```text
-00 A1 B2
+C0 A1 B2
 ```
 
 Total: 3 bytes.
@@ -51,11 +51,11 @@ A first-contact beacon including the sender's full 32-byte public key.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=0 (broadcast), S=1, O=0, H=0 | `04` |
+| FCF | VER=3, TYPE=0 (broadcast), S=1, O=0, H=0 | `C4` |
 | SRC | Node A full key | `A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20` |
 
 ```text
-04 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+C4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
 20
 ```
@@ -68,7 +68,7 @@ An encrypted unicast packet from Node A to Node B using source hints.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=2 (unicast), S=0, O=0, H=0 | `10` |
+| FCF | VER=3, TYPE=2 (unicast), S=0, O=0, H=0 | `D0` |
 | DST | Node B hint | `C3 D4` |
 | SRC | Node A hint | `A1 B2` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
@@ -77,7 +77,7 @@ An encrypted unicast packet from Node A to Node B using source hints.
 | MIC | 16 bytes | `F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F` |
 
 ```text
-10 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+D0 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 ```
 
@@ -89,7 +89,7 @@ A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowl
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=3 (unicast ack-req), S=1, O=0, H=0 | `1C` |
+| FCF | VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0 | `DC` |
 | DST | Node B hint | `C3 D4` |
 | SRC | Node A full key | `A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
@@ -98,7 +98,7 @@ A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowl
 | MIC | 16 bytes | `B0 B1 B2 B3 B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF` |
 
 ```text
-1C C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
+DC C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
 B5 B6 B7 B8 B9 BA BB BC BD BE BF
@@ -112,7 +112,7 @@ An encrypted multicast from Node A. The source hint and payload are encrypted to
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=4 (multicast), S=0, O=0, H=0 | `20` |
+| FCF | VER=3, TYPE=4 (multicast), S=0, O=0, H=0 | `E0` |
 | CHANNEL | Channel hint | `7E 5F` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 5 | `00 00 00 05` |
@@ -120,7 +120,7 @@ An encrypted multicast from Node A. The source hint and payload are encrypted to
 | MIC | 16 bytes | `AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99` |
 
 ```text
-20 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
+E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
 BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 ```
 
@@ -132,7 +132,7 @@ An authenticated but unencrypted multicast from Node A. The source hint appears 
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=4 (multicast), S=0, O=0, H=0 | `20` |
+| FCF | VER=3, TYPE=4 (multicast), S=0, O=0, H=0 | `E0` |
 | CHANNEL | Channel hint | `7E 5F` |
 | SCF | E=0, MIC=3 (16-byte), S=0 | `60` |
 | Frame Counter | 3 | `00 00 00 03` |
@@ -141,7 +141,7 @@ An authenticated but unencrypted multicast from Node A. The source hint appears 
 | MIC | 16 bytes | `11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00` |
 
 ```text
-20 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
+E0 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
 ```
 
@@ -149,7 +149,7 @@ Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).
 
 ## Example 7: Unicast with Options
 
-An encrypted unicast from Node A to Node B with a hop count of 4, a region code option, and an empty trace-route option (to be populated by repeaters during flooding).
+An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).
 
 **Options encoding:**
 
@@ -163,9 +163,9 @@ The region code value `7853` encodes "SJC" in ARNCE/HAM-64.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=0, TYPE=2 (unicast), S=0, O=1, H=1 | `13` |
+| FCF | VER=3, TYPE=2 (unicast), S=0, O=1, H=1 | `D3` |
 | Options | Region code (1) + trace route (2) + end marker | `12 78 53 10 FF` |
-| HOPS | 4 | `04` |
+| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |
 | DST | Node B hint | `C3 D4` |
 | SRC | Node A hint | `A1 B2` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
@@ -174,7 +174,7 @@ The region code value `7853` encodes "SJC" in ARNCE/HAM-64.
 | MIC | 16 bytes | `D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD DE DF` |
 
 ```text
-13 12 78 53 10 FF 04 C3 D4 A1 B2 E0 00 00 00 0A
+D3 12 78 53 10 FF 40 C3 D4 A1 B2 E0 00 00 00 0A
 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
 DD DE DF
 ```

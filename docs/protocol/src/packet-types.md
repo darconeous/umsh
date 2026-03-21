@@ -6,7 +6,7 @@ Broadcast packets carry a source and payload, but no security info.
 
 ```text
 +-----+-----------+------+-----+---------+
-| FCF | [OPTIONS] |[HOPS]| SRC | PAYLOAD |
+| FCF | [OPTIONS] |[FHOPS]| SRC | PAYLOAD |
 +-----+-----------+------+-----+---------+
   1 B    variable   0/1 B 2/32B   var.
 ```
@@ -21,7 +21,7 @@ The ack identifies the original sender by destination hint and carries an **ack 
 
 ```text
 +-----+-----------+------+-----+---------+
-| FCF | [OPTIONS] |[HOPS]| DST | ACK TAG |
+| FCF | [OPTIONS] |[FHOPS]| DST | ACK TAG |
 +-----+-----------+------+-----+---------+
   1 B    variable   0/1 B  2 B    8 B
 ```
@@ -33,7 +33,7 @@ Where:
 
 Because the ack tag requires knowledge of the pairwise `K_enc`, it cannot be forged by a passive observer — even one who received the original packet in its entirety.
 
-The ack is routed back to the original sender either via a source route (e.g., the reverse of a trace route learned from the inbound packet) or by flooding bounded by a hop count. See the [FAQ](faq.md#how-does-a-mac-ack-get-routed-back-to-the-original-sender) for details.
+The ack is routed back to the original sender using whatever routing state is available — a cached source route, a flood scoped by `FHOPS_ACC`, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.
 
 ## Unicast Packet
 
@@ -41,7 +41,7 @@ Unicast packets are addressed by destination hint and carry the source address.
 
 ```text
 +-----+-----------+------+-----+-----+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+-----+---------+---------+------+
   1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
 ```
@@ -56,7 +56,7 @@ This is identical to unicast, but the packet-type value signals that a MAC ackno
 
 ```text
 +-----+-----------+------+-----+------+---------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+------+---------+---------+------+
 ```
 
@@ -78,7 +78,7 @@ When encryption is enabled, the source address is encrypted together with the pa
 
 ```text
 +-----+-----------+------+---------+---------+----------------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
 +-----+-----------+------+---------+---------+----------------------+------+
   1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
 ```
@@ -94,7 +94,7 @@ place that it appeared in encrypted multicast:
 
 ```text
 +-----+-----------+------+---------+---------+------+---------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+------+---------+------+
   1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
 ```
@@ -105,7 +105,7 @@ Blind unicast uses a multicast channel to conceal sender and destination metadat
 
 ```text
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 ```
@@ -133,7 +133,7 @@ Same wire layout as blind unicast, but with ack-requested semantics.
 
 ```text
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-| FCF | [OPTIONS] |[HOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 ```

@@ -23,7 +23,6 @@ UMSH is designed to support:
 - Operation in both encrypted and amateur-radio-compliant unencrypted modes
 - Ability to operate in a way that preserves [perfect forward secrecy (PFS)](security.md#perfect-forward-secrecy-sessions)
 - Timestamp-free at the MAC layer
-- Low-power operation
 
 ## Use Cases
 
@@ -84,10 +83,6 @@ role, capabilities, and location — via the [Node Identity](node-identity.md)
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.
 
-#### Perfect Forward Secrecy
-
-UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions) via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
-
 ### Unicast
 
 Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see [Frame Types](packet-types.md) and [Security & Cryptography](security.md)).
@@ -101,4 +96,8 @@ A 2-byte channel hint is derived from the channel key and included in multicast 
 ### Blind Unicast
 
 **Blind unicast** hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Source Encryption](security.md#blind-unicast-source-encryption) for details.
+
+### Perfect Forward Secrecy
+
+UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions) via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
 
