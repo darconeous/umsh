@@ -10,7 +10,7 @@ Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and
 
 ## CoAP-Style Option Encoding
 
-UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while remaining backward compatability.
+UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatability.
 
 Each option is encoded as a delta from the previous option's number, a length, and a value. The sequence is terminated by a `0xFF` end-of-options marker if there is additional data present after the options section.
 
@@ -25,7 +25,7 @@ The full encoding rules — nibble interpretation, extended bytes, and the end m
 
 ## ARNCE/HAM-64 Text Encoding
 
-ARNCE (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.
+[ARNCE](https://github.com/arngll/arnce-spec/blob/main/n6drc-arnce.md#introduction) (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.
 
 UMSH uses ARNCE/HAM-64 for:
 
