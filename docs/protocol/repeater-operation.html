@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d68eaf2f.js";
+            window.path_to_searchindex_js = "searchindex-c068eb39.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4a28c63.js"></script>
+        <script src="toc-47903931.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,22 +177,27 @@
                         <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
 <h2 id="duplicate-suppression"><a class="header" href="#duplicate-suppression">Duplicate Suppression</a></h2>
-<p>Repeaters detect duplicate packets by MIC.</p>
-<p>Each repeater maintains a fixed-size cache of recently seen MIC values.</p>
+<p>Each repeater maintains a fixed-size cache of recently seen <strong>cache keys</strong> used to detect duplicate packets.</p>
 <p>Parameters:</p>
 <ul>
-<li>cache entry = full packet MIC</li>
-<li>cache size = implementation configurable</li>
+<li>cache size = implementation configurable (see <a href="#cache-sizing">sizing guidance</a> below)</li>
 <li>eviction policy = oldest entry removed when full</li>
 </ul>
-<p>Before forwarding a packet, the repeater checks the MIC cache:</p>
+<p>The cache key is derived from the packet as follows:</p>
 <ul>
-<li>if MIC is already present, do not forward</li>
-<li>if MIC is not present, continue processing</li>
-<li>once the repeater decides the packet is eligible, insert the MIC into the cache</li>
+<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the hop count, it remains stable across forwarding hops.</li>
+<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
 </ul>
-<p>To avoid racy reforward behavior, the repeater should insert the MIC into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
-<p>Because duplicate suppression depends directly on the MIC, shorter MIC sizes increase the probability of false-positive collisions in the cache. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
+<p>Before forwarding a packet, the repeater checks the cache:</p>
+<ul>
+<li>if the cache key is already present, do not forward</li>
+<li>if the cache key is not present, continue processing</li>
+<li>once the repeater decides the packet is eligible, insert the cache key into the cache</li>
+</ul>
+<p>To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
+<p>Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
+<h3 id="cache-sizing"><a class="header" href="#cache-sizing">Cache Sizing</a></h3>
+<p>Each cache entry is small (equal to the cache key size — typically 4 to 16 bytes), so generous sizing is inexpensive. The recommended minimum is <strong>32 entries</strong>; the suggested default is <strong>64 entries</strong>. High-traffic deployments or networks with large diameters may benefit from 128 or more entries.</p>
 <h2 id="forwarding-procedure"><a class="header" href="#forwarding-procedure">Forwarding Procedure</a></h2>
 <ol>
 <li>
@@ -228,9 +233,9 @@
 </ul>
 </li>
 <li>
-<p><strong>Unknown critical routing options</strong></p>
+<p><strong>Unknown critical options</strong></p>
 <ul>
-<li>If the packet contains any routing-critical option the repeater does not understand, do not forward.</li>
+<li>If the packet contains any critical option the repeater does not understand, do not forward.</li>
 </ul>
 </li>
 <li>
@@ -276,7 +281,15 @@
 </li>
 </ol>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
-<p>Repeaters do not generate MAC acks — acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a repeater can confirm that its forwarded packet was successfully received by the next hop by overhearing the next repeater’s retransmission of the same packet. If the repeater does not hear a subsequent retransmission within a reasonable window, it may infer that the next hop did not receive the packet, though no retry mechanism is defined at the MAC layer.</p>
+<p>Repeaters do not generate MAC acks — acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.</p>
+<p>This applies to:</p>
+<ul>
+<li><strong>Source-routed packets</strong>: Each forwarding hop listens for the next hop — the node matching the next source-route hint — to retransmit.</li>
+<li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
+<li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
+</ul>
+<p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression">cache key</a> — to be retransmitted. The listening window duration is sampled uniformly from [T_frame, 3 × T_frame], where T_frame is defined in <a href="channel-access.html#frame-duration">Channel Access</a>. If the packet is heard before the window expires, delivery is confirmed.</p>
+<p>If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in <a href="channel-access.html#backoff-procedure">Channel Access</a>.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
 <p>This forwarding model allows hybrid routing behavior.</p>
 <p>For example, a packet can be source-routed to a specific repeater and also carry a hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by the remaining hop count. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
@@ -285,7 +298,7 @@
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="multicast-channels.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="channel-access.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -299,7 +312,7 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="multicast-channels.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="channel-access.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

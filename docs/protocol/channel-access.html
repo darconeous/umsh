@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Limitations &amp; Open Items - UMSH Protocol Specification</title>
+        <title>Channel Access - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,52 +174,52 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="limitations--open-items"><a class="header" href="#limitations--open-items">Limitations &amp; Open Items</a></h1>
-<h2 id="known-limitations"><a class="header" href="#known-limitations">Known Limitations</a></h2>
-<h3 id="no-mac-layer-fragmentation"><a class="header" href="#no-mac-layer-fragmentation">No MAC-Layer Fragmentation</a></h3>
-<p>UMSH intentionally does not define a fragmentation mechanism at the MAC layer. The MAC layer delegates fragmentation to higher-layer protocols carried in the payload (see <a href="introduction.html#layer-separation">Layer Separation</a>). LoRa payloads are typically limited to approximately 200–250 bytes, and UMSH header overhead (FCF, addresses, SECINFO, MIC) consumes a significant portion of this budget. Higher-layer protocols that require payloads larger than a single frame must provide their own segmentation — for example, CoAP block-wise transfer or 6LoWPAN fragmentation.</p>
-<h3 id="multicast-sender-authentication"><a class="header" href="#multicast-sender-authentication">Multicast Sender Authentication</a></h3>
-<p>Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify that the claimed sender actually produced the packet. When the <code>S</code> flag is set, the source public key is carried in the packet and can be used for application-level trust decisions, but the protocol-level MIC authenticates only channel membership, not individual sender identity.</p>
-<p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
-<h3 id="destination-hint-collisions"><a class="header" href="#destination-hint-collisions">Destination-Hint Collisions</a></h3>
-<p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="addressing.html#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</p>
-<h2 id="open-items"><a class="header" href="#open-items">Open Items</a></h2>
+                        <h1 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h1>
+<p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.</p>
+<h2 id="frame-duration"><a class="header" href="#frame-duration">Frame Duration</a></h2>
+<p><strong>T_frame</strong> is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.</p>
+<h2 id="channel-sensing"><a class="header" href="#channel-sensing">Channel Sensing</a></h2>
+<p>Before transmitting any packet, a node MUST perform Channel Activity Detection (CAD). CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.</p>
+<ul>
+<li>If CAD indicates the channel is idle, proceed to transmit.</li>
+<li>If CAD indicates the channel is busy, enter the backoff procedure.</li>
+</ul>
+<h2 id="backoff-procedure"><a class="header" href="#backoff-procedure">Backoff Procedure</a></h2>
+<p>When CAD indicates the channel is busy:</p>
 <ol>
-<li>
-<p><strong>Protocol version statement</strong></p>
-<ul>
-<li>The FCF includes a <code>VER</code> field, but the introduction does not state which protocol version this document describes.</li>
-</ul>
-</li>
-<li>
-<p><strong>“Optional payload encryption” clarification</strong></p>
-<ul>
-<li>The introduction lists “Optional payload encryption” as a feature but does not specify when encryption is optional (e.g., amateur-radio-compliant modes, broadcasts, all frame types).</li>
-</ul>
-</li>
-<li>
-<p><strong>“Low-power operation” specificity</strong></p>
-<ul>
-<li>The introduction lists “Low-power operation” as a feature, but unlike the other items it describes a design goal rather than a concrete protocol property. Consider making it more specific or folding it into the use cases section.</li>
-</ul>
-</li>
-<li>
-<p><strong>PFS subsection placement in introduction</strong></p>
-<ul>
-<li>Perfect Forward Secrecy is currently a sub-subsection under Nodes, but PFS is a session-level property involving pairs of nodes. Consider promoting it to a sibling of Unicast / Multicast Channels / Blind Unicast.</li>
-</ul>
-</li>
+<li>Wait a random duration uniformly sampled from [0, T_frame].</li>
+<li>Perform CAD again.</li>
+<li>Repeat up to 4 more times (5 CAD attempts total).</li>
+<li>If the channel remains busy after all attempts, drop the packet silently.</li>
 </ol>
+<h2 id="flood-forwarding-contention-window"><a class="header" href="#flood-forwarding-contention-window">Flood Forwarding Contention Window</a></h2>
+<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and cancel their own pending forwarding.</p>
+<p>Compute the contention delay as:</p>
+<pre><code class="language-text">W     = W_max × clamp(1 − (received_SNR − SNR_threshold) / SNR_range, 0, 1)
+delay = uniform_random(0, W)
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>SNR_threshold</code> is the effective minimum SNR: the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. If neither is configured, <code>SNR_threshold = 0 dB</code>.</li>
+<li><code>SNR_range</code> is a configurable parameter; the suggested default is <strong>20 dB</strong>.</li>
+<li><code>W_max</code> is a configurable parameter; the suggested default is <strong>T_frame</strong>.</li>
+<li><code>received_SNR</code> is the SNR measured during reception of the packet being forwarded.</li>
+</ul>
+<p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
+<p>After computing the delay, the repeater waits. If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it MUST cancel its own pending transmission.</p>
+<h2 id="immediate-ack-transmission"><a class="header" href="#immediate-ack-transmission">Immediate ACK Transmission</a></h2>
+<p>When a node is the final destination of an ack-requested packet (UACK or BUAK) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.</p>
+<p>If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="amateur-radio.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="multicast-channels.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="faq.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="repeater-operation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -229,11 +229,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="amateur-radio.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="multicast-channels.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="faq.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="repeater-operation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
