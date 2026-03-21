@@ -7,8 +7,6 @@ UMSH packet options use the delta-length encoding described in [Packet Structure
 
 This means a node can determine an unrecognized option's attributes by inspecting its option number without consulting a registry.
 
-A third attribute, **Routing-Critical**, is planned but not yet defined. Routing-critical options would affect forwarding decisions and require special handling by repeaters. This will be elaborated in a future revision.
-
 ## Attribute Encoding
 
 The four attribute combinations and their option number patterns:

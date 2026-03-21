@@ -15,6 +15,7 @@
 
 - [Packet Processing](packet-processing.md)
 - [Multicast Channels](multicast-channels.md)
+- [Channel Access](channel-access.md)
 - [Repeater Operation](repeater-operation.md)
 - [Beacons & Path Discovery](beacons.md)
 

@@ -4,25 +4,31 @@ Forwarding logic is intentionally conservative. A repeater should evaluate packe
 
 ## Duplicate Suppression
 
-Repeaters detect duplicate packets by MIC.
-
-Each repeater maintains a fixed-size cache of recently seen MIC values.
+Each repeater maintains a fixed-size cache of recently seen **cache keys** used to detect duplicate packets.
 
 Parameters:
 
-- cache entry = full packet MIC
-- cache size = implementation configurable
+- cache size = implementation configurable (see [sizing guidance](#cache-sizing) below)
 - eviction policy = oldest entry removed when full
 
-Before forwarding a packet, the repeater checks the MIC cache:
+The cache key is derived from the packet as follows:
 
-- if MIC is already present, do not forward
-- if MIC is not present, continue processing
-- once the repeater decides the packet is eligible, insert the MIC into the cache
+- **Authenticated packets** (unicast, multicast, blind unicast): the cache key is the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the hop count, it remains stable across forwarding hops.
+- **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
 
-To avoid racy reforward behavior, the repeater should insert the MIC into the cache as soon as it accepts the packet for forwarding, not after transmission completes.
+Before forwarding a packet, the repeater checks the cache:
 
-Because duplicate suppression depends directly on the MIC, shorter MIC sizes increase the probability of false-positive collisions in the cache. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.
+- if the cache key is already present, do not forward
+- if the cache key is not present, continue processing
+- once the repeater decides the packet is eligible, insert the cache key into the cache
+
+To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.
+
+Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.
+
+### Cache Sizing
+
+Each cache entry is small (equal to the cache key size — typically 4 to 16 bytes), so generous sizing is inexpensive. The recommended minimum is **32 entries**; the suggested default is **64 entries**. High-traffic deployments or networks with large diameters may benefit from 128 or more entries.
 
 ## Forwarding Procedure
 
@@ -40,8 +46,8 @@ Because duplicate suppression depends directly on the MIC, shorter MIC sizes inc
    - If either the packet or repeater imposes a minimum SNR:
      - If the received SNR is below the effective threshold, do not forward.
 
-4. **Unknown critical routing options**
-   - If the packet contains any routing-critical option the repeater does not understand, do not forward.
+4. **Unknown critical options**
+   - If the packet contains any critical option the repeater does not understand, do not forward.
 
 5. **Policy checks**
    - If the packet does not satisfy local repeater policy, do not forward.
@@ -65,7 +71,17 @@ Because duplicate suppression depends directly on the MIC, shorter MIC sizes inc
 
 ## Forwarding Confirmation
 
-Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a repeater can confirm that its forwarded packet was successfully received by the next hop by overhearing the next repeater's retransmission of the same packet. If the repeater does not hear a subsequent retransmission within a reasonable window, it may infer that the next hop did not receive the packet, though no retry mechanism is defined at the MAC layer.
+Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.
+
+This applies to:
+
+- **Source-routed packets**: Each forwarding hop listens for the next hop — the node matching the next source-route hint — to retransmit.
+- **Flood originators**: The originating node listens for any node to retransmit.
+- **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
+
+After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. The listening window duration is sampled uniformly from [T_frame, 3 × T_frame], where T_frame is defined in [Channel Access](channel-access.md#frame-duration). If the packet is heard before the window expires, delivery is confirmed.
+
+If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in [Channel Access](channel-access.md#backoff-procedure).
 
 ## Routing Implications
 
