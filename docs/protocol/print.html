@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b663679e.js";
+            window.path_to_searchindex_js = "searchindex-fa055c91.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -1165,6 +1165,10 @@ K_mic = okm[16..31]
 </ol>
 <h2 id="flood-forwarding-contention-window"><a class="header" href="#flood-forwarding-contention-window">Flood Forwarding Contention Window</a></h2>
 <p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and cancel their own pending forwarding.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>These calculations and constants have been written by an LLM and have not yet been fully verified for correctness.</p>
+</blockquote>
 <p>Compute the contention delay as:</p>
 <pre><code class="language-text">W     = W_max × clamp(1 − (received_SNR − SNR_threshold) / SNR_range, 0, 1)
 delay = uniform_random(0, W)
