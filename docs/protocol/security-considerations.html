@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Packet Options - UMSH Protocol Specification</title>
+        <title>Security Considerations - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,177 +174,98 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="packet-options"><a class="header" href="#packet-options">Packet Options</a></h1>
-<p>UMSH packet options use the delta-length encoding described in <a href="packet-structure.html#options-field">Packet Structure</a>. Each option has a numeric option number whose two least significant bits encode two semantic attributes:</p>
+                        <h1 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h1>
+<p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>
+<h2 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h2>
+<p>UMSH is designed for a shared radio medium where any device in range can observe and inject packets. The threat model assumes:</p>
 <ul>
-<li><strong>Bit 0</strong>: Critical (1) / Non-Critical (0)</li>
-<li><strong>Bit 1</strong>: Dynamic (1) / Static (0)</li>
+<li><strong>Passive eavesdroppers</strong> can observe all traffic on the channel, including packet timing, size, hint values, and frame counters.</li>
+<li><strong>Active attackers</strong> can inject, replay, modify, or selectively drop packets.</li>
+<li><strong>Compromised nodes</strong> may leak their long-term private keys, channel keys, or both.</li>
 </ul>
-<p>This means a node can determine an unrecognized option’s attributes by inspecting its option number without consulting a registry.</p>
-<h2 id="attribute-encoding"><a class="header" href="#attribute-encoding">Attribute Encoding</a></h2>
-<p>The four attribute combinations and their option number patterns:</p>
+<p>UMSH does <strong>not</strong> assume a trusted infrastructure, a reliable transport, or a synchronized clock.</p>
+<h2 id="what-umsh-protects-against"><a class="header" href="#what-umsh-protects-against">What UMSH Protects Against</a></h2>
+<p><strong>Eavesdropping.</strong> When encryption is enabled, payload content is protected by AES-128-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.</p>
+<p><strong>Forgery.</strong> All authenticated packets carry a MIC computed with AES-CMAC. An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The <a href="security.html#security-control-field">MIC size</a> determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).</p>
+<p><strong>Replay attacks.</strong> Monotonically increasing <a href="security.html#frame-counters">frame counters</a> allow receivers to detect and reject replayed packets. The <a href="security.html#replay-detection">backward window and MIC cache</a> provide tolerance for out-of-order delivery without weakening replay protection.</p>
+<p><strong>Nonce misuse.</strong> The <a href="security.html#encrypted-packets">AES-SIV-inspired construction</a> derives the CTR IV from the MIC, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical plaintext — the keys and other traffic remain uncompromised.</p>
+<p><strong>Long-term key compromise (with PFS).</strong> If a <a href="security.html#perfect-forward-secrecy-sessions">PFS session</a> was active and the ephemeral keys were properly erased, traffic from that session cannot be retroactively decrypted even if the long-term private keys are later compromised.</p>
+<h2 id="what-umsh-does-not-protect-against"><a class="header" href="#what-umsh-does-not-protect-against">What UMSH Does Not Protect Against</a></h2>
+<p><strong>Traffic analysis.</strong> A passive observer can see packet timing, frequency, size, hint values, frame counters, and flood hop counts — all in the clear. This reveals communication patterns (who is active, how often, rough network topology) even when payloads are encrypted. Hint values are stable for a given identity, enabling long-term tracking of a node’s activity.</p>
+<p><strong>Multicast sender impersonation.</strong> Multicast authentication is based on the shared channel key. Any node possessing the key can construct a valid packet with any claimed source address. Other channel members cannot cryptographically distinguish the true sender from an impersonator. See <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
+<p><strong>Selective packet dropping.</strong> A compromised or malicious repeater can selectively drop packets without detection. UMSH provides no mechanism to verify that a repeater faithfully forwarded a packet. The flood routing model provides redundancy (multiple paths), but a strategically positioned adversary can still disrupt delivery.</p>
+<p><strong>Denial of service.</strong> An attacker can flood the radio channel with valid-looking packets, forcing receivers to expend computation on cryptographic verification. The 2-byte destination hint reduces this cost (only ~1 in 65,536 packets will trigger verification for any given node), but the shared medium provides no isolation. The <code>EMERGENCY</code> channel’s priority forwarding could be abused to amplify DoS traffic, though the signature requirement limits this to attackers who possess a valid Ed25519 keypair.</p>
+<p><strong>Non-repudiation.</strong> UMSH’s MIC is computed with symmetric pairwise keys that both sender and recipient possess, so a recipient cannot cryptographically prove to a third party who authored a given packet — either party could have constructed it. However, UMSH does not claim to provide deniability. Real-world deniability depends on the entire system: usage patterns, device forensics, metadata, and interactions with other systems. The symmetric MIC is a narrow property, not a deniability guarantee. When the application layer includes an EdDSA signature in the payload (as required by the <code>EMERGENCY</code> channel), even this narrow property is lost — a signature can only be produced by the private key holder.</p>
+<p><strong>Forward secrecy without PFS sessions.</strong> Normal unicast traffic uses stable pairwise keys derived from long-term ECDH. If a node’s long-term private key is compromised, all past and future unicast traffic with that node can be decrypted. Forward secrecy requires explicit use of <a href="security.html#perfect-forward-secrecy-sessions">PFS sessions</a>.</p>
+<p><strong>Anonymous channel membership.</strong> Possessing a channel key is both necessary and sufficient for channel membership. There is no mechanism to verify <em>who</em> holds a key, revoke access to a specific node without re-keying the entire channel (except via <a href="multicast-channels.html#managed-channels">managed channels</a>), or detect how many members a channel has.</p>
+<h2 id="implementation-requirements"><a class="header" href="#implementation-requirements">Implementation Requirements</a></h2>
+<p>The following requirements are critical for security. Failure to implement any of them correctly can compromise the properties described above.</p>
+<h3 id="frame-counter-monotonicity"><a class="header" href="#frame-counter-monotonicity">Frame Counter Monotonicity</a></h3>
+<p>The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See <a href="security.html#frame-counters">Frame Counters</a>.</p>
+<h3 id="frame-counter-persistence"><a class="header" href="#frame-counter-persistence">Frame Counter Persistence</a></h3>
+<p>A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it by a large margin on startup. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See <a href="security.html#counter-persistence">Counter Persistence</a> and <a href="security.html#counter-resynchronization">Counter Resynchronization</a>.</p>
+<h3 id="ephemeral-key-erasure"><a class="header" href="#ephemeral-key-erasure">Ephemeral Key Erasure</a></h3>
+<p>PFS sessions derive their security from the guarantee that ephemeral private keys are erased when the session ends. Implementations must ensure that ephemeral keys are:</p>
+<ul>
+<li>Never written to persistent storage, swap files, or logs</li>
+<li>Explicitly zeroed in memory upon session termination (not just freed — freed memory may not be overwritten promptly)</li>
+<li>Not retained in core dumps or crash reports</li>
+</ul>
+<p>Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See <a href="security.html#key-erasure">Key Erasure</a>.</p>
+<h3 id="constant-time-mic-verification"><a class="header" href="#constant-time-mic-verification">Constant-Time MIC Verification</a></h3>
+<p>MIC comparison must use constant-time comparison (e.g., a fixed-iteration XOR-and-OR loop) rather than <code>memcmp</code> or similar short-circuiting functions. A timing side channel in MIC verification allows an attacker to incrementally guess MIC bytes by measuring response time.</p>
+<h3 id="public-key-validation"><a class="header" href="#public-key-validation">Public Key Validation</a></h3>
+<p>Implementations must reject malformed Ed25519 public keys before converting them to X25519 form. Accepting a malformed key can produce a low-order X25519 point, resulting in a shared secret of zero — which would cause all pairwise keys to be identical across different peers. See <a href="security.html#ed25519-to-x25519-conversion">Ed25519 to X25519 Conversion</a>.</p>
+<h3 id="reserved-bits"><a class="header" href="#reserved-bits">Reserved Bits</a></h3>
+<p>Packets with non-zero reserved bits in the <a href="security.html#security-control-field">Security Control Field</a> must be dropped. Accepting unknown bit patterns could indicate a protocol version mismatch or a malformed packet; processing them risks undefined behavior.</p>
+<h2 id="metadata-exposure"><a class="header" href="#metadata-exposure">Metadata Exposure</a></h2>
+<p>Even with encryption enabled, the following information is visible to a passive observer. Which fields are present depends on the packet type:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Low 2 bits</th><th>Option numbers</th><th>Classification</th></tr>
+<tr><th>Field</th><th>Packet types</th><th>What it reveals</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right"><code>0b00</code></td><td>0, 4, 8, 12, …</td><td>Non-Critical, Static</td></tr>
-<tr><td style="text-align: right"><code>0b01</code></td><td>1, 5, 9, 13, …</td><td>Critical, Static</td></tr>
-<tr><td style="text-align: right"><code>0b10</code></td><td>2, 6, 10, 14, …</td><td>Non-Critical, Dynamic</td></tr>
-<tr><td style="text-align: right"><code>0b11</code></td><td>3, 7, 11, 15, …</td><td>Critical, Dynamic</td></tr>
+<tr><td>Packet timing and frequency</td><td>All</td><td>Communication patterns — when a node is active, how often it transmits</td></tr>
+<tr><td>Destination hint (2 bytes)</td><td>Unicast</td><td>Stable per-identity; enables tracking a node’s correspondents over time</td></tr>
+<tr><td>Source hint (2 bytes)</td><td>Unicast, unencrypted multicast</td><td>Stable per-identity; enables tracking a node’s activity over time</td></tr>
+<tr><td>Channel identifier (2 bytes)</td><td>Multicast, blind unicast</td><td>Stable per-channel; reveals which channel a packet belongs to</td></tr>
+<tr><td>Frame counter</td><td>All authenticated</td><td>Monotonically increasing; reveals total packet count and transmission rate</td></tr>
+<tr><td>Flood hop count</td><td>All with FHOPS</td><td>Reveals approximate distance from the original sender</td></tr>
+<tr><td>Packet size</td><td>All</td><td>May correlate with payload type or content length</td></tr>
+<tr><td>MIC</td><td>All authenticated</td><td>Unique per-packet; usable as a packet fingerprint for correlation across hops</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="critical-vs-non-critical"><a class="header" href="#critical-vs-non-critical">Critical vs. Non-Critical</a></h2>
-<p>These determine behavior when a node encounters an unknown option:</p>
-<ul>
-<li><strong>Critical</strong> (bit 0 set): if unrecognized, the packet must be dropped</li>
-<li><strong>Non-Critical</strong> (bit 0 clear): if unrecognized, the option is ignored and the node continues processing</li>
-</ul>
-<h2 id="dynamic-vs-static"><a class="header" href="#dynamic-vs-static">Dynamic vs. Static</a></h2>
-<p>These determine whether an option is covered by the MIC:</p>
-<ul>
-<li><strong>Dynamic</strong> (bit 1 set): not protected by the security MIC; may be modified in transit by repeaters</li>
-<li><strong>Static</strong> (bit 1 clear): protected by the security MIC; must not be modified in transit</li>
-</ul>
-<p>This distinction allows forwarding-related metadata (source routes, trace routes, station callsigns) to be modified by repeaters without invalidating end-to-end authentication.</p>
-<h2 id="defined-options"><a class="header" href="#defined-options">Defined Options</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th style="text-align: right">Number</th><th>Name</th><th>Classification</th><th>Value</th></tr>
-</thead>
-<tbody>
-<tr><td style="text-align: right">1</td><td>Region Code</td><td>Critical, Static</td><td>2 bytes</td></tr>
-<tr><td style="text-align: right">2</td><td>Trace Route</td><td>Non-Critical, Dynamic</td><td>0+ bytes</td></tr>
-<tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
-<tr><td style="text-align: right">4</td><td>Operator Callsign</td><td>Non-Critical, Static</td><td>ARNCE/HAM-64</td></tr>
-<tr><td style="text-align: right">5</td><td>Minimum RSSI</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
-<tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
-<tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="region-code-option-1"><a class="header" href="#region-code-option-1">Region Code (option 1)</a></h3>
-<ul>
-<li>Type: 2-byte region identifier</li>
-<li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
-<li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
-<li>This option is not enforced until the source route list is exhausted.</li>
-</ul>
-<h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
-<p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
-<p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>IATA Code</th><th>Region Code</th></tr>
-</thead>
-<tbody>
-<tr><td>SJC</td><td><code>0x7853</code></td></tr>
-<tr><td>MFR</td><td><code>0x5242</code></td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Region Name</th><th>SHA-256 prefix</th><th>Region Code</th></tr>
-</thead>
-<tbody>
-<tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
-<tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
-<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0x6af2</code></td></tr>
-</tbody>
-</table>
-</div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.</p>
-<p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
-<p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
-<h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
-<ul>
-<li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>
-<li>If absent, no trace-route information is added automatically.</li>
-<li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
-</ul>
-<h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
-<ul>
-<li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
-<li>Repeater behavior:
-<ul>
-<li>Only the repeater matching the first hint may forward the packet.</li>
-<li>That repeater removes its own hint before retransmission.</li>
-<li>Repeaters that do not match the first hint must not forward the packet.</li>
-</ul>
-</li>
-<li>Value layout: see <a href="#source-route-option-value">Source Route Option Value</a>.</li>
-</ul>
-<h3 id="operator-callsign-option-4"><a class="header" href="#operator-callsign-option-4">Operator Callsign (option 4)</a></h3>
-<ul>
-<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
-<li>Semantics: identifies the original packet sender’s amateur radio callsign.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
-</ul>
-<h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
-<ul>
-<li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
-<li>Semantics: packet must be received with at least this RSSI to be forwarded.</li>
-<li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-90 dBm</code></li>
-<li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
-</ul>
-<h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
-<ul>
-<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
-<li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
-<li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
-<li>This option is critical because repeaters must replace or remove it during forwarding.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
-</ul>
-<h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
-<ul>
-<li>Type: signed 1-byte integer, in dB</li>
-<li>Semantics: packet must be received with at least this SNR to be forwarded.</li>
-<li>If present with no value (length 0), default is <code>0 dB</code>.</li>
-<li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
-</ul>
-<h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
-<h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
-<p>A source-route option contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
-   1 B      1 B      1 B
-</code></pre>
-<p>Where each <code>RH[i]</code> is the first byte of a repeater’s public key.</p>
-<p>Interpretation:</p>
-<ul>
-<li><code>RH[0]</code> is the next repeater that must forward the packet</li>
-<li>when that repeater forwards, it removes <code>RH[0]</code></li>
-</ul>
-<p>An empty source-route option indicates that all explicit routing hints have been consumed. It is not semantically distinct from the absence of a source-route option for forwarding purposes.</p>
-<h3 id="trace-route-option-value"><a class="header" href="#trace-route-option-value">Trace Route Option Value</a></h3>
-<p>A trace-route option also contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
-</code></pre>
-<p>Repeaters prepend themselves:</p>
-<pre><code class="language-text">new_trace = my_router_hint || old_trace
-</code></pre>
-<p>So the list is ordered most-recent repeater first.</p>
+<p>In encrypted multicast, the source address is encrypted inside the ciphertext. In blind unicast, both the source and destination addresses are encrypted using the channel key — only the channel identifier remains in the clear. Normal unicast exposes both the destination hint and source hint (or full source key) to passive observers.</p>
+<h3 id="frame-counter-correlation-and-pfs"><a class="header" href="#frame-counter-correlation-and-pfs">Frame Counter Correlation and PFS</a></h3>
+<p>If a device uses a single monotonic frame counter across all traffic (including PFS sessions), an observer can correlate PFS session traffic with the device’s long-term identity by observing counter continuity. Implementations concerned with PFS unlinkability should consider using independent frame counters for PFS sessions. See <a href="security.html#wire-level-privacy">Wire-Level Privacy</a>.</p>
+<h3 id="hint-stability-and-tracking"><a class="header" href="#hint-stability-and-tracking">Hint Stability and Tracking</a></h3>
+<p>Because hints are derived deterministically from public keys, they remain stable for the lifetime of a node identity. An observer who associates a hint with a physical location or person can track that identity across sessions, power cycles, and network changes. The only countermeasure is generating a new identity (a new Ed25519 keypair), which requires all peers to re-learn the new public key.</p>
+<h2 id="cryptographic-design-rationale"><a class="header" href="#cryptographic-design-rationale">Cryptographic Design Rationale</a></h2>
+<h3 id="aes-siv-over-aes-gcm"><a class="header" href="#aes-siv-over-aes-gcm">AES-SIV over AES-GCM</a></h3>
+<p>UMSH uses an AES-SIV-inspired construction rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. The AES-SIV construction degrades gracefully — nonce reuse reveals only whether two plaintexts are identical, without compromising keys or enabling forgery. See the <a href="faq.html#why-aes-siv-instead-of-aes-gcm">FAQ</a>.</p>
+<h3 id="stable-keys-over-ratcheting"><a class="header" href="#stable-keys-over-ratcheting">Stable Keys over Ratcheting</a></h3>
+<p>UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH’s stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional <a href="security.html#perfect-forward-secrecy-sessions">PFS sessions</a> provide forward secrecy when needed, without imposing ratcheting’s fragility on all traffic. See the <a href="faq.html#why-doesnt-umsh-use-a-ratcheting-protocol-for-forward-secrecy">FAQ</a>.</p>
+<h3 id="single-keypair-for-signing-and-key-agreement"><a class="header" href="#single-keypair-for-signing-and-key-agreement">Single Keypair for Signing and Key Agreement</a></h3>
+<p>UMSH uses a single Ed25519 keypair per node for both identity (signing) and key agreement (via X25519 conversion). Standard guidance recommends separate keys, but the alternative would require distributing an additional 32-byte X25519 public key per identity and cryptographically binding it to the Ed25519 key. On a ~255-byte LoRa frame, this overhead is significant. The Ed25519/X25519 conversion is a well-understood, deterministic mapping over birationally equivalent curves, used by Signal’s X3DH and libsodium. See <a href="security.html#ed25519-to-x25519-conversion">Ed25519 to X25519 Conversion</a>.</p>
+<h2 id="channel-specific-considerations"><a class="header" href="#channel-specific-considerations">Channel-Specific Considerations</a></h2>
+<h3 id="named-channel-security"><a class="header" href="#named-channel-security">Named Channel Security</a></h3>
+<p>Named channels derive their key from a human-readable name via HKDF-Extract. Anyone who knows (or guesses) the name can derive the key. Named channels should be treated as public — they provide a shared namespace, not confidentiality. Long, high-entropy names offer practical obscurity but should not be relied upon for security.</p>
+<h3 id="emergency-channel-integrity"><a class="header" href="#emergency-channel-integrity">Emergency Channel Integrity</a></h3>
+<p>The <code>EMERGENCY</code> channel requires unencrypted transmission, full source key (<code>S=1</code>), and an EdDSA payload signature. These requirements ensure that emergency traffic is universally readable and cryptographically attributable. However, an attacker with a valid Ed25519 keypair can still send fraudulent emergency messages — the signature proves only that the sender possesses the key, not that the emergency is real. Social and operational controls (e.g., reputation, identity verification) are needed to complement the cryptographic guarantees.</p>
+<h3 id="blind-unicast-key-binding"><a class="header" href="#blind-unicast-key-binding">Blind Unicast Key Binding</a></h3>
+<p>Blind unicast payload keys are <a href="security.html#blind-unicast-payload-keys">derived by XORing</a> the pairwise unicast keys with the channel’s multicast keys. This ensures that decrypting a blind unicast payload requires both the pairwise shared secret and the channel key. Compromise of one without the other is insufficient.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="packet-types.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="uri-formats.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="security.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="amateur-radio.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -354,11 +275,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="packet-types.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="uri-formats.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="security.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="amateur-radio.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-28489508.js";
+            window.path_to_searchindex_js = "searchindex-b663679e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-96414d10.js"></script>
+        <script src="toc-7c6b562e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,6 +178,18 @@
 <p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.</p>
 <h2 id="frame-duration"><a class="header" href="#frame-duration">Frame Duration</a></h2>
 <p><strong>T_frame</strong> is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.</p>
+<p>For reference, typical T_frame values for a maximum-length (255-byte) packet using common MeshCore-style channel settings:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Region</th><th>Settings</th><th>T_frame</th></tr>
+</thead>
+<tbody>
+<tr><td>USA (915 MHz)</td><td>BW 62.5 kHz, SF7, CR 4/5</td><td>~0.8 s</td></tr>
+<tr><td>Europe (868 MHz)</td><td>BW 62.5 kHz, SF8, CR 4/8</td><td>~2.2 s</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="channel-sensing"><a class="header" href="#channel-sensing">Channel Sensing</a></h2>
 <p>Before transmitting any packet, a node MUST perform Channel Activity Detection (CAD). CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.</p>
 <ul>
