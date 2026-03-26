@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9dc35857.js";
+            window.path_to_searchindex_js = "searchindex-28489508.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-96414d10.js"></script>
@@ -207,8 +207,9 @@
 <p>For destination hints — which serve as a prefilter that determines whether a node must perform cryptographic verification — moving to 3 bytes dramatically reduces false-positive verification work and seems well worth the overhead.</p>
 <h4 id="source-hints"><a class="header" href="#source-hints">Source hints</a></h4>
 <p>The source hint serves a different purpose than the destination hint. It is not used as a prefilter; rather, it helps the receiver narrow down which cached pairwise key to try first. A source hint collision means the receiver may occasionally try the wrong cached key before finding the right one, but implementations can mitigate this by prioritizing recently matched keys.</p>
-<p>The worst case arises when two nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for well-connected infrastructure nodes (which tend not to be power-constrained) rather than battery-powered endpoints.</p>
-<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would save a byte per packet while still providing strong prefiltering where it matters most. However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte remains an open question.</p>
+<p>The worst case arises when two (or more) nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for infrastructure nodes (which tend not to be as power-constrained) rather than battery-powered endpoints, so the problem may be self-limiting.</p>
+<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would maintain the current per-packet overhead while strengthening prefiltering where it matters most. It would also maintain the current minimum-packet-overhead with MeshCore.</p>
+<p>However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte (or two) remains an open question.</p>
 
                     </main>
 

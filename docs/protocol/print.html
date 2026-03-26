@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9dc35857.js";
+            window.path_to_searchindex_js = "searchindex-28489508.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-96414d10.js"></script>
@@ -181,10 +181,10 @@
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>In UMSH, endpoints are identified
 by public keys, and multicast communication is based on shared symmetric
-channel keys. At its core, UMSH defines a <strong>MAC layer</strong> — framing,
+channel keys. At its core, UMSH defines a <strong>MAC layer</strong> with framing,
 addressing, encryption, authentication, and hop-by-hop forwarding. UMSH
 also defines application-layer protocols for text messaging, chat rooms,
-and node management that are built on top of the MAC layer. The MAC
+and node management that are built on top of this foundation. The MAC
 layer treats payloads opaquely and can equally carry UMSH-defined
 application protocols, third-party protocols such as CoAP, or any other
 higher-layer content.</p>
@@ -216,13 +216,16 @@ higher-layer content.</p>
 <li>High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.</li>
 <li>Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.</li>
 </ul>
-<h2 id="design-model"><a class="header" href="#design-model">Design Model</a></h2>
-<p>This document treats the terms <strong>channel</strong> and <strong>multicast group</strong> as
-equivalent. Unless otherwise noted, “channel” refers to a multicast
-group secured by a shared symmetric key.</p>
-<h3 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h3>
-<p>The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.</p>
-<p>This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).</p>
+<h2 id="design-principles"><a class="header" href="#design-principles">Design Principles</a></h2>
+<p>The following principles guide UMSH’s design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.</p>
+<p><strong>Single-frame design.</strong> Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.</p>
+<p><strong>Robustness.</strong> Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.</p>
+<p><strong>Tolerance of loss and disorder.</strong> LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.</p>
+<p><strong>Privacy by default.</strong> Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.</p>
+<p><strong>Brevity.</strong> Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, 2-byte hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.</p>
+<p><strong>Layer separation.</strong> The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.</p>
+<p><strong>Minimal mandatory state.</strong> A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.</p>
+<h2 id="key-concepts"><a class="header" href="#key-concepts">Key Concepts</a></h2>
 <h3 id="nodes"><a class="header" href="#nodes">Nodes</a></h3>
 <p>A <strong>node</strong> is a logical endpoint on the network, identified by a 32-byte
 Ed25519 public key. That public key is the node’s long-term network
@@ -712,7 +715,7 @@ place that it appeared in encrypted multicast:</p>
 <li><code>S</code> = salt included</li>
 <li><code>RESERVED</code> = must all be set to zero</li>
 </ul>
-<p>If the <code>RESERVED</code> bits read as anything other than zero, the packet MUST be dropped.</p>
+<p>If the <code>RESERVED</code> bits read as anything other than zero, the packet MUST be dropped by the recipient.</p>
 <p>MIC size encodings:</p>
 <div class="table-wrapper">
 <table>
@@ -759,7 +762,9 @@ those counters is being used.</p>
 <p>A receiver determines whether a frame counter is acceptable by computing:</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
-<p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>2048</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
+<p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>172800</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
+<p>Implementations that need to tolerate out-of-order delivery may also define a <strong>backward window</strong> — a small range of counter values <em>behind</em> the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is <strong>8</strong>. When a packet’s counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for <a href="#duplicate-suppression">duplicate suppression</a> in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.</p>
+<p>Regardless of window sizes, a packet must not be accepted if it is more than <strong>5 minutes</strong> out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a <a href="#counter-resynchronization">counter resynchronization</a>) establishes that node’s counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">
@@ -1802,8 +1807,9 @@ delay = uniform_random(0, W)
 <p>For destination hints — which serve as a prefilter that determines whether a node must perform cryptographic verification — moving to 3 bytes dramatically reduces false-positive verification work and seems well worth the overhead.</p>
 <h4 id="source-hints"><a class="header" href="#source-hints">Source hints</a></h4>
 <p>The source hint serves a different purpose than the destination hint. It is not used as a prefilter; rather, it helps the receiver narrow down which cached pairwise key to try first. A source hint collision means the receiver may occasionally try the wrong cached key before finding the right one, but implementations can mitigate this by prioritizing recently matched keys.</p>
-<p>The worst case arises when two nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for well-connected infrastructure nodes (which tend not to be power-constrained) rather than battery-powered endpoints.</p>
-<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would save a byte per packet while still providing strong prefiltering where it matters most. However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte remains an open question.</p>
+<p>The worst case arises when two (or more) nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for infrastructure nodes (which tend not to be as power-constrained) rather than battery-powered endpoints, so the problem may be self-limiting.</p>
+<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would maintain the current per-packet overhead while strengthening prefiltering where it matters most. It would also maintain the current minimum-packet-overhead with MeshCore.</p>
+<p>However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte (or two) remains an open question.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
@@ -1980,7 +1986,7 @@ delay = uniform_random(0, W)
 </table>
 </div>
 <p>UMSH’s payload types identify which higher-layer protocol is carried inside the payload — whether UMSH-defined (text messages, chat rooms, node identity) or third-party (CoAP, 6LoWPAN). The MAC layer treats all payloads identically. MeshCore’s payload types define application-level semantics directly at the protocol level, without a clean separation between MAC and application concerns. UMSH defines a CoAP-over-UMSH transport (payload type 7) that inherits CoAP’s block-wise transfer for payloads larger than a single LoRa frame. MeshCore defines a multipart packet type for segmented transfers at the protocol level.</p>
-<h2 id="layer-separation-1"><a class="header" href="#layer-separation-1">Layer Separation</a></h2>
+<h2 id="layer-separation"><a class="header" href="#layer-separation">Layer Separation</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2210,7 +2216,7 @@ delay = uniform_random(0, W)
 </div>
 <p>Meshtastic defines a rich application layer with built-in support for position sharing, telemetry, waypoints, audio, store-and-forward, and TAK integration. These are tightly integrated into the firmware and protobuf schema.</p>
 <p>UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This approach is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without protocol changes.</p>
-<h2 id="layer-separation-2"><a class="header" href="#layer-separation-2">Layer Separation</a></h2>
+<h2 id="layer-separation-1"><a class="header" href="#layer-separation-1">Layer Separation</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
