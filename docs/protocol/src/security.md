@@ -32,7 +32,7 @@ Where:
 - `S` = salt included
 - `RESERVED` = must all be set to zero
 
-If the `RESERVED` bits read as anything other than zero, the packet MUST be dropped.
+If the `RESERVED` bits read as anything other than zero, the packet MUST be dropped by the recipient.
 
 MIC size encodings:
 
@@ -80,7 +80,11 @@ A receiver determines whether a frame counter is acceptable by computing:
 delta = (received_counter - last_accepted_counter) mod 2^32
 ```
 
-If `delta` is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling. The suggested default forward window is **2048**. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.
+If `delta` is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling. The suggested default forward window is **172800**. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.
+
+Implementations that need to tolerate out-of-order delivery may also define a **backward window** — a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.
+
+Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
 #### Counter Persistence
 
@@ -142,7 +146,7 @@ keys to secure and authenticate messages.
 
 ### HKDF Inputs for Unicast
 
-For unicast and blind unicast, packet encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.
+For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.
 
 Let:
 
@@ -174,6 +178,28 @@ Where:
 These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.
 
 Because the key derivation depends only on the ECDH shared secret and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.
+
+### Blind Unicast Payload Keys
+
+Blind unicast payload encryption and authentication must require knowledge of *both* the pairwise shared secret and the channel key. This ensures that an attacker who compromises one of the two secrets — but not both — cannot decrypt blind unicast payloads.
+
+The blind unicast payload keys are derived by XORing the pairwise unicast keys (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)) with the channel's multicast keys (see [Multicast Packet Keys](#multicast-packet-keys)):
+
+```text
+K_enc_blind = K_enc_pairwise XOR K_enc_channel
+K_mic_blind = K_mic_pairwise XOR K_mic_channel
+```
+
+Where:
+
+- `K_enc_pairwise`, `K_mic_pairwise` are the stable pairwise keys derived from the sender/recipient ECDH shared secret
+- `K_enc_channel`, `K_mic_channel` are the stable channel keys derived from the channel key
+
+Both sets of input keys are independent HKDF outputs — pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.
+
+These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.
+
+Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 16-byte XOR per key, with no additional HKDF calls.
 
 ### Per-Packet Security Inputs
 
@@ -294,7 +320,7 @@ ack_tag = truncate_to_8( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
 
 Where:
 
-- `K_enc` is the **pairwise** encryption key derived from the sender/recipient ECDH shared secret (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), even for blind unicast packets
+- `K_enc` is the encryption key used for the packet — the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
 - `full_16B_CMAC` is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length
 
 The ack tag is never transmitted in the original packet — it appears only in the [MAC Ack](packet-types.md#mac-ack-packet) response. Because it requires knowledge of `K_enc`, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.
@@ -303,23 +329,23 @@ AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom
 
 ### Blind Unicast Source Encryption
 
-Blind unicast packets encrypt the source address separately from the payload.
+Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the **channel key alone**, so that any channel member can recover the sender's identity. The payload is then encrypted with the **combined blind unicast keys** (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys)), which require both the channel key and the pairwise shared secret.
 
-The source address is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
+The source address is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
 
 Let:
 
-- `K_enc` = channel encryption key derived from the channel key via HKDF
+- `K_enc_channel` = channel encryption key derived from the channel key via HKDF
 - `IV` = CTR IV constructed from the packet MIC and SECINFO
 - `SRC` = 32-byte source public key
 
 Then:
 
 ```text
-ENC_SRC = AES-128-CTR( key=K_enc, iv=IV, plaintext=SRC )
+ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
 ```
 
-This allows a receiver possessing the channel key to derive `K_enc`, recover the source address, and then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.
+This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.
 
 ## Perfect Forward Secrecy Sessions
 

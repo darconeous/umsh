@@ -8,10 +8,10 @@ The ideas in UMSH are free for anyone to adopt. MeshCore may never introduce a b
 
 In UMSH, endpoints are identified
 by public keys, and multicast communication is based on shared symmetric
-channel keys. At its core, UMSH defines a **MAC layer** — framing,
+channel keys. At its core, UMSH defines a **MAC layer** with framing,
 addressing, encryption, authentication, and hop-by-hop forwarding. UMSH
 also defines application-layer protocols for text messaging, chat rooms,
-and node management that are built on top of the MAC layer. The MAC
+and node management that are built on top of this foundation. The MAC
 layer treats payloads opaquely and can equally carry UMSH-defined
 application protocols, third-party protocols such as CoAP, or any other
 higher-layer content.
@@ -47,17 +47,25 @@ UMSH is designed for deployments where LoRa's range and low power consumption ar
 - High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.
 - Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.
 
-## Design Model
+## Design Principles
 
-This document treats the terms **channel** and **multicast group** as
-equivalent. Unless otherwise noted, "channel" refers to a multicast
-group secured by a shared symmetric key.
+The following principles guide UMSH's design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.
 
-### Layer Separation
+**Single-frame design.** Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.
 
-The UMSH MAC layer provides framing, addressing, encryption, authentication, and single-hop or multi-hop forwarding. It does not interpret payload content — the payload field carries higher-layer data opaquely, constrained only by the LoRa frame size budget.
+**Robustness.** Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.
 
-This clean separation means that features such as fragmentation, end-to-end reliable delivery, and application-level routing are handled by higher-layer protocols carried in the payload. For example, a payload might carry a 6LoWPAN-compressed IPv6 datagram, a CoAP request, or one of the UMSH-defined application protocols such as text messaging. If fragmentation is needed, it must be provided by the higher-layer protocol (e.g., CoAP block-wise transfer, 6LoWPAN fragmentation).
+**Tolerance of loss and disorder.** LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.
+
+**Privacy by default.** Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.
+
+**Brevity.** Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, 2-byte hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.
+
+**Layer separation.** The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.
+
+**Minimal mandatory state.** A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+
+## Key Concepts
 
 ### Nodes
 
@@ -92,15 +100,9 @@ is carried at the application layer and is not required by the MAC layer.
 
 Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see [Frame Types](packet-types.md) and [Security & Cryptography](security.md)).
 
-### Multicast Channels
+### Channels
 
-A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See [Multicast Channels](multicast-channels.md) for channel configuration and membership details.
-
-A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.
-
-### Blind Unicast
-
-**Blind unicast** hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Source Encryption](security.md#blind-unicast-source-encryption) for details.
+A channel is a shared symmetric key that serves two roles: **multicast** group communication and **blind unicast** metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See [Channels](multicast-channels.md) for channel types, membership models, and default channels.
 
 ### Perfect Forward Secrecy
 

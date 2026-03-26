@@ -110,19 +110,19 @@ Blind unicast uses a multicast channel to conceal sender and destination metadat
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 ```
 
-The `MIC` is the pairwise MIC computed over the payload using the sender/recipient shared secret. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and the `MIC` as IV (see [Security & Cryptography](security.md#blind-unicast-source-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
+The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and the `MIC` as IV (see [Security & Cryptography](security.md#blind-unicast-source-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
 
 ### Blind Unicast Processing
 
 1. Receiver uses `CHANNEL` to identify candidate channel keys.
-2. Receiver derives `K_enc` from the candidate channel key via HKDF.
+2. Receiver derives the channel's `K_enc_channel` from the candidate channel key via HKDF.
 3. Receiver reads the `MIC` from the end of the packet.
-4. Receiver uses `K_enc` and `MIC` to decrypt `ENC_DST_SRC`, recovering the sender's public key.
+4. Receiver uses `K_enc_channel` and `MIC` to decrypt `ENC_DST_SRC`, recovering the sender's public key.
 5. Receiver converts the sender Ed25519 public key into an X25519 public key.
 6. Receiver converts its own Ed25519 private key into an X25519 private key.
-7. Receiver performs ECDH.
-8. Receiver derives the stable pairwise encryption and authentication keys.
-9. Receiver authenticates and decrypts `ENC_PAYLOAD` using the pairwise keys.
+7. Receiver performs ECDH and derives the stable pairwise keys.
+8. Receiver computes the [blind unicast payload keys](security.md#blind-unicast-payload-keys) by XORing the pairwise keys with the channel keys.
+9. Receiver authenticates and decrypts `ENC_PAYLOAD` using the blind unicast payload keys.
 10. If authentication fails, the packet is rejected.
 
 Some repeaters may decline to forward blind unicast packets for unknown channels.

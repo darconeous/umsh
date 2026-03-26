@@ -2,11 +2,11 @@
 
 ### Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?
 
-No. A MAC Ack contains an [ack tag](security.md#ack-tag-construction) — an 8-byte value derived by encrypting the full 16-byte CMAC with the pairwise `K_enc`. Computing a valid ack tag requires knowledge of the pairwise encryption key, which in turn requires the ECDH shared secret between the sender and recipient. A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without `K_enc`. Ack forgery is therefore as hard as breaking the pairwise key agreement.
+No. A MAC Ack contains an [ack tag](security.md#ack-tag-construction) — an 8-byte value derived by encrypting the full 16-byte CMAC with `K_enc`. Computing a valid ack tag requires knowledge of the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without `K_enc`. Ack forgery is therefore as hard as breaking the underlying key agreement.
 
 ### Doesn't blind unicast have a circular dependency between the MIC and source decryption?
 
-No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is the pairwise MIC computed over the payload using the sender/recipient shared secret. The receiver reads the MIC, uses it (together with the channel key) as the IV to decrypt `ENC_SRC`, and then derives the pairwise keys from the recovered source public key to authenticate and decrypt `ENC_PAYLOAD`. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
+No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_SRC`, and then derives the pairwise keys from the recovered source public key. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
 
 ### Can source-routed packets loop if router hints collide?
 
@@ -24,7 +24,7 @@ The 4-byte frame counter wraps naturally at `2^32`. Replay detection uses modula
 
 Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
 
-This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient's key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.
+This does not apply to blind unicast. Blind unicast payloads are authenticated using [combined keys](security.md#blind-unicast-payload-keys) that require both the pairwise shared secret and the channel key, so only the true sender can produce a valid payload and only the intended recipient can read it.
 
 ### When should the S flag (full source address) be set?
 

@@ -1,10 +1,15 @@
-# Multicast Channels
+# Channels
 
-A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.
+A **channel** is a shared symmetric key that enables group communication and metadata concealment. Channels serve two distinct roles in UMSH:
+
+- **Multicast** — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.
+- **Blind unicast** — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Source Encryption](security.md#blind-unicast-source-encryption) for details.
+
+In both cases, the channel key is the membership credential — possessing it is both necessary and sufficient to participate.
 
 ## Channel Keys
 
-A channel key is a 32-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see [Multicast Packet Keys](security.md#multicast-packet-keys)).
+A channel key is a 32-byte symmetric key. It serves as the root secret from which encryption, authentication, and identification keys are derived (see [Multicast Packet Keys](security.md#multicast-packet-keys)).
 
 How a node obtains a channel key depends on the type of channel — see [Joining a Channel](#joining-a-channel) below.
 
@@ -14,7 +19,7 @@ Each channel is identified on the wire by a 2-byte channel identifier [derived f
 
 ## Encrypted and Unencrypted Modes
 
-Multicast packets may be sent with or without encryption, controlled by the `E` flag in the Security Control Field.
+Channel-addressed packets (multicast and blind unicast) may be sent with or without encryption, controlled by the `E` flag in the Security Control Field.
 
 - **Encrypted** (E=1): The source address is encrypted together with the payload, concealing the sender's identity from observers who do not possess the channel key. Only channel members can recover the source address and payload. See [Encrypted Multicast](packet-types.md#encrypted-multicast-e--1) for the packet layout.
 
@@ -22,11 +27,13 @@ Multicast packets may be sent with or without encryption, controlled by the `E` 
 
 ## Multi-Hop Delivery
 
-Multicast packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward multicast packets according to the standard [forwarding procedure](repeater-operation.md#forwarding-procedure), including duplicate suppression, signal-quality filtering, and region-scoped flooding.
+Channel-addressed packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward these packets according to the standard [forwarding procedure](repeater-operation.md#forwarding-procedure), including duplicate suppression, signal-quality filtering, and region-scoped flooding.
 
 ## Sender Authentication
 
 Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication) for further discussion.
+
+Blind unicast payloads are additionally authenticated using pairwise keys derived from the sender and recipient's key agreement, so only the true sender can produce a valid payload and only the intended recipient can verify it.
 
 ## Joining a Channel
 
@@ -60,7 +67,7 @@ For channels that require real secrecy, the channel key is distributed out-of-ba
 
 A managed channel is administered by a designated managing node that controls membership. Unlike named and private channels, a managed channel supports adding and removing individual members without requiring all remaining members to re-join manually.
 
-> **Note:** The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected — managed channels use the same multicast packet format and cryptographic processing as any other channel. 
+> **Note:** The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected — managed channels use the same multicast packet format and cryptographic processing as any other channel.
 
 To join a managed channel, a node provides its public key to the managing node — either out-of-band or via an in-band join request that the manager can accept or deny. Once accepted, the new member receives the current channel key and channel metadata from the managing node.
 
@@ -70,14 +77,30 @@ To remove a member, the managing node distributes a new key to all members *exce
 
 Members that are offline during a key rotation can request the current key from the managing node when they reconnect.
 
-## Relationship to Blind Unicast
+## Default Channels
 
-Channels also enable [blind unicast](packet-types.md#blind-unicast-packet), which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.
+Implementations should recognize two well-known named channels with specific behavior requirements.
+
+### `public`
+
+The `public` channel (derived from `umsh:cs:public`) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square — any node that knows the name can participate.
+
+- Maximum flood hops: **5** without a region code, **7** with a region code.
+- Traffic **may** be encrypted (E=1).
+- Chat messages that do not include the full source key (`S=1`) **must not** be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.
+
+### `EMERGENCY`
+
+The `EMERGENCY` channel (derived from `umsh:cs:EMERGENCY`, case-sensitive) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.
+
+- Maximum flood hops: **5** without a region code, **7** with a region code.
+- Chat messages **must not** be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.
+- Chat messages **must** include the full source key (`S=1`).
+- Chat messages **must** include an EdDSA signature in the payload.
+- Messages that do not meet all three requirements (unencrypted, full source key, signed) **must not** be accepted or displayed by the user interface.
+
+These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.
 
 ## Payload Reuse
 
-Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same [text message](app-text-messages.md) and [chat room](app-chat-rooms.md) payload formats as direct messaging. However, not all application types are allowed over multicast.
-
-
-
-
+Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same [text message](app-text-messages.md) and [chat room](app-chat-rooms.md) payload formats as direct messaging. However, not all application types are valid over multicast — see [Payload Types](payload-format.md) for compatibility.
