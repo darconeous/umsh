@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d0669a88.js";
+            window.path_to_searchindex_js = "searchindex-9dc35857.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-47903931.js"></script>
+        <script src="toc-96414d10.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -248,11 +248,8 @@ payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="packet-types.html">Frame Types</a> and <a href="security.html">Security &amp; Cryptography</a>).</p>
-<h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
-<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See <a href="multicast-channels.html">Multicast Channels</a> for channel configuration and membership details.</p>
-<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
-<h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
-<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See <a href="packet-types.html#blind-unicast-packet">Blind Unicast Packet</a> and <a href="security.html#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</p>
+<h3 id="channels"><a class="header" href="#channels">Channels</a></h3>
+<p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="security.html#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See <a href="multicast-channels.html">Channels</a> for channel types, membership models, and default channels.</p>
 <h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
 <p>UMSH supports <a href="security.html#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 

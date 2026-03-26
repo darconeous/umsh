@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d0669a88.js";
+            window.path_to_searchindex_js = "searchindex-9dc35857.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-47903931.js"></script>
+        <script src="toc-96414d10.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -249,11 +249,8 @@ payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="#frame-types">Frame Types</a> and <a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
-<h3 id="multicast-channels"><a class="header" href="#multicast-channels">Multicast Channels</a></h3>
-<p>A multicast channel is represented by a shared symmetric key. All nodes configured with that key are considered members of the channel and may receive packets addressed to it. See <a href="#multicast-channels-1">Multicast Channels</a> for channel configuration and membership details.</p>
-<p>A 2-byte channel hint is derived from the channel key and included in multicast packets to help receivers identify candidate channels efficiently. When encryption is enabled, the source address is encrypted inside the ciphertext, concealing the sender from non-members.</p>
-<h3 id="blind-unicast"><a class="header" href="#blind-unicast">Blind Unicast</a></h3>
-<p><strong>Blind unicast</strong> hides both the sender and destination from observers who do not possess the appropriate channel key, while still restricting payload access to the final recipient. The recipient must also possess the channel key. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</p>
+<h3 id="channels"><a class="header" href="#channels">Channels</a></h3>
+<p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See <a href="#channels-1">Channels</a> for channel types, membership models, and default channels.</p>
 <h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
 <p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -506,18 +503,18 @@ place that it appeared in encrypted multicast:</p>
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is the pairwise MIC computed over the payload using the sender/recipient shared secret. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is computed over the payload using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
-<li>Receiver derives <code>K_enc</code> from the candidate channel key via HKDF.</li>
+<li>Receiver derives the channel’s <code>K_enc_channel</code> from the candidate channel key via HKDF.</li>
 <li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses <code>K_enc</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver uses <code>K_enc_channel</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
-<li>Receiver performs ECDH.</li>
-<li>Receiver derives the stable pairwise encryption and authentication keys.</li>
-<li>Receiver authenticates and decrypts <code>ENC_PAYLOAD</code> using the pairwise keys.</li>
+<li>Receiver performs ECDH and derives the stable pairwise keys.</li>
+<li>Receiver computes the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a> by XORing the pairwise keys with the channel keys.</li>
+<li>Receiver authenticates and decrypts <code>ENC_PAYLOAD</code> using the blind unicast payload keys.</li>
 <li>If authentication fails, the packet is rejected.</li>
 </ol>
 <p>Some repeaters may decline to forward blind unicast packets for unknown channels.</p>
@@ -804,7 +801,7 @@ number of writes.</p>
 <p>This shared secret is ised as the input keying material for deriving the cryptographic
 keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
-<p>For unicast and blind unicast, packet encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
+<p>For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
@@ -825,6 +822,20 @@ K_mic = okm[16..31]
 </ul>
 <p>These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.</p>
 <p>Because the key derivation depends only on the ECDH shared secret and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.</p>
+<h3 id="blind-unicast-payload-keys"><a class="header" href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a></h3>
+<p>Blind unicast payload encryption and authentication must require knowledge of <em>both</em> the pairwise shared secret and the channel key. This ensures that an attacker who compromises one of the two secrets — but not both — cannot decrypt blind unicast payloads.</p>
+<p>The blind unicast payload keys are derived by XORing the pairwise unicast keys (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>) with the channel’s multicast keys (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>):</p>
+<pre><code class="language-text">K_enc_blind = K_enc_pairwise XOR K_enc_channel
+K_mic_blind = K_mic_pairwise XOR K_mic_channel
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>K_enc_pairwise</code>, <code>K_mic_pairwise</code> are the stable pairwise keys derived from the sender/recipient ECDH shared secret</li>
+<li><code>K_enc_channel</code>, <code>K_mic_channel</code> are the stable channel keys derived from the channel key</li>
+</ul>
+<p>Both sets of input keys are independent HKDF outputs — pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.</p>
+<p>These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.</p>
+<p>Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 16-byte XOR per key, with no additional HKDF calls.</p>
 <h3 id="per-packet-security-inputs"><a class="header" href="#per-packet-security-inputs">Per-Packet Security Inputs</a></h3>
 <p>Although <code>K_enc</code> and <code>K_mic</code> are stable for a given node pair, each packet still carries per-packet security inputs in <code>SECINFO</code>.</p>
 <p>These inputs are:</p>
@@ -918,24 +929,24 @@ K_mic = okm[16..31]
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>K_enc</code> is the <strong>pairwise</strong> encryption key derived from the sender/recipient ECDH shared secret (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), even for blind unicast packets</li>
+<li><code>K_enc</code> is the encryption key used for the packet — the pairwise key for unicast (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), or the combined blind unicast key for blind unicast (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>)</li>
 <li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
 </ul>
 <p>The ack tag is never transmitted in the original packet — it appears only in the <a href="#mac-ack-packet">MAC Ack</a> response. Because it requires knowledge of <code>K_enc</code>, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast packets encrypt the source address separately from the payload.</p>
-<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<p>Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
+<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
-<li><code>K_enc</code> = channel encryption key derived from the channel key via HKDF</li>
+<li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>SRC</code> = 32-byte source public key</li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc, iv=IV, plaintext=SRC )
+<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
 </code></pre>
-<p>This allows a receiver possessing the channel key to derive <code>K_enc</code>, recover the source address, and then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
+<p>This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
 <p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
 <h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>
@@ -1045,15 +1056,20 @@ K_mic = okm[16..31]
 </li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="multicast-channels-1"><a class="header" href="#multicast-channels-1">Multicast Channels</a></h1>
-<p>A multicast channel is a group communication primitive based on a shared symmetric key. Any node configured with a given channel key is a member of that channel and can send and receive packets addressed to it.</p>
+<h1 id="channels-1"><a class="header" href="#channels-1">Channels</a></h1>
+<p>A <strong>channel</strong> is a shared symmetric key that enables group communication and metadata concealment. Channels serve two distinct roles in UMSH:</p>
+<ul>
+<li><strong>Multicast</strong> — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.</li>
+<li><strong>Blind unicast</strong> — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</li>
+</ul>
+<p>In both cases, the channel key is the membership credential — possessing it is both necessary and sufficient to participate.</p>
 <h2 id="channel-keys"><a class="header" href="#channel-keys">Channel Keys</a></h2>
-<p>A channel key is a 32-byte symmetric key. It serves as both the membership credential and the root secret from which encryption, authentication, and identification keys are derived (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>).</p>
+<p>A channel key is a 32-byte symmetric key. It serves as the root secret from which encryption, authentication, and identification keys are derived (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>).</p>
 <p>How a node obtains a channel key depends on the type of channel — see <a href="#joining-a-channel">Joining a Channel</a> below.</p>
 <h2 id="channel-identifier"><a class="header" href="#channel-identifier">Channel Identifier</a></h2>
 <p>Each channel is identified on the wire by a 2-byte channel identifier <a href="#channel-identifier-derivation">derived from the channel key</a>. This identifier is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, channel identifiers are not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification.</p>
 <h2 id="encrypted-and-unencrypted-modes"><a class="header" href="#encrypted-and-unencrypted-modes">Encrypted and Unencrypted Modes</a></h2>
-<p>Multicast packets may be sent with or without encryption, controlled by the <code>E</code> flag in the Security Control Field.</p>
+<p>Channel-addressed packets (multicast and blind unicast) may be sent with or without encryption, controlled by the <code>E</code> flag in the Security Control Field.</p>
 <ul>
 <li>
 <p><strong>Encrypted</strong> (E=1): The source address is encrypted together with the payload, concealing the sender’s identity from observers who do not possess the channel key. Only channel members can recover the source address and payload. See <a href="#encrypted-multicast-e--1">Encrypted Multicast</a> for the packet layout.</p>
@@ -1063,9 +1079,10 @@ K_mic = okm[16..31]
 </li>
 </ul>
 <h2 id="multi-hop-delivery"><a class="header" href="#multi-hop-delivery">Multi-Hop Delivery</a></h2>
-<p>Multicast packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward multicast packets according to the standard <a href="#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
+<p>Channel-addressed packets are delivered via flood forwarding, bounded by the optional flood hop count field. Repeaters forward these packets according to the standard <a href="#forwarding-procedure">forwarding procedure</a>, including duplicate suppression, signal-quality filtering, and region-scoped flooding.</p>
 <h2 id="sender-authentication"><a class="header" href="#sender-authentication">Sender Authentication</a></h2>
 <p>Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see <a href="#multicast-sender-authentication">Multicast Sender Authentication</a> for further discussion.</p>
+<p>Blind unicast payloads are additionally authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can verify it.</p>
 <h2 id="joining-a-channel"><a class="header" href="#joining-a-channel">Joining a Channel</a></h2>
 <p>UMSH supports three models for channel membership, from simplest to most capable.</p>
 <h3 id="named-channels"><a class="header" href="#named-channels">Named Channels</a></h3>
@@ -1089,10 +1106,27 @@ K_mic = okm[16..31]
 <p>The managing node periodically rotates the channel key. When a key rotation occurs, each current member receives the new key along with the time at which it becomes active, allowing a coordinated switchover. Because the <a href="#channel-identifier-derivation">channel identifier</a> is derived from the channel key, a key rotation also changes the channel’s on-wire identifier; the application layer masks this from the user so the channel appears to be the same.</p>
 <p>To remove a member, the managing node distributes a new key to all members <em>except</em> the excluded node. The excluded node still holds the old key but cannot decrypt traffic encrypted under the new one.</p>
 <p>Members that are offline during a key rotation can request the current key from the managing node when they reconnect.</p>
-<h2 id="relationship-to-blind-unicast"><a class="header" href="#relationship-to-blind-unicast">Relationship to Blind Unicast</a></h2>
-<p>Channels also enable <a href="#blind-unicast-packet">blind unicast</a>, which uses a channel key to conceal both the sender and destination addresses while protecting the payload end-to-end with pairwise encryption. In this mode, the channel serves as a metadata-concealment layer rather than a group communication mechanism — the payload is readable only by the intended recipient, not by all channel members.</p>
+<h2 id="default-channels"><a class="header" href="#default-channels">Default Channels</a></h2>
+<p>Implementations should recognize two well-known named channels with specific behavior requirements.</p>
+<h3 id="public"><a class="header" href="#public"><code>public</code></a></h3>
+<p>The <code>public</code> channel (derived from <code>umsh:cs:public</code>) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square — any node that knows the name can participate.</p>
+<ul>
+<li>Maximum flood hops: <strong>5</strong> without a region code, <strong>7</strong> with a region code.</li>
+<li>Traffic <strong>may</strong> be encrypted (E=1).</li>
+<li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>must not</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
+</ul>
+<h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
+<p>The <code>EMERGENCY</code> channel (derived from <code>umsh:cs:EMERGENCY</code>, case-sensitive) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>
+<ul>
+<li>Maximum flood hops: <strong>5</strong> without a region code, <strong>7</strong> with a region code.</li>
+<li>Chat messages <strong>must not</strong> be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.</li>
+<li>Chat messages <strong>must</strong> include the full source key (<code>S=1</code>).</li>
+<li>Chat messages <strong>must</strong> include an EdDSA signature in the payload.</li>
+<li>Messages that do not meet all three requirements (unencrypted, full source key, signed) <strong>must not</strong> be accepted or displayed by the user interface.</li>
+</ul>
+<p>These requirements ensure that emergency traffic is universally readable, attributable to a specific node, and cryptographically authenticated against impersonation.</p>
 <h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
-<p>Application-layer multicast communication reuses the same payload types as unicast. For example, group chat uses the same <a href="#text-messages">text message</a> and <a href="#chat-rooms">chat room</a> payload formats as direct messaging. However, not all application types are allowed over multicast.</p>
+<p>Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same <a href="#text-messages">text message</a> and <a href="#chat-rooms">chat room</a> payload formats as direct messaging. However, not all application types are valid over multicast — see <a href="#payload-format">Payload Types</a> for compatibility.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h1>
 <p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.</p>
@@ -1742,14 +1776,40 @@ delay = uniform_random(0, W)
 <h3 id="multicast-sender-authentication"><a class="header" href="#multicast-sender-authentication">Multicast Sender Authentication</a></h3>
 <p>Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify that the claimed sender actually produced the packet. When the <code>S</code> flag is set, the source public key is carried in the packet and can be used for application-level trust decisions, but the protocol-level MIC authenticates only channel membership, not individual sender identity.</p>
 <p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
-<h3 id="destination-hint-collisions"><a class="header" href="#destination-hint-collisions">Destination-Hint Collisions</a></h3>
-<p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="#destination-hint">Addressing</a>). In practice, collisions are rare (~1 in 65536) and the cost is wasted computation, not incorrect behavior.</p>
+<h2 id="open-issues"><a class="header" href="#open-issues">Open Issues</a></h2>
+<h3 id="hint-collisions"><a class="header" href="#hint-collisions">Hint Collisions</a></h3>
+<p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="#destination-hint">Addressing</a>). The probability of any <em>specific</em> pair of nodes sharing a hint is low (~1 in 65,536), but by the birthday bound, once a network approaches 256 active nodes the probability of <em>at least two</em> nodes sharing a hint rises above 40%.</p>
+<p>The cost of a hint collision is wasted computation, not incorrect behavior. However, on battery-constrained devices the wasted computation can be significant: a destination hint collision persists for the lifetime of both node identities, causing repeated unnecessary cryptographic verification on every packet exchanged between the colliding nodes. The only remedy is for one of the nodes to generate a new identity (a new Ed25519 keypair). For a dedicated repeater or sensor node this is relatively painless, but for a chat node it means all peers must re-learn the new public key.</p>
+<p>MeshCore originally used 1-byte hints for source, destination, and source-routing addresses. This placed the birthday bound at just 16 nodes — far too low for practical networks.</p>
+<p>UMSH uses 2-byte source and destination hints, raising the birthday bound to 256 nodes. UMSH retains 1-byte hints for source-routing (router hints), which may affect source-routed delivery in denser areas.</p>
+<h4 id="how-big-is-big-enough"><a class="header" href="#how-big-is-big-enough">How big is big enough?</a></h4>
+<p>Moving to 3-byte hints would raise the birthday bound to approximately 4,096 nodes — a significant improvement over both 16 and 256. But is the extra byte per hint worth it?</p>
+<p>The answer depends on the effective network size. A collision is only relevant when both colliding nodes are regularly reachable from each other. For flood-routed traffic, this means all nodes reachable by flooding. For source-routed traffic, only nodes along the path matter, but path composition can be unpredictable and hard to characterize in advance.</p>
+<p>The impact of router hint collisions during source routing is not entirely clear. In theory, an unnecessary retransmission caused by a collision should fizzle out quickly (the next hop hint is unlikely to also collide). But if a particular source route is used frequently, even a small amount of extra traffic per use can accumulate. Repeater operators are more likely to coordinate hint assignments among themselves, but this cannot be assumed in all deployments. MeshCore addressed this by introducing 2-byte and 3-byte repeater hints, though with the majority of MeshCore traffic appearing to be flood-routed, it is not clear whether this represents a material improvement in practice.</p>
+<p>As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one destination hint collision for different hint sizes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Hint size</th><th>Collision probability</th></tr>
+</thead>
+<tbody>
+<tr><td>1 byte (256 values)</td><td>~100%</td></tr>
+<tr><td>2 bytes (65,536 values)</td><td>~94%</td></tr>
+<tr><td>3 bytes (16,777,216 values)</td><td>~1%</td></tr>
+</tbody>
+</table>
+</div>
+<p>For destination hints — which serve as a prefilter that determines whether a node must perform cryptographic verification — moving to 3 bytes dramatically reduces false-positive verification work and seems well worth the overhead.</p>
+<h4 id="source-hints"><a class="header" href="#source-hints">Source hints</a></h4>
+<p>The source hint serves a different purpose than the destination hint. It is not used as a prefilter; rather, it helps the receiver narrow down which cached pairwise key to try first. A source hint collision means the receiver may occasionally try the wrong cached key before finding the right one, but implementations can mitigate this by prioritizing recently matched keys.</p>
+<p>The worst case arises when two nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for well-connected infrastructure nodes (which tend not to be power-constrained) rather than battery-powered endpoints.</p>
+<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would save a byte per packet while still providing strong prefiltering where it matters most. However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte remains an open question.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
-<p>No. A MAC Ack contains an <a href="#ack-tag-construction">ack tag</a> — an 8-byte value derived by encrypting the full 16-byte CMAC with the pairwise <code>K_enc</code>. Computing a valid ack tag requires knowledge of the pairwise encryption key, which in turn requires the ECDH shared secret between the sender and recipient. A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without <code>K_enc</code>. Ack forgery is therefore as hard as breaking the pairwise key agreement.</p>
+<p>No. A MAC Ack contains an <a href="#ack-tag-construction">ack tag</a> — an 8-byte value derived by encrypting the full 16-byte CMAC with <code>K_enc</code>. Computing a valid ack tag requires knowledge of the encryption key (pairwise for unicast, or the <a href="#blind-unicast-payload-keys">combined blind unicast key</a> for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without <code>K_enc</code>. Ack forgery is therefore as hard as breaking the underlying key agreement.</p>
 <h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption">Doesn’t blind unicast have a circular dependency between the MIC and source decryption?</a></h3>
-<p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is the pairwise MIC computed over the payload using the sender/recipient shared secret. The receiver reads the MIC, uses it (together with the channel key) as the IV to decrypt <code>ENC_SRC</code>, and then derives the pairwise keys from the recovered source public key to authenticate and decrypt <code>ENC_PAYLOAD</code>. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
+<p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_SRC</code>, and then derives the pairwise keys from the recovered source public key. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
 <p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
 <h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
@@ -1758,7 +1818,7 @@ delay = uniform_random(0, W)
 <p>The 4-byte frame counter wraps naturally at <code>2^32</code>. Replay detection uses modular arithmetic: <code>delta = (received - last_accepted) mod 2^32</code>. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case — it is handled identically to any other counter increment. See <a href="#replay-detection">Replay Detection</a>.</p>
 <h3 id="can-a-multicast-channel-member-impersonate-another-member"><a class="header" href="#can-a-multicast-channel-member-impersonate-another-member">Can a multicast channel member impersonate another member?</a></h3>
 <p>Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
-<p>This does not apply to blind unicast. Blind unicast payloads are authenticated using pairwise keys derived from the sender and recipient’s key agreement, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
+<p>This does not apply to blind unicast. Blind unicast payloads are authenticated using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the pairwise shared secret and the channel key, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
 <h3 id="when-should-the-s-flag-full-source-address-be-set"><a class="header" href="#when-should-the-s-flag-full-source-address-be-set">When should the S flag (full source address) be set?</a></h3>
 <p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set <code>S</code> when:</p>
 <ul>

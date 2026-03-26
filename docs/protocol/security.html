@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d0669a88.js";
+            window.path_to_searchindex_js = "searchindex-9dc35857.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-47903931.js"></script>
+        <script src="toc-96414d10.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -287,7 +287,7 @@ number of writes.</p>
 <p>This shared secret is ised as the input keying material for deriving the cryptographic
 keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
-<p>For unicast and blind unicast, packet encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
+<p>For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
@@ -308,6 +308,20 @@ K_mic = okm[16..31]
 </ul>
 <p>These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.</p>
 <p>Because the key derivation depends only on the ECDH shared secret and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.</p>
+<h3 id="blind-unicast-payload-keys"><a class="header" href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a></h3>
+<p>Blind unicast payload encryption and authentication must require knowledge of <em>both</em> the pairwise shared secret and the channel key. This ensures that an attacker who compromises one of the two secrets — but not both — cannot decrypt blind unicast payloads.</p>
+<p>The blind unicast payload keys are derived by XORing the pairwise unicast keys (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>) with the channel’s multicast keys (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>):</p>
+<pre><code class="language-text">K_enc_blind = K_enc_pairwise XOR K_enc_channel
+K_mic_blind = K_mic_pairwise XOR K_mic_channel
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>K_enc_pairwise</code>, <code>K_mic_pairwise</code> are the stable pairwise keys derived from the sender/recipient ECDH shared secret</li>
+<li><code>K_enc_channel</code>, <code>K_mic_channel</code> are the stable channel keys derived from the channel key</li>
+</ul>
+<p>Both sets of input keys are independent HKDF outputs — pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.</p>
+<p>These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.</p>
+<p>Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 16-byte XOR per key, with no additional HKDF calls.</p>
 <h3 id="per-packet-security-inputs"><a class="header" href="#per-packet-security-inputs">Per-Packet Security Inputs</a></h3>
 <p>Although <code>K_enc</code> and <code>K_mic</code> are stable for a given node pair, each packet still carries per-packet security inputs in <code>SECINFO</code>.</p>
 <p>These inputs are:</p>
@@ -401,24 +415,24 @@ K_mic = okm[16..31]
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>K_enc</code> is the <strong>pairwise</strong> encryption key derived from the sender/recipient ECDH shared secret (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), even for blind unicast packets</li>
+<li><code>K_enc</code> is the encryption key used for the packet — the pairwise key for unicast (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), or the combined blind unicast key for blind unicast (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>)</li>
 <li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
 </ul>
 <p>The ack tag is never transmitted in the original packet — it appears only in the <a href="packet-types.html#mac-ack-packet">MAC Ack</a> response. Because it requires knowledge of <code>K_enc</code>, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast packets encrypt the source address separately from the payload.</p>
-<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<p>Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
+<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
-<li><code>K_enc</code> = channel encryption key derived from the channel key via HKDF</li>
+<li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>SRC</code> = 32-byte source public key</li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc, iv=IV, plaintext=SRC )
+<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
 </code></pre>
-<p>This allows a receiver possessing the channel key to derive <code>K_enc</code>, recover the source address, and then derive the stable pairwise keys needed to authenticate and decrypt the payload itself.</p>
+<p>This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
 <p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="mac-commands.html#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
 <h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>
