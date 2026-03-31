@@ -6,6 +6,13 @@ This chapter describes how UMSH nodes contend for channel access before transmit
 
 **T_frame** is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.
 
+For reference, typical T_frame values for a maximum-length (255-byte) packet using common MeshCore-style channel settings:
+
+| Region | Settings | T_frame |
+|---|---|---|
+| USA (915 MHz) | BW 62.5 kHz, SF7, CR 4/5 | ~0.8 s |
+| Europe (868 MHz) | BW 62.5 kHz, SF8, CR 4/8 | ~2.2 s |
+
 ## Channel Sensing
 
 Before transmitting any packet, a node MUST perform Channel Activity Detection (CAD). CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.
@@ -25,6 +32,9 @@ When CAD indicates the channel is busy:
 ## Flood Forwarding Contention Window
 
 When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and cancel their own pending forwarding.
+
+> [!NOTE]
+> These calculations and constants have been written by an LLM and have not yet been fully verified for correctness.
 
 Compute the contention delay as:
 

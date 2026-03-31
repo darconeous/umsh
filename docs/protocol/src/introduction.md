@@ -2,7 +2,7 @@
 
 UMSH is a LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as [critical shortcomings](meshcore-comparison.md#cryptography)—shortcomings that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into this comprehensive specification.
 
-The ideas in UMSH are free for anyone to adopt. MeshCore may never introduce a breaking protocol revision, but individual techniques described here — compact authenticated framing, nonce-misuse-resistant encryption, blind addressing — could be useful to other similar LoRa mesh protocols. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.
+The ideas in UMSH are free for anyone to adopt, but was written with MeshCore V2 in mind. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.
 
 ## Overview
 
@@ -29,24 +29,6 @@ UMSH is designed to support:
 - Ability to operate in a way that preserves [perfect forward secrecy (PFS)](security.md#perfect-forward-secrecy-sessions)
 - Timestamp-free at the MAC layer
 
-## Use Cases
-
-UMSH is designed for deployments where LoRa's range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.
-
-**Intended use cases include:**
-
-- **Off-grid text communication** — chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.
-- **Emergency and disaster communications** — resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.
-- **IoT and sensor telemetry** — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.
-- **Amateur radio mesh networking** — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.
-- **Privacy-sensitive communication** — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.
-- **Embedded and constrained deployments** — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.
-
-**UMSH is not designed for:**
-
-- High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.
-- Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.
-
 ## Design Principles
 
 The following principles guide UMSH's design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.
@@ -64,6 +46,24 @@ The following principles guide UMSH's design. They reflect the constraints of Lo
 **Layer separation.** The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.
 
 **Minimal mandatory state.** A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+
+## Use Cases
+
+UMSH is designed for deployments where LoRa's range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.
+
+**Intended use cases include:**
+
+- **Off-grid text communication** — chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.
+- **Emergency and disaster communications** — resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.
+- **IoT and sensor telemetry** — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.
+- **Amateur radio mesh networking** — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.
+- **Privacy-sensitive communication** — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.
+- **Embedded and constrained deployments** — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+
+**UMSH is not designed for:**
+
+- High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical. 
+- Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.
 
 ## Key Concepts
 
@@ -106,5 +106,5 @@ A channel is a shared symmetric key that serves two roles: **multicast** group c
 
 ### Perfect Forward Secrecy
 
-UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions) via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
+UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions), not as a core part of the underlying protocol but instead via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
 

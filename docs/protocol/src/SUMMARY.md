@@ -31,6 +31,7 @@
 
 # Appendices
 
+- [Security Considerations](security-considerations.md)
 - [Amateur Radio Operation](amateur-radio.md)
 - [Limitations & Open Items](limitations.md)
 - [FAQ](faq.md)

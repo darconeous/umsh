@@ -33,9 +33,9 @@ Fragments a large message across multiple packets. The option value is 3 bytes:
 
 | Byte | Field | Description |
 |---:|---|---|
-| 0 | Fragment Index | Position of this fragment in the reassembled message |
-| 1 | Fragment Count | Total number of fragments (must not be zero or one) |
-| 2 | Message Identifier | Shared by all fragments of the same message |
+| 0 | Message Id | Shared by all fragments of the same message |
+| 1 | Fragment Index | Position of this fragment in the reassembled message |
+| 2 | Fragment Count | Total number of fragments (must not be zero or one) |
 
 Rules:
 
