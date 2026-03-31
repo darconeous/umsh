@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -186,8 +186,8 @@
 <tbody>
 <tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number derived from Bluetooth MAC address</td></tr>
 <tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Optional Curve25519 keypair (PKC, v2.5+), not used for addressing</td></tr>
-<tr><td>Source address in packets</td><td>2-byte hint or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
-<tr><td>Destination address</td><td>2-byte hint</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Source address in packets</td><td>compact hint (1 byte in unicast, 3 bytes in broadcast/multicast) or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Destination address</td><td>3-byte hint</td><td>4-byte node number (cleartext)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Address spoofing resistance</td><td>Cryptographic — pairwise keys are derived from public keys</td><td>None — node numbers are hardware-derived and trivially spoofable</td></tr>
 </tbody>
@@ -287,7 +287,7 @@
 </table>
 </div>
 <p>Meshtastic’s 16-byte cleartext header exposes the full sender and recipient node numbers on every packet. A passive observer with a LoRa receiver can identify who is communicating with whom, build traffic graphs, and track individual devices over time — even without the channel key. Node numbers are derived from hardware MAC addresses, making them persistent identifiers tied to physical devices.</p>
-<p>UMSH’s 2-byte hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
+<p>UMSH’s compact hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
 <h2 id="multicast-and-group-communication"><a class="header" href="#multicast-and-group-communication">Multicast and Group Communication</a></h2>
 <div class="table-wrapper">
 <table>
@@ -397,7 +397,7 @@
 </div>
 <p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-256-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
 <h3 id="unicast-filtering"><a class="header" href="#unicast-filtering">Unicast Filtering</a></h3>
-<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 2-byte destination hint has a ~1-in-65536 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
+<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
 <p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.</p>
 <h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
 <p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header scales from 1 byte upward depending on which optional fields are present. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>

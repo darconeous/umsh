@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -180,8 +180,18 @@
 <h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
 <p>The following fictional values are used consistently across examples:</p>
 <ul>
-<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code> (hint: <code>A1B2</code>)</li>
-<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code> (hint: <code>C3D4</code>)</li>
+<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code>
+<ul>
+<li>As unicast/blind-unicast SRC hint (1 byte): <code>A1</code></li>
+<li>As destination hint or broadcast/multicast SRC hint (3 bytes): <code>A1 B2 03</code></li>
+</ul>
+</li>
+<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code>
+<ul>
+<li>As unicast/blind-unicast SRC hint (1 byte): <code>C3</code></li>
+<li>As destination hint or broadcast/multicast SRC hint (3 bytes): <code>C3 D4 25</code></li>
+</ul>
+</li>
 <li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
 </ul>
 <h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
@@ -205,13 +215,13 @@
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>C0</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">C0 A1 B2
+<pre><code class="language-text">C0 A1 B2 03
 </code></pre>
-<p>Total: 3 bytes.</p>
+<p>Total: 4 bytes.</p>
 <h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
 <p>A first-contact beacon including the sender’s full 32-byte public key.</p>
 <div class="table-wrapper">
@@ -239,8 +249,8 @@
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>D0</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (1 byte)</td><td><code>A1</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
 <tr><td>Payload</td><td>Encrypted (5 bytes)</td><td><code>8B 3F C7 A2 15</code></td></tr>
@@ -248,10 +258,10 @@
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+<pre><code class="language-text">D0 C3 D4 25 A1 E0 00 00 00 2A 8B 3F C7 A2 15 F0
 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </code></pre>
-<p>Total: 31 bytes (1 + 2 + 2 + 5 + 5 + 16).</p>
+<p>Total: 31 bytes (1 + 3 + 1 + 5 + 5 + 16).</p>
 <h2 id="example-4-unicast-with-ack-requested-s1"><a class="header" href="#example-4-unicast-with-ack-requested-s1">Example 4: Unicast with Ack Requested (S=1)</a></h2>
 <p>A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included so the receiver can perform ECDH without prior state.</p>
 <div class="table-wrapper">
@@ -261,7 +271,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>DC</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
@@ -270,12 +280,12 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">DC C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
-0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
-1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
-B5 B6 B7 B8 B9 BA BB BC BD BE BF
+<pre><code class="language-text">DC C3 D4 25 A1 B2 03 04 05 06 07 08 09 0A 0B 0C
+0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C
+1D 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3
+B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </code></pre>
-<p>Total: 59 bytes (1 + 2 + 32 + 5 + 3 + 16).</p>
+<p>Total: 60 bytes (1 + 3 + 32 + 5 + 3 + 16).</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
 <p>An encrypted multicast from Node A. The source hint and payload are encrypted together, concealing the sender from observers without the channel key.</p>
 <div class="table-wrapper">
@@ -288,15 +298,15 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
-<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 7 bytes</td><td><code>D4 9C 71 E8 3A 5B 02</code></td></tr>
+<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 8 bytes</td><td><code>D4 9C 71 E8 3A 5B 02 17</code></td></tr>
 <tr><td>MIC</td><td>16 bytes</td><td><code>AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
-BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
+<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 17
+AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
-<p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
+<p>Total: 32 bytes (1 + 2 + 5 + 8 + 16). The 8 encrypted bytes contain the 3-byte source hint and 5 bytes of plaintext payload.</p>
 <h2 id="example-6-unencrypted-multicast-e0"><a class="header" href="#example-6-unencrypted-multicast-e0">Example 6: Unencrypted Multicast (E=0)</a></h2>
 <p>An authenticated but unencrypted multicast from Node A. The source hint appears in cleartext.</p>
 <div class="table-wrapper">
@@ -309,16 +319,17 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
 <tr><td>Payload</td><td>Payload type 3 (text message) + “Hello”</td><td><code>03 48 65 6C 6C 6F</code></td></tr>
 <tr><td>MIC</td><td>16 bytes</td><td><code>11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
-11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
+<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 03 48 65 6C 6C
+6F 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF
+00
 </code></pre>
-<p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
+<p>Total: 33 bytes (1 + 2 + 5 + 3 + 6 + 16).</p>
 <h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
 <p>An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
 <p><strong>Options encoding:</strong></p>
@@ -344,8 +355,8 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
 <tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
 <tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (1 byte)</td><td><code>A1</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
 <tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>8B 3F C7</code></td></tr>
@@ -353,11 +364,11 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 A1 B2 E0 00 00 00 0A
+<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 25 A1 E0 00 00 00 0A
 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
 DD DE DF
 </code></pre>
-<p>Total: 35 bytes (1 + 5 + 1 + 2 + 2 + 5 + 3 + 16).</p>
+<p>Total: 35 bytes (1 + 5 + 1 + 3 + 1 + 5 + 3 + 16).</p>
 
                     </main>
 

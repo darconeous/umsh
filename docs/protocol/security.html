@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -422,19 +422,20 @@ K_mic = okm[16..31]
 </ul>
 <p>The ack tag is never transmitted in the original packet — it appears only in the <a href="packet-types.html#mac-ack-packet">MAC Ack</a> response. Because it requires knowledge of <code>K_enc</code>, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
-<h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
-<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>
+<p>Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover both the intended recipient and the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
+<p>The address block is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
 <li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
-<li><code>SRC</code> = 32-byte source public key</li>
+<li><code>DST</code> = 3-byte destination hint</li>
+<li><code>SRC</code> = source address: 1-byte source hint when <code>S=0</code>, or 32-byte source public key when <code>S=1</code></li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
+<pre><code class="language-text">ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 </code></pre>
-<p>This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.</p>
+<p>This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
 <p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="mac-commands.html#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
 <h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>

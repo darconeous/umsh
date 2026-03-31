@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -180,7 +180,7 @@
 <pre><code class="language-text">+-----+-----------+------+-----+---------+
 | FCF | [OPTIONS] |[FHOPS]| SRC | PAYLOAD |
 +-----+-----------+------+-----+---------+
-  1 B    variable   0/1 B 2/32B   var.
+  1 B    variable   0/1 B 3/32B   var.
 </code></pre>
 <p>A broadcast with an empty payload is a <strong>Beacon</strong>.</p>
 <h2 id="mac-ack-packet"><a class="header" href="#mac-ack-packet">MAC Ack Packet</a></h2>
@@ -193,7 +193,7 @@
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>DST</code> is the 2-byte destination hint of the original sender</li>
+<li><code>DST</code> is a 2-byte prefix of the original sender’s public key (MAC Ack uses a 2-byte destination hint, not the full 3-byte hint used in unicast packets)</li>
 <li><code>ACK TAG</code> is an 8-byte value derived from the original packet’s MIC and the pairwise encryption key (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>)</li>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
@@ -203,15 +203,16 @@
 <pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+-----+---------+---------+------+
-  1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 </code></pre>
-<p><code>DST</code> is the first two bytes of the recipient’s public key.</p>
+<p><code>DST</code> is the first three bytes of the recipient’s public key.</p>
 <p>Receivers first use <code>DST</code> as a cheap filter, then use the source public key (or its cached equivalent when only a hint is present) and their own key to derive the shared secret and authenticate/decrypt the packet.</p>
 <h2 id="unicast-packet-with-ack-requested"><a class="header" href="#unicast-packet-with-ack-requested">Unicast Packet with Ack Requested</a></h2>
 <p>This is identical to unicast, but the packet-type value signals that a MAC acknowledgement is requested.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+------+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+------+---------+---------+------+
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 </code></pre>
 <p>Semantics differ, wire layout does not.</p>
 <h2 id="multicast-packet"><a class="header" href="#multicast-packet">Multicast Packet</a></h2>
@@ -224,9 +225,9 @@
 <pre><code class="language-text">+-----+-----------+------+---------+---------+----------------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
 +-----+-----------+------+---------+---------+----------------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B          3/32 + var.      4-16 B
 </code></pre>
-<p>The <code>SRC</code> inside the ciphertext follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>The <code>SRC</code> inside the ciphertext follows the <code>S</code> flag convention: a 3-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 <p>Only a node with the correct channel key can recover the source address and payload.</p>
 <h3 id="unencrypted-multicast-e--0"><a class="header" href="#unencrypted-multicast-e--0">Unencrypted Multicast (E = 0)</a></h3>
 <p>When encryption is not enabled, the source address appears in cleartext, but in the same
@@ -234,14 +235,14 @@ place that it appeared in encrypted multicast:</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+------+---------+------+
-  1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
+  1 B    variable   0/1 B    2 B      5/7 B   3/32 B    var.   4-16 B
 </code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 <p>The <code>MIC</code> is computed over the payload using the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="security.html#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
@@ -263,7 +264,7 @@ place that it appeared in encrypted multicast:</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 
                     </main>

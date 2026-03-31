@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -177,18 +177,18 @@
                         <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
-<pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
-+--------+-----------+--------+--------------+----------+-----------+---------+------+
-   1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
+<pre><code class="language-text">+--------+-----------+--------+--------------+------------+-----------+---------+------+
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |    SRC     |  SECINFO  | PAYLOAD | MIC  |
++--------+-----------+--------+--------------+------------+-----------+---------+------+
+   1 B      variable    0/1 B      0/2/3 B    0/1/3/32 B    0/5/7 B      var.   0-16 B
 </code></pre>
 <p>Where:</p>
 <ul>
 <li><code>OPTIONS</code> are present if the FCF options flag is set</li>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
-<li><code>DST</code> is a 2-byte destination hint</li>
+<li><code>DST</code> is a 3-byte destination hint (2 bytes in MAC Ack packets)</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
-<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
+<li><code>SRC</code> is a compact source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); the hint is 1 byte in unicast and blind unicast packets, and 3 bytes in broadcast and multicast packets; in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
 <li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry an <a href="security.html#ack-tag-construction">ack tag</a> instead</li>
 </ul>
@@ -204,7 +204,7 @@
 <ul>
 <li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
 <li><code>PKT TYPE</code> = packet type</li>
-<li><code>S</code> = full 32-byte source address included (when clear, a 2-byte source hint is used instead)</li>
+<li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="addressing.html#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>O</code> = options present</li>
 <li><code>H</code> = flood hop count present</li>
 </ul>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -180,29 +180,34 @@
 <h2 id="destination-hint"><a class="header" href="#destination-hint">Destination Hint</a></h2>
 <p>A <strong>destination hint</strong> is defined as:</p>
 <ul>
-<li>the <strong>first two bytes of the destination node’s 32-byte public key</strong></li>
+<li>the <strong>first three bytes of the destination node’s 32-byte public key</strong></li>
 </ul>
 <p>This hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.</p>
 <p>A receiver that sees a matching destination hint must still confirm that it is the intended destination by successfully processing the packet cryptographically.</p>
 <h2 id="router-hint"><a class="header" href="#router-hint">Router Hint</a></h2>
 <p>A <strong>router hint</strong> is defined as:</p>
 <ul>
-<li>the <strong>first byte of the repeater’s 32-byte public key</strong></li>
+<li>the <strong>first two bytes of the repeater’s 32-byte public key</strong></li>
 </ul>
 <p>Router hints are used in:</p>
 <ul>
 <li>source-route options</li>
 <li>trace-route options</li>
 </ul>
-<p>Because router hints are only 1 byte, collisions are expected and acceptable. A router hint is therefore only a compact routing selector, not a globally unique repeater identifier.</p>
+<p>Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.</p>
 <h2 id="source-address"><a class="header" href="#source-address">Source Address</a></h2>
 <p>A source address in a packet is either:</p>
 <ul>
-<li>a <strong>2-byte source hint</strong> (the first two bytes of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
+<li>a <strong>compact source hint</strong> (a prefix of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
 <li>the <strong>full 32-byte public key</strong>, when the <code>S</code> flag is set.</li>
 </ul>
+<p>The hint size depends on the packet type:</p>
+<ul>
+<li><strong>Unicast and blind unicast</strong>: the source hint is <strong>1 byte</strong> (the first byte of the public key). The destination hint handles the prefiltering work; the source hint is used only to narrow down which cached key to try first.</li>
+<li><strong>Broadcast and multicast</strong>: the source hint is <strong>3 bytes</strong> (the first three bytes of the public key). These packet types carry no destination hint, so the source hint serves as the primary addressing field and benefits from a lower collision probability.</li>
+</ul>
 <p>The source hint is a compact reference used when the receiver is expected to already have the sender’s full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.</p>
-<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the same conventions: a hint (of the appropriate size) when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 
                     </main>
 

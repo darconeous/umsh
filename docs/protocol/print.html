@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -177,7 +177,7 @@
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
 <p>UMSH is a LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as <a href="#cryptography">critical shortcomings</a>—shortcomings that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into this comprehensive specification.</p>
-<p>The ideas in UMSH are free for anyone to adopt. MeshCore may never introduce a breaking protocol revision, but individual techniques described here — compact authenticated framing, nonce-misuse-resistant encryption, blind addressing — could be useful to other similar LoRa mesh protocols. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.</p>
+<p>The ideas in UMSH are free for anyone to adopt, but was written with MeshCore V2 in mind. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>In UMSH, endpoints are identified
 by public keys, and multicast communication is based on shared symmetric
@@ -200,6 +200,15 @@ higher-layer content.</p>
 <li>Ability to operate in a way that preserves <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy (PFS)</a></li>
 <li>Timestamp-free at the MAC layer</li>
 </ul>
+<h2 id="design-principles"><a class="header" href="#design-principles">Design Principles</a></h2>
+<p>The following principles guide UMSH’s design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.</p>
+<p><strong>Single-frame design.</strong> Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.</p>
+<p><strong>Robustness.</strong> Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.</p>
+<p><strong>Tolerance of loss and disorder.</strong> LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.</p>
+<p><strong>Privacy by default.</strong> Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.</p>
+<p><strong>Brevity.</strong> Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, compact address hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.</p>
+<p><strong>Layer separation.</strong> The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.</p>
+<p><strong>Minimal mandatory state.</strong> A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.</p>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
 <p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
 <p><strong>Intended use cases include:</strong></p>
@@ -209,22 +218,13 @@ higher-layer content.</p>
 <li><strong>IoT and sensor telemetry</strong> — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.</li>
 <li><strong>Amateur radio mesh networking</strong> — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.</li>
 <li><strong>Privacy-sensitive communication</strong> — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.</li>
-<li><strong>Embedded and constrained deployments</strong> — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.</li>
+<li><strong>Embedded and constrained deployments</strong> — compact encoding (1-byte FCF, compact address hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.</li>
 </ul>
 <p><strong>UMSH is not designed for:</strong></p>
 <ul>
 <li>High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.</li>
 <li>Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.</li>
 </ul>
-<h2 id="design-principles"><a class="header" href="#design-principles">Design Principles</a></h2>
-<p>The following principles guide UMSH’s design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.</p>
-<p><strong>Single-frame design.</strong> Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.</p>
-<p><strong>Robustness.</strong> Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.</p>
-<p><strong>Tolerance of loss and disorder.</strong> LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.</p>
-<p><strong>Privacy by default.</strong> Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.</p>
-<p><strong>Brevity.</strong> Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, 2-byte hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.</p>
-<p><strong>Layer separation.</strong> The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.</p>
-<p><strong>Minimal mandatory state.</strong> A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.</p>
 <h2 id="key-concepts"><a class="header" href="#key-concepts">Key Concepts</a></h2>
 <h3 id="nodes"><a class="header" href="#nodes">Nodes</a></h3>
 <p>A <strong>node</strong> is a logical endpoint on the network, identified by a 32-byte
@@ -243,8 +243,8 @@ presence, optionally including identity information (see <a href="#node-identity
 its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
 </ul>
 <p>Once a node’s public key is known, it can be cached and subsequent packets
-can use a compact 2-byte source hint instead of the full key, saving 30
-bytes per packet.</p>
+can use a compact source hint instead of the full key — saving 31 bytes per
+packet in unicast (1-byte hint vs 32-byte key).</p>
 <h4 id="node-metadata"><a class="header" href="#node-metadata">Node Metadata</a></h4>
 <p>Nodes may also advertise additional metadata — such as a human-readable name,
 role, capabilities, and location — via the <a href="#node-identity">Node Identity</a>
@@ -255,7 +255,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h3 id="channels"><a class="header" href="#channels">Channels</a></h3>
 <p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See <a href="#channels-1">Channels</a> for channel types, membership models, and default channels.</p>
 <h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
-<p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a> via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
+<p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a>, not as a core part of the underlying protocol but instead via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
 <p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
@@ -298,45 +298,50 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <h2 id="destination-hint"><a class="header" href="#destination-hint">Destination Hint</a></h2>
 <p>A <strong>destination hint</strong> is defined as:</p>
 <ul>
-<li>the <strong>first two bytes of the destination node’s 32-byte public key</strong></li>
+<li>the <strong>first three bytes of the destination node’s 32-byte public key</strong></li>
 </ul>
 <p>This hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.</p>
 <p>A receiver that sees a matching destination hint must still confirm that it is the intended destination by successfully processing the packet cryptographically.</p>
 <h2 id="router-hint"><a class="header" href="#router-hint">Router Hint</a></h2>
 <p>A <strong>router hint</strong> is defined as:</p>
 <ul>
-<li>the <strong>first byte of the repeater’s 32-byte public key</strong></li>
+<li>the <strong>first two bytes of the repeater’s 32-byte public key</strong></li>
 </ul>
 <p>Router hints are used in:</p>
 <ul>
 <li>source-route options</li>
 <li>trace-route options</li>
 </ul>
-<p>Because router hints are only 1 byte, collisions are expected and acceptable. A router hint is therefore only a compact routing selector, not a globally unique repeater identifier.</p>
+<p>Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.</p>
 <h2 id="source-address"><a class="header" href="#source-address">Source Address</a></h2>
 <p>A source address in a packet is either:</p>
 <ul>
-<li>a <strong>2-byte source hint</strong> (the first two bytes of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
+<li>a <strong>compact source hint</strong> (a prefix of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
 <li>the <strong>full 32-byte public key</strong>, when the <code>S</code> flag is set.</li>
 </ul>
+<p>The hint size depends on the packet type:</p>
+<ul>
+<li><strong>Unicast and blind unicast</strong>: the source hint is <strong>1 byte</strong> (the first byte of the public key). The destination hint handles the prefiltering work; the source hint is used only to narrow down which cached key to try first.</li>
+<li><strong>Broadcast and multicast</strong>: the source hint is <strong>3 bytes</strong> (the first three bytes of the public key). These packet types carry no destination hint, so the source hint serves as the primary addressing field and benefits from a lower collision probability.</li>
+</ul>
 <p>The source hint is a compact reference used when the receiver is expected to already have the sender’s full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.</p>
-<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the same conventions: a hint (of the appropriate size) when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
-<pre><code class="language-text">+--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
-+--------+-----------+--------+--------------+----------+-----------+---------+------+
-   1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
+<pre><code class="language-text">+--------+-----------+--------+--------------+------------+-----------+---------+------+
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |    SRC     |  SECINFO  | PAYLOAD | MIC  |
++--------+-----------+--------+--------------+------------+-----------+---------+------+
+   1 B      variable    0/1 B      0/2/3 B    0/1/3/32 B    0/5/7 B      var.   0-16 B
 </code></pre>
 <p>Where:</p>
 <ul>
 <li><code>OPTIONS</code> are present if the FCF options flag is set</li>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
-<li><code>DST</code> is a 2-byte destination hint</li>
+<li><code>DST</code> is a 3-byte destination hint (2 bytes in MAC Ack packets)</li>
 <li><code>CHANNEL</code> is a 2-byte channel identifier</li>
-<li><code>SRC</code> is a 2-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
+<li><code>SRC</code> is a compact source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); the hint is 1 byte in unicast and blind unicast packets, and 3 bytes in broadcast and multicast packets; in multicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
 <li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry an <a href="#ack-tag-construction">ack tag</a> instead</li>
 </ul>
@@ -352,7 +357,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <ul>
 <li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
 <li><code>PKT TYPE</code> = packet type</li>
-<li><code>S</code> = full 32-byte source address included (when clear, a 2-byte source hint is used instead)</li>
+<li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>O</code> = options present</li>
 <li><code>H</code> = flood hop count present</li>
 </ul>
@@ -443,7 +448,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+---------+
 | FCF | [OPTIONS] |[FHOPS]| SRC | PAYLOAD |
 +-----+-----------+------+-----+---------+
-  1 B    variable   0/1 B 2/32B   var.
+  1 B    variable   0/1 B 3/32B   var.
 </code></pre>
 <p>A broadcast with an empty payload is a <strong>Beacon</strong>.</p>
 <h2 id="mac-ack-packet"><a class="header" href="#mac-ack-packet">MAC Ack Packet</a></h2>
@@ -456,7 +461,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>DST</code> is the 2-byte destination hint of the original sender</li>
+<li><code>DST</code> is a 2-byte prefix of the original sender’s public key (MAC Ack uses a 2-byte destination hint, not the full 3-byte hint used in unicast packets)</li>
 <li><code>ACK TAG</code> is an 8-byte value derived from the original packet’s MIC and the pairwise encryption key (see <a href="#ack-tag-construction">Ack Tag Construction</a>)</li>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
@@ -466,15 +471,16 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+-----+---------+---------+------+
-  1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 </code></pre>
-<p><code>DST</code> is the first two bytes of the recipient’s public key.</p>
+<p><code>DST</code> is the first three bytes of the recipient’s public key.</p>
 <p>Receivers first use <code>DST</code> as a cheap filter, then use the source public key (or its cached equivalent when only a hint is present) and their own key to derive the shared secret and authenticate/decrypt the packet.</p>
 <h2 id="unicast-packet-with-ack-requested"><a class="header" href="#unicast-packet-with-ack-requested">Unicast Packet with Ack Requested</a></h2>
 <p>This is identical to unicast, but the packet-type value signals that a MAC acknowledgement is requested.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+------+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+------+---------+---------+------+
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 </code></pre>
 <p>Semantics differ, wire layout does not.</p>
 <h2 id="multicast-packet"><a class="header" href="#multicast-packet">Multicast Packet</a></h2>
@@ -487,9 +493,9 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+----------------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
 +-----+-----------+------+---------+---------+----------------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B          3/32 + var.      4-16 B
 </code></pre>
-<p>The <code>SRC</code> inside the ciphertext follows the <code>S</code> flag convention: a 2-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>The <code>SRC</code> inside the ciphertext follows the <code>S</code> flag convention: a 3-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 <p>Only a node with the correct channel key can recover the source address and payload.</p>
 <h3 id="unencrypted-multicast-e--0"><a class="header" href="#unencrypted-multicast-e--0">Unencrypted Multicast (E = 0)</a></h3>
 <p>When encryption is not enabled, the source address appears in cleartext, but in the same
@@ -497,14 +503,14 @@ place that it appeared in encrypted multicast:</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+------+---------+------+
-  1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
+  1 B    variable   0/1 B    2 B      5/7 B   3/32 B    var.   4-16 B
 </code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 <p>The <code>MIC</code> is computed over the payload using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
@@ -526,7 +532,7 @@ place that it appeared in encrypted multicast:</p>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-options"><a class="header" href="#packet-options">Packet Options</a></h1>
@@ -668,12 +674,12 @@ place that it appeared in encrypted multicast:</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
-   1 B      1 B      1 B
+<pre><code class="language-text">+----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 </code></pre>
-<p>Where each <code>RH[i]</code> is the first byte of a repeater’s public key.</p>
+<p>Where each <code>RH[i]</code> is the first two bytes of a repeater’s public key.</p>
 <p>Interpretation:</p>
 <ul>
 <li><code>RH[0]</code> is the next repeater that must forward the packet</li>
@@ -682,11 +688,12 @@ place that it appeared in encrypted multicast:</p>
 <p>An empty source-route option indicates that all explicit routing hints have been consumed. It is not semantically distinct from the absence of a source-route option for forwarding purposes.</p>
 <h3 id="trace-route-option-value"><a class="header" href="#trace-route-option-value">Trace Route Option Value</a></h3>
 <p>A trace-route option also contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
+<pre><code class="language-text">+----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 </code></pre>
-<p>Repeaters prepend themselves:</p>
+<p>Repeaters prepend their 2-byte router hint:</p>
 <pre><code class="language-text">new_trace = my_router_hint || old_trace
 </code></pre>
 <p>So the list is ordered most-recent repeater first.</p>
@@ -939,19 +946,20 @@ K_mic = okm[16..31]
 </ul>
 <p>The ack tag is never transmitted in the original packet — it appears only in the <a href="#mac-ack-packet">MAC Ack</a> response. Because it requires knowledge of <code>K_enc</code>, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
-<h3 id="blind-unicast-source-encryption"><a class="header" href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a></h3>
-<p>Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
-<p>The source address is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>
+<p>Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover both the intended recipient and the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
+<p>The address block is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
 <li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
-<li><code>SRC</code> = 32-byte source public key</li>
+<li><code>DST</code> = 3-byte destination hint</li>
+<li><code>SRC</code> = source address: 1-byte source hint when <code>S=0</code>, or 32-byte source public key when <code>S=1</code></li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
+<pre><code class="language-text">ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 </code></pre>
-<p>This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.</p>
+<p>This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
 <p>UMSH provides optional perfect forward secrecy (PFS) via ephemeral node addresses exchanged using the <a href="#pfs-session-request-6">PFS Session MAC commands</a>. Once a PFS session is established, traffic between the two nodes is encrypted and authenticated exactly as if the ephemeral addresses were any other long-term node identities. Compromise of either node’s long-term private key cannot retroactively expose traffic encrypted during a PFS session, because the private keys for the ephemeral addresses are erased when the session ends and the session’s ECDH shared secret is irrecoverable.</p>
 <h3 id="handshake"><a class="header" href="#handshake">Handshake</a></h3>
@@ -1793,7 +1801,8 @@ delay = uniform_random(0, W)
 <p><strong>Traffic analysis.</strong> A passive observer can see packet timing, frequency, size, hint values, frame counters, and flood hop counts — all in the clear. This reveals communication patterns (who is active, how often, rough network topology) even when payloads are encrypted. Hint values are stable for a given identity, enabling long-term tracking of a node’s activity.</p>
 <p><strong>Multicast sender impersonation.</strong> Multicast authentication is based on the shared channel key. Any node possessing the key can construct a valid packet with any claimed source address. Other channel members cannot cryptographically distinguish the true sender from an impersonator. See <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
 <p><strong>Selective packet dropping.</strong> A compromised or malicious repeater can selectively drop packets without detection. UMSH provides no mechanism to verify that a repeater faithfully forwarded a packet. The flood routing model provides redundancy (multiple paths), but a strategically positioned adversary can still disrupt delivery.</p>
-<p><strong>Denial of service.</strong> An attacker can flood the radio channel with valid-looking packets, forcing receivers to expend computation on cryptographic verification. The 2-byte destination hint reduces this cost (only ~1 in 65,536 packets will trigger verification for any given node), but the shared medium provides no isolation. The <code>EMERGENCY</code> channel’s priority forwarding could be abused to amplify DoS traffic, though the signature requirement limits this to attackers who possess a valid Ed25519 keypair.</p>
+<p><strong>Denial of service.</strong> An attacker can flood the radio channel with valid-looking packets, forcing receivers to expend computation on cryptographic verification. The 3-byte destination hint reduces this cost (only ~1 in 16,777,216 unicast packets will trigger verification for any given node), but the shared medium provides no isolation. The <code>EMERGENCY</code> channel’s priority forwarding could be abused to amplify DoS traffic, though the signature requirement limits this to attackers who possess a valid Ed25519 keypair.</p>
+<p><strong>Traffic amplification via broadcast or multicast requests.</strong> A broadcast packet is unauthenticated by design, and a multicast packet may be attributable only to a shared channel key or an ephemeral source identity. An attacker can exploit this by sending a request that appears to warrant a response or some other follow-on action from every receiving node. If the request does not include a trace-route option, recipients do not learn a specific return path. Any per-node reply may therefore fall back to flood routing, using the inbound <code>FHOPS_ACC</code> as a distance estimate or flooding more broadly if no better routing state exists. The result is an amplification attack: one injected request can trigger many independent flood-routed responses, consuming airtime and effectively causing a distributed denial of service. Implementations and application protocols must therefore treat broadcast and multicast requests as fan-out hazards. They should not automatically generate per-node responses unless those responses are explicitly designed to avoid amplification through mechanisms such as route learning, strict rate limits, randomized suppression, aggregation, or making the request one-way only.</p>
 <p><strong>Non-repudiation.</strong> UMSH’s MIC is computed with symmetric pairwise keys that both sender and recipient possess, so a recipient cannot cryptographically prove to a third party who authored a given packet — either party could have constructed it. However, UMSH does not claim to provide deniability. Real-world deniability depends on the entire system: usage patterns, device forensics, metadata, and interactions with other systems. The symmetric MIC is a narrow property, not a deniability guarantee. When the application layer includes an EdDSA signature in the payload (as required by the <code>EMERGENCY</code> channel), even this narrow property is lost — a signature can only be produced by the private key holder.</p>
 <p><strong>Forward secrecy without PFS sessions.</strong> Normal unicast traffic uses stable pairwise keys derived from long-term ECDH. If a node’s long-term private key is compromised, all past and future unicast traffic with that node can be decrypted. Forward secrecy requires explicit use of <a href="#perfect-forward-secrecy-sessions">PFS sessions</a>.</p>
 <p><strong>Anonymous channel membership.</strong> Possessing a channel key is both necessary and sufficient for channel membership. There is no mechanism to verify <em>who</em> holds a key, revoke access to a specific node without re-keying the entire channel (except via <a href="#managed-channels">managed channels</a>), or detect how many members a channel has.</p>
@@ -1826,8 +1835,8 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td>Packet timing and frequency</td><td>All</td><td>Communication patterns — when a node is active, how often it transmits</td></tr>
-<tr><td>Destination hint (2 bytes)</td><td>Unicast</td><td>Stable per-identity; enables tracking a node’s correspondents over time</td></tr>
-<tr><td>Source hint (2 bytes)</td><td>Unicast, unencrypted multicast</td><td>Stable per-identity; enables tracking a node’s activity over time</td></tr>
+<tr><td>Destination hint (3 bytes)</td><td>Unicast</td><td>Stable per-identity; enables tracking a node’s correspondents over time</td></tr>
+<tr><td>Source hint (1 byte, unicast; 3 bytes, broadcast/multicast)</td><td>Unicast, unencrypted multicast, broadcast</td><td>Stable per-identity; enables tracking a node’s activity over time</td></tr>
 <tr><td>Channel identifier (2 bytes)</td><td>Multicast, blind unicast</td><td>Stable per-channel; reveals which channel a packet belongs to</td></tr>
 <tr><td>Frame counter</td><td>All authenticated</td><td>Monotonically increasing; reveals total packet count and transmission rate</td></tr>
 <tr><td>Flood hop count</td><td>All with FHOPS</td><td>Reveals approximate distance from the original sender</td></tr>
@@ -1880,21 +1889,14 @@ delay = uniform_random(0, W)
 <h3 id="multicast-sender-authentication"><a class="header" href="#multicast-sender-authentication">Multicast Sender Authentication</a></h3>
 <p>Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify that the claimed sender actually produced the packet. When the <code>S</code> flag is set, the source public key is carried in the packet and can be used for application-level trust decisions, but the protocol-level MIC authenticates only channel membership, not individual sender identity.</p>
 <p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
-<h2 id="open-issues"><a class="header" href="#open-issues">Open Issues</a></h2>
-<h3 id="hint-collisions"><a class="header" href="#hint-collisions">Hint Collisions</a></h3>
-<p>Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see <a href="#destination-hint">Addressing</a>). The probability of any <em>specific</em> pair of nodes sharing a hint is low (~1 in 65,536), but by the birthday bound, once a network approaches 256 active nodes the probability of <em>at least two</em> nodes sharing a hint rises above 40%.</p>
-<p>The cost of a hint collision is wasted computation, not incorrect behavior. However, on battery-constrained devices the wasted computation can be significant: a destination hint collision persists for the lifetime of both node identities, causing repeated unnecessary cryptographic verification on every packet exchanged between the colliding nodes. The only remedy is for one of the nodes to generate a new identity (a new Ed25519 keypair). For a dedicated repeater or sensor node this is relatively painless, but for a chat node it means all peers must re-learn the new public key.</p>
-<p>MeshCore originally used 1-byte hints for source, destination, and source-routing addresses. This placed the birthday bound at just 16 nodes — far too low for practical networks.</p>
-<p>UMSH uses 2-byte source and destination hints, raising the birthday bound to 256 nodes. UMSH retains 1-byte hints for source-routing (router hints), which may affect source-routed delivery in denser areas.</p>
-<h4 id="how-big-is-big-enough"><a class="header" href="#how-big-is-big-enough">How big is big enough?</a></h4>
-<p>Moving to 3-byte hints would raise the birthday bound to approximately 4,096 nodes — a significant improvement over both 16 and 256. But is the extra byte per hint worth it?</p>
-<p>The answer depends on the effective network size. A collision is only relevant when both colliding nodes are regularly reachable from each other. For flood-routed traffic, this means all nodes reachable by flooding. For source-routed traffic, only nodes along the path matter, but path composition can be unpredictable and hard to characterize in advance.</p>
-<p>The impact of router hint collisions during source routing is not entirely clear. In theory, an unnecessary retransmission caused by a collision should fizzle out quickly (the next hop hint is unlikely to also collide). But if a particular source route is used frequently, even a small amount of extra traffic per use can accumulate. Repeater operators are more likely to coordinate hint assignments among themselves, but this cannot be assumed in all deployments. MeshCore addressed this by introducing 2-byte and 3-byte repeater hints, though with the majority of MeshCore traffic appearing to be flood-routed, it is not clear whether this represents a material improvement in practice.</p>
-<p>As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one destination hint collision for different hint sizes:</p>
+<h2 id="known-hint-collision-properties"><a class="header" href="#known-hint-collision-properties">Known Hint Collision Properties</a></h2>
+<p>UMSH uses asymmetric hint sizes chosen to minimize false-positive work where it matters most while preserving overall packet compactness.</p>
+<p>MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes — far too low for practical networks. UMSH addresses this with larger, role-differentiated hints.</p>
+<p>As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Hint size</th><th>Collision probability</th></tr>
+<tr><th>Hint size</th><th>Collision probability (600 nodes)</th></tr>
 </thead>
 <tbody>
 <tr><td>1 byte (256 values)</td><td>~100%</td></tr>
@@ -1903,18 +1905,27 @@ delay = uniform_random(0, W)
 </tbody>
 </table>
 </div>
-<p>For destination hints — which serve as a prefilter that determines whether a node must perform cryptographic verification — moving to 3 bytes dramatically reduces false-positive verification work and seems well worth the overhead.</p>
-<h4 id="source-hints"><a class="header" href="#source-hints">Source hints</a></h4>
-<p>The source hint serves a different purpose than the destination hint. It is not used as a prefilter; rather, it helps the receiver narrow down which cached pairwise key to try first. A source hint collision means the receiver may occasionally try the wrong cached key before finding the right one, but implementations can mitigate this by prioritizing recently matched keys.</p>
-<p>The worst case arises when two (or more) nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for infrastructure nodes (which tend not to be as power-constrained) rather than battery-powered endpoints, so the problem may be self-limiting.</p>
-<p>An asymmetric design — 1-byte source hints and 3-byte destination hints — would maintain the current per-packet overhead while strengthening prefiltering where it matters most. It would also maintain the current minimum-packet-overhead with MeshCore.</p>
-<p>However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte (or two) remains an open question.</p>
+<h3 id="destination-hints-3-bytes"><a class="header" href="#destination-hints-3-bytes">Destination hints (3 bytes)</a></h3>
+<p>The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume.</p>
+<p>With 3-byte destination hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.</p>
+<h3 id="source-hints-unicast-1-byte-broadcast-and-multicast-3-bytes"><a class="header" href="#source-hints-unicast-1-byte-broadcast-and-multicast-3-bytes">Source hints (unicast: 1 byte; broadcast and multicast: 3 bytes)</a></h3>
+<p>The source hint serves a different purpose in different packet types.</p>
+<p><strong>Unicast source hint (1 byte).</strong> In unicast and blind unicast, the destination hint already handles prefiltering. The source hint is used only to narrow down which cached pairwise key to try first. A collision means the receiver tries the wrong cached key before finding the correct one — an extra AES-CMAC call, not a persistent per-packet cost. This is primarily a concern for infrastructure nodes (repeaters, gateways) that maintain many concurrent pairwise relationships and are less power-constrained than battery-powered endpoints. Using a 1-byte source hint offsets the +1 byte cost of the 3-byte destination hint, keeping unicast packet overhead identical to a symmetric 2+2 design.</p>
+<p><strong>Broadcast and multicast source hint (3 bytes).</strong> These packet types carry no destination hint. The source hint is therefore the primary addressing field visible to receivers and is used for source identification, traffic attribution, and diagnostics. At 2 bytes, ~94% of nodes in a 600-node network share a hint, making the field nearly useless for attribution. At 3 bytes, the probability drops to ~1%.</p>
+<h3 id="router-hints-2-bytes"><a class="header" href="#router-hints-2-bytes">Router hints (2 bytes)</a></h3>
+<p>Router hints are used in source-route and trace-route options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.</p>
+<p>Source routing is an inherently local operation — only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:</p>
+<ul>
+<li>1-byte hints: ~46% collision probability</li>
+<li>2-byte hints: ~1.9% collision probability</li>
+</ul>
+<p>2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace-route options.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
 <p>No. A MAC Ack contains an <a href="#ack-tag-construction">ack tag</a> — an 8-byte value derived by encrypting the full 16-byte CMAC with <code>K_enc</code>. Computing a valid ack tag requires knowledge of the encryption key (pairwise for unicast, or the <a href="#blind-unicast-payload-keys">combined blind unicast key</a> for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without <code>K_enc</code>. Ack forgery is therefore as hard as breaking the underlying key agreement.</p>
-<h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-source-decryption">Doesn’t blind unicast have a circular dependency between the MIC and source decryption?</a></h3>
-<p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_SRC</code>, and then derives the pairwise keys from the recovered source public key. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
+<h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption">Doesn’t blind unicast have a circular dependency between the MIC and address decryption?</a></h3>
+<p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_DST_SRC</code>, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
 <p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
 <h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
@@ -1925,13 +1936,13 @@ delay = uniform_random(0, W)
 <p>Yes. Multicast authentication is based on the shared channel key, not on individual sender identity. Any node with the channel key can construct a valid packet with any claimed source address. This is an inherent property of symmetric-key multicast and is shared by other protocols with similar designs. See <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>.</p>
 <p>This does not apply to blind unicast. Blind unicast payloads are authenticated using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the pairwise shared secret and the channel key, so only the true sender can produce a valid payload and only the intended recipient can read it.</p>
 <h3 id="when-should-the-s-flag-full-source-address-be-set"><a class="header" href="#when-should-the-s-flag-full-source-address-be-set">When should the S flag (full source address) be set?</a></h3>
-<p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set <code>S</code> when:</p>
+<p>The <code>S</code> flag controls whether the full 32-byte source public key or a compact source hint is included in the packet. Set <code>S</code> when:</p>
 <ul>
 <li>This is a first-contact transmission and the receiver has never seen the sender’s public key before.</li>
 <li>The sender wants to allow any receiver to perform ECDH and authenticate the packet without prior state.</li>
 <li>The sender is using an ephemeral keypair (anonymous request pattern).</li>
 </ul>
-<p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the 2-byte hint saves 30 bytes per packet, which is significant on LoRa.</p>
+<p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the compact hint saves 31 bytes per packet in unicast (1-byte hint vs 32-byte key), which is significant on LoRa.</p>
 <p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
 <h3 id="how-does-a-mac-ack-get-routed-back-to-the-original-sender"><a class="header" href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">How does a MAC Ack get routed back to the original sender?</a></h3>
 <p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet’s trace route, or a flood scoped by <code>FHOPS_ACC</code>. This is the same <a href="#route-learning">route learning</a> mechanism used for all communication, not an ack-specific feature.</p>
@@ -1961,13 +1972,13 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>32-byte Ed25519 public key</td></tr>
-<tr><td>Source address in packets</td><td>2-byte hint (S=0) or full 32-byte key (S=1)</td><td>1-byte hash (first byte of public key)</td></tr>
-<tr><td>Destination address</td><td>2-byte hint</td><td>1-byte hash</td></tr>
+<tr><td>Source address in packets</td><td>1-byte hint in unicast (S=0), 3-byte hint in broadcast/multicast (S=0), or full 32-byte key (S=1)</td><td>1-byte hash (first byte of public key)</td></tr>
+<tr><td>Destination address</td><td>3-byte hint</td><td>1-byte hash</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of channel key</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH uses 2-byte hints for both source and destination, with an explicit <code>S</code> flag to include the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated <code>ANON_REQ</code> packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves one additional byte per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.</p>
+<p>UMSH uses asymmetric hints sized to their role: 3-byte destination hints (the prefilter that determines whether cryptographic verification is attempted) and 1-byte source hints in unicast (used only for key lookup, not prefiltering), with 3-byte source hints in broadcast and multicast where no destination hint is present. An explicit <code>S</code> flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated <code>ANON_REQ</code> packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.</p>
 <h2 id="packet-structure-1"><a class="header" href="#packet-structure-1">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2121,12 +2132,12 @@ delay = uniform_random(0, W)
 <tbody>
 <tr><td>Header/FCF</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
 <tr><td>Path length</td><td>—</td><td>—</td><td>—</td><td>1</td></tr>
-<tr><td>Destination</td><td>2</td><td>2</td><td>2</td><td>1</td></tr>
-<tr><td>Source</td><td>2</td><td>2</td><td>32</td><td>1</td></tr>
+<tr><td>Destination</td><td>3</td><td>3</td><td>3</td><td>1</td></tr>
+<tr><td>Source</td><td>1</td><td>1</td><td>32</td><td>1</td></tr>
 <tr><td>Security info</td><td>5</td><td>5</td><td>5</td><td>—</td></tr>
 <tr><td>MAC/MIC</td><td>16</td><td>4</td><td>4–16</td><td>2</td></tr>
 <tr><td>ECB block padding</td><td>—</td><td>—</td><td>—</td><td>0–15 (avg ~8)</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>44–56</strong></td><td><strong>~14</strong></td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>45–57</strong></td><td><strong>~14</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -2141,17 +2152,16 @@ delay = uniform_random(0, W)
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Protocol</th><th>Address hint width</th><th>False-positive rate per packet</th></tr>
+<tr><th>Protocol</th><th>Destination hint width</th><th>False-positive rate per unicast packet</th></tr>
 </thead>
 <tbody>
 <tr><td>MeshCore</td><td>8 bits (1 byte)</td><td>~1 in 256</td></tr>
-<tr><td>UMSH</td><td>16 bits (2 bytes)</td><td>~1 in 65536</td></tr>
+<tr><td>UMSH</td><td>24 bits (3 bytes)</td><td>~1 in 16,777,216</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH’s 2-byte hints reduce spurious cryptographic wake-ups by a factor of ~256 compared to MeshCore. In a busy mesh where a node receives hundreds of packets per hour intended for others, this difference accumulates. Each avoided verification means less CPU time, fewer memory accesses, and a faster return to sleep — all of which reduce battery drain.</p>
+<p>UMSH’s 3-byte destination hints reduce spurious cryptographic wake-ups by a factor of ~65,536 compared to MeshCore. Because the unicast source hint is 1 byte, the combined address overhead is unchanged from MeshCore’s 1+1 byte layout — the stronger prefiltering comes at no additional per-packet cost. In a busy mesh where a node receives hundreds of packets per hour intended for others, fewer wasted verifications means less CPU time, fewer memory accesses, and a faster return to sleep.</p>
 <p>The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that any packet addressed to an unknown channel matches a channel you are not a member of. UMSH’s 2-byte channel identifier reduces this to 1-in-65536.</p>
-<p>The overhead cost of wider hints is exactly 1 byte per address field per packet — a modest price for a 256× reduction in false-positive cryptographic work.</p>
 <h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
 <p>Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.</p>
 <p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the flood hop count and duplicate suppression cache. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
@@ -2172,8 +2182,8 @@ delay = uniform_random(0, W)
 <tbody>
 <tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number derived from Bluetooth MAC address</td></tr>
 <tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Optional Curve25519 keypair (PKC, v2.5+), not used for addressing</td></tr>
-<tr><td>Source address in packets</td><td>2-byte hint or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
-<tr><td>Destination address</td><td>2-byte hint</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Source address in packets</td><td>compact hint (1 byte in unicast, 3 bytes in broadcast/multicast) or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Destination address</td><td>3-byte hint</td><td>4-byte node number (cleartext)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Address spoofing resistance</td><td>Cryptographic — pairwise keys are derived from public keys</td><td>None — node numbers are hardware-derived and trivially spoofable</td></tr>
 </tbody>
@@ -2273,7 +2283,7 @@ delay = uniform_random(0, W)
 </table>
 </div>
 <p>Meshtastic’s 16-byte cleartext header exposes the full sender and recipient node numbers on every packet. A passive observer with a LoRa receiver can identify who is communicating with whom, build traffic graphs, and track individual devices over time — even without the channel key. Node numbers are derived from hardware MAC addresses, making them persistent identifiers tied to physical devices.</p>
-<p>UMSH’s 2-byte hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
+<p>UMSH’s compact hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
 <h2 id="multicast-and-group-communication"><a class="header" href="#multicast-and-group-communication">Multicast and Group Communication</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2383,7 +2393,7 @@ delay = uniform_random(0, W)
 </div>
 <p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-256-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
 <h3 id="unicast-filtering"><a class="header" href="#unicast-filtering">Unicast Filtering</a></h3>
-<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 2-byte destination hint has a ~1-in-65536 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
+<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
 <p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.</p>
 <h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
 <p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header scales from 1 byte upward depending on which optional fields are present. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>
@@ -2441,15 +2451,15 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>512-bit keyset: 256-bit X25519 + 256-bit Ed25519 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58"><code>Identity.py:58</code></a>, <code>KEYSIZE = 256*2</code>)</td></tr>
-<tr><td>Address in packets</td><td>2-byte hint (S=0) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
-<tr><td>Source address</td><td>2-byte hint or 32-byte key</td><td>Not included (no source address in packets)</td></tr>
-<tr><td>Destination address</td><td>2-byte destination hint</td><td>16-byte destination hash</td></tr>
+<tr><td>Address in packets</td><td>compact hint (S=0; 1 byte for unicast SRC, 3 bytes for DST/BCST/MCST SRC) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
+<tr><td>Source address</td><td>1-byte hint (unicast) or 3-byte hint (broadcast/multicast), or full 32-byte key</td><td>Not included (no source address in packets)</td></tr>
+<tr><td>Destination address</td><td>3-byte destination hint</td><td>16-byte destination hash</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact 2-byte hints as prefilters for efficient matching. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L118"><code>Destination.py:118</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L80"><code>Identity.py:80</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
-<p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a 2-byte hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers explicit <a href="#blind-unicast">blind unicast</a> as an opt-in privacy mode that encrypts the source address.</p>
+<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact hints as prefilters for efficient matching — 3 bytes for destination hints and broadcast/multicast source hints, 1 byte for unicast source hints. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L118"><code>Destination.py:118</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L80"><code>Identity.py:80</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
+<p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a compact hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers explicit <a href="#blind-unicast">blind unicast</a> as an opt-in privacy mode that encrypts the source address.</p>
 <h2 id="packet-structure-3"><a class="header" href="#packet-structure-3">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2554,7 +2564,7 @@ delay = uniform_random(0, W)
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Source address in packets</td><td>Yes (2-byte hint or 32-byte key)</td><td>No (default initiator anonymity)</td></tr>
+<tr><td>Source address in packets</td><td>Yes (compact hint or 32-byte key)</td><td>No (default initiator anonymity)</td></tr>
 <tr><td>Blind unicast</td><td>Yes (source encrypted with channel key)</td><td>N/A (no source to conceal)</td></tr>
 <tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext)</td><td>N/A</td></tr>
 <tr><td>Anonymous first contact</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Per-packet ephemeral key for SINGLE destinations</td></tr>
@@ -2669,7 +2679,7 @@ delay = uniform_random(0, W)
 <p>The reference Reticulum implementation requires a Python 3 runtime and therefore runs on Linux-capable hardware — a Raspberry Pi, SBC, or similar computer. These platforms consume on the order of 1–5 watts continuously. This is an implementation choice rather than a protocol requirement: the unofficial <a href="https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs">Rust implementation</a> could in principle run on more constrained hardware. However, Reticulum’s protocol design places a higher floor than UMSH regardless of implementation language — the path table state required for Transport Node operation, the 500-byte MTU requiring larger packet buffers, and the complexity of the announce propagation and link establishment machinery all demand more RAM and processing than UMSH’s simpler MAC-layer model.</p>
 <p>UMSH’s compact encoding, minimal per-packet state, and single-frame design allow it to run on bare-metal microcontrollers drawing microamps in sleep and milliwatts when active. For battery-powered or solar-powered field deployments this difference is significant: a minimal UMSH node can operate for months or years on a single battery in a way that a full Reticulum stack — even a hypothetical embedded Rust implementation — would find difficult to match.</p>
 <h3 id="false-positive-filtering"><a class="header" href="#false-positive-filtering">False-Positive Filtering</a></h3>
-<p>Reticulum’s 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH’s 2-byte destination hints have a ~1-in-65536 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.</p>
+<p>Reticulum’s 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH’s 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.</p>
 <h3 id="packet-length-and-airtime-1"><a class="header" href="#packet-length-and-airtime-1">Packet Length and Airtime</a></h3>
 <p>Reticulum’s minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH’s minimum overhead is 1 byte, with 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.</p>
 <h3 id="fragmentation"><a class="header" href="#fragmentation">Fragmentation</a></h3>
@@ -2698,8 +2708,18 @@ delay = uniform_random(0, W)
 <h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
 <p>The following fictional values are used consistently across examples:</p>
 <ul>
-<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code> (hint: <code>A1B2</code>)</li>
-<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code> (hint: <code>C3D4</code>)</li>
+<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code>
+<ul>
+<li>As unicast/blind-unicast SRC hint (1 byte): <code>A1</code></li>
+<li>As destination hint or broadcast/multicast SRC hint (3 bytes): <code>A1 B2 03</code></li>
+</ul>
+</li>
+<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code>
+<ul>
+<li>As unicast/blind-unicast SRC hint (1 byte): <code>C3</code></li>
+<li>As destination hint or broadcast/multicast SRC hint (3 bytes): <code>C3 D4 25</code></li>
+</ul>
+</li>
 <li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
 </ul>
 <h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
@@ -2723,13 +2743,13 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>C0</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">C0 A1 B2
+<pre><code class="language-text">C0 A1 B2 03
 </code></pre>
-<p>Total: 3 bytes.</p>
+<p>Total: 4 bytes.</p>
 <h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
 <p>A first-contact beacon including the sender’s full 32-byte public key.</p>
 <div class="table-wrapper">
@@ -2757,8 +2777,8 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>D0</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (1 byte)</td><td><code>A1</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
 <tr><td>Payload</td><td>Encrypted (5 bytes)</td><td><code>8B 3F C7 A2 15</code></td></tr>
@@ -2766,10 +2786,10 @@ delay = uniform_random(0, W)
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 C3 D4 A1 B2 E0 00 00 00 2A 8B 3F C7 A2 15 F0
+<pre><code class="language-text">D0 C3 D4 25 A1 E0 00 00 00 2A 8B 3F C7 A2 15 F0
 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </code></pre>
-<p>Total: 31 bytes (1 + 2 + 2 + 5 + 5 + 16).</p>
+<p>Total: 31 bytes (1 + 3 + 1 + 5 + 5 + 16).</p>
 <h2 id="example-4-unicast-with-ack-requested-s1"><a class="header" href="#example-4-unicast-with-ack-requested-s1">Example 4: Unicast with Ack Requested (S=1)</a></h2>
 <p>A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included so the receiver can perform ECDH without prior state.</p>
 <div class="table-wrapper">
@@ -2779,7 +2799,7 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>DC</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
 <tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
@@ -2788,12 +2808,12 @@ E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">DC C3 D4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D
-0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D
-1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3 B4
-B5 B6 B7 B8 B9 BA BB BC BD BE BF
+<pre><code class="language-text">DC C3 D4 25 A1 B2 03 04 05 06 07 08 09 0A 0B 0C
+0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C
+1D 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3
+B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </code></pre>
-<p>Total: 59 bytes (1 + 2 + 32 + 5 + 3 + 16).</p>
+<p>Total: 60 bytes (1 + 3 + 32 + 5 + 3 + 16).</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
 <p>An encrypted multicast from Node A. The source hint and payload are encrypted together, concealing the sender from observers without the channel key.</p>
 <div class="table-wrapper">
@@ -2806,15 +2826,15 @@ B5 B6 B7 B8 B9 BA BB BC BD BE BF
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
-<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 7 bytes</td><td><code>D4 9C 71 E8 3A 5B 02</code></td></tr>
+<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 8 bytes</td><td><code>D4 9C 71 E8 3A 5B 02 17</code></td></tr>
 <tr><td>MIC</td><td>16 bytes</td><td><code>AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 AA
-BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
+<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 17
+AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </code></pre>
-<p>Total: 30 bytes (1 + 2 + 5 + 7 + 16). The 7 encrypted bytes contain the 2-byte source hint and 5 bytes of plaintext payload.</p>
+<p>Total: 32 bytes (1 + 2 + 5 + 8 + 16). The 8 encrypted bytes contain the 3-byte source hint and 5 bytes of plaintext payload.</p>
 <h2 id="example-6-unencrypted-multicast-e0"><a class="header" href="#example-6-unencrypted-multicast-e0">Example 6: Unencrypted Multicast (E=0)</a></h2>
 <p>An authenticated but unencrypted multicast from Node A. The source hint appears in cleartext.</p>
 <div class="table-wrapper">
@@ -2827,16 +2847,17 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
 <tr><td>Payload</td><td>Payload type 3 (text message) + “Hello”</td><td><code>03 48 65 6C 6C 6F</code></td></tr>
 <tr><td>MIC</td><td>16 bytes</td><td><code>11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 48 65 6C 6C 6F
-11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00
+<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 03 48 65 6C 6C
+6F 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF
+00
 </code></pre>
-<p>Total: 32 bytes (1 + 2 + 5 + 2 + 6 + 16).</p>
+<p>Total: 33 bytes (1 + 2 + 5 + 3 + 6 + 16).</p>
 <h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
 <p>An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
 <p><strong>Options encoding:</strong></p>
@@ -2862,8 +2883,8 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
 <tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
 <tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
-<tr><td>DST</td><td>Node B hint</td><td><code>C3 D4</code></td></tr>
-<tr><td>SRC</td><td>Node A hint</td><td><code>A1 B2</code></td></tr>
+<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
+<tr><td>SRC</td><td>Node A hint (1 byte)</td><td><code>A1</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
 <tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>8B 3F C7</code></td></tr>
@@ -2871,11 +2892,11 @@ BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 A1 B2 E0 00 00 00 0A
+<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 25 A1 E0 00 00 00 0A
 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
 DD DE DF
 </code></pre>
-<p>Total: 35 bytes (1 + 5 + 1 + 2 + 2 + 5 + 3 + 16).</p>
+<p>Total: 35 bytes (1 + 5 + 1 + 3 + 1 + 5 + 3 + 16).</p>
 
                     </main>
 

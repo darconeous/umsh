@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fa055c91.js";
+            window.path_to_searchindex_js = "searchindex-44c931f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -313,12 +313,12 @@
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
-   1 B      1 B      1 B
+<pre><code class="language-text">+----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 </code></pre>
-<p>Where each <code>RH[i]</code> is the first byte of a repeater’s public key.</p>
+<p>Where each <code>RH[i]</code> is the first two bytes of a repeater’s public key.</p>
 <p>Interpretation:</p>
 <ul>
 <li><code>RH[0]</code> is the next repeater that must forward the packet</li>
@@ -327,11 +327,12 @@
 <p>An empty source-route option indicates that all explicit routing hints have been consumed. It is not semantically distinct from the absence of a source-route option for forwarding purposes.</p>
 <h3 id="trace-route-option-value"><a class="header" href="#trace-route-option-value">Trace Route Option Value</a></h3>
 <p>A trace-route option also contains zero or more router hints:</p>
-<pre><code class="language-text">+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
+<pre><code class="language-text">+----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 </code></pre>
-<p>Repeaters prepend themselves:</p>
+<p>Repeaters prepend their 2-byte router hint:</p>
 <pre><code class="language-text">new_trace = my_router_hint || old_trace
 </code></pre>
 <p>So the list is ordered most-recent repeater first.</p>
