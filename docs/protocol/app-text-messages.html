@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-556850d9.js";
+            window.path_to_searchindex_js = "searchindex-06068481.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -186,9 +186,12 @@
 <tbody>
 <tr><td style="text-align: right">0</td><td>Message Type</td><td>0 or 1 bytes</td></tr>
 <tr><td style="text-align: right">1</td><td>Sender Handle</td><td>UTF-8 string</td></tr>
-<tr><td style="text-align: right">2</td><td>Multi-Message</td><td>3 bytes (see below)</td></tr>
-<tr><td style="text-align: right">3</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
-<tr><td style="text-align: right">4</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
+<tr><td style="text-align: right">2</td><td>Message Sequence</td><td>1 or 3 bytes (see below)</td></tr>
+<tr><td style="text-align: right">3</td><td>Sequence Reset</td><td>0 bytes (flag)</td></tr>
+<tr><td style="text-align: right">4</td><td>Regarding</td><td>1 or 4 bytes (see below)</td></tr>
+<tr><td style="text-align: right">5</td><td>Editing</td><td>1 byte</td></tr>
+<tr><td style="text-align: right">6</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
+<tr><td style="text-align: right">7</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
 </tbody>
 </table>
 </div>
@@ -205,30 +208,61 @@
 </table>
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
+<p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. An <strong>emote</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate emotes from plain status text by the presence of the Regarding option.</p>
 <h3 id="sender-handle"><a class="header" href="#sender-handle">Sender Handle</a></h3>
 <p>A UTF-8 string containing the name or pseudonym of the sender. If not supplied, a handle may be inferred from previously received node metadata for the sender’s address.</p>
-<h3 id="multi-message"><a class="header" href="#multi-message">Multi-Message</a></h3>
-<p>Fragments a large message across multiple packets. The option value is 3 bytes:</p>
+<h3 id="message-sequence"><a class="header" href="#message-sequence">Message Sequence</a></h3>
+<p>Associates a packet with a per-sender monotonically increasing message identifier, and optionally carries fragmentation state. The option is encouraged on all messages but is not required. Messages without this option cannot be directly referenced in replies or emotes.</p>
+<p>The option value is either 1 byte or 3 bytes:</p>
+<p><strong>1-byte form</strong> (message ID only):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th style="text-align: right">Byte</th><th>Field</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>Message Id</td><td>Shared by all fragments of the same message</td></tr>
-<tr><td style="text-align: right">1</td><td>Fragment Index</td><td>Position of this fragment in the reassembled message</td></tr>
-<tr><td style="text-align: right">2</td><td>Fragment Count</td><td>Total number of fragments (must not be zero or one)</td></tr>
+<tr><td style="text-align: right">0</td><td>Message ID</td><td>Per-sender message identifier (wraps at 255)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>3-byte form</strong> (fragment):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Byte</th><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Message ID</td><td>Shared by all fragments of the same message</td></tr>
+<tr><td style="text-align: right">1</td><td>Fragment Index</td><td>Zero-based position of this fragment</td></tr>
+<tr><td style="text-align: right">2</td><td>Fragment Count</td><td>Total number of fragments (must be 2 or greater)</td></tr>
 </tbody>
 </table>
 </div>
 <p>Rules:</p>
 <ul>
+<li>Message IDs are per-sender and monotonically increasing, wrapping at 255.</li>
 <li>Messages smaller than 140 bytes MUST NOT be fragmented.</li>
-<li>The message identifier may be randomly chosen or simply incremented, but MUST NOT be reused within 5 minutes.</li>
-<li>Options from the first fragment apply to the entire reassembled message. Subsequent fragments cannot override options such as text color.</li>
+<li>Options from the first fragment (Fragment Index 0) apply to the entire reassembled message. Subsequent fragments MUST NOT include options that would override those of the first fragment.</li>
 <li>During reassembly, missing fragments are rendered as <code>[FRAGMENT MISSING]</code>.</li>
 <li>Out-of-order reassembly SHOULD be supported for fragments received within 15–30 seconds.</li>
+<li>Edits (see <a href="#editing">Editing</a>) carry their own message IDs and MUST NOT be referenced by subsequent Editing or Regarding options. The original message ID is the stable reference.</li>
 </ul>
+<h3 id="sequence-reset"><a class="header" href="#sequence-reset">Sequence Reset</a></h3>
+<p>A 0-byte flag option that signals the sender has reset its message ID counter — for example, after a restart. Receivers SHOULD discard any cached message context for this sender, including pending fragment reassembly state.</p>
+<p>The Sequence Reset option SHOULD accompany a Message Sequence option bearing the sender’s new starting ID. In the absence of a Message Sequence option, receivers SHOULD treat the next message from that sender as starting a fresh sequence.</p>
+<h3 id="regarding"><a class="header" href="#regarding">Regarding</a></h3>
+<p>References a previously sent message for the purposes of replies and emotes.</p>
+<p>The option length depends on context:</p>
+<ul>
+<li><strong>Unicast</strong> (MAC packet addressed to a single destination): 1 byte — the Message ID of the referenced message.</li>
+<li><strong>Multi-user</strong> (multicast channel or chat room): 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
+</ul>
+<p>The source prefix is necessary in multi-user contexts to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence.</p>
+<h3 id="editing"><a class="header" href="#editing">Editing</a></h3>
+<p>Indicates that this message replaces a previously sent message from the same sender. The option value is 1 byte: the Message ID of the message being edited. Because only the original sender can issue an edit (enforced by MAC-layer authentication), no source prefix is needed.</p>
+<p>An edit with a zero-length body signals deletion of the original message.</p>
+<p>Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message’s ID, not the edit’s ID.</p>
+<p>How edits are presented to users is implementation-defined. Implementations typically display only the most recent edit, with some indication that edits exist, and an optional mechanism to view edit history.</p>
 <h3 id="background-color"><a class="header" href="#background-color">Background Color</a></h3>
 <p>Three bytes (red, green, blue) specifying a suggested background color for the text bubble. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the text color.</p>
 <h3 id="text-color"><a class="header" href="#text-color">Text Color</a></h3>
