@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-44c931f9.js";
+            window.path_to_searchindex_js = "searchindex-556850d9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -202,7 +202,7 @@
 <p>With 3-byte destination hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.</p>
 <h3 id="source-hints-unicast-1-byte-broadcast-and-multicast-3-bytes"><a class="header" href="#source-hints-unicast-1-byte-broadcast-and-multicast-3-bytes">Source hints (unicast: 1 byte; broadcast and multicast: 3 bytes)</a></h3>
 <p>The source hint serves a different purpose in different packet types.</p>
-<p><strong>Unicast source hint (1 byte).</strong> In unicast and blind unicast, the destination hint already handles prefiltering. The source hint is used only to narrow down which cached pairwise key to try first. A collision means the receiver tries the wrong cached key before finding the correct one — an extra AES-CMAC call, not a persistent per-packet cost. This is primarily a concern for infrastructure nodes (repeaters, gateways) that maintain many concurrent pairwise relationships and are less power-constrained than battery-powered endpoints. Using a 1-byte source hint offsets the +1 byte cost of the 3-byte destination hint, keeping unicast packet overhead identical to a symmetric 2+2 design.</p>
+<p><strong>Unicast source hint (1 byte).</strong> In unicast and blind unicast, the destination hint already handles prefiltering. The source hint is used only to narrow down which cached pairwise key to try first. A collision means the receiver tries the wrong cached key before finding the correct one — an extra AES-CMAC call, not a persistent per-packet cost. This is primarily a concern for endpoint nodes that communicate with many peers and therefore maintain large caches of pairwise keys. Using a 1-byte source hint offsets the +1 byte cost of the 3-byte destination hint, keeping unicast packet overhead at 4 bytes total for addressing.</p>
 <p><strong>Broadcast and multicast source hint (3 bytes).</strong> These packet types carry no destination hint. The source hint is therefore the primary addressing field visible to receivers and is used for source identification, traffic attribution, and diagnostics. At 2 bytes, ~94% of nodes in a 600-node network share a hint, making the field nearly useless for attribution. At 3 bytes, the probability drops to ~1%.</p>
 <h3 id="router-hints-2-bytes"><a class="header" href="#router-hints-2-bytes">Router hints (2 bytes)</a></h3>
 <p>Router hints are used in source-route and trace-route options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.</p>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-44c931f9.js";
+            window.path_to_searchindex_js = "searchindex-556850d9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -200,14 +200,15 @@ higher-layer content.</p>
 <li>Timestamp-free at the MAC layer</li>
 </ul>
 <h2 id="design-principles"><a class="header" href="#design-principles">Design Principles</a></h2>
-<p>The following principles guide UMSH’s design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.</p>
-<p><strong>Single-frame design.</strong> Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.</p>
-<p><strong>Robustness.</strong> Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.</p>
-<p><strong>Tolerance of loss and disorder.</strong> LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.</p>
-<p><strong>Privacy by default.</strong> Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.</p>
-<p><strong>Brevity.</strong> Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, compact address hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.</p>
-<p><strong>Layer separation.</strong> The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.</p>
-<p><strong>Minimal mandatory state.</strong> A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.</p>
+<p>The following principles guide UMSH’s design. When evaluating a design decision, prefer the option that best satisfies these principles. The order of these principles shouldn’t be interpreted as an order of importance.</p>
+<p><strong>Single-frame design.</strong> Every packet must fit in a single LoRa frame. Operations that require more data than one frame can carry belong at a higher layer.</p>
+<p><strong>Confidentiality.</strong> Encryption and authentication must be available for every kind of interaction. Where metadata concealment is also needed, the protocol should provide opt-in mechanisms rather than requiring it universally.</p>
+<p><strong>Robustness.</strong> Prefer constructions that fail gracefully over ones that fail catastrophically. A slightly less efficient design that degrades safely under adverse conditions is better than an efficient one that breaks badly.</p>
+<p><strong>Tolerance of loss and disorder.</strong> Assume packets will be dropped, duplicated, and delivered out of order. No operation should require synchronized state between two nodes that cannot recover from a missed message.</p>
+<p><strong>Brevity.</strong> Every byte costs airtime. Mandatory fields should be as small as correctness allows; optional fields should be absent when not needed.</p>
+<p><strong>Layer separation.</strong> The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.</p>
+<p><strong>Minimal mandatory state.</strong> Basic operation should require only a node’s own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.</p>
+<p><strong>Graceful extensibility.</strong> The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.</p>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
 <p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
 <p><strong>Intended use cases include:</strong></p>

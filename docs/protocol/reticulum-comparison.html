@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-44c931f9.js";
+            window.path_to_searchindex_js = "searchindex-556850d9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -216,7 +216,7 @@
 </table>
 </div>
 <p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact hints as prefilters for efficient matching — 3 bytes for destination hints and broadcast/multicast source hints, 1 byte for unicast source hints. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L118"><code>Destination.py:118</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L80"><code>Identity.py:80</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
-<p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a compact hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers explicit <a href="introduction.html#blind-unicast">blind unicast</a> as an opt-in privacy mode that encrypts the source address.</p>
+<p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a compact hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers two opt-in mechanisms that reduce identity exposure. <a href="introduction.html#blind-unicast">Blind unicast</a> encrypts the source address with the channel key so that only channel members can identify the sender. <a href="security.html#perfect-forward-secrecy-sessions">PFS sessions</a> use ephemeral node addresses for the duration of the session, so an observer sees only hints derived from short-lived keys rather than the nodes’ long-term identities — the long-term identity hints never appear on the wire during the session. This identity obscuration is not unconditional: because the PFS handshake is authenticated with the nodes’ long-term keys, an attacker who later compromises a long-term private key can retroactively attribute the session to those identities, even though the session’s content remains protected.</p>
 <h2 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
