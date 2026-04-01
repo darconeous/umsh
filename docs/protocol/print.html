@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3d497390.js";
+            window.path_to_searchindex_js = "searchindex-4ad01c26.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -207,6 +207,7 @@ higher-layer content.</p>
 <p><strong>Robustness.</strong> Prefer constructions that fail gracefully over ones that fail catastrophically. A slightly less efficient design that degrades safely under adverse conditions is better than an efficient one that breaks badly.</p>
 <p><strong>Tolerance of loss and disorder.</strong> Assume packets will be dropped, duplicated, and delivered out of order. No operation should require synchronized state between two nodes that cannot recover from a missed message.</p>
 <p><strong>Brevity.</strong> Every byte costs airtime. Mandatory fields should be as small as correctness allows; optional fields should be absent when not needed.</p>
+<p><strong>Practicality.</strong> A protocol must be operable, not just correct. Prefer designs that make real networks easier to understand and debug — readable packet traces, attributable traffic, and identifiable nodes are operational requirements, not luxuries. Theoretical minimalism that makes a protocol difficult to deploy or troubleshoot is a real cost.</p>
 <p><strong>Layer separation.</strong> The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.</p>
 <p><strong>Minimal mandatory state.</strong> Basic operation should require only a node’s own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.</p>
 <p><strong>Graceful extensibility.</strong> The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.</p>
