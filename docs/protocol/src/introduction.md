@@ -31,21 +31,23 @@ UMSH is designed to support:
 
 ## Design Principles
 
-The following principles guide UMSH's design. They reflect the constraints of LoRa — small frames, low data rates, unreliable delivery, no infrastructure — and together they determine what the protocol can and cannot do well.
+The following principles guide UMSH's design. When evaluating a design decision, prefer the option that best satisfies these principles. The order of these principles shouldn't be interpreted as an order of importance.
 
-**Single-frame design.** Every UMSH packet must fit in a single LoRa frame (~255 bytes). There is no multi-frame reassembly, no fragmentation state machine, and no assumption that related packets will arrive in order or at all. This constraint drives nearly every other design decision: compact encodings, short headers, and delegation of larger-than-one-frame operations to higher-layer protocols.
+**Single-frame design.** Every packet must fit in a single LoRa frame. Operations that require more data than one frame can carry belong at a higher layer.
 
-**Robustness.** Where a design choice exists between a construction that is slightly more efficient and one that fails more gracefully, UMSH chooses the latter. The AES-SIV-inspired encryption tolerates nonce reuse without catastrophic failure. Key derivation uses well-separated HKDF domains so that a flaw in one derivation path does not compromise others.
+**Confidentiality.** Encryption and authentication must be available for every kind of interaction. Where metadata concealment is also needed, the protocol should provide opt-in mechanisms rather than requiring it universally.
 
-**Tolerance of loss and disorder.** LoRa is a lossy, high-latency medium where packets are routinely dropped, duplicated, or delivered out of order. The protocol assumes none of these conditions are exceptional. Replay protection uses simple monotonic counters. No operation requires both sides to maintain tightly coupled session state that can desynchronize when packets go missing. Cryptographic schemes that fail closed on missed or reordered messages are a poor fit for this environment.
+**Robustness.** Prefer constructions that fail gracefully over ones that fail catastrophically. A slightly less efficient design that degrades safely under adverse conditions is better than an efficient one that breaks badly.
 
-**Privacy by default.** Passive observers should learn as little as possible from the wire. Addresses appear as compact hints rather than cleartext identifiers. Encrypted multicast conceals the sender. Blind unicast conceals both sender and destination. No mandatory metadata (timestamps, sequence numbers, node names) is leaked in the clear.
+**Tolerance of loss and disorder.** Assume packets will be dropped, duplicated, and delivered out of order. No operation should require synchronized state between two nodes that cannot recover from a missed message.
 
-**Brevity.** Every byte costs airtime, and airtime costs battery. The protocol minimizes per-packet overhead — 1-byte frame control, 2-byte hints, variable-length options that are absent when unused — so that maximum payload capacity is available to higher layers.
+**Brevity.** Every byte costs airtime. Mandatory fields should be as small as correctness allows; optional fields should be absent when not needed.
 
-**Layer separation.** The core protocol treats payloads opaquely. It provides framing, addressing, encryption, authentication, and hop-by-hop forwarding, but does not interpret payload content. Application-layer concerns — message types, fragmentation, delivery confirmation — are handled by higher-layer protocols carried in the payload. A payload might carry a UMSH-defined text message, a CoAP request, or a 6LoWPAN-compressed IPv6 datagram; the core protocol does not distinguish between them.
+**Layer separation.** The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.
 
-**Minimal mandatory state.** A node can receive and process any packet using only its own keypair and configured channel keys. There are no mandatory path tables, no clock synchronization, and no session state required for basic operation. This makes the protocol suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+**Minimal mandatory state.** Basic operation should require only a node's own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.
+
+**Graceful extensibility.** The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.
 
 ## Use Cases
 
@@ -58,7 +60,7 @@ UMSH is designed for deployments where LoRa's range and low power consumption ar
 - **IoT and sensor telemetry** — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.
 - **Amateur radio mesh networking** — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.
 - **Privacy-sensitive communication** — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.
-- **Embedded and constrained deployments** — compact encoding (1-byte FCF, 2-byte hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.
+- **Embedded and constrained deployments** — compact encoding (1-byte FCF, compact address hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.
 
 **UMSH is not designed for:**
 
@@ -86,8 +88,8 @@ keys can be learned through several mechanisms:
   its full public key in any packet, allowing the receiver to learn it directly from the wire
 
 Once a node's public key is known, it can be cached and subsequent packets
-can use a compact 2-byte source hint instead of the full key, saving 30
-bytes per packet.
+can use a compact source hint instead of the full key — saving 31 bytes per
+packet in unicast (1-byte hint vs 32-byte key).
 
 #### Node Metadata
 

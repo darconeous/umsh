@@ -10,8 +10,8 @@ Meshtastic and UMSH occupy different positions in the design space. Meshtastic i
 |---|---|---|
 | Identity basis | 32-byte Ed25519 public key | 32-bit node number derived from Bluetooth MAC address |
 | Cryptographic identity | Public key is the address | Optional Curve25519 keypair (PKC, v2.5+), not used for addressing |
-| Source address in packets | 2-byte hint or 32-byte key | 4-byte node number (cleartext) |
-| Destination address | 2-byte hint | 4-byte node number (cleartext) |
+| Source address in packets | compact hint (1 byte in unicast, 3 bytes in broadcast/multicast) or 32-byte key | 4-byte node number (cleartext) |
+| Destination address | 3-byte hint | 4-byte node number (cleartext) |
 | Channel identifier | 2-byte derived hint | 1-byte DJB2 hash of channel name |
 | Address spoofing resistance | Cryptographic — pairwise keys are derived from public keys | None — node numbers are hardware-derived and trivially spoofable |
 
@@ -108,7 +108,7 @@ Both protocols provide forwarding confirmation, but with different scope. Meshta
 
 Meshtastic's 16-byte cleartext header exposes the full sender and recipient node numbers on every packet. A passive observer with a LoRa receiver can identify who is communicating with whom, build traffic graphs, and track individual devices over time — even without the channel key. Node numbers are derived from hardware MAC addresses, making them persistent identifiers tied to physical devices.
 
-UMSH's 2-byte hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.
+UMSH's compact hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.
 
 ## Multicast and Group Communication
 
@@ -203,7 +203,7 @@ Meshtastic's 1-byte channel hash produces ~256× more false positives than UMSH'
 
 ### Unicast Filtering
 
-For unicast packets, Meshtastic's 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH's 2-byte destination hint has a ~1-in-65536 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.
+For unicast packets, Meshtastic's 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH's 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.
 
 This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.
 

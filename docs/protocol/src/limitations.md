@@ -12,44 +12,43 @@ Multicast channels use a shared symmetric key. Any node possessing the channel k
 
 This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.
 
-## Open Issues
+## Known Hint Collision Properties
 
-### Hint Collisions
+UMSH uses asymmetric hint sizes chosen to minimize false-positive work where it matters most while preserving overall packet compactness.
 
-Two-byte destination hints will occasionally collide, causing a receiver to attempt cryptographic verification on packets intended for a different node. The protocol does not define a mechanism to mitigate this beyond treating hints as a prefilter (see [Addressing](addressing.md#destination-hint)). The probability of any *specific* pair of nodes sharing a hint is low (~1 in 65,536), but by the birthday bound, once a network approaches 256 active nodes the probability of *at least two* nodes sharing a hint rises above 40%.
+MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes — far too low for practical networks. UMSH addresses this with larger, role-differentiated hints.
 
-The cost of a hint collision is wasted computation, not incorrect behavior. However, on battery-constrained devices the wasted computation can be significant: a destination hint collision persists for the lifetime of both node identities, causing repeated unnecessary cryptographic verification on every packet exchanged between the colliding nodes. The only remedy is for one of the nodes to generate a new identity (a new Ed25519 keypair). For a dedicated repeater or sensor node this is relatively painless, but for a chat node it means all peers must re-learn the new public key.
+As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:
 
-MeshCore originally used 1-byte hints for source, destination, and source-routing addresses. This placed the birthday bound at just 16 nodes — far too low for practical networks.
-
-UMSH uses 2-byte source and destination hints, raising the birthday bound to 256 nodes. UMSH retains 1-byte hints for source-routing (router hints), which may affect source-routed delivery in denser areas.
-
-#### How big is big enough?
-
-Moving to 3-byte hints would raise the birthday bound to approximately 4,096 nodes — a significant improvement over both 16 and 256. But is the extra byte per hint worth it?
-
-The answer depends on the effective network size. A collision is only relevant when both colliding nodes are regularly reachable from each other. For flood-routed traffic, this means all nodes reachable by flooding. For source-routed traffic, only nodes along the path matter, but path composition can be unpredictable and hard to characterize in advance.
-
-The impact of router hint collisions during source routing is not entirely clear. In theory, an unnecessary retransmission caused by a collision should fizzle out quickly (the next hop hint is unlikely to also collide). But if a particular source route is used frequently, even a small amount of extra traffic per use can accumulate. Repeater operators are more likely to coordinate hint assignments among themselves, but this cannot be assumed in all deployments. MeshCore addressed this by introducing 2-byte and 3-byte repeater hints, though with the majority of MeshCore traffic appearing to be flood-routed, it is not clear whether this represents a material improvement in practice.
-
-As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one destination hint collision for different hint sizes:
-
-| Hint size | Collision probability |
+| Hint size | Collision probability (600 nodes) |
 |---|---|
 | 1 byte (256 values) | ~100% |
 | 2 bytes (65,536 values) | ~94% |
 | 3 bytes (16,777,216 values) | ~1% |
 
-For destination hints — which serve as a prefilter that determines whether a node must perform cryptographic verification — moving to 3 bytes dramatically reduces false-positive verification work and seems well worth the overhead.
+### Destination hints (3 bytes)
 
-#### Source hints
+The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume.
 
-The source hint serves a different purpose than the destination hint. It is not used as a prefilter; rather, it helps the receiver narrow down which cached pairwise key to try first. A source hint collision means the receiver may occasionally try the wrong cached key before finding the right one, but implementations can mitigate this by prioritizing recently matched keys.
+With 3-byte destination hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.
 
-The worst case arises when two (or more) nodes sharing a source hint are both in regular contact with a third node. That third node will experience more frequent key-lookup misses and additional cryptographic verification attempts. This is primarily a concern for infrastructure nodes (which tend not to be as power-constrained) rather than battery-powered endpoints, so the problem may be self-limiting.
+### Source hints (unicast: 1 byte; broadcast and multicast: 3 bytes)
 
-An asymmetric design — 1-byte source hints and 3-byte destination hints — would maintain the current per-packet overhead while strengthening prefiltering where it matters most. It would also maintain the current minimum-packet-overhead with MeshCore.
+The source hint serves a different purpose in different packet types.
 
-However, source hints can be useful beyond key lookup: they can help identify traffic patterns and diagnose network issues. Whether this diagnostic value justifies the extra byte (or two) remains an open question.
+**Unicast source hint (1 byte).** In unicast and blind unicast, the destination hint already handles prefiltering. The source hint is used only to narrow down which cached pairwise key to try first. A collision means the receiver tries the wrong cached key before finding the correct one — an extra AES-CMAC call, not a persistent per-packet cost. This is primarily a concern for endpoint nodes that communicate with many peers and therefore maintain large caches of pairwise keys. Using a 1-byte source hint offsets the +1 byte cost of the 3-byte destination hint, keeping unicast packet overhead at 4 bytes total for addressing.
+
+**Broadcast and multicast source hint (3 bytes).** These packet types carry no destination hint. The source hint is therefore the primary addressing field visible to receivers and is used for source identification, traffic attribution, and diagnostics. At 2 bytes, ~94% of nodes in a 600-node network share a hint, making the field nearly useless for attribution. At 3 bytes, the probability drops to ~1%.
+
+### Router hints (2 bytes)
+
+Router hints are used in source-route and trace-route options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.
+
+Source routing is an inherently local operation — only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:
+
+- 1-byte hints: ~46% collision probability
+- 2-byte hints: ~1.9% collision probability
+
+2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace-route options.
 
 

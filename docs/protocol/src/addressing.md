@@ -8,7 +8,7 @@ The sections below describe the three addressing forms used across the protocol:
 
 A **destination hint** is defined as:
 
-- the **first two bytes of the destination node's 32-byte public key**
+- the **first three bytes of the destination node's 32-byte public key**
 
 This hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.
 
@@ -18,22 +18,27 @@ A receiver that sees a matching destination hint must still confirm that it is t
 
 A **router hint** is defined as:
 
-- the **first byte of the repeater's 32-byte public key**
+- the **first two bytes of the repeater's 32-byte public key**
 
 Router hints are used in:
 
 - source-route options
 - trace-route options
 
-Because router hints are only 1 byte, collisions are expected and acceptable. A router hint is therefore only a compact routing selector, not a globally unique repeater identifier.
+Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.
 
 ## Source Address
 
 A source address in a packet is either:
 
-- a **2-byte source hint** (the first two bytes of the sender's 32-byte public key), when the `S` flag in the FCF is clear, or
+- a **compact source hint** (a prefix of the sender's 32-byte public key), when the `S` flag in the FCF is clear, or
 - the **full 32-byte public key**, when the `S` flag is set.
+
+The hint size depends on the packet type:
+
+- **Unicast and blind unicast**: the source hint is **1 byte** (the first byte of the public key). The destination hint handles the prefiltering work; the source hint is used only to narrow down which cached key to try first.
+- **Broadcast and multicast**: the source hint is **3 bytes** (the first three bytes of the public key). These packet types carry no destination hint, so the source hint serves as the primary addressing field and benefits from a lower collision probability.
 
 The source hint is a compact reference used when the receiver is expected to already have the sender's full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.
 
-In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the `S` flag convention: a 2-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.
+In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the same conventions: a hint (of the appropriate size) when `S` is clear, or the full 32-byte public key when `S` is set.

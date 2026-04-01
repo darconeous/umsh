@@ -327,25 +327,26 @@ The ack tag is never transmitted in the original packet — it appears only in t
 
 AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
 
-### Blind Unicast Source Encryption
+### Blind Unicast Address Encryption
 
-Blind unicast packets encrypt the source address separately from the payload. The source address is encrypted with the **channel key alone**, so that any channel member can recover the sender's identity. The payload is then encrypted with the **combined blind unicast keys** (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys)), which require both the channel key and the pairwise shared secret.
+Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the **channel key alone**, so that any channel member can recover both the intended recipient and the sender's identity. The payload is then encrypted with the **combined blind unicast keys** (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys)), which require both the channel key and the pairwise shared secret.
 
-The source address is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
+The address block is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
 
 Let:
 
 - `K_enc_channel` = channel encryption key derived from the channel key via HKDF
 - `IV` = CTR IV constructed from the packet MIC and SECINFO
-- `SRC` = 32-byte source public key
+- `DST` = 3-byte destination hint
+- `SRC` = source address: 1-byte source hint when `S=0`, or 32-byte source public key when `S=1`
 
 Then:
 
 ```text
-ENC_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=SRC )
+ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 ```
 
-This allows a receiver possessing the channel key to recover the source address and then derive the blind unicast payload keys needed to authenticate and decrypt the payload.
+This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).
 
 ## Perfect Forward Secrecy Sessions
 
@@ -377,7 +378,9 @@ While a PFS session is active, packet hint fields are derived from the ephemeral
 
 Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.
 
-However, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address — including ephemeral ones — so that session traffic is not correlated with long-term traffic through counter continuity.
+This identity separation is not unconditional. The PFS handshake messages are authenticated with the nodes' long-term keys, so an attacker who later compromises a long-term private key can retroactively identify which long-term identities established the session — even though the session's content remains protected by the erased ephemeral keys.
+
+Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address — including ephemeral ones — so that session traffic is not correlated with long-term traffic through counter continuity.
 
 From the application layer's perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.
 

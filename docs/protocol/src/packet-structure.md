@@ -5,19 +5,19 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 ## Top-Level Packet Layout
 
 ```text
-+--------+-----------+--------+--------------+----------+-----------+---------+------+
-|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |   SRC    |  SECINFO  | PAYLOAD | MIC  |
-+--------+-----------+--------+--------------+----------+-----------+---------+------+
-   1 B      variable    0/1 B       0/2 B      0/2/32 B    0/5/7 B      var.   0-16 B
++--------+-----------+--------+--------------+------------+-----------+---------+------+
+|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |    SRC     |  SECINFO  | PAYLOAD | MIC  |
++--------+-----------+--------+--------------+------------+-----------+---------+------+
+   1 B      variable    0/1 B      0/2/3 B    0/1/3/32 B    0/5/7 B      var.   0-16 B
 ```
 
 Where:
 
 - `OPTIONS` are present if the FCF options flag is set
 - `FHOPS` is present if the FCF flood hop count flag is set
-- `DST` is a 2-byte destination hint
+- `DST` is a 3-byte destination hint (2 bytes in MAC Ack packets)
 - `CHANNEL` is a 2-byte channel identifier
-- `SRC` is a 2-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
+- `SRC` is a compact source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); the hint is 1 byte in unicast and blind unicast packets, and 3 bytes in broadcast and multicast packets; in multicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
 - `SECINFO` is present on authenticated/encrypted packet types
 - `MIC` is present on authenticated/encrypted packet types; MAC acks carry an [ack tag](security.md#ack-tag-construction) instead
 
@@ -37,7 +37,7 @@ Where:
 
 - `VER` = protocol version (this specification defines version **3**, i.e., both bits set)
 - `PKT TYPE` = packet type
-- `S` = full 32-byte source address included (when clear, a 2-byte source hint is used instead)
+- `S` = full 32-byte source address included (when clear, a compact source hint is used instead; see [Source Address](addressing.md#source-address) for hint size by packet type)
 - `O` = options present
 - `H` = flood hop count present
 

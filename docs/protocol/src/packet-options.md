@@ -122,13 +122,13 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 A source-route option contains zero or more router hints:
 
 ```text
-+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
-   1 B      1 B      1 B
++----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 ```
 
-Where each `RH[i]` is the first byte of a repeater's public key.
+Where each `RH[i]` is the first two bytes of a repeater's public key.
 
 Interpretation:
 
@@ -142,12 +142,13 @@ An empty source-route option indicates that all explicit routing hints have been
 A trace-route option also contains zero or more router hints:
 
 ```text
-+--------+--------+--------+-----+
-| RH[0]  | RH[1]  | RH[2]  | ... |
-+--------+--------+--------+-----+
++----------+----------+----------+-----+
+|  RH[0]   |  RH[1]   |  RH[2]   | ... |
++----------+----------+----------+-----+
+    2 B         2 B       2 B
 ```
 
-Repeaters prepend themselves:
+Repeaters prepend their 2-byte router hint:
 
 ```text
 new_trace = my_router_hint || old_trace

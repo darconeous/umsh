@@ -4,9 +4,9 @@
 
 No. A MAC Ack contains an [ack tag](security.md#ack-tag-construction) — an 8-byte value derived by encrypting the full 16-byte CMAC with `K_enc`. Computing a valid ack tag requires knowledge of the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without `K_enc`. Ack forgery is therefore as hard as breaking the underlying key agreement.
 
-### Doesn't blind unicast have a circular dependency between the MIC and source decryption?
+### Doesn't blind unicast have a circular dependency between the MIC and address decryption?
 
-No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_SRC`, and then derives the pairwise keys from the recovered source public key. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If the source address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
+No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_DST_SRC`, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
 
 ### Can source-routed packets loop if router hints collide?
 
@@ -28,13 +28,13 @@ This does not apply to blind unicast. Blind unicast payloads are authenticated u
 
 ### When should the S flag (full source address) be set?
 
-The `S` flag controls whether the full 32-byte source public key or a compact 2-byte source hint is included in the packet. Set `S` when:
+The `S` flag controls whether the full 32-byte source public key or a compact source hint is included in the packet. Set `S` when:
 
 - This is a first-contact transmission and the receiver has never seen the sender's public key before.
 - The sender wants to allow any receiver to perform ECDH and authenticate the packet without prior state.
 - The sender is using an ephemeral keypair (anonymous request pattern).
 
-Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the 2-byte hint saves 30 bytes per packet, which is significant on LoRa.
+Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 31 bytes per packet in unicast (1-byte hint vs 32-byte key), which is significant on LoRa.
 
 Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with `S=1` to provide the full key.
 

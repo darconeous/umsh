@@ -8,7 +8,7 @@ Broadcast packets carry a source and payload, but no security info.
 +-----+-----------+------+-----+---------+
 | FCF | [OPTIONS] |[FHOPS]| SRC | PAYLOAD |
 +-----+-----------+------+-----+---------+
-  1 B    variable   0/1 B 2/32B   var.
+  1 B    variable   0/1 B 3/32B   var.
 ```
 
 A broadcast with an empty payload is a **Beacon**.
@@ -28,7 +28,7 @@ The ack identifies the original sender by destination hint and carries an **ack 
 
 Where:
 
-- `DST` is the 2-byte destination hint of the original sender
+- `DST` is a 2-byte prefix of the original sender's public key (MAC Ack uses a 2-byte destination hint, not the full 3-byte hint used in unicast packets)
 - `ACK TAG` is an 8-byte value derived from the original packet's MIC and the pairwise encryption key (see [Ack Tag Construction](security.md#ack-tag-construction))
 
 Because the ack tag requires knowledge of the pairwise `K_enc`, it cannot be forged by a passive observer — even one who received the original packet in its entirety.
@@ -43,10 +43,10 @@ Unicast packets are addressed by destination hint and carry the source address.
 +-----+-----------+------+-----+-----+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+-----+---------+---------+------+
-  1 B    variable   0/1 B  2 B  2/32B    5/7 B     var.    4-16 B
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 ```
 
-`DST` is the first two bytes of the recipient's public key.
+`DST` is the first three bytes of the recipient's public key.
 
 Receivers first use `DST` as a cheap filter, then use the source public key (or its cached equivalent when only a hint is present) and their own key to derive the shared secret and authenticate/decrypt the packet.
 
@@ -58,6 +58,7 @@ This is identical to unicast, but the packet-type value signals that a MAC ackno
 +-----+-----------+------+-----+------+---------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| DST | SRC  | SECINFO | PAYLOAD | MIC  |
 +-----+-----------+------+-----+------+---------+---------+------+
+  1 B    variable   0/1 B  3 B  1/32B    5/7 B     var.    4-16 B
 ```
 
 Semantics differ, wire layout does not.
@@ -80,10 +81,10 @@ When encryption is enabled, the source address is encrypted together with the pa
 +-----+-----------+------+---------+---------+----------------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENCRYPT(SRC+PAYLOAD) | MIC  |
 +-----+-----------+------+---------+---------+----------------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B          2/32 + var.      4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B          3/32 + var.      4-16 B
 ```
 
-The `SRC` inside the ciphertext follows the `S` flag convention: a 2-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.
+The `SRC` inside the ciphertext follows the `S` flag convention: a 3-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.
 
 Only a node with the correct channel key can recover the source address and payload.
 
@@ -96,7 +97,7 @@ place that it appeared in encrypted multicast:
 +-----+-----------+------+---------+---------+------+---------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | SRC  | PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+------+---------+------+
-  1 B    variable   0/1 B    2 B      5/7 B   2/32 B    var.   4-16 B
+  1 B    variable   0/1 B    2 B      5/7 B   3/32 B    var.   4-16 B
 ```
 
 ## Blind Unicast Packet
@@ -107,7 +108,7 @@ Blind unicast uses a multicast channel to conceal sender and destination metadat
 +-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 ```
 
 The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and the `MIC` as IV (see [Security & Cryptography](security.md#blind-unicast-source-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
@@ -135,5 +136,5 @@ Same wire layout as blind unicast, but with ack-requested semantics.
 +-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
-  1 B    variable   0/1 B    2 B     5/7 B        4/34 B         var.     4-16 B
+  1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 ```

@@ -9,11 +9,11 @@ Both protocols use Ed25519 public keys as node identities and perform X25519 ECD
 | Aspect | UMSH | MeshCore |
 |---|---|---|
 | Identity key | 32-byte Ed25519 public key | 32-byte Ed25519 public key |
-| Source address in packets | 2-byte hint (S=0) or full 32-byte key (S=1) | 1-byte hash (first byte of public key) |
-| Destination address | 2-byte hint | 1-byte hash |
+| Source address in packets | 1-byte hint in unicast (S=0), 3-byte hint in broadcast/multicast (S=0), or full 32-byte key (S=1) | 1-byte hash (first byte of public key) |
+| Destination address | 3-byte hint | 1-byte hash |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of channel key |
 
-UMSH uses 2-byte hints for both source and destination, with an explicit `S` flag to include the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated `ANON_REQ` packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves one additional byte per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
+UMSH uses asymmetric hints sized to their role: 3-byte destination hints (the prefilter that determines whether cryptographic verification is attempted) and 1-byte source hints in unicast (used only for key lookup, not prefiltering), with 3-byte source hints in broadcast and multicast where no destination hint is present. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated `ANON_REQ` packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
 
 ## Packet Structure
 
@@ -139,12 +139,12 @@ Minimum overhead for a typical encrypted unicast message (no options, no flood h
 |---|---|---|---|---|
 | Header/FCF | 1 | 1 | 1 | 1 |
 | Path length | — | — | — | 1 |
-| Destination | 2 | 2 | 2 | 1 |
-| Source | 2 | 2 | 32 | 1 |
+| Destination | 3 | 3 | 3 | 1 |
+| Source | 1 | 1 | 32 | 1 |
 | Security info | 5 | 5 | 5 | — |
 | MAC/MIC | 16 | 4 | 4–16 | 2 |
 | ECB block padding | — | — | — | 0–15 (avg ~8) |
-| **Total overhead** | **26** | **14** | **44–56** | **~14** |
+| **Total overhead** | **26** | **14** | **45–57** | **~14** |
 
 UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography](security.md#security-control-field)). With a 4-byte MIC and `S=0`, UMSH matches MeshCore's effective overhead while providing AES-SIV encryption, HKDF key separation, and monotonic frame counter replay protection.
 
@@ -162,16 +162,14 @@ When a node receives a packet, it checks the destination hint against its own ad
 
 The problem is collisions. In a network of many nodes, some fraction of packets addressed to *other* nodes will collide with your own hint and trigger unnecessary cryptographic work. The collision rate depends on the hint width:
 
-| Protocol | Address hint width | False-positive rate per packet |
+| Protocol | Destination hint width | False-positive rate per unicast packet |
 |---|---|---|
 | MeshCore | 8 bits (1 byte) | ~1 in 256 |
-| UMSH | 16 bits (2 bytes) | ~1 in 65536 |
+| UMSH | 24 bits (3 bytes) | ~1 in 16,777,216 |
 
-UMSH's 2-byte hints reduce spurious cryptographic wake-ups by a factor of ~256 compared to MeshCore. In a busy mesh where a node receives hundreds of packets per hour intended for others, this difference accumulates. Each avoided verification means less CPU time, fewer memory accesses, and a faster return to sleep — all of which reduce battery drain.
+UMSH's 3-byte destination hints reduce spurious cryptographic wake-ups by a factor of ~65,536 compared to MeshCore. Because the unicast source hint is 1 byte, the combined address overhead is unchanged from MeshCore's 1+1 byte layout — the stronger prefiltering comes at no additional per-packet cost. In a busy mesh where a node receives hundreds of packets per hour intended for others, fewer wasted verifications means less CPU time, fewer memory accesses, and a faster return to sleep.
 
 The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that any packet addressed to an unknown channel matches a channel you are not a member of. UMSH's 2-byte channel identifier reduces this to 1-in-65536.
-
-The overhead cost of wider hints is exactly 1 byte per address field per packet — a modest price for a 256× reduction in false-positive cryptographic work.
 
 ### Repeater Power
 

@@ -12,11 +12,12 @@ The first byte of the payload identifies the action type.
 | 1 | Room Info | Room → User |
 | 2 | Login | User → Room |
 | 3 | Logout | User → Room |
-| 4 | Send Message | User → Room |
 | 5 | Fetch Messages | User → Room |
 | 6 | Fetch Users | User → Room |
 | 7 | Admin Commands | User → Room |
 | 8 | Room Update | Room → User |
+
+Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads (unicast to the room node), and the room distributes them to members the same way. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery.
 
 ## Get Room Info / Room Info
 
@@ -56,11 +57,13 @@ All options are optional. Behavior details:
 
 Logging out unsubscribes the user from push updates and removes them from the active user list. Previously sent messages remain stored and retrievable by other users up to the history limit.
 
-If the user is currently logged in, the room sends one final Room Update containing a system message indicating the user has left.
+If the user is currently logged in, the room sends a final text message to all members using the User Left message type (see [System Events](#system-events)).
 
 ## Send Message
 
-The payload uses the same format as the [Text Message](app-text-messages.md) protocol, except that the Sender Handle option is ignored (the room fills it in). Once received, the message is echoed back to the sender via a Room Update.
+To send a message to a chat room, a user sends a standard [text message](app-text-messages.md) unicast to the room node. The Sender Handle option is ignored — the room fills it in from the sender's registered handle when distributing the message to members.
+
+The Message Sequence option SHOULD be included, using the sender's own per-sender message ID counter. The room uses this to detect duplicate submissions and to order rapid messages from the same user. The sender's per-sender ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.
 
 ## Fetch Messages
 
@@ -79,13 +82,28 @@ Retrieves the currently active user list, possibly including their public keys.
 
 TBD.
 
-## Room Update
+## Message Distribution
 
-A Room Update contains a list of timestamped events from the room. All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room's clock is synchronized. Regardless of absolute accuracy, the chronological ordering by timestamp is the canonical event ordering.
+When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see [Regarding](app-text-messages.md#regarding)).
 
-Each event is formatted as a length-prefixed [text message](app-text-messages.md) with the following extensions:
+All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room's clock is synchronized.
 
-### Additional Message Types
+### Sender Sequence
+
+When the room echoes a message back to the original sender, it faces a correlation problem: the sender showed the message optimistically in their UI the moment they sent it, but the echoed copy arrives with a room-assigned ID the client has never seen. Without some way to link them, the client cannot reliably identify which pending outbound message the echo corresponds to — matching by content alone fails if the user sends identical messages in quick succession.
+
+To solve this, the room includes a Sender Sequence option on the echo it sends back to the original sender. This option is not included in copies sent to other members.
+
+| Number | Name | Value |
+|---:|---|---|
+| 12 | Timestamp Received | 4 bytes, UTC UNIX timestamp |
+| 13 | Sender Sequence | 1 byte — the sender's original Message Sequence ID |
+
+The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this against its pending outbound messages to identify the echo, then updates its local record to use the canonical room-assigned ID for future Regarding references.
+
+### System Events
+
+The room delivers system notifications as text messages to all logged-in members, using message types reserved for room use:
 
 | Value | Name |
 |---:|---|
@@ -93,10 +111,12 @@ Each event is formatted as a length-prefixed [text message](app-text-messages.md
 | 33 | User Left |
 | 34 | Admin Message |
 
-### Additional Options
+The Sender Handle option is automatically populated by the room for all distributed messages, including system events.
 
-| Number | Name |
-|---:|---|
-| 12 | Timestamp Received |
+## Room Update
 
-The Sender Handle option is automatically populated by the room.
+Room Update is used exclusively for batch delivery: the history sent on login (via the Last Message Timestamp login option) and the response to Fetch Messages. It contains a list of length-prefixed text messages in chronological order, each carrying the room-injected options defined above (Timestamp Received, and Sender Sequence where applicable). This batching avoids the per-packet overhead of sending history as individual unicast messages on LoRa.
+
+| Value | Action | Direction |
+|---:|---|---|
+| 8 | Room Update | Room → User |
