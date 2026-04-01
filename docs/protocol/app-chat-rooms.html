@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-06068481.js";
+            window.path_to_searchindex_js = "searchindex-4b1cb508.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7c6b562e.js"></script>
@@ -188,7 +188,6 @@
 <tr><td style="text-align: right">1</td><td>Room Info</td><td>Room → User</td></tr>
 <tr><td style="text-align: right">2</td><td>Login</td><td>User → Room</td></tr>
 <tr><td style="text-align: right">3</td><td>Logout</td><td>User → Room</td></tr>
-<tr><td style="text-align: right">4</td><td>Send Message</td><td>User → Room</td></tr>
 <tr><td style="text-align: right">5</td><td>Fetch Messages</td><td>User → Room</td></tr>
 <tr><td style="text-align: right">6</td><td>Fetch Users</td><td>User → Room</td></tr>
 <tr><td style="text-align: right">7</td><td>Admin Commands</td><td>User → Room</td></tr>
@@ -196,6 +195,7 @@
 </tbody>
 </table>
 </div>
+<p>Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads (unicast to the room node), and the room distributes them to members the same way. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery.</p>
 <h2 id="get-room-info--room-info"><a class="header" href="#get-room-info--room-info">Get Room Info / Room Info</a></h2>
 <p>A user may send a Get Room Info action to a room node without being logged in. The room responds with a Room Info action containing CoAP-option-encoded metadata:</p>
 <div class="table-wrapper">
@@ -239,9 +239,10 @@
 </ul>
 <h2 id="logout"><a class="header" href="#logout">Logout</a></h2>
 <p>Logging out unsubscribes the user from push updates and removes them from the active user list. Previously sent messages remain stored and retrievable by other users up to the history limit.</p>
-<p>If the user is currently logged in, the room sends one final Room Update containing a system message indicating the user has left.</p>
+<p>If the user is currently logged in, the room sends a final text message to all members using the User Left message type (see <a href="#system-events">System Events</a>).</p>
 <h2 id="send-message"><a class="header" href="#send-message">Send Message</a></h2>
-<p>The payload uses the same format as the <a href="app-text-messages.html">Text Message</a> protocol, except that the Sender Handle option is ignored (the room fills it in). Once received, the message is echoed back to the sender via a Room Update.</p>
+<p>To send a message to a chat room, a user sends a standard <a href="app-text-messages.html">text message</a> unicast to the room node. The Sender Handle option is ignored — the room fills it in from the sender’s registered handle when distributing the message to members.</p>
+<p>The Message Sequence option SHOULD be included, using the sender’s own per-sender message ID counter. The room uses this to detect duplicate submissions and to order rapid messages from the same user. The sender’s per-sender ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.</p>
 <h2 id="fetch-messages"><a class="header" href="#fetch-messages">Fetch Messages</a></h2>
 <p>Retrieves previous messages posted to the room, which may include system messages.</p>
 <div class="table-wrapper">
@@ -259,10 +260,26 @@
 <p>Retrieves the currently active user list, possibly including their public keys.</p>
 <h2 id="admin-commands"><a class="header" href="#admin-commands">Admin Commands</a></h2>
 <p>TBD.</p>
-<h2 id="room-update"><a class="header" href="#room-update">Room Update</a></h2>
-<p>A Room Update contains a list of timestamped events from the room. All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room’s clock is synchronized. Regardless of absolute accuracy, the chronological ordering by timestamp is the canonical event ordering.</p>
-<p>Each event is formatted as a length-prefixed <a href="app-text-messages.html">text message</a> with the following extensions:</p>
-<h3 id="additional-message-types"><a class="header" href="#additional-message-types">Additional Message Types</a></h3>
+<h2 id="message-distribution"><a class="header" href="#message-distribution">Message Distribution</a></h2>
+<p>When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see <a href="app-text-messages.html#regarding">Regarding</a>).</p>
+<p>All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room’s clock is synchronized.</p>
+<h3 id="sender-sequence"><a class="header" href="#sender-sequence">Sender Sequence</a></h3>
+<p>When the room echoes a message back to the original sender, it faces a correlation problem: the sender showed the message optimistically in their UI the moment they sent it, but the echoed copy arrives with a room-assigned ID the client has never seen. Without some way to link them, the client cannot reliably identify which pending outbound message the echo corresponds to — matching by content alone fails if the user sends identical messages in quick succession.</p>
+<p>To solve this, the room includes a Sender Sequence option on the echo it sends back to the original sender. This option is not included in copies sent to other members.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">12</td><td>Timestamp Received</td><td>4 bytes, UTC UNIX timestamp</td></tr>
+<tr><td style="text-align: right">13</td><td>Sender Sequence</td><td>1 byte — the sender’s original Message Sequence ID</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this against its pending outbound messages to identify the echo, then updates its local record to use the canonical room-assigned ID for future Regarding references.</p>
+<h3 id="system-events"><a class="header" href="#system-events">System Events</a></h3>
+<p>The room delivers system notifications as text messages to all logged-in members, using message types reserved for room use:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -275,18 +292,19 @@
 </tbody>
 </table>
 </div>
-<h3 id="additional-options"><a class="header" href="#additional-options">Additional Options</a></h3>
+<p>The Sender Handle option is automatically populated by the room for all distributed messages, including system events.</p>
+<h2 id="room-update"><a class="header" href="#room-update">Room Update</a></h2>
+<p>Room Update is used exclusively for batch delivery: the history sent on login (via the Last Message Timestamp login option) and the response to Fetch Messages. It contains a list of length-prefixed text messages in chronological order, each carrying the room-injected options defined above (Timestamp Received, and Sender Sequence where applicable). This batching avoids the per-packet overhead of sending history as individual unicast messages on LoRa.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Number</th><th>Name</th></tr>
+<tr><th style="text-align: right">Value</th><th>Action</th><th>Direction</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">12</td><td>Timestamp Received</td></tr>
+<tr><td style="text-align: right">8</td><td>Room Update</td><td>Room → User</td></tr>
 </tbody>
 </table>
 </div>
-<p>The Sender Handle option is automatically populated by the room.</p>
 
                     </main>
 
