@@ -1,0 +1,335 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Definitions - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-7b8db912.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-b09eb8a0.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="definitions"><a class="header" href="#definitions">Definitions</a></h1>
+<p>The following terms are used throughout this specification. Definitions are given in the context of UMSH; terms with broader meanings in other fields are defined here as they apply to this protocol.</p>
+<dl>
+<dt id="address"><a class="header" href="#address"><strong>Address</strong></a></dt>
+<dd>A node’s 32-byte Ed25519 public key, used as its stable network identifier. UMSH addresses are not numeric values used for routing. Short <em>address hints</em> derived from the address are used on the wire to save space.</dd>
+<dt id="address-hint"><a class="header" href="#address-hint"><strong>Address Hint</strong></a></dt>
+<dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. These can be 1, 2, or 3 bytes long, depending on where and how they are used. See <a href="addressing.html">Addressing</a>.</dd>
+<dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
+<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
+<dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>
+<dd>A misuse-resistant authenticated encryption scheme (RFC 5297) in which the initialization vector is derived from an authentication tag computed over the plaintext. If the same plaintext is accidentally encrypted twice with the same key, the output reveals only that duplication — keys and other traffic remain uncompromised. UMSH uses a construction inspired by AES-SIV: AES-CMAC is used to compute the MIC, which then seeds AES-128-CTR for encryption.</dd>
+<dt id="arnceham-64"><a class="header" href="#arnceham-64"><strong>ARNCE/HAM-64</strong></a></dt>
+<dd>A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH’s Operator Callsign and Station Callsign packet options.</dd>
+<dt id="beacon"><a class="header" href="#beacon"><strong>Beacon</strong></a></dt>
+<dd>A broadcast or multicast packet with an empty payload. Beacons advertise a node’s presence and are used for path discovery and route learning. See <a href="beacons.html">Beacons &amp; Path Discovery</a>.</dd>
+<dt id="blind-unicast"><a class="header" href="#blind-unicast"><strong>Blind Unicast</strong></a></dt>
+<dd>A packet type that carries a unicast payload addressed to a specific destination while concealing both the sender and destination identities from observers who do not possess the channel key. The destination hint and source address are encrypted using the channel key; the payload is protected end-to-end using keys derived from both the channel key and the pairwise shared secret. See <a href="packet-types.html#blind-unicast-packet">Frame Types</a>.</dd>
+<dt id="bridge"><a class="header" href="#bridge"><strong>Bridge</strong></a></dt>
+<dd>A node that relays UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: they consume source-route hints and forward packets as repeaters do, but their onward transmission cannot be observed on the inbound medium.</dd>
+<dt id="broadcast"><a class="header" href="#broadcast"><strong>Broadcast</strong></a></dt>
+<dd>A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See <a href="packet-types.html">Frame Types</a>.</dd>
+<dt id="cad-channel-activity-detection"><a class="header" href="#cad-channel-activity-detection"><strong>CAD (Channel Activity Detection)</strong></a></dt>
+<dd>A LoRa physical-layer feature that listens briefly for preamble energy on the channel with minimal power draw. UMSH uses CAD to implement listen-before-talk channel access, reducing collisions without requiring continuous reception. See <a href="channel-access.html">Channel Access</a>.</dd>
+<dt id="channel"><a class="header" href="#channel"><strong>Channel</strong></a></dt>
+<dd>A logical communication group secured by a shared symmetric key. Channels serve two purposes: group communication (multicast) and metadata concealment (blind unicast). See <a href="multicast-channels.html">Channels</a>.</dd>
+<dt id="coap-constrained-application-protocol"><a class="header" href="#coap-constrained-application-protocol"><strong>CoAP (Constrained Application Protocol)</strong></a></dt>
+<dd>A lightweight request/response protocol designed for constrained networks (RFC 7252). UMSH borrows CoAP’s delta-length option encoding for packet options and application-layer payloads.</dd>
+<dt id="confidentiality"><a class="header" href="#confidentiality"><strong>Confidentiality</strong></a></dt>
+<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-128 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
+<dt id="duplicate-suppression"><a class="header" href="#duplicate-suppression"><strong>Duplicate Suppression</strong></a></dt>
+<dd>A mechanism by which repeaters track recently forwarded packets and decline to forward the same packet a second time. Each packet is identified by its MIC (for authenticated packets) or a locally computed hash (for unauthenticated packets). This prevents flood-routed packets from circulating indefinitely. See <a href="repeater-operation.html#duplicate-suppression">Repeater Operation</a>.</dd>
+<dt id="ecdh-elliptic-curve-diffie-hellman"><a class="header" href="#ecdh-elliptic-curve-diffie-hellman"><strong>ECDH (Elliptic Curve Diffie-Hellman)</strong></a></dt>
+<dd>A key agreement protocol that allows two parties to derive a shared secret using only their public keys and their own private keys. UMSH uses X25519 ECDH to derive pairwise shared secrets for unicast encryption and authentication.</dd>
+<dt id="ed25519"><a class="header" href="#ed25519"><strong>Ed25519</strong></a></dt>
+<dd>An elliptic curve digital signature algorithm using the Edwards25519 curve. UMSH uses Ed25519 keypairs as node identities. The same keypair is converted to X25519 form for key agreement.</dd>
+<dt id="eddsa-edwards-curve-digital-signature-algorithm"><a class="header" href="#eddsa-edwards-curve-digital-signature-algorithm"><strong>EdDSA (Edwards-curve Digital Signature Algorithm)</strong></a></dt>
+<dd>The family of signature algorithms that includes Ed25519. Used in UMSH for payload signatures, most notably for node identity broadcasts.</dd>
+<dt id="ephemeral-key"><a class="header" href="#ephemeral-key"><strong>Ephemeral Key</strong></a></dt>
+<dd>A temporary Ed25519 keypair generated for a single PFS session. Unlike a long-term identity keypair, ephemeral keys are never written to persistent storage and are explicitly erased when the session ends, ensuring that compromise of long-term keys cannot retroactively decrypt traffic protected by them. See <a href="security.html#perfect-forward-secrecy-sessions">Security &amp; Cryptography</a>.</dd>
+<dt id="flood-routing"><a class="header" href="#flood-routing"><strong>Flood Routing</strong></a></dt>
+<dd>A routing strategy where a packet is forwarded by every eligible repeater within the flood radius, subject to duplicate suppression. Requires no topology state at repeaters. Bounded by the flood hop count field (<code>FHOPS</code>). See <a href="repeater-operation.html">Repeater Operation</a>.</dd>
+<dt id="frame"><a class="header" href="#frame"><strong>Frame</strong></a></dt>
+<dd>The unit of transmission at the LoRa PHY layer. A UMSH packet must fit within a single frame. The terms <em>frame</em> and <em>packet</em> are used interchangeably in this specification; <em>frame</em> emphasizes the physical transmission unit, <em>packet</em> emphasizes the logical protocol unit.</dd>
+<dt id="frame-counter"><a class="header" href="#frame-counter"><strong>Frame Counter</strong></a></dt>
+<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="security.html#frame-counters">Security &amp; Cryptography</a>.</dd>
+<dt id="hop"><a class="header" href="#hop"><strong>Hop</strong></a></dt>
+<dd>One leg of a packet’s path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
+The protocol differentiates between source-routed hops and flood-routed hops.</dd>
+<dt id="hkdf-hmac-based-key-derivation-function"><a class="header" href="#hkdf-hmac-based-key-derivation-function"><strong>HKDF (HMAC-based Key Derivation Function)</strong></a></dt>
+<dd>A key derivation function standardized in RFC 5869, composed of two steps: Extract (combining a secret and optional salt into a pseudorandom key) and Expand (stretching that key to the required output length). UMSH uses HKDF-SHA256 with domain-separated labels to derive encryption keys, authentication keys, and channel identifiers from shared secrets and channel keys.</dd>
+<dt id="iot-internet-of-things"><a class="header" href="#iot-internet-of-things"><strong>IoT (Internet of Things)</strong></a></dt>
+<dd>A broad term for networked embedded devices. UMSH is designed to be applicable to IoT use cases in addition to human communication, though it is optimized for the latter.</dd>
+<dt id="latency"><a class="header" href="#latency"><strong>Latency</strong></a></dt>
+<dd>The time elapsed between a packet being transmitted and its receipt or acknowledgement. LoRa’s low data rate and mesh forwarding introduce significant latency compared to IP networks.</dd>
+<dt id="lora-long-range"><a class="header" href="#lora-long-range"><strong>LoRa (Long Range)</strong></a></dt>
+<dd>A proprietary wireless modulation technology using chirp spread spectrum, designed for long range and low power consumption at the cost of low data rate. LoRa payloads are typically limited to 200–250 bytes, and transmitting a single packet may take hundreds of milliseconds depending on spreading factor and bandwidth. UMSH is designed around these constraints.</dd>
+<dt id="long-term-identity"><a class="header" href="#long-term-identity"><strong>Long-Term Identity</strong></a></dt>
+<dd>A node’s stable Ed25519 keypair, used as its persistent network identity. Contrast with ephemeral keypairs used in PFS sessions, which are discarded after use.</dd>
+<dt id="mac-layer-medium-access-control"><a class="header" href="#mac-layer-medium-access-control"><strong>MAC Layer (Medium Access Control)</strong></a></dt>
+<dd>The sublayer of the data link layer responsible for addressing, packet framing, and channel access. In UMSH, the MAC layer handles packet types, addressing, routing options, and cryptography. Application-layer protocols are carried in the payload and are defined separately.</dd>
+<dt id="mac-ack"><a class="header" href="#mac-ack"><strong>MAC Ack</strong></a></dt>
+<dd>A packet type generated by the final destination of a unicast packet (UACK or BUAK) to confirm receipt. The MAC Ack carries an <em>ack tag</em> — an 8-byte value derived from the original packet’s MIC and the pairwise encryption key — which allows the original sender to verify the acknowledgement. Repeaters do not generate MAC Acks; they forward them like any other packet. See <a href="packet-types.html#mac-ack-packet">Frame Types</a>.</dd>
+<dt id="mesh"><a class="header" href="#mesh"><strong>Mesh</strong></a></dt>
+<dd>A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.</dd>
+<dt id="mic-message-integrity-code"><a class="header" href="#mic-message-integrity-code"><strong>MIC (Message Integrity Code)</strong></a></dt>
+<dd>UMSH’s authentication tag, computed using AES-CMAC over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="security.html">Security &amp; Cryptography</a>.</dd>
+<dt id="multicast"><a class="header" href="#multicast"><strong>Multicast</strong></a></dt>
+<dd>A packet intended for all members of a channel, identified by a 2-byte channel identifier derived from the channel key. See <a href="packet-types.html">Frame Types</a>.</dd>
+<dt id="node"><a class="header" href="#node"><strong>Node</strong></a></dt>
+<dd>A logical participant in a UMSH network, defined by a unique Ed25519 keypair. A single physical device may host multiple nodes. A node may act as an endpoint (sending and receiving application data), a repeater (forwarding packets), or both.</dd>
+<dt id="packet"><a class="header" href="#packet"><strong>Packet</strong></a></dt>
+<dd>The logical unit of the UMSH protocol. Every packet must fit within a single LoRa frame. See <em>Frame</em> above.</dd>
+<dt id="pairwise-key"><a class="header" href="#pairwise-key"><strong>Pairwise Key</strong></a></dt>
+<dd>A symmetric key derived from X25519 ECDH between a specific sender and recipient. Each pair of nodes shares a unique set of pairwise keys (one for encryption, one for authentication) derived deterministically from their long-term key material. Pairwise keys are stable across sessions unless a PFS session is used. See <a href="security.html">Security &amp; Cryptography</a>.</dd>
+<dt id="pfs-perfect-forward-secrecy"><a class="header" href="#pfs-perfect-forward-secrecy"><strong>PFS (Perfect Forward Secrecy)</strong></a></dt>
+<dd>A property ensuring that compromise of long-term keys does not allow retroactive decryption of past traffic. UMSH provides optional PFS via ephemeral keypair sessions. See <a href="security.html#perfect-forward-secrecy-sessions">Security &amp; Cryptography</a>.</dd>
+<dt id="phy-physical-layer"><a class="header" href="#phy-physical-layer"><strong>PHY (Physical Layer)</strong></a></dt>
+<dd>The lowest layer of a network stack, responsible for modulation and transmission over the physical medium. In UMSH deployments, this is typically LoRa. The PHY layer is below the MAC layer and is not defined by this specification.</dd>
+<dt id="private-key"><a class="header" href="#private-key"><strong>Private Key</strong></a></dt>
+<dd>The secret half of an asymmetric keypair. In UMSH, a node’s Ed25519 private key is used to derive its X25519 private key for ECDH and to sign payloads when required. Must never be transmitted or disclosed.</dd>
+<dt id="privacy"><a class="header" href="#privacy"><strong>Privacy</strong></a></dt>
+<dd>Broader than confidentiality: the protection of metadata and communication patterns in addition to payload content. UMSH provides confidentiality but does not fully protect against traffic analysis. See <a href="security-considerations.html#metadata-exposure">Security Considerations</a>.</dd>
+<dt id="public-key"><a class="header" href="#public-key"><strong>Public Key</strong></a></dt>
+<dd>The public half of an asymmetric keypair, which can be freely shared. In UMSH, a node’s Ed25519 public key <em>is</em> its address. Address hints are derived from it.</dd>
+<dt id="rssi-received-signal-strength-indicator"><a class="header" href="#rssi-received-signal-strength-indicator"><strong>RSSI (Received Signal Strength Indicator)</strong></a></dt>
+<dd>A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger). Used in UMSH’s Minimum RSSI packet option and in repeater forwarding decisions to filter out packets received with insufficient signal strength. See <a href="packet-options.html#minimum-rssi-option-5">Packet Options</a>.</dd>
+<dt id="repeater"><a class="header" href="#repeater"><strong>Repeater</strong></a></dt>
+<dd>A node that forwards packets to extend the effective range of the mesh. Repeaters participate in flood routing and source routing but do not generate or consume application payloads for the packets they forward. See <a href="repeater-operation.html">Repeater Operation</a>.</dd>
+<dt id="snr-signal-to-noise-ratio"><a class="header" href="#snr-signal-to-noise-ratio"><strong>SNR (Signal-to-Noise Ratio)</strong></a></dt>
+<dd>A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains meaningful at very low signal levels and is used by LoRa for demodulation decisions. Used in UMSH’s Minimum SNR packet option and in repeater contention delay calculations. See <a href="packet-options.html#minimum-snr-option-9">Packet Options</a>.</dd>
+<dt id="source-routing"><a class="header" href="#source-routing"><strong>Source Routing</strong></a></dt>
+<dd>A routing strategy where the sender specifies the explicit sequence of repeaters a packet must traverse. Requires the sender to have prior knowledge of a valid path. See <a href="packet-options.html#source-route-option-3">Packet Options</a>.</dd>
+<dt id="trace-route"><a class="header" href="#trace-route"><strong>Trace Route</strong></a></dt>
+<dd>A packet option that instructs each forwarding repeater to prepend its router hint to the option value, building an ordered record of the path a packet has taken (most-recent repeater first). Used for route learning: a destination that receives a packet with a trace route has enough information to construct a source route for the reply. See <a href="packet-options.html#trace-route-option-2">Packet Options</a>.</dd>
+<dt id="unicast"><a class="header" href="#unicast"><strong>Unicast</strong></a></dt>
+<dd>A packet addressed to a single destination node, identified by a 3-byte destination hint. Unicast packets are always authenticated end-to-end; encryption is optional and controlled by the <code>E</code> flag. See <a href="packet-types.html">Frame Types</a>.</dd>
+<dt id="uri-uniform-resource-identifier"><a class="header" href="#uri-uniform-resource-identifier"><strong>URI (Uniform Resource Identifier)</strong></a></dt>
+<dd>A compact string that identifies a resource or address. UMSH defines URI schemes for addressing nodes and channels. See <a href="uri-formats.html">URI Formats</a>.</dd>
+<dt id="x25519"><a class="header" href="#x25519"><strong>X25519</strong></a></dt>
+<dd>An elliptic curve Diffie-Hellman function over Curve25519. UMSH converts Ed25519 keypairs to X25519 form for key agreement. The conversion is deterministic and well-defined.</dd>
+</dl>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="common-patterns.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="common-patterns.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

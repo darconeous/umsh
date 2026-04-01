@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a908fb1d.js";
+            window.path_to_searchindex_js = "searchindex-7b8db912.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7c6b562e.js"></script>
+        <script src="toc-b09eb8a0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -257,6 +257,108 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See <a href="#channels-1">Channels</a> for channel types, membership models, and default channels.</p>
 <h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
 <p>UMSH supports <a href="#perfect-forward-secrecy-sessions">perfect forward secrecy</a>, not as a core part of the underlying protocol but instead via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="definitions"><a class="header" href="#definitions">Definitions</a></h1>
+<p>The following terms are used throughout this specification. Definitions are given in the context of UMSH; terms with broader meanings in other fields are defined here as they apply to this protocol.</p>
+<dl>
+<dt id="address"><a class="header" href="#address"><strong>Address</strong></a></dt>
+<dd>A node’s 32-byte Ed25519 public key, used as its stable network identifier. UMSH addresses are not numeric values used for routing. Short <em>address hints</em> derived from the address are used on the wire to save space.</dd>
+<dt id="address-hint"><a class="header" href="#address-hint"><strong>Address Hint</strong></a></dt>
+<dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. These can be 1, 2, or 3 bytes long, depending on where and how they are used. See <a href="#addressing">Addressing</a>.</dd>
+<dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
+<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
+<dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>
+<dd>A misuse-resistant authenticated encryption scheme (RFC 5297) in which the initialization vector is derived from an authentication tag computed over the plaintext. If the same plaintext is accidentally encrypted twice with the same key, the output reveals only that duplication — keys and other traffic remain uncompromised. UMSH uses a construction inspired by AES-SIV: AES-CMAC is used to compute the MIC, which then seeds AES-128-CTR for encryption.</dd>
+<dt id="arnceham-64"><a class="header" href="#arnceham-64"><strong>ARNCE/HAM-64</strong></a></dt>
+<dd>A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH’s Operator Callsign and Station Callsign packet options.</dd>
+<dt id="beacon"><a class="header" href="#beacon"><strong>Beacon</strong></a></dt>
+<dd>A broadcast or multicast packet with an empty payload. Beacons advertise a node’s presence and are used for path discovery and route learning. See <a href="#beacons--path-discovery">Beacons &amp; Path Discovery</a>.</dd>
+<dt id="blind-unicast"><a class="header" href="#blind-unicast"><strong>Blind Unicast</strong></a></dt>
+<dd>A packet type that carries a unicast payload addressed to a specific destination while concealing both the sender and destination identities from observers who do not possess the channel key. The destination hint and source address are encrypted using the channel key; the payload is protected end-to-end using keys derived from both the channel key and the pairwise shared secret. See <a href="#blind-unicast-packet">Frame Types</a>.</dd>
+<dt id="bridge"><a class="header" href="#bridge"><strong>Bridge</strong></a></dt>
+<dd>A node that relays UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: they consume source-route hints and forward packets as repeaters do, but their onward transmission cannot be observed on the inbound medium.</dd>
+<dt id="broadcast"><a class="header" href="#broadcast"><strong>Broadcast</strong></a></dt>
+<dd>A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See <a href="#frame-types">Frame Types</a>.</dd>
+<dt id="cad-channel-activity-detection"><a class="header" href="#cad-channel-activity-detection"><strong>CAD (Channel Activity Detection)</strong></a></dt>
+<dd>A LoRa physical-layer feature that listens briefly for preamble energy on the channel with minimal power draw. UMSH uses CAD to implement listen-before-talk channel access, reducing collisions without requiring continuous reception. See <a href="#channel-access">Channel Access</a>.</dd>
+<dt id="channel"><a class="header" href="#channel"><strong>Channel</strong></a></dt>
+<dd>A logical communication group secured by a shared symmetric key. Channels serve two purposes: group communication (multicast) and metadata concealment (blind unicast). See <a href="#channels-1">Channels</a>.</dd>
+<dt id="coap-constrained-application-protocol"><a class="header" href="#coap-constrained-application-protocol"><strong>CoAP (Constrained Application Protocol)</strong></a></dt>
+<dd>A lightweight request/response protocol designed for constrained networks (RFC 7252). UMSH borrows CoAP’s delta-length option encoding for packet options and application-layer payloads.</dd>
+<dt id="confidentiality"><a class="header" href="#confidentiality"><strong>Confidentiality</strong></a></dt>
+<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-128 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
+<dt id="duplicate-suppression"><a class="header" href="#duplicate-suppression"><strong>Duplicate Suppression</strong></a></dt>
+<dd>A mechanism by which repeaters track recently forwarded packets and decline to forward the same packet a second time. Each packet is identified by its MIC (for authenticated packets) or a locally computed hash (for unauthenticated packets). This prevents flood-routed packets from circulating indefinitely. See <a href="#duplicate-suppression-1">Repeater Operation</a>.</dd>
+<dt id="ecdh-elliptic-curve-diffie-hellman"><a class="header" href="#ecdh-elliptic-curve-diffie-hellman"><strong>ECDH (Elliptic Curve Diffie-Hellman)</strong></a></dt>
+<dd>A key agreement protocol that allows two parties to derive a shared secret using only their public keys and their own private keys. UMSH uses X25519 ECDH to derive pairwise shared secrets for unicast encryption and authentication.</dd>
+<dt id="ed25519"><a class="header" href="#ed25519"><strong>Ed25519</strong></a></dt>
+<dd>An elliptic curve digital signature algorithm using the Edwards25519 curve. UMSH uses Ed25519 keypairs as node identities. The same keypair is converted to X25519 form for key agreement.</dd>
+<dt id="eddsa-edwards-curve-digital-signature-algorithm"><a class="header" href="#eddsa-edwards-curve-digital-signature-algorithm"><strong>EdDSA (Edwards-curve Digital Signature Algorithm)</strong></a></dt>
+<dd>The family of signature algorithms that includes Ed25519. Used in UMSH for payload signatures, most notably for node identity broadcasts.</dd>
+<dt id="ephemeral-key"><a class="header" href="#ephemeral-key"><strong>Ephemeral Key</strong></a></dt>
+<dd>A temporary Ed25519 keypair generated for a single PFS session. Unlike a long-term identity keypair, ephemeral keys are never written to persistent storage and are explicitly erased when the session ends, ensuring that compromise of long-term keys cannot retroactively decrypt traffic protected by them. See <a href="#perfect-forward-secrecy-sessions">Security &amp; Cryptography</a>.</dd>
+<dt id="flood-routing"><a class="header" href="#flood-routing"><strong>Flood Routing</strong></a></dt>
+<dd>A routing strategy where a packet is forwarded by every eligible repeater within the flood radius, subject to duplicate suppression. Requires no topology state at repeaters. Bounded by the flood hop count field (<code>FHOPS</code>). See <a href="#repeater-operation">Repeater Operation</a>.</dd>
+<dt id="frame"><a class="header" href="#frame"><strong>Frame</strong></a></dt>
+<dd>The unit of transmission at the LoRa PHY layer. A UMSH packet must fit within a single frame. The terms <em>frame</em> and <em>packet</em> are used interchangeably in this specification; <em>frame</em> emphasizes the physical transmission unit, <em>packet</em> emphasizes the logical protocol unit.</dd>
+<dt id="frame-counter"><a class="header" href="#frame-counter"><strong>Frame Counter</strong></a></dt>
+<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="#frame-counters">Security &amp; Cryptography</a>.</dd>
+<dt id="hop"><a class="header" href="#hop"><strong>Hop</strong></a></dt>
+<dd>One leg of a packet’s path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
+The protocol differentiates between source-routed hops and flood-routed hops.</dd>
+<dt id="hkdf-hmac-based-key-derivation-function"><a class="header" href="#hkdf-hmac-based-key-derivation-function"><strong>HKDF (HMAC-based Key Derivation Function)</strong></a></dt>
+<dd>A key derivation function standardized in RFC 5869, composed of two steps: Extract (combining a secret and optional salt into a pseudorandom key) and Expand (stretching that key to the required output length). UMSH uses HKDF-SHA256 with domain-separated labels to derive encryption keys, authentication keys, and channel identifiers from shared secrets and channel keys.</dd>
+<dt id="iot-internet-of-things"><a class="header" href="#iot-internet-of-things"><strong>IoT (Internet of Things)</strong></a></dt>
+<dd>A broad term for networked embedded devices. UMSH is designed to be applicable to IoT use cases in addition to human communication, though it is optimized for the latter.</dd>
+<dt id="latency"><a class="header" href="#latency"><strong>Latency</strong></a></dt>
+<dd>The time elapsed between a packet being transmitted and its receipt or acknowledgement. LoRa’s low data rate and mesh forwarding introduce significant latency compared to IP networks.</dd>
+<dt id="lora-long-range"><a class="header" href="#lora-long-range"><strong>LoRa (Long Range)</strong></a></dt>
+<dd>A proprietary wireless modulation technology using chirp spread spectrum, designed for long range and low power consumption at the cost of low data rate. LoRa payloads are typically limited to 200–250 bytes, and transmitting a single packet may take hundreds of milliseconds depending on spreading factor and bandwidth. UMSH is designed around these constraints.</dd>
+<dt id="long-term-identity"><a class="header" href="#long-term-identity"><strong>Long-Term Identity</strong></a></dt>
+<dd>A node’s stable Ed25519 keypair, used as its persistent network identity. Contrast with ephemeral keypairs used in PFS sessions, which are discarded after use.</dd>
+<dt id="mac-layer-medium-access-control"><a class="header" href="#mac-layer-medium-access-control"><strong>MAC Layer (Medium Access Control)</strong></a></dt>
+<dd>The sublayer of the data link layer responsible for addressing, packet framing, and channel access. In UMSH, the MAC layer handles packet types, addressing, routing options, and cryptography. Application-layer protocols are carried in the payload and are defined separately.</dd>
+<dt id="mac-ack"><a class="header" href="#mac-ack"><strong>MAC Ack</strong></a></dt>
+<dd>A packet type generated by the final destination of a unicast packet (UACK or BUAK) to confirm receipt. The MAC Ack carries an <em>ack tag</em> — an 8-byte value derived from the original packet’s MIC and the pairwise encryption key — which allows the original sender to verify the acknowledgement. Repeaters do not generate MAC Acks; they forward them like any other packet. See <a href="#mac-ack-packet">Frame Types</a>.</dd>
+<dt id="mesh"><a class="header" href="#mesh"><strong>Mesh</strong></a></dt>
+<dd>A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.</dd>
+<dt id="mic-message-integrity-code"><a class="header" href="#mic-message-integrity-code"><strong>MIC (Message Integrity Code)</strong></a></dt>
+<dd>UMSH’s authentication tag, computed using AES-CMAC over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="#security--cryptography">Security &amp; Cryptography</a>.</dd>
+<dt id="multicast"><a class="header" href="#multicast"><strong>Multicast</strong></a></dt>
+<dd>A packet intended for all members of a channel, identified by a 2-byte channel identifier derived from the channel key. See <a href="#frame-types">Frame Types</a>.</dd>
+<dt id="node"><a class="header" href="#node"><strong>Node</strong></a></dt>
+<dd>A logical participant in a UMSH network, defined by a unique Ed25519 keypair. A single physical device may host multiple nodes. A node may act as an endpoint (sending and receiving application data), a repeater (forwarding packets), or both.</dd>
+<dt id="packet"><a class="header" href="#packet"><strong>Packet</strong></a></dt>
+<dd>The logical unit of the UMSH protocol. Every packet must fit within a single LoRa frame. See <em>Frame</em> above.</dd>
+<dt id="pairwise-key"><a class="header" href="#pairwise-key"><strong>Pairwise Key</strong></a></dt>
+<dd>A symmetric key derived from X25519 ECDH between a specific sender and recipient. Each pair of nodes shares a unique set of pairwise keys (one for encryption, one for authentication) derived deterministically from their long-term key material. Pairwise keys are stable across sessions unless a PFS session is used. See <a href="#security--cryptography">Security &amp; Cryptography</a>.</dd>
+<dt id="pfs-perfect-forward-secrecy"><a class="header" href="#pfs-perfect-forward-secrecy"><strong>PFS (Perfect Forward Secrecy)</strong></a></dt>
+<dd>A property ensuring that compromise of long-term keys does not allow retroactive decryption of past traffic. UMSH provides optional PFS via ephemeral keypair sessions. See <a href="#perfect-forward-secrecy-sessions">Security &amp; Cryptography</a>.</dd>
+<dt id="phy-physical-layer"><a class="header" href="#phy-physical-layer"><strong>PHY (Physical Layer)</strong></a></dt>
+<dd>The lowest layer of a network stack, responsible for modulation and transmission over the physical medium. In UMSH deployments, this is typically LoRa. The PHY layer is below the MAC layer and is not defined by this specification.</dd>
+<dt id="private-key"><a class="header" href="#private-key"><strong>Private Key</strong></a></dt>
+<dd>The secret half of an asymmetric keypair. In UMSH, a node’s Ed25519 private key is used to derive its X25519 private key for ECDH and to sign payloads when required. Must never be transmitted or disclosed.</dd>
+<dt id="privacy"><a class="header" href="#privacy"><strong>Privacy</strong></a></dt>
+<dd>Broader than confidentiality: the protection of metadata and communication patterns in addition to payload content. UMSH provides confidentiality but does not fully protect against traffic analysis. See <a href="#metadata-exposure">Security Considerations</a>.</dd>
+<dt id="public-key"><a class="header" href="#public-key"><strong>Public Key</strong></a></dt>
+<dd>The public half of an asymmetric keypair, which can be freely shared. In UMSH, a node’s Ed25519 public key <em>is</em> its address. Address hints are derived from it.</dd>
+<dt id="rssi-received-signal-strength-indicator"><a class="header" href="#rssi-received-signal-strength-indicator"><strong>RSSI (Received Signal Strength Indicator)</strong></a></dt>
+<dd>A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger). Used in UMSH’s Minimum RSSI packet option and in repeater forwarding decisions to filter out packets received with insufficient signal strength. See <a href="#minimum-rssi-option-5">Packet Options</a>.</dd>
+<dt id="repeater"><a class="header" href="#repeater"><strong>Repeater</strong></a></dt>
+<dd>A node that forwards packets to extend the effective range of the mesh. Repeaters participate in flood routing and source routing but do not generate or consume application payloads for the packets they forward. See <a href="#repeater-operation">Repeater Operation</a>.</dd>
+<dt id="snr-signal-to-noise-ratio"><a class="header" href="#snr-signal-to-noise-ratio"><strong>SNR (Signal-to-Noise Ratio)</strong></a></dt>
+<dd>A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains meaningful at very low signal levels and is used by LoRa for demodulation decisions. Used in UMSH’s Minimum SNR packet option and in repeater contention delay calculations. See <a href="#minimum-snr-option-9">Packet Options</a>.</dd>
+<dt id="source-routing"><a class="header" href="#source-routing"><strong>Source Routing</strong></a></dt>
+<dd>A routing strategy where the sender specifies the explicit sequence of repeaters a packet must traverse. Requires the sender to have prior knowledge of a valid path. See <a href="#source-route-option-3">Packet Options</a>.</dd>
+<dt id="trace-route"><a class="header" href="#trace-route"><strong>Trace Route</strong></a></dt>
+<dd>A packet option that instructs each forwarding repeater to prepend its router hint to the option value, building an ordered record of the path a packet has taken (most-recent repeater first). Used for route learning: a destination that receives a packet with a trace route has enough information to construct a source route for the reply. See <a href="#trace-route-option-2">Packet Options</a>.</dd>
+<dt id="unicast-1"><a class="header" href="#unicast-1"><strong>Unicast</strong></a></dt>
+<dd>A packet addressed to a single destination node, identified by a 3-byte destination hint. Unicast packets are always authenticated end-to-end; encryption is optional and controlled by the <code>E</code> flag. See <a href="#frame-types">Frame Types</a>.</dd>
+<dt id="uri-uniform-resource-identifier"><a class="header" href="#uri-uniform-resource-identifier"><strong>URI (Uniform Resource Identifier)</strong></a></dt>
+<dd>A compact string that identifies a resource or address. UMSH defines URI schemes for addressing nodes and channels. See <a href="#uri-formats">URI Formats</a>.</dd>
+<dt id="x25519"><a class="header" href="#x25519"><strong>X25519</strong></a></dt>
+<dd>An elliptic curve Diffie-Hellman function over Curve25519. UMSH converts Ed25519 keypairs to X25519 form for key agreement. The conversion is deterministic and well-defined.</dd>
+</dl>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h1>
 <p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
@@ -740,7 +842,7 @@ place that it appeared in encrypted multicast:</p>
 </div>
 <p>The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
 <h4 id="mic-size-selection-guidance"><a class="header" href="#mic-size-selection-guidance">MIC Size Selection Guidance</a></h4>
-<p>Shorter MICs save bytes on the wire but reduce forgery resistance and increase the probability of duplicate-suppression collisions in repeater caches (see <a href="#duplicate-suppression">Duplicate Suppression</a>). The following guidelines help choose an appropriate MIC size:</p>
+<p>Shorter MICs save bytes on the wire but reduce forgery resistance and increase the probability of duplicate-suppression collisions in repeater caches (see <a href="#duplicate-suppression-1">Duplicate Suppression</a>). The following guidelines help choose an appropriate MIC size:</p>
 <ul>
 <li>
 <p><strong>16 bytes</strong> (default): Recommended for long-term stable identities where the same pairwise keys may be used for months or years. The cost of a successful forgery is high (attacker gains persistent access to impersonate a node), and the 2^-128 forgery probability makes brute-force infeasible regardless of how many packets an attacker can attempt.</p>
@@ -756,7 +858,7 @@ place that it appeared in encrypted multicast:</p>
 </li>
 </ul>
 <p>As a general principle: the longer the keys will be in use and the higher the value of the traffic they protect, the larger the MIC should be. For ephemeral keys that will be erased within minutes, a small MIC is sufficient. For a node’s long-term identity keys, prefer the full 16 bytes.</p>
-<h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
+<h3 id="frame-counter-1"><a class="header" href="#frame-counter-1">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
 <p>The exact mechanism for how the frame counter is handled is implementation specitic,
@@ -771,7 +873,7 @@ those counters is being used.</p>
 <pre><code class="language-text">delta = (received_counter - last_accepted_counter) mod 2^32
 </code></pre>
 <p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>172800</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
-<p>Implementations that need to tolerate out-of-order delivery may also define a <strong>backward window</strong> — a small range of counter values <em>behind</em> the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is <strong>8</strong>. When a packet’s counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for <a href="#duplicate-suppression">duplicate suppression</a> in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.</p>
+<p>Implementations that need to tolerate out-of-order delivery may also define a <strong>backward window</strong> — a small range of counter values <em>behind</em> the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is <strong>8</strong>. When a packet’s counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for <a href="#duplicate-suppression-1">duplicate suppression</a> in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.</p>
 <p>Regardless of window sizes, a packet must not be accepted if it is more than <strong>5 minutes</strong> out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a <a href="#counter-resynchronization">counter resynchronization</a>) establishes that node’s counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
@@ -1198,7 +1300,7 @@ delay = uniform_random(0, W)
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
-<h2 id="duplicate-suppression"><a class="header" href="#duplicate-suppression">Duplicate Suppression</a></h2>
+<h2 id="duplicate-suppression-1"><a class="header" href="#duplicate-suppression-1">Duplicate Suppression</a></h2>
 <p>Each repeater maintains a fixed-size cache of recently seen <strong>cache keys</strong> used to detect duplicate packets.</p>
 <p>Parameters:</p>
 <ul>
@@ -1302,7 +1404,7 @@ delay = uniform_random(0, W)
 <li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
 <li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
 </ul>
-<p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression">cache key</a> — to be retransmitted. The listening window duration is sampled uniformly from [T_frame, 3 × T_frame], where T_frame is defined in <a href="#frame-duration">Channel Access</a>. If the packet is heard before the window expires, delivery is confirmed.</p>
+<p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression-1">cache key</a> — to be retransmitted. The listening window duration is sampled uniformly from [T_frame, 3 × T_frame], where T_frame is defined in <a href="#frame-duration">Channel Access</a>. If the packet is heard before the window expires, delivery is confirmed.</p>
 <p>If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in <a href="#backoff-procedure">Channel Access</a>.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
 <p>This forwarding model allows hybrid routing behavior.</p>
@@ -1395,7 +1497,7 @@ delay = uniform_random(0, W)
 <p>Support for in-band management is protocol-defined but implementation-optional.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-identity"><a class="header" href="#node-identity">Node Identity</a></h1>
-<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="#frame-counter">Frame Counter</a>).</p>
+<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="#frame-counter-1">Frame Counter</a>).</p>
 <p>A node’s identity may be expressed as the following structure:</p>
 <ul>
 <li><strong>4 bytes</strong>: UNIX timestamp from when this information was last updated, truncated to 32 bits</li>
@@ -1979,6 +2081,39 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <li>2-byte hints: ~1.9% collision probability</li>
 </ul>
 <p>2-byte router hints reduce the collision probability by roughly 24× relative to 1-byte hints for typical deployments, at a cost of 1 extra byte per hop in source-route and trace-route options.</p>
+<h2 id="open-issues"><a class="header" href="#open-issues">Open Issues</a></h2>
+<h3 id="bridge-hop-confirmation"><a class="header" href="#bridge-hop-confirmation">Bridge Hop Confirmation</a></h3>
+<p>A <strong>bridge</strong> is a node that relays UMSH packets over a different medium or channel than the one it received them on — for example, an internet backhaul, a wired link, or a different radio band connecting two geographically distant segments. Bridges are transparent to the protocol at the MAC layer: they consume source-route hints and forward packets exactly as repeaters do.</p>
+<p>The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment.</p>
+<p>If a bridge elects <em>not</em> to retransmit on the inbound medium — to save airtime — the implicit confirmation mechanism no longer works. The previous-hop node cannot observe the bridge’s onward transmission and, upon not hearing the expected retransmission, will assume delivery failed and retry. These retries are wasteful: the bridge did receive the packet successfully, but there is no way for the previous hop to know that.</p>
+<h4 id="proposed-hop-signal-for-non-retransmitting-bridges"><a class="header" href="#proposed-hop-signal-for-non-retransmitting-bridges">Proposed: Hop Signal for non-retransmitting bridges</a></h4>
+<p>A <strong>Hop Signal</strong> is a local-only BCST (no FHOPS field, so it is never forwarded) emitted by the bridge on its inbound medium immediately after handling a packet. The BCST carries a MIC reference to the original packet for correlation, a signal type (Hop Ack or Hop Nak), and the bridge’s own 3-byte SRC hint for identification. It is smaller than a full retransmission and can also convey failure (Hop Nak) rather than just presence.</p>
+<p>Because only one packet type slot (value 5) remains reserved, a Hop Signal would be defined as a MAC option on BCST rather than a dedicated packet type, preserving the reserved slot for a future use case with stronger architectural justification.</p>
+<p>Hop signals would be informational only. A forged Hop Ack is equivalent to silent dropping — already in the threat model — so senders must still fall back to full MAC ack timeout if no Hop Ack arrives. The format of the Hop Signal option and the complete emission rules have not yet been defined.</p>
+<h3 id="intermediate-node-error-feedback"><a class="header" href="#intermediate-node-error-feedback">Intermediate Node Error Feedback</a></h3>
+<h4 id="problem"><a class="header" href="#problem">Problem</a></h4>
+<p>When a packet cannot be delivered — for example, because a bridge’s backhaul link is down, or because a source-routed path is broken — intermediate nodes have no reliable way to inform the original sender. The sender can only detect failure by waiting for a MAC ack that never arrives.</p>
+<p>This timeout-based detection is slow (the sender must wait long enough to account for bridge round-trip latency) and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.</p>
+<p>A fully addressed error reply from an intermediate node is not possible in the general case. Unicast packets carry only a 1-byte source hint — insufficient to address a response or derive the sender’s public key. Only the final destination, which has the full source key (either from cache or the packet itself) and uses it to perform ECDH, can send an authenticated reply. This constraint is a direct consequence of the Brevity design principle; the 1-byte hint saves 31 bytes on every unicast packet.</p>
+<h4 id="possible-approaches"><a class="header" href="#possible-approaches">Possible Approaches</a></h4>
+<p><strong>1. S=1 (full source key) enables complete error replies — no spec change needed</strong></p>
+<p>When the sender sets <code>S=1</code>, any intermediate node receives the full 32-byte Ed25519 public key and has everything needed to construct an authenticated unicast reply. Senders who want error feedback on a specific packet can opt in simply by including their key.</p>
+<p>The drawback is overhead: <code>S=1</code> costs 31 additional bytes and conflates “error feedback desired” with “I’m announcing my public key.” For packets already setting <code>S=1</code> (e.g., first contact, PFS session establishment), this is free. For routine traffic, it is a significant per-packet cost.</p>
+<p><strong>2. Feedback Address option — small, explicit opt-in</strong></p>
+<p>Define a new MAC option carrying only the sender’s own 3-byte hint. This is ~5 bytes with option encoding — much cheaper than <code>S=1</code>. Intermediate nodes that detect an error can address a best-effort response to this 3-byte hint.</p>
+<p>The returned error packet is unencrypted (no ECDH possible) and unauthenticated, but carries the original packet’s MIC-REF for correlation. A 3-byte destination hint gives ~1-in-16M false positives: the sender can treat a match as high-confidence even without cryptographic verification. The receiver must treat this as untrusted diagnostic information only.</p>
+<p>This approach requires a new option number and an unencrypted error packet type or convention.</p>
+<p><strong>3. Reversed trace route path notification</strong></p>
+<p>If the original packet carries a trace route option, the return path back to the sender accumulates hop by hop. An intermediate node that detects an error can reverse the accumulated trace to reconstruct a source route toward the sender, then emit an unencrypted error packet that hops back along that path.</p>
+<p>The sender’s 1-byte SRC hint is used as a coarse destination filter on the returning packet — a false match simply causes an unrelated node to read an error message it cannot correlate to any of its own traffic. The MIC-REF is the real correlator.</p>
+<p>This requires no new addressing mechanism but only works when the sender included a trace route option. It is naturally opt-in: senders who want error feedback include a trace route; senders who do not, don’t. It requires defining what this error packet looks like (a new packet type, or a BCST-with-option convention similar to the Hop Signal mechanism proposed for bridges).</p>
+<p><strong>4. Extend Hop Signal with a return path</strong></p>
+<p>The Hop Signal mechanism (a BCST with a MIC-REF option, emitted by bridges for local ack/nak) could be extended: when a trace route is present, append the reversed path to the Hop Signal so it can travel back toward the sender rather than remaining local. This unifies the bridge ack/nak mechanism with the broader error-feedback problem under a single option definition.</p>
+<h4 id="considerations"><a class="header" href="#considerations">Considerations</a></h4>
+<p>Options 2 and 3 compose well: the Feedback Address option provides a 3-byte return address, and the reversed trace route provides the return path. Together they form a lightweight opt-in error feedback mechanism with ~5–7 bytes of per-packet overhead when enabled.</p>
+<p>Option 1 is available today with no spec changes, covers more than just error feedback, and is already justified on packets that are already setting <code>S=1</code>.</p>
+<p>Any error feedback message traveling back through the network using options 2 and 3 is unencrypted and unauthenticated. The original senders MUST treat such messages as untrusted diagnostic information — a forged error message is equivalent in effect to a dropped packet, which is already in the threat model.</p>
+<p>This remains an open design question. No approach is specified in the current version of this protocol. Additionally, regardless of which addressing mechanism is chosen, the format and semantics of error reports themselves — error codes, what conditions trigger them, how they are encoded — have not yet been defined.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
@@ -1986,7 +2121,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption">Doesn’t blind unicast have a circular dependency between the MIC and address decryption?</a></h3>
 <p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_DST_SRC</code>, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
-<p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
+<p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="#duplicate-suppression-1">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
 <h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
 <p>The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See <a href="#path-discovery">Path Discovery</a> for the full procedure.</p>
 <h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>
@@ -2123,7 +2258,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </div>
 <p>UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.</p>
 <p>Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the <code>S</code> flag set — no dedicated packet type is needed. MeshCore defines a specific <code>ANON_REQ</code> payload type that carries the full 32-byte sender public key.</p>
-<h2 id="multicast"><a class="header" href="#multicast">Multicast</a></h2>
+<h2 id="multicast-1"><a class="header" href="#multicast-1">Multicast</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2166,7 +2301,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <tr><td>Payload interpretation</td><td>Opaque at MAC layer — application protocols defined separately</td><td>Protocol defines payload types with application semantics (text messages, advertisements, login, etc.)</td></tr>
 <tr><td>Fragmentation</td><td>Delegated to higher-layer protocols in the payload</td><td>Multipart packet type defined at protocol level</td></tr>
 <tr><td>Node identity / advertisements</td><td>Application-layer payload (see <a href="#node-identity">Node Identity</a>)</td><td>Protocol-level advertisement packet with mandatory fields</td></tr>
-<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="#frame-counter">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; relies on UNIX timestamps for advertisement freshness and login sequencing</td></tr>
+<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="#frame-counter-1">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; relies on UNIX timestamps for advertisement freshness and login sequencing</td></tr>
 </tbody>
 </table>
 </div>
@@ -2179,7 +2314,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp used to determine which advertisement is most recent.</li>
 <li><strong>Login sequencing</strong>: The login handshake incorporates timestamps.</li>
 </ul>
-<p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="#frame-counter">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="#node-identity">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
+<p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="#frame-counter-1">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="#node-identity">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
 <p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on clock accuracy and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity — in a busy mesh, the 128-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s reliance on timestamps for advertisement freshness and login sequencing additionally requires nodes to maintain reasonably accurate clocks.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
 <p>Minimum overhead for a typical encrypted unicast message (no options, no flood hop count):</p>
@@ -2326,7 +2461,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="#route-learning">Route Learning</a>).</p>
 <p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
 <p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
-<h2 id="privacy"><a class="header" href="#privacy">Privacy</a></h2>
+<h2 id="privacy-1"><a class="header" href="#privacy-1">Privacy</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
