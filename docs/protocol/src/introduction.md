@@ -43,6 +43,8 @@ The following principles guide UMSH's design. When evaluating a design decision,
 
 **Brevity.** Every byte costs airtime. Mandatory fields should be as small as correctness allows; optional fields should be absent when not needed.
 
+**Practicality.** A protocol must be operable, not just correct. Prefer designs that make real networks easier to understand and debug — readable packet traces, attributable traffic, and identifiable nodes are operational requirements, not luxuries. Theoretical minimalism that makes a protocol difficult to deploy or troubleshoot is a real cost.
+
 **Layer separation.** The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.
 
 **Minimal mandatory state.** Basic operation should require only a node's own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.
