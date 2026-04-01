@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7b8db912.js";
+            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -216,8 +216,9 @@
 <h3 id="bridge-hop-confirmation"><a class="header" href="#bridge-hop-confirmation">Bridge Hop Confirmation</a></h3>
 <p>A <strong>bridge</strong> is a node that relays UMSH packets over a different medium or channel than the one it received them on — for example, an internet backhaul, a wired link, or a different radio band connecting two geographically distant segments. Bridges are transparent to the protocol at the MAC layer: they consume source-route hints and forward packets exactly as repeaters do.</p>
 <p>The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment.</p>
-<p>If a bridge elects <em>not</em> to retransmit on the inbound medium — to save airtime — the implicit confirmation mechanism no longer works. The previous-hop node cannot observe the bridge’s onward transmission and, upon not hearing the expected retransmission, will assume delivery failed and retry. These retries are wasteful: the bridge did receive the packet successfully, but there is no way for the previous hop to know that.</p>
-<h4 id="proposed-hop-signal-for-non-retransmitting-bridges"><a class="header" href="#proposed-hop-signal-for-non-retransmitting-bridges">Proposed: Hop Signal for non-retransmitting bridges</a></h4>
+<p>However, retransmitting the entire packet just to communicate the fact that it was received could be considered wasteful. However, if the bridge doesn’t somehow acknowledge the packet, the previous-hop node cannot observe the bridge’s onward transmission and, upon not hearing the expected retransmission, will assume delivery failed and retry. These retries are even more wasteful: the bridge did receive the packet successfully, but there is no way for the previous hop to know that.</p>
+<p>To be honest, it isn’t entirely clear that this is a problem worth optimizing. Bridges aren’t expected to exactly be common. But it is worth thinking about.</p>
+<h4 id="possibility-hop-signal-for-non-retransmitting-bridges"><a class="header" href="#possibility-hop-signal-for-non-retransmitting-bridges">Possibility: Hop Signal for non-retransmitting bridges</a></h4>
 <p>A <strong>Hop Signal</strong> is a local-only BCST (no FHOPS field, so it is never forwarded) emitted by the bridge on its inbound medium immediately after handling a packet. The BCST carries a MIC reference to the original packet for correlation, a signal type (Hop Ack or Hop Nak), and the bridge’s own 3-byte SRC hint for identification. It is smaller than a full retransmission and can also convey failure (Hop Nak) rather than just presence.</p>
 <p>Because only one packet type slot (value 5) remains reserved, a Hop Signal would be defined as a MAC option on BCST rather than a dedicated packet type, preserving the reserved slot for a future use case with stronger architectural justification.</p>
 <p>Hop signals would be informational only. A forged Hop Ack is equivalent to silent dropping — already in the threat model — so senders must still fall back to full MAC ack timeout if no Hop Ack arrives. The format of the Hop Signal option and the complete emission rules have not yet been defined.</p>
