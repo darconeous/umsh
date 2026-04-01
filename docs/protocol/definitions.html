@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -180,7 +180,7 @@
 <dt id="address"><a class="header" href="#address"><strong>Address</strong></a></dt>
 <dd>A node’s 32-byte Ed25519 public key, used as its stable network identifier. UMSH addresses are not numeric values used for routing. Short <em>address hints</em> derived from the address are used on the wire to save space.</dd>
 <dt id="address-hint"><a class="header" href="#address-hint"><strong>Address Hint</strong></a></dt>
-<dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. These can be 1, 2, or 3 bytes long, depending on where and how they are used. See <a href="addressing.html">Addressing</a>.</dd>
+<dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See <a href="addressing.html">Addressing</a>.</dd>
 <dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
 <dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
 <dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>

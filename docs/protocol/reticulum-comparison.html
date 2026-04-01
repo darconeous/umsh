@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -208,14 +208,14 @@
 </thead>
 <tbody>
 <tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>512-bit keyset: 256-bit X25519 + 256-bit Ed25519 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58"><code>Identity.py:58</code></a>, <code>KEYSIZE = 256*2</code>)</td></tr>
-<tr><td>Address in packets</td><td>compact hint (S=0; 1 byte for unicast SRC, 3 bytes for DST/BCST/MCST SRC) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
-<tr><td>Source address</td><td>1-byte hint (unicast) or 3-byte hint (broadcast/multicast), or full 32-byte key</td><td>Not included (no source address in packets)</td></tr>
+<tr><td>Address in packets</td><td>compact 3-byte hint (S=0) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
+<tr><td>Source address</td><td>3-byte hint (S=0) or full 32-byte key (S=1)</td><td>Not included (no source address in packets)</td></tr>
 <tr><td>Destination address</td><td>3-byte destination hint</td><td>16-byte destination hash</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact hints as prefilters for efficient matching — 3 bytes for destination hints and broadcast/multicast source hints, 1 byte for unicast source hints. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L118"><code>Destination.py:118</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L80"><code>Identity.py:80</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
+<p>UMSH identifies nodes directly by their Ed25519 public keys and uses compact 3-byte hints as prefilters for efficient matching. The <code>S</code> flag allows including the full 32-byte key when needed (first contact, ephemeral keys). Reticulum derives 16-byte destination hashes via a two-step construction (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L118"><code>Destination.py:118</code></a>): (1) the aspect name (a dotted string like <code>app.sensor.temperature</code>) is hashed with SHA-256 and truncated to 10 bytes (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L80"><code>Identity.py:80</code></a>, <code>NAME_HASH_LENGTH = 80</code>); (2) the final address is <code>SHA-256(name_hash || identity_hash)[:16]</code>, where <code>identity_hash = SHA-256(public_key)[:16]</code>. These hashes are larger than UMSH hints but serve a different purpose — they are meant to be globally unique identifiers rather than prefilters.</p>
 <p>Reticulum does not include a source address in any packet. This provides initiator anonymity by default but means that the recipient must already have context (via an established link or a prior announce) to know who sent a given packet. UMSH includes the source address (as a compact hint or full key) in every packet, which allows stateless first-contact and simplifies protocol logic at the cost of revealing the sender’s identity to observers. UMSH offers two opt-in mechanisms that reduce identity exposure. <a href="introduction.html#blind-unicast">Blind unicast</a> encrypts the source address with the channel key so that only channel members can identify the sender. <a href="security.html#perfect-forward-secrecy-sessions">PFS sessions</a> use ephemeral node addresses for the duration of the session, so an observer sees only hints derived from short-lived keys rather than the nodes’ long-term identities — the long-term identity hints never appear on the wire during the session. This identity obscuration is not unconditional: because the PFS handshake is authenticated with the nodes’ long-term keys, an attacker who later compromises a long-term private key can retroactively attribute the session to those identities, even though the session’s content remains protected.</p>
 <h2 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h2>
 <div class="table-wrapper">
@@ -404,16 +404,16 @@
 </thead>
 <tbody>
 <tr><td>Header/FCF</td><td>1</td><td>1</td><td>2</td><td>2</td></tr>
-<tr><td>Destination</td><td>2</td><td>2</td><td>16</td><td>16</td></tr>
+<tr><td>Destination</td><td>3</td><td>3</td><td>16</td><td>16</td></tr>
 <tr><td>Transport ID</td><td>—</td><td>—</td><td>—</td><td>16 (if routed)</td></tr>
-<tr><td>Source</td><td>2</td><td>2</td><td>—</td><td>—</td></tr>
+<tr><td>Source</td><td>3</td><td>3</td><td>—</td><td>—</td></tr>
 <tr><td>Context byte</td><td>—</td><td>—</td><td>1</td><td>1</td></tr>
 <tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
 <tr><td>Ephemeral pubkey</td><td>—</td><td>—</td><td>32</td><td>—</td></tr>
 <tr><td>IV</td><td>—</td><td>—</td><td>16</td><td>16</td></tr>
 <tr><td>MIC / HMAC</td><td>16</td><td>4</td><td>32</td><td>32</td></tr>
 <tr><td>CBC padding</td><td>—</td><td>—</td><td>1–16</td><td>1–16</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>28</strong></td><td><strong>16</strong></td><td><strong>~108</strong></td><td><strong>~91</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -424,11 +424,11 @@
 <tr><th></th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Reticulum (SINGLE)</th><th>Reticulum (LINK)</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>Available payload</strong></td><td><strong>229 B</strong></td><td><strong>241 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
+<tr><td><strong>Available payload</strong></td><td><strong>227 B</strong></td><td><strong>239 B</strong></td><td><strong>~147 B</strong></td><td><strong>~164 B</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>With a 16-byte MIC, UMSH provides roughly 40–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH’s 14 bytes of total overhead leaves 241 bytes for payload — over 60% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
+<p>With a 16-byte MIC, UMSH provides roughly 45–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH’s 16 bytes of total overhead leaves 239 bytes for payload — over 45% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.</p>
 <p>Reticulum’s 500-byte network MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum requires link-layer fragmentation at the LoRa interface that further reduces effective throughput. Link MTU discovery (added in v0.9.3) allows Reticulum to negotiate larger MTUs on capable links, but provides no relief for LoRa interfaces with sub-500-byte physical limits.</p>
 <h2 id="power-consumption"><a class="header" href="#power-consumption">Power Consumption</a></h2>
 <p>The power profiles of UMSH and Reticulum differ across every dimension: platform, per-packet overhead, and filtering behavior.</p>

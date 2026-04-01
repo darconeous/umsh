@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -430,7 +430,7 @@ K_mic = okm[16..31]
 <li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
 <li><code>IV</code> = CTR IV constructed from the packet MIC and SECINFO</li>
 <li><code>DST</code> = 3-byte destination hint</li>
-<li><code>SRC</code> = source address: 1-byte source hint when <code>S=0</code>, or 32-byte source public key when <code>S=1</code></li>
+<li><code>SRC</code> = source address: 3-byte source hint when <code>S=0</code>, or 32-byte source public key when <code>S=1</code></li>
 </ul>
 <p>Then:</p>
 <pre><code class="language-text">ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )

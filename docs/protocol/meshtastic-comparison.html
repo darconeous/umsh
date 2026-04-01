@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -186,7 +186,7 @@
 <tbody>
 <tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number derived from Bluetooth MAC address</td></tr>
 <tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Optional Curve25519 keypair (PKC, v2.5+), not used for addressing</td></tr>
-<tr><td>Source address in packets</td><td>compact hint (1 byte in unicast, 3 bytes in broadcast/multicast) or 32-byte key</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Source address in packets</td><td>compact 3-byte hint (S=0) or 32-byte key (S=1)</td><td>4-byte node number (cleartext)</td></tr>
 <tr><td>Destination address</td><td>3-byte hint</td><td>4-byte node number (cleartext)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
 <tr><td>Address spoofing resistance</td><td>Cryptographic — pairwise keys are derived from public keys</td><td>None — node numbers are hardware-derived and trivially spoofable</td></tr>
@@ -367,18 +367,18 @@
 </thead>
 <tbody>
 <tr><td>Header/FCF</td><td>1</td><td>1</td><td>16</td><td>16</td></tr>
-<tr><td>Destination</td><td>2</td><td>2</td><td>(in header)</td><td>(in header)</td></tr>
-<tr><td>Source</td><td>2</td><td>2</td><td>(in header)</td><td>(in header)</td></tr>
+<tr><td>Destination</td><td>3</td><td>3</td><td>(in header)</td><td>(in header)</td></tr>
+<tr><td>Source</td><td>3</td><td>3</td><td>(in header)</td><td>(in header)</td></tr>
 <tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
 <tr><td>MIC / auth tag</td><td>16</td><td>4</td><td>—</td><td>~12</td></tr>
 <tr><td>Nonce / IV</td><td>—</td><td>—</td><td>(derived, not transmitted)</td><td>(8 in payload)</td></tr>
 <tr><td>Protobuf overhead</td><td>—</td><td>—</td><td>~6</td><td>~6</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>26</strong></td><td><strong>14</strong></td><td><strong>~22</strong></td><td><strong>~42</strong></td></tr>
+<tr><td><strong>Total overhead</strong></td><td><strong>28</strong></td><td><strong>16</strong></td><td><strong>~22</strong></td><td><strong>~42</strong></td></tr>
 </tbody>
 </table>
 </div>
 <p>Meshtastic’s nonce is derived from header fields (packet ID + sender node number) rather than transmitted, saving bytes compared to protocols that transmit the IV. However, the fixed 16-byte cleartext header and protobuf encoding overhead partially offset this advantage.</p>
-<p>UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (26 vs ~22 bytes), but UMSH’s overhead includes full authentication that Meshtastic’s channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 14 bytes of overhead — lower than Meshtastic — while still providing authentication that Meshtastic channel traffic does not have.</p>
+<p>UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (28 vs ~22 bytes), but UMSH’s overhead includes full authentication that Meshtastic’s channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 16 bytes of overhead — lower than Meshtastic’s ~22 bytes — while still providing authentication that Meshtastic channel traffic does not have.</p>
 <p>Meshtastic PKC direct messages add approximately 20 bytes of overhead beyond channel encryption (ECDH-derived key, CCM nonce, and authentication tag), bringing total overhead to roughly 42 bytes for authenticated direct messages.</p>
 <h2 id="power-consumption"><a class="header" href="#power-consumption">Power Consumption</a></h2>
 <p>Power consumption on a battery-constrained LoRa node is driven by two factors: how long the radio is active (airtime), and how much CPU work is required after each received packet.</p>

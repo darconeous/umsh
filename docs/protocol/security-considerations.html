@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -229,7 +229,7 @@
 <tbody>
 <tr><td>Packet timing and frequency</td><td>All</td><td>Communication patterns — when a node is active, how often it transmits</td></tr>
 <tr><td>Destination hint (3 bytes)</td><td>Unicast</td><td>Stable per-identity; enables tracking a node’s correspondents over time</td></tr>
-<tr><td>Source hint (1 byte, unicast; 3 bytes, broadcast/multicast)</td><td>Unicast, unencrypted multicast, broadcast</td><td>Stable per-identity; enables tracking a node’s activity over time</td></tr>
+<tr><td>Source hint (3 bytes)</td><td>Unicast, unencrypted multicast, broadcast</td><td>Stable per-identity; enables tracking a node’s activity over time</td></tr>
 <tr><td>Channel identifier (2 bytes)</td><td>Multicast, blind unicast</td><td>Stable per-channel; reveals which channel a packet belongs to</td></tr>
 <tr><td>Frame counter</td><td>All authenticated</td><td>Monotonically increasing; reveals total packet count and transmission rate</td></tr>
 <tr><td>Flood hop count</td><td>All with FHOPS</td><td>Reveals approximate distance from the original sender</td></tr>

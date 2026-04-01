@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-99a6d3fb.js";
+            window.path_to_searchindex_js = "searchindex-3d497390.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -201,13 +201,9 @@
 <li>a <strong>compact source hint</strong> (a prefix of the sender’s 32-byte public key), when the <code>S</code> flag in the FCF is clear, or</li>
 <li>the <strong>full 32-byte public key</strong>, when the <code>S</code> flag is set.</li>
 </ul>
-<p>The hint size depends on the packet type:</p>
-<ul>
-<li><strong>Unicast and blind unicast</strong>: the source hint is <strong>1 byte</strong> (the first byte of the public key). The destination hint handles the prefiltering work; the source hint is used only to narrow down which cached key to try first.</li>
-<li><strong>Broadcast and multicast</strong>: the source hint is <strong>3 bytes</strong> (the first three bytes of the public key). These packet types carry no destination hint, so the source hint serves as the primary addressing field and benefits from a lower collision probability.</li>
-</ul>
+<p>The source hint is <strong>3 bytes</strong> (the first three bytes of the public key) when <code>S</code> is clear.</p>
 <p>The source hint is a compact reference used when the receiver is expected to already have the sender’s full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.</p>
-<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the same conventions: a hint (of the appropriate size) when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
+<p>In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext: a 3-byte hint when <code>S</code> is clear, or the full 32-byte public key when <code>S</code> is set.</p>
 
                     </main>
 
