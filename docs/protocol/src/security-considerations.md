@@ -84,7 +84,7 @@ Even with encryption enabled, the following information is visible to a passive 
 |---|---|---|
 | Packet timing and frequency | All | Communication patterns — when a node is active, how often it transmits |
 | Destination hint (3 bytes) | Unicast | Stable per-identity; enables tracking a node's correspondents over time |
-| Source hint (1 byte, unicast; 3 bytes, broadcast/multicast) | Unicast, unencrypted multicast, broadcast | Stable per-identity; enables tracking a node's activity over time |
+| Source hint (3 bytes) | Unicast, unencrypted multicast, broadcast | Stable per-identity; enables tracking a node's activity over time |
 | Channel identifier (2 bytes) | Multicast, blind unicast | Stable per-channel; reveals which channel a packet belongs to |
 | Frame counter | All authenticated | Monotonically increasing; reveals total packet count and transmission rate |
 | Flood hop count | All with FHOPS | Reveals approximate distance from the original sender |

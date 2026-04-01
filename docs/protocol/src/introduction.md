@@ -88,8 +88,8 @@ keys can be learned through several mechanisms:
   its full public key in any packet, allowing the receiver to learn it directly from the wire
 
 Once a node's public key is known, it can be cached and subsequent packets
-can use a compact source hint instead of the full key — saving 31 bytes per
-packet in unicast (1-byte hint vs 32-byte key).
+can use a compact source hint instead of the full key — saving 29 bytes per
+packet in unicast (3-byte hint vs 32-byte key).
 
 #### Node Metadata
 

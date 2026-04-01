@@ -10,7 +10,7 @@ Meshtastic and UMSH occupy different positions in the design space. Meshtastic i
 |---|---|---|
 | Identity basis | 32-byte Ed25519 public key | 32-bit node number derived from Bluetooth MAC address |
 | Cryptographic identity | Public key is the address | Optional Curve25519 keypair (PKC, v2.5+), not used for addressing |
-| Source address in packets | compact hint (1 byte in unicast, 3 bytes in broadcast/multicast) or 32-byte key | 4-byte node number (cleartext) |
+| Source address in packets | compact 3-byte hint (S=0) or 32-byte key (S=1) | 4-byte node number (cleartext) |
 | Destination address | 3-byte hint | 4-byte node number (cleartext) |
 | Channel identifier | 2-byte derived hint | 1-byte DJB2 hash of channel name |
 | Address spoofing resistance | Cryptographic — pairwise keys are derived from public keys | None — node numbers are hardware-derived and trivially spoofable |
@@ -172,17 +172,17 @@ Minimum overhead for a typical encrypted unicast message:
 | Field | UMSH (S=0, 16B MIC) | UMSH (S=0, 4B MIC) | Meshtastic (channel) | Meshtastic (PKC DM) |
 |---|---|---|---|---|
 | Header/FCF | 1 | 1 | 16 | 16 |
-| Destination | 2 | 2 | (in header) | (in header) |
-| Source | 2 | 2 | (in header) | (in header) |
+| Destination | 3 | 3 | (in header) | (in header) |
+| Source | 3 | 3 | (in header) | (in header) |
 | SECINFO | 5 | 5 | — | — |
 | MIC / auth tag | 16 | 4 | — | ~12 |
 | Nonce / IV | — | — | (derived, not transmitted) | (8 in payload) |
 | Protobuf overhead | — | — | ~6 | ~6 |
-| **Total overhead** | **26** | **14** | **~22** | **~42** |
+| **Total overhead** | **28** | **16** | **~22** | **~42** |
 
 Meshtastic's nonce is derived from header fields (packet ID + sender node number) rather than transmitted, saving bytes compared to protocols that transmit the IV. However, the fixed 16-byte cleartext header and protobuf encoding overhead partially offset this advantage.
 
-UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (26 vs ~22 bytes), but UMSH's overhead includes full authentication that Meshtastic's channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 14 bytes of overhead — lower than Meshtastic — while still providing authentication that Meshtastic channel traffic does not have.
+UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (28 vs ~22 bytes), but UMSH's overhead includes full authentication that Meshtastic's channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 16 bytes of overhead — lower than Meshtastic's ~22 bytes — while still providing authentication that Meshtastic channel traffic does not have.
 
 Meshtastic PKC direct messages add approximately 20 bytes of overhead beyond channel encryption (ECDH-derived key, CCM nonce, and authentication tag), bringing total overhead to roughly 42 bytes for authenticated direct messages.
 

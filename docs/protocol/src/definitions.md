@@ -6,7 +6,7 @@ The following terms are used throughout this specification. Definitions are give
 : A node's 32-byte Ed25519 public key, used as its stable network identifier. UMSH addresses are not numeric values used for routing. Short *address hints* derived from the address are used on the wire to save space.
 
 **Address Hint**
-: A short prefix of a node's public key used as a cheap prefilter before full cryptographic processing. These can be 1, 2, or 3 bytes long, depending on where and how they are used. See [Addressing](addressing.md).
+: A short prefix of a node's public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See [Addressing](addressing.md).
 
 **AES (Advanced Encryption Standard)**
 : A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.

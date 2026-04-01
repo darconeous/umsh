@@ -338,7 +338,7 @@ Let:
 - `K_enc_channel` = channel encryption key derived from the channel key via HKDF
 - `IV` = CTR IV constructed from the packet MIC and SECINFO
 - `DST` = 3-byte destination hint
-- `SRC` = source address: 1-byte source hint when `S=0`, or 32-byte source public key when `S=1`
+- `SRC` = source address: 3-byte source hint when `S=0`, or 32-byte source public key when `S=1`
 
 Then:
 

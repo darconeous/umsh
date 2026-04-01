@@ -9,11 +9,9 @@ Cryptographic outputs (ciphertext, MIC values) are illustrative — they do not 
 The following fictional values are used consistently across examples:
 
 - **Node A** public key: `A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20`
-  - As unicast/blind-unicast SRC hint (1 byte): `A1`
-  - As destination hint or broadcast/multicast SRC hint (3 bytes): `A1 B2 03`
+  - As source or destination hint (3 bytes): `A1 B2 03`
 - **Node B** public key: `C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40`
-  - As unicast/blind-unicast SRC hint (1 byte): `C3`
-  - As destination hint or broadcast/multicast SRC hint (3 bytes): `C3 D4 25`
+  - As source or destination hint (3 bytes): `C3 D4 25`
 - **Channel key**: `5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A` (channel hint: `7E5F`)
 
 ### FCF Bit Layout Reference
@@ -74,18 +72,19 @@ An encrypted unicast packet from Node A to Node B using source hints.
 |---|---|---|
 | FCF | VER=3, TYPE=2 (unicast), S=0, O=0, H=0 | `D0` |
 | DST | Node B hint (3 bytes) | `C3 D4 25` |
-| SRC | Node A hint (1 byte) | `A1` |
+| SRC | Node A hint (3 bytes) | `A1 B2 03` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 42 | `00 00 00 2A` |
 | Payload | Encrypted (5 bytes) | `8B 3F C7 A2 15` |
 | MIC | 16 bytes | `F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F` |
 
 ```text
-D0 C3 D4 25 A1 E0 00 00 00 2A 8B 3F C7 A2 15 F0
-E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F
+D0 C3 D4 25 A1 B2 03 E0 00 00 00 2A 8B 3F C7 A2
+15 F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E
+0F
 ```
 
-Total: 31 bytes (1 + 3 + 1 + 5 + 5 + 16).
+Total: 33 bytes (1 + 3 + 3 + 5 + 5 + 16).
 
 ## Example 4: Unicast with Ack Requested (S=1)
 
@@ -172,16 +171,16 @@ The region code value `7853` encodes "SJC" in ARNCE/HAM-64.
 | Options | Region code (1) + trace route (2) + end marker | `12 78 53 10 FF` |
 | FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |
 | DST | Node B hint (3 bytes) | `C3 D4 25` |
-| SRC | Node A hint (1 byte) | `A1` |
+| SRC | Node A hint (3 bytes) | `A1 B2 03` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 10 | `00 00 00 0A` |
 | Payload | Encrypted (3 bytes) | `8B 3F C7` |
 | MIC | 16 bytes | `D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD DE DF` |
 
 ```text
-D3 12 78 53 10 FF 40 C3 D4 25 A1 E0 00 00 00 0A
-8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC
-DD DE DF
+D3 12 78 53 10 FF 40 C3 D4 25 A1 B2 03 E0 00 00
+00 0A 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA
+DB DC DD DE DF
 ```
 
-Total: 35 bytes (1 + 5 + 1 + 3 + 1 + 5 + 3 + 16).
+Total: 37 bytes (1 + 5 + 1 + 3 + 3 + 5 + 3 + 16).

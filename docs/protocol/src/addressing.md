@@ -34,11 +34,8 @@ A source address in a packet is either:
 - a **compact source hint** (a prefix of the sender's 32-byte public key), when the `S` flag in the FCF is clear, or
 - the **full 32-byte public key**, when the `S` flag is set.
 
-The hint size depends on the packet type:
-
-- **Unicast and blind unicast**: the source hint is **1 byte** (the first byte of the public key). The destination hint handles the prefiltering work; the source hint is used only to narrow down which cached key to try first.
-- **Broadcast and multicast**: the source hint is **3 bytes** (the first three bytes of the public key). These packet types carry no destination hint, so the source hint serves as the primary addressing field and benefits from a lower collision probability.
+The source hint is **3 bytes** (the first three bytes of the public key) when `S` is clear.
 
 The source hint is a compact reference used when the receiver is expected to already have the sender's full public key cached (e.g., from a prior advertisement or first-contact exchange). When the full public key is present, the receiver can perform ECDH directly from the packet without any prior state.
 
-In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext but still follows the same conventions: a hint (of the appropriate size) when `S` is clear, or the full 32-byte public key when `S` is set.
+In encrypted multicast and blind unicast packets, the source address is carried inside the ciphertext: a 3-byte hint when `S` is clear, or the full 32-byte public key when `S` is set.

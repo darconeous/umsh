@@ -34,7 +34,7 @@ The `S` flag controls whether the full 32-byte source public key or a compact so
 - The sender wants to allow any receiver to perform ECDH and authenticate the packet without prior state.
 - The sender is using an ephemeral keypair (anonymous request pattern).
 
-Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 31 bytes per packet in unicast (1-byte hint vs 32-byte key), which is significant on LoRa.
+Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.
 
 Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with `S=1` to provide the full key.
 

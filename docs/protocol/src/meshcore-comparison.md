@@ -9,11 +9,11 @@ Both protocols use Ed25519 public keys as node identities and perform X25519 ECD
 | Aspect | UMSH | MeshCore |
 |---|---|---|
 | Identity key | 32-byte Ed25519 public key | 32-byte Ed25519 public key |
-| Source address in packets | 1-byte hint in unicast (S=0), 3-byte hint in broadcast/multicast (S=0), or full 32-byte key (S=1) | 1-byte hash (first byte of public key) |
+| Source address in packets | 3-byte hint (S=0), or full 32-byte key (S=1) | 1-byte hash (first byte of public key) |
 | Destination address | 3-byte hint | 1-byte hash |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of channel key |
 
-UMSH uses asymmetric hints sized to their role: 3-byte destination hints (the prefilter that determines whether cryptographic verification is attempted) and 1-byte source hints in unicast (used only for key lookup, not prefiltering), with 3-byte source hints in broadcast and multicast where no destination hint is present. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated `ANON_REQ` packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
+UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit `S` flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated `ANON_REQ` packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.
 
 ## Packet Structure
 
@@ -140,19 +140,19 @@ Minimum overhead for a typical encrypted unicast message (no options, no flood h
 | Header/FCF | 1 | 1 | 1 | 1 |
 | Path length | — | — | — | 1 |
 | Destination | 3 | 3 | 3 | 1 |
-| Source | 1 | 1 | 32 | 1 |
+| Source | 3 | 3 | 32 | 1 |
 | Security info | 5 | 5 | 5 | — |
 | MAC/MIC | 16 | 4 | 4–16 | 2 |
 | ECB block padding | — | — | — | 0–15 (avg ~8) |
-| **Total overhead** | **26** | **14** | **45–57** | **~14** |
+| **Total overhead** | **28** | **16** | **45–57** | **~14** |
 
-UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography](security.md#security-control-field)). With a 4-byte MIC and `S=0`, UMSH matches MeshCore's effective overhead while providing AES-SIV encryption, HKDF key separation, and monotonic frame counter replay protection.
+UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography](security.md#security-control-field)). With a 4-byte MIC and `S=0`, UMSH's 16 bytes of overhead is 2 bytes more than MeshCore's effective ~14 bytes — the additional cost of 3-byte source and destination hints compared to MeshCore's 1-byte addresses, in exchange for uniform 1-in-16,777,216 collision resistance on both source and destination.
 
 MeshCore's use of AES-128-ECB requires the plaintext to be padded to a multiple of 16 bytes. This wastes 0–15 bytes per packet depending on the payload size, averaging roughly 8 bytes of dead space. When this padding overhead is included, MeshCore's effective overhead rises from 6 bytes to approximately 14 bytes.
 
 MeshCore achieves low per-packet overhead by using 1-byte addresses, a 2-byte MAC, and no frame counter or security control field. However, this compactness comes at a significant cost to security (ECB mode, 2-byte MAC, no replay protection counter, no key separation) and to flexibility (no first-contact without ANON_REQ, no blind unicast, no composable options).
 
-UMSH with `S=0` and a 16-byte MIC provides the strongest security configuration at 26 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore's 1-in-2^16 with its 2-byte MAC) while matching MeshCore's effective overhead.
+UMSH with `S=0` and a 16-byte MIC provides the strongest security configuration at 28 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore's 1-in-2^16 with its 2-byte MAC) while matching MeshCore's effective overhead.
 
 ## Power Consumption
 
@@ -167,7 +167,7 @@ The problem is collisions. In a network of many nodes, some fraction of packets 
 | MeshCore | 8 bits (1 byte) | ~1 in 256 |
 | UMSH | 24 bits (3 bytes) | ~1 in 16,777,216 |
 
-UMSH's 3-byte destination hints reduce spurious cryptographic wake-ups by a factor of ~65,536 compared to MeshCore. Because the unicast source hint is 1 byte, the combined address overhead is unchanged from MeshCore's 1+1 byte layout — the stronger prefiltering comes at no additional per-packet cost. In a busy mesh where a node receives hundreds of packets per hour intended for others, fewer wasted verifications means less CPU time, fewer memory accesses, and a faster return to sleep.
+UMSH's 3-byte node hints reduce spurious cryptographic wake-ups by a factor of ~65,536 compared to MeshCore, at a combined address overhead of 6 bytes per unicast packet versus MeshCore's 2 bytes. In a busy mesh where a node receives hundreds of packets per hour intended for others, fewer wasted verifications means less CPU time, fewer memory accesses, and a faster return to sleep.
 
 The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that any packet addressed to an unknown channel matches a channel you are not a member of. UMSH's 2-byte channel identifier reduces this to 1-in-65536.
 

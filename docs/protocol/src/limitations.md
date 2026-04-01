@@ -14,9 +14,7 @@ This is a fundamental property of symmetric-key multicast and is shared by other
 
 ## Known Hint Collision Properties
 
-UMSH uses asymmetric hint sizes chosen to minimize false-positive work where it matters most while preserving overall packet compactness.
-
-MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes — far too low for practical networks. UMSH addresses this with larger, role-differentiated hints.
+MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes — far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses.
 
 As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:
 
@@ -26,19 +24,11 @@ As a concrete example, consider a regional network of approximately 600 active n
 | 2 bytes (65,536 values) | ~94% |
 | 3 bytes (16,777,216 values) | ~1% |
 
-### Destination hints (3 bytes)
+### Node hints (3 bytes)
 
-The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume.
+The destination hint is a prefilter: a match causes the receiver to attempt full cryptographic verification. A false positive wastes computation on every packet exchanged between the two colliding nodes, for the lifetime of both identities. The cost is persistent and proportional to traffic volume. The source hint is used for source identification, traffic attribution, and diagnostics.
 
-With 3-byte destination hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.
-
-### Source hints (unicast: 1 byte; broadcast and multicast: 3 bytes)
-
-The source hint serves a different purpose in different packet types.
-
-**Unicast source hint (1 byte).** In unicast and blind unicast, the destination hint already handles prefiltering. The source hint is used only to narrow down which cached pairwise key to try first. A collision means the receiver tries the wrong cached key before finding the correct one — an extra AES-CMAC call, not a persistent per-packet cost. This is primarily a concern for endpoint nodes that communicate with many peers and therefore maintain large caches of pairwise keys. Using a 1-byte source hint offsets the +1 byte cost of the 3-byte destination hint, keeping unicast packet overhead at 4 bytes total for addressing.
-
-**Broadcast and multicast source hint (3 bytes).** These packet types carry no destination hint. The source hint is therefore the primary addressing field visible to receivers and is used for source identification, traffic attribution, and diagnostics. At 2 bytes, ~94% of nodes in a 600-node network share a hint, making the field nearly useless for attribution. At 3 bytes, the probability drops to ~1%.
+With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.
 
 ### Router hints (2 bytes)
 
@@ -79,7 +69,7 @@ When a packet cannot be delivered — for example, because a bridge's backhaul l
 
 This timeout-based detection is slow (the sender must wait long enough to account for bridge round-trip latency) and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.
 
-A fully addressed error reply from an intermediate node is not possible in the general case. Unicast packets carry only a 1-byte source hint — insufficient to address a response or derive the sender's public key. Only the final destination, which has the full source key (either from cache or the packet itself) and uses it to perform ECDH, can send an authenticated reply. This constraint is a direct consequence of the Brevity design principle; the 1-byte hint saves 31 bytes on every unicast packet.
+A fully addressed error reply from an intermediate node is not possible in the general case. Unicast packets carry only a 3-byte source hint — insufficient to address a response or derive the sender's public key. Only the final destination, which has the full source key (either from cache or the packet itself) and uses it to perform ECDH, can send an authenticated reply.
 
 #### Possible Approaches
 
@@ -101,7 +91,7 @@ This approach requires a new option number and an unencrypted error packet type 
 
 If the original packet carries a trace route option, the return path back to the sender accumulates hop by hop. An intermediate node that detects an error can reverse the accumulated trace to reconstruct a source route toward the sender, then emit an unencrypted error packet that hops back along that path.
 
-The sender's 1-byte SRC hint is used as a coarse destination filter on the returning packet — a false match simply causes an unrelated node to read an error message it cannot correlate to any of its own traffic. The MIC-REF is the real correlator.
+The sender's 3-byte SRC hint is used as a coarse destination filter on the returning packet, giving a ~1-in-16M false-positive rate — a false match simply causes an unrelated node to read an error message it cannot correlate to any of its own traffic. The MIC-REF is the real correlator.
 
 This requires no new addressing mechanism but only works when the sender included a trace route option. It is naturally opt-in: senders who want error feedback include a trace route; senders who do not, don't. It requires defining what this error packet looks like (a new packet type, or a BCST-with-option convention similar to the Hop Signal mechanism proposed for bridges).
 
