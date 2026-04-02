@@ -24,6 +24,26 @@ pub trait Clock {
 
 pub trait Rng {
     fn fill_bytes(&mut self, dest: &mut [u8]);
+
+    fn random_u32(&mut self) -> u32 {
+        let mut buf = [0u8; 4];
+        self.fill_bytes(&mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn random_range(&mut self, bound: u32) -> u32 {
+        if bound <= 1 {
+            return 0;
+        }
+
+        let zone = u32::MAX - (u32::MAX % bound);
+        loop {
+            let value = self.random_u32();
+            if value < zone {
+                return value % bound;
+            }
+        }
+    }
 }
 
 pub trait CounterStore {

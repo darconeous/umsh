@@ -104,6 +104,10 @@ place that it appeared in encrypted multicast:
 
 Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.
 
+Like other channel-addressed packets, blind unicast honors the `E` flag in `SECINFO`.
+
+### Encrypted Blind Unicast (E = 1)
+
 ```text
 +-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
@@ -113,18 +117,37 @@ Blind unicast uses a multicast channel to conceal sender and destination metadat
 
 The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and the `MIC` as IV (see [Security & Cryptography](security.md#blind-unicast-source-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
 
+### Unencrypted Blind Unicast (E = 0)
+
+When encryption is disabled, blind unicast still uses the channel identifier and
+the blind-unicast packet type, but the destination hint, source address, and
+payload appear in cleartext:
+
+```text
++-----+-----------+------+---------+---------+-----+------+---------+------+
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | DST | SRC  | PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+-----+------+---------+------+
+  1 B    variable   0/1 B    2 B      5/7 B   3 B  3/32 B    var.   4-16 B
+```
+
+In this mode, the packet remains channel-associated and authenticated with the
+blind-unicast keys, but it does not conceal sender or destination metadata.
+This can still be useful when an implementation wants channel-associated
+unicast semantics without encryption.
+
 ### Blind Unicast Processing
 
 1. Receiver uses `CHANNEL` to identify candidate channel keys.
-2. Receiver derives the channel's `K_enc_channel` from the candidate channel key via HKDF.
-3. Receiver reads the `MIC` from the end of the packet.
-4. Receiver uses `K_enc_channel` and `MIC` to decrypt `ENC_DST_SRC`, recovering the sender's public key.
+2. Receiver derives the channel's candidate keys via HKDF.
+3. If `E = 1`, receiver reads the `MIC` and uses `K_enc_channel` plus `MIC` to decrypt `ENC_DST_SRC`, recovering the destination hint and sender address.
+4. If `E = 0`, receiver reads `DST` and `SRC` directly from the cleartext packet.
 5. Receiver converts the sender Ed25519 public key into an X25519 public key.
 6. Receiver converts its own Ed25519 private key into an X25519 private key.
 7. Receiver performs ECDH and derives the stable pairwise keys.
 8. Receiver computes the [blind unicast payload keys](security.md#blind-unicast-payload-keys) by XORing the pairwise keys with the channel keys.
-9. Receiver authenticates and decrypts `ENC_PAYLOAD` using the blind unicast payload keys.
-10. If authentication fails, the packet is rejected.
+9. Receiver authenticates the packet using the blind-unicast MIC.
+10. If `E = 1`, receiver decrypts `ENC_PAYLOAD` using the blind unicast payload keys.
+11. If authentication fails, the packet is rejected.
 
 Some repeaters may decline to forward blind unicast packets for unknown channels.
 

@@ -21,7 +21,8 @@ mod tests {
     use crate::{
         feed_aad,
         options::{OptionDecoder, OptionEncoder},
-        Fcf, MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType, PublicKey, Scf, SecInfo,
+        Fcf, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, Scf, SecInfo,
+        SourceAddrRef,
     };
 
     #[test]
@@ -103,6 +104,30 @@ mod tests {
     }
 
     #[test]
+    fn unencrypted_blind_unicast_builder_and_parser_match() {
+        let mut buf = [0u8; 128];
+        let src = PublicKey([0xA1; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let channel = crate::ChannelId([0x7E, 0x5F]);
+        let packet = PacketBuilder::new(&mut buf)
+            .blind_unicast(channel, dst)
+            .source_full(&src)
+            .frame_counter(5)
+            .unencrypted()
+            .payload(b"hello")
+            .build()
+            .unwrap();
+
+        let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+        assert_eq!(header.packet_type(), PacketType::BlindUnicast);
+        assert_eq!(header.channel, Some(channel));
+        assert_eq!(header.dst, Some(dst));
+        assert_eq!(header.source, SourceAddrRef::FullKeyAt { offset: header.body_range.start - 32 });
+        assert!(!header.sec_info.unwrap().scf.encrypted());
+        assert_eq!(header.body_range.len(), 5);
+    }
+
+    #[test]
     fn builder_encodes_incremental_options_with_correct_deltas() {
         let mut buf = [0u8; 128];
         let src = NodeHint([0xA1, 0xB2, 0x03]);
@@ -170,12 +195,38 @@ mod tests {
     }
 
     #[test]
+    fn aad_encodes_static_option_tl_as_u16_be_pairs() {
+        let mut buf = [0u8; 96];
+        let packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC3, 0xD4, 0x25]))
+            .source_hint(NodeHint([0xA1, 0xB2, 0x03]))
+            .frame_counter(42)
+            .encrypted()
+            .option(OptionNumber::Unknown(300), &[0xAA])
+            .payload(b"hey")
+            .build()
+            .unwrap();
+        let bytes = packet.as_bytes().to_vec();
+        let header = PacketHeader::parse(&bytes).unwrap();
+        let mut aad = [0u8; 32];
+        let mut aad_len = 0usize;
+
+        feed_aad(&header, &bytes, |chunk| {
+            let next_len = aad_len + chunk.len();
+            aad[aad_len..next_len].copy_from_slice(chunk);
+            aad_len = next_len;
+        });
+
+        assert_eq!(&aad[1..6], &[0x01, 0x2C, 0x00, 0x01, 0xAA]);
+    }
+
+    #[test]
     fn parse_blind_unicast_tracks_secinfo_range() {
         let bytes = [
             0xF0, 0x7E, 0x5F, 0x80, 0x00, 0x00, 0x00, 0x05, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03,
             0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x11, 0x22, 0x33, 0x44,
         ];
         let header = PacketHeader::parse(&bytes).unwrap();
-        assert_eq!(header.sec_info_range, 3..8);
+        assert_eq!(header.sec_info.unwrap().wire_len(), 5);
     }
 }

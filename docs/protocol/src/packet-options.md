@@ -93,7 +93,8 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 ### Operator Callsign (option 4)
 - Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
 - Semantics: identifies the original packet sender's amateur radio callsign.
-- Use: required only when operating under amateur radio rules.
+- Use: required for locally originated packets in `Licensed-Only` amateur operation.
+- In `Hybrid` operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.
 
 ### Minimum RSSI (option 5)
 - Type: unsigned 1-byte integer, interpreted as a negative dBm value
@@ -107,7 +108,10 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 - Semantics: identifies the transmitting station's amateur radio callsign.
 - If absent, the station callsign is assumed to equal the source callsign (if present)
 - This option is critical because repeaters must replace or remove it during forwarding.
-- Use: required only when operating under amateur radio rules.
+- Use:
+  - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
+  - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
+  - in `Unlicensed` mode, repeaters remove it if present and do not add their own
 
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB

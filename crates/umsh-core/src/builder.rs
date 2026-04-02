@@ -1,8 +1,8 @@
 use core::{marker::PhantomData, ops::Range};
 
 use crate::{
-    options::OptionEncoder, BuildError, ChannelId, Fcf, FloodHops, MicSize, NodeHint,
-    OptionNumber, PacketType, PublicKey, Scf, SecInfo, UnsealedPacket,
+    options::OptionEncoder, BuildError, ChannelId, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
+    PacketType, PublicKey, Scf, SecInfo, UnsealedPacket,
 };
 
 pub mod state {
@@ -44,7 +44,11 @@ impl<'a> PacketBuilder<'a> {
         builder
     }
 
-    pub fn blind_unicast(self, channel: ChannelId, dst: NodeHint) -> BlindUnicastBuilder<'a, state::NeedsSource> {
+    pub fn blind_unicast(
+        self,
+        channel: ChannelId,
+        dst: NodeHint,
+    ) -> BlindUnicastBuilder<'a, state::NeedsSource> {
         let mut builder = Builder::new(self.buf, PacketType::BlindUnicast);
         builder.channel = Some(channel);
         builder.dst = Some(dst);
@@ -108,7 +112,10 @@ impl<'a, K, S> Builder<'a, K, S> {
             ack_dst: None,
             ack_tag: None,
             frame_counter: None,
-            encrypted: matches!(packet_type, PacketType::BlindUnicast | PacketType::BlindUnicastAckReq),
+            encrypted: matches!(
+                packet_type,
+                PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
+            ),
             mic_size: MicSize::Mic16,
             salt: None,
             flood_hops: None,
@@ -154,7 +161,9 @@ impl<'a, K, S> Builder<'a, K, S> {
             }
         }
         let mut live = match self.last_option_number {
-            Some(last_number) => OptionEncoder::with_last_number(&mut self.buf[1 + self.options_len..], last_number),
+            Some(last_number) => {
+                OptionEncoder::with_last_number(&mut self.buf[1 + self.options_len..], last_number)
+            }
             None => OptionEncoder::new(&mut self.buf[1 + self.options_len..]),
         };
         match live.put(number, value) {
@@ -184,7 +193,12 @@ impl<'a, K, S> Builder<'a, K, S> {
         }
         self.finalize_options()?;
         let full_source = matches!(self.source, Some(SourceValue::Full(_)));
-        let fcf = Fcf::new(self.packet_type, full_source, self.options_used, self.flood_hops.is_some());
+        let fcf = Fcf::new(
+            self.packet_type,
+            full_source,
+            self.options_used,
+            self.flood_hops.is_some(),
+        );
         if self.buf.is_empty() {
             return Err(BuildError::BufferTooSmall);
         }
@@ -192,7 +206,10 @@ impl<'a, K, S> Builder<'a, K, S> {
         let mut cursor = 1;
         cursor += self.options_len;
         if let Some(fhops) = self.flood_hops {
-            self.buf.get_mut(cursor).ok_or(BuildError::BufferTooSmall).map(|slot| *slot = fhops.0)?;
+            self.buf
+                .get_mut(cursor)
+                .ok_or(BuildError::BufferTooSmall)
+                .map(|slot| *slot = fhops.0)?;
             cursor += 1;
         }
         Ok(cursor)
@@ -202,12 +219,18 @@ impl<'a, K, S> Builder<'a, K, S> {
         match self.source {
             Some(SourceValue::Hint(hint)) => {
                 let end = *cursor + 3;
-                self.buf.get_mut(*cursor..end).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&hint.0);
+                self.buf
+                    .get_mut(*cursor..end)
+                    .ok_or(BuildError::BufferTooSmall)?
+                    .copy_from_slice(&hint.0);
                 *cursor = end;
             }
             Some(SourceValue::Full(key)) => {
                 let end = *cursor + 32;
-                self.buf.get_mut(*cursor..end).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&key.0);
+                self.buf
+                    .get_mut(*cursor..end)
+                    .ok_or(BuildError::BufferTooSmall)?
+                    .copy_from_slice(&key.0);
                 *cursor = end;
             }
             None => return Err(BuildError::MissingSource),
@@ -248,7 +271,10 @@ impl<'a, K, S> Builder<'a, K, S> {
         let dst = self.dst.ok_or(BuildError::MissingDestination)?;
         let start = *cursor;
         let dst_end = start + 3;
-        self.buf.get_mut(start..dst_end).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&dst.0);
+        self.buf
+            .get_mut(start..dst_end)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&dst.0);
         *cursor = dst_end;
         self.write_source(cursor)?;
         let end = *cursor;
@@ -428,6 +454,16 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
         self
     }
 
+    pub fn encrypted(mut self) -> Self {
+        self.encrypted = true;
+        self
+    }
+
+    pub fn unencrypted(mut self) -> Self {
+        self.encrypted = false;
+        self
+    }
+
     pub fn mic_size(mut self, size: MicSize) -> Self {
         self.mic_size = size;
         self
@@ -470,10 +506,16 @@ impl<'a> MacAckBuilder<'a, state::Configuring> {
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let dst = self.ack_dst.ok_or(BuildError::MissingDestination)?;
-        self.buf.get_mut(cursor..cursor + 2).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&dst);
+        self.buf
+            .get_mut(cursor..cursor + 2)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&dst);
         cursor += 2;
         let ack_tag = self.ack_tag.ok_or(BuildError::MissingAckTag)?;
-        self.buf.get_mut(cursor..cursor + 8).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&ack_tag);
+        self.buf
+            .get_mut(cursor..cursor + 8)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&ack_tag);
         cursor += 8;
         Ok(&self.buf[..cursor])
     }
@@ -489,19 +531,41 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let dst = self.dst.ok_or(BuildError::MissingDestination)?;
-        self.buf.get_mut(cursor..cursor + 3).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&dst.0);
+        self.buf
+            .get_mut(cursor..cursor + 3)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&dst.0);
         cursor += 3;
         self.write_source(&mut cursor)?;
         let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo { scf, frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?, salt: self.salt };
+        let sec_info = SecInfo {
+            scf,
+            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
+            salt: self.salt,
+        };
         let sec_start = cursor;
-        cursor += sec_info.encode(self.buf.get_mut(cursor..).ok_or(BuildError::BufferTooSmall)?);
+        cursor += sec_info.encode(
+            self.buf
+                .get_mut(cursor..)
+                .ok_or(BuildError::BufferTooSmall)?,
+        );
         let body_range = self.copy_staged_payload(&mut cursor)?;
         let mic_start = cursor;
         let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf.get_mut(mic_start..mic_end).ok_or(BuildError::BufferTooSmall)?.fill(0);
+        self.buf
+            .get_mut(mic_start..mic_end)
+            .ok_or(BuildError::BufferTooSmall)?
+            .fill(0);
         cursor = mic_end;
-        Ok(UnsealedPacket::new(self.buf, cursor, body_range, None, mic_start..mic_end, sec_start..sec_start + sec_info.wire_len(), 1..1 + self.options_len))
+        Ok(UnsealedPacket::new(
+            self.buf,
+            cursor,
+            body_range,
+            None,
+            mic_start..mic_end,
+            sec_start..sec_start + sec_info.wire_len(),
+            1..1 + self.options_len,
+        ))
     }
 }
 
@@ -515,21 +579,47 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let channel = self.channel.ok_or(BuildError::MissingChannel)?;
-        self.buf.get_mut(cursor..cursor + 2).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&channel.0);
+        self.buf
+            .get_mut(cursor..cursor + 2)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&channel.0);
         cursor += 2;
         let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo { scf, frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?, salt: self.salt };
+        let sec_info = SecInfo {
+            scf,
+            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
+            salt: self.salt,
+        };
         let sec_start = cursor;
-        cursor += sec_info.encode(self.buf.get_mut(cursor..).ok_or(BuildError::BufferTooSmall)?);
+        cursor += sec_info.encode(
+            self.buf
+                .get_mut(cursor..)
+                .ok_or(BuildError::BufferTooSmall)?,
+        );
         let body_start = cursor;
         self.write_source(&mut cursor)?;
         let payload_range = self.copy_staged_payload(&mut cursor)?;
-        let body_range = if self.encrypted { body_start..payload_range.end } else { payload_range };
+        let body_range = if self.encrypted {
+            body_start..payload_range.end
+        } else {
+            payload_range
+        };
         let mic_start = cursor;
         let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf.get_mut(mic_start..mic_end).ok_or(BuildError::BufferTooSmall)?.fill(0);
+        self.buf
+            .get_mut(mic_start..mic_end)
+            .ok_or(BuildError::BufferTooSmall)?
+            .fill(0);
         cursor = mic_end;
-        Ok(UnsealedPacket::new(self.buf, cursor, body_range, None, mic_start..mic_end, sec_start..sec_start + sec_info.wire_len(), 1..1 + self.options_len))
+        Ok(UnsealedPacket::new(
+            self.buf,
+            cursor,
+            body_range,
+            None,
+            mic_start..mic_end,
+            sec_start..sec_start + sec_info.wire_len(),
+            1..1 + self.options_len,
+        ))
     }
 }
 
@@ -543,17 +633,31 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let channel = self.channel.ok_or(BuildError::MissingChannel)?;
-        self.buf.get_mut(cursor..cursor + 2).ok_or(BuildError::BufferTooSmall)?.copy_from_slice(&channel.0);
+        self.buf
+            .get_mut(cursor..cursor + 2)
+            .ok_or(BuildError::BufferTooSmall)?
+            .copy_from_slice(&channel.0);
         cursor += 2;
-        let scf = Scf::new(true, self.mic_size, self.salt.is_some());
-        let sec_info = SecInfo { scf, frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?, salt: self.salt };
+        let scf = Scf::new(self.encrypted, self.mic_size, self.salt.is_some());
+        let sec_info = SecInfo {
+            scf,
+            frame_counter: self.frame_counter.ok_or(BuildError::MissingFrameCounter)?,
+            salt: self.salt,
+        };
         let sec_start = cursor;
-        cursor += sec_info.encode(self.buf.get_mut(cursor..).ok_or(BuildError::BufferTooSmall)?);
+        cursor += sec_info.encode(
+            self.buf
+                .get_mut(cursor..)
+                .ok_or(BuildError::BufferTooSmall)?,
+        );
         let blind_addr_range = self.stage_blind_addr(&mut cursor)?;
         let body_range = self.copy_staged_payload(&mut cursor)?;
         let mic_start = cursor;
         let mic_end = mic_start + self.mic_size.byte_len();
-        self.buf.get_mut(mic_start..mic_end).ok_or(BuildError::BufferTooSmall)?.fill(0);
+        self.buf
+            .get_mut(mic_start..mic_end)
+            .ok_or(BuildError::BufferTooSmall)?
+            .fill(0);
         cursor = mic_end;
         Ok(UnsealedPacket::new(
             self.buf,

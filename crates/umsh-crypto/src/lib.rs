@@ -5,8 +5,8 @@
 use core::ops::Range;
 
 use umsh_core::{
-    feed_aad, ChannelId, ChannelKey, PacketHeader, PacketType, PublicKey, SourceAddr,
-    SourceAddrRef, UnsealedPacket,
+    feed_aad, ChannelId, ChannelKey, PacketHeader, PacketType, PublicKey, SourceAddrRef,
+    UnsealedPacket,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -202,7 +202,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     pub fn seal_packet(&self, packet: &mut UnsealedPacket<'_>, keys: &PairwiseKeys) -> Result<usize, CryptoError> {
-        let header = packet.header().map_err(|_| CryptoError::InvalidPacket)?;
+        let header = packet.header();
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
             let bytes = packet.as_bytes();
@@ -216,7 +216,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         packet.mic_slot()[..mic_len].copy_from_slice(&full_mac[..mic_len]);
 
         if sec_info.scf.encrypted() {
-            let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[header.sec_info_range.clone()]);
+            let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[packet.sec_info_range()]);
             self.aes_ctr(&keys.k_enc, &iv, packet.body_mut());
         }
 
@@ -229,7 +229,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         blind_keys: &PairwiseKeys,
         channel_keys: &DerivedChannelKeys,
     ) -> Result<usize, CryptoError> {
-        let header = packet.header().map_err(|_| CryptoError::InvalidPacket)?;
+        let header = packet.header();
         match header.packet_type() {
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {}
             _ => return Err(CryptoError::InvalidPacket),
@@ -246,10 +246,12 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         };
 
         let mic_len = sec_info.scf.mic_size().map_err(|_| CryptoError::InvalidPacket)?.byte_len();
-        let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[header.sec_info_range.clone()]);
+        let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[packet.sec_info_range()]);
         packet.mic_slot()[..mic_len].copy_from_slice(&full_mac[..mic_len]);
-        self.aes_ctr(&blind_keys.k_enc, &iv, packet.body_mut());
-        self.aes_ctr(&channel_keys.k_enc, &iv, &mut packet.as_bytes_mut()[blind_addr_range]);
+        if sec_info.scf.encrypted() {
+            self.aes_ctr(&blind_keys.k_enc, &iv, packet.body_mut());
+            self.aes_ctr(&channel_keys.k_enc, &iv, &mut packet.as_bytes_mut()[blind_addr_range]);
+        }
         Ok(mic_len)
     }
 
@@ -259,7 +261,8 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         let mic_len = header.mic_range.end - header.mic_range.start;
         mic[..mic_len].copy_from_slice(&buf[header.mic_range.clone()]);
         if sec_info.scf.encrypted() {
-            let iv = self.build_ctr_iv(&mic[..mic_len], &buf[header.sec_info_range.clone()]);
+            let sec_info_range = header.body_range.start - sec_info.wire_len()..header.body_range.start;
+            let iv = self.build_ctr_iv(&mic[..mic_len], &buf[sec_info_range]);
             self.aes_ctr(&keys.k_enc, &iv, &mut buf[header.body_range.clone()]);
         }
 
@@ -287,29 +290,42 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         buf: &mut [u8],
         header: &PacketHeader,
         channel_keys: &DerivedChannelKeys,
-    ) -> Result<(umsh_core::NodeHint, SourceAddr), CryptoError> {
-        let SourceAddrRef::Encrypted { offset, len } = header.source else {
-            return Err(CryptoError::InvalidPacket);
-        };
-        let addr_start = offset.checked_sub(3).ok_or(CryptoError::InvalidPacket)?;
-        let addr_end = addr_start + 3 + len;
-        let iv = self.build_ctr_iv(&buf[header.mic_range.clone()], &buf[header.sec_info_range.clone()]);
-        self.aes_ctr(&channel_keys.k_enc, &iv, &mut buf[addr_start..addr_end]);
-        let dst = umsh_core::NodeHint([buf[addr_start], buf[addr_start + 1], buf[addr_start + 2]]);
-        let source = if len == 3 {
-            SourceAddr::Hint(umsh_core::NodeHint([
-                buf[addr_start + 3],
-                buf[addr_start + 4],
-                buf[addr_start + 5],
-            ]))
-        } else if len == 32 {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&buf[addr_start + 3..addr_end]);
-            SourceAddr::Full(PublicKey(key))
-        } else {
-            return Err(CryptoError::InvalidPacket);
-        };
-        Ok((dst, source))
+    ) -> Result<(umsh_core::NodeHint, SourceAddrRef), CryptoError> {
+        match header.source {
+            SourceAddrRef::Encrypted { offset, len } => {
+                let addr_start = offset.checked_sub(3).ok_or(CryptoError::InvalidPacket)?;
+                let addr_end = addr_start + 3 + len;
+                let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
+                let sec_info_range = header.body_range.start - sec_info.wire_len()..header.body_range.start;
+                let iv = self.build_ctr_iv(&buf[header.mic_range.clone()], &buf[sec_info_range]);
+                self.aes_ctr(&channel_keys.k_enc, &iv, &mut buf[addr_start..addr_end]);
+                let dst = umsh_core::NodeHint([buf[addr_start], buf[addr_start + 1], buf[addr_start + 2]]);
+                let source = if len == 3 {
+                    SourceAddrRef::Hint(umsh_core::NodeHint([
+                        buf[addr_start + 3],
+                        buf[addr_start + 4],
+                        buf[addr_start + 5],
+                    ]))
+                } else if len == 32 {
+                    SourceAddrRef::FullKeyAt {
+                        offset: addr_start + 3,
+                    }
+                } else {
+                    return Err(CryptoError::InvalidPacket);
+                };
+                Ok((dst, source))
+            }
+            SourceAddrRef::Hint(hint) => {
+                let dst = header.dst.ok_or(CryptoError::InvalidPacket)?;
+                Ok((dst, SourceAddrRef::Hint(hint)))
+            }
+            SourceAddrRef::FullKeyAt { offset } => {
+                let dst = header.dst.ok_or(CryptoError::InvalidPacket)?;
+                let _ = buf.get(offset..offset + 32).ok_or(CryptoError::InvalidPacket)?;
+                Ok((dst, SourceAddrRef::FullKeyAt { offset }))
+            }
+            SourceAddrRef::None => Err(CryptoError::InvalidPacket),
+        }
     }
 
     pub fn compute_ack_tag(&self, full_cmac: &[u8; 16], k_enc: &[u8; 16]) -> [u8; 8] {
@@ -710,7 +726,8 @@ mod tests {
         let range = engine.open_packet(&mut wire, &header, &blind_keys).unwrap();
 
         assert_eq!(decoded_dst, dst);
-        assert_eq!(decoded_src, SourceAddr::Full(src));
+        assert_eq!(decoded_src, SourceAddrRef::FullKeyAt { offset: header.body_range.start - 32 });
+        assert_eq!(&wire[header.body_range.start - 32..header.body_range.start], &src.0);
         assert_eq!(&wire[range], b"hello");
     }
 

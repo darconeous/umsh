@@ -1188,25 +1188,27 @@ pub struct RepeaterConfig {
     pub regions: heapless::Vec<[u8; 2], 8>,
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
-    pub amateur_mode: bool,
-    /// Station callsign for this repeater. When `amateur_mode` is true, the
-    /// forwarding path replaces or inserts option 7 (Station Callsign) with
-    /// this value before retransmission, as required by the spec.
-    /// If `amateur_mode` is true and this is `None`, the repeater must not
-    /// forward packets under amateur-radio authority.
+     pub amateur_radio_mode: AmateurRadioMode,
+     /// Station callsign for this repeater. In `LicensedOnly` and `Hybrid`
+     /// operation, the forwarding path replaces or inserts option 7 (Station
+     /// Callsign) with this value before retransmission whenever the repeater is
+     /// operating under amateur authority. In `Unlicensed` mode, the repeater
+     /// removes station callsigns and does not add its own.
     pub station_callsign: Option<HamAddr>,
 }
 ```
 
-When `amateur_mode` is true, the forwarding procedure in `poll_cycle` performs
-option 7 rewriting as a first-class step:
+When amateur-radio handling is enabled, the forwarding procedure in `poll_cycle`
+performs option 7 rewriting as a first-class step:
 
-1. If the packet lacks an operator callsign (option 4) and retransmission would
-   occur under amateur-radio authority, the repeater must not forward.
-2. The repeater replaces or inserts option 7 with its own `station_callsign`
-   before retransmission.
-3. If `station_callsign` is `None` and `amateur_mode` is true, the packet is
-   not forwarded (the repeater cannot legally identify itself).
+1. `LicensedOnly`: only packets carrying an operator callsign (option 4) may be
+    forwarded under amateur authority.
+2. `Hybrid`: packets with an operator callsign may be forwarded under amateur
+    authority; packets without one may still be forwarded under unlicensed
+    authority if local rules permit.
+3. `LicensedOnly` and `Hybrid`: the repeater replaces or inserts option 7 with
+    its own `station_callsign` before retransmission.
+4. `Unlicensed`: the repeater removes option 7 if present and does not add its own.
 
 #### Route Learning
 
@@ -1596,13 +1598,13 @@ impl SendOptions {
 | Tier | Where | What it enforces |
 |------|-------|------------------|
 | **Wire-validity** | MAC coordinator, on TX | Packet structure invariants: field sizes, option ordering, frame counter monotonicity |
-| **Local-operating** | `OperatingPolicy` in `MacShared` | Mode-level rules: amateur mode forbids encryption and blind unicast, requires callsign; emergency channel TX requires unencrypted + S=1 |
+| **Local-operating** | `OperatingPolicy` in `MacShared` | Mode-level rules: amateur-radio mode selection, operator callsign requirements, and emergency-channel TX constraints |
 | **UI acceptance** | `Endpoint::handle_event` | Display rules: public-channel chat without S=1 must not be shown; emergency messages without valid EdDSA signature must not be displayed; invalid identity signatures flagged |
 
 ```rust
 /// Local operating policy. Configured at startup, consulted on every send.
 pub struct OperatingPolicy {
-    pub amateur_mode: bool,
+    pub amateur_radio_mode: AmateurRadioMode,
     pub operator_callsign: Option<HamAddr>,
     /// Per-channel overrides (e.g., EMERGENCY requires unencrypted + S=1 + sig).
     pub channel_policies: heapless::Vec<ChannelPolicy, 4>,
@@ -2423,32 +2425,32 @@ Validate against the spec's test vectors.
 **Goal:** A working MAC coordinator that can send, receive, authenticate,
 forward, and acknowledge packets.
 
-- [ ] `umsh-hal`: Radio, Clock, Rng, CounterStore, KeyValueStore traits
-- [ ] `umsh`: `Platform` trait (umbrella crate, bundles HAL + crypto types)
-- [ ] `umsh-mac`: `DuplicateCache` with explicit `DupCacheKey` enum
-- [ ] `umsh-mac`: `ReplayWindow` with per-sender multicast keying
-- [ ] `umsh-mac`: `PeerRegistry` (shared) and `PeerCryptoMap` (per-identity)
-- [ ] `umsh-mac`: `ChannelTable` with per-sender replay maps
-- [ ] `umsh-mac`: `Mac` coordinator — run loop with priority TX queue
-- [ ] `umsh-mac`: `MacHandle` — cloneable send interface
-- [ ] `umsh-mac`: Receive pipeline (full packet processing procedure from spec)
-- [ ] `umsh-mac`: Channel access (CAD + backoff) with immediate-ACK fast path
-- [ ] `umsh-mac`: Repeater forwarding procedure with contention delay
-- [ ] `umsh-mac`: MAC ack generation and matching
-- [ ] `umsh-mac`: Route learning (trace route + flood hop caching in `PeerRegistry`)
-- [ ] `umsh-mac`: Post-transmit listen state (forwarding confirmation window)
-- [ ] `umsh-mac`: Forwarding confirmation + retry logic
-- [ ] `umsh-mac`: `OperatingPolicy` — wire-validity and local-operating enforcement
-- [ ] `umsh-mac`: `register_ephemeral` / `remove_ephemeral` for PFS identities
-- [ ] Integration tests with a mock radio
+- [x] `umsh-hal`: Radio, Clock, Rng, CounterStore, KeyValueStore traits
+- [x] `umsh`: `Platform` trait (umbrella crate, bundles HAL + crypto types)
+- [x] `umsh-mac`: `DuplicateCache` with explicit `DupCacheKey` enum
+- [x] `umsh-mac`: `ReplayWindow` with per-sender multicast keying
+- [x] `umsh-mac`: `PeerRegistry` (shared) and `PeerCryptoMap` (per-identity)
+- [x] `umsh-mac`: `ChannelTable` with per-sender replay maps
+- [x] `umsh-mac`: `Mac` coordinator — run loop with priority TX queue
+- [x] `umsh-mac`: `MacHandle` — cloneable send interface
+- [x] `umsh-mac`: Receive pipeline (full packet processing procedure from spec)
+- [x] `umsh-mac`: Channel access (CAD + backoff) with immediate-ACK fast path
+- [x] `umsh-mac`: Repeater forwarding procedure with contention delay
+- [x] `umsh-mac`: MAC ack generation and matching
+- [x] `umsh-mac`: Route learning (trace route + flood hop caching in `PeerRegistry`)
+- [x] `umsh-mac`: Post-transmit listen state (forwarding confirmation window)
+- [x] `umsh-mac`: Forwarding confirmation + retry logic
+- [x] `umsh-mac`: `OperatingPolicy` — wire-validity and local-operating enforcement
+- [x] `umsh-mac`: `register_ephemeral` / `remove_ephemeral` for PFS identities
+- [x] Integration tests with a mock radio
 - [ ] ACK state machine edge cases:
-  - [ ] Direct ack-requested unicast starts in `AwaitingAck`, not `AwaitingForward`
-  - [ ] Source-routed send starts in `AwaitingForward`, retries on missed confirmation
-  - [ ] Multi-hop: forwarding confirmed early, MAC ACK arrives later
-  - [ ] Blind-unicast ACK matching through internal ack-tag → `SendReceipt` mapping
-  - [ ] Pending-ACK table full: deterministic rejection, not silent drop
-  - [ ] Receipt counter wraparound behavior
-  - [ ] ACK and timeout racing in the same `poll_cycle`
+  - [x] Direct ack-requested unicast starts in `AwaitingAck`, not `AwaitingForward`
+  - [x] Source-routed send starts in `AwaitingForward`, retries on missed confirmation
+  - [x] Multi-hop: forwarding confirmed early, MAC ACK arrives later
+  - [x] Blind-unicast ACK matching through internal ack-tag → `SendReceipt` mapping
+  - [x] Pending-ACK table full: deterministic rejection, not silent drop
+  - [x] Receipt counter wraparound behavior
+  - [x] ACK and timeout racing in the same `poll_cycle`
 
 ### Phase 3: Application Layer
 

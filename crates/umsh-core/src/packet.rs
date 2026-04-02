@@ -18,7 +18,7 @@ pub enum PacketType {
 }
 
 impl PacketType {
-    pub fn from_bits(value: u8) -> Self {
+    pub const fn from_bits(value: u8) -> Self {
         match value & 0x07 {
             0 => Self::Broadcast,
             1 => Self::MacAck,
@@ -34,7 +34,11 @@ impl PacketType {
     pub fn is_secure(self) -> bool {
         matches!(
             self,
-            Self::Unicast | Self::UnicastAckReq | Self::Multicast | Self::BlindUnicast | Self::BlindUnicastAckReq
+            Self::Unicast
+                | Self::UnicastAckReq
+                | Self::Multicast
+                | Self::BlindUnicast
+                | Self::BlindUnicastAckReq
         )
     }
 
@@ -47,7 +51,12 @@ impl PacketType {
 pub struct Fcf(pub u8);
 
 impl Fcf {
-    pub const fn new(packet_type: PacketType, full_source: bool, options_present: bool, flood_hops_present: bool) -> Self {
+    pub const fn new(
+        packet_type: PacketType,
+        full_source: bool,
+        options_present: bool,
+        flood_hops_present: bool,
+    ) -> Self {
         Self(
             (UMSH_VERSION << 6)
                 | ((packet_type as u8) << 3)
@@ -61,7 +70,7 @@ impl Fcf {
         self.0 >> 6
     }
 
-    pub fn packet_type(self) -> PacketType {
+    pub const fn packet_type(self) -> PacketType {
         PacketType::from_bits((self.0 >> 3) & 0x07)
     }
 
@@ -200,12 +209,12 @@ impl PublicKey {
 pub struct ChannelKey(pub [u8; 32]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceAddr {
+pub enum SourceAddr<'a> {
     Hint(NodeHint),
-    Full(PublicKey),
+    Full(&'a PublicKey),
 }
 
-impl SourceAddr {
+impl SourceAddr<'_> {
     pub fn hint(&self) -> NodeHint {
         match self {
             Self::Hint(hint) => *hint,
@@ -223,7 +232,11 @@ pub struct SecInfo {
 
 impl SecInfo {
     pub fn wire_len(&self) -> usize {
-        if self.salt.is_some() { 7 } else { 5 }
+        if self.salt.is_some() {
+            7
+        } else {
+            5
+        }
     }
 
     pub fn encode(&self, buf: &mut [u8]) -> usize {
@@ -329,7 +342,6 @@ pub struct PacketHeader {
     pub ack_dst: Option<[u8; 2]>,
     pub source: SourceAddrRef,
     pub sec_info: Option<SecInfo>,
-    pub sec_info_range: Range<usize>,
     pub body_range: Range<usize>,
     pub mic_range: Range<usize>,
     pub total_len: usize,
@@ -373,7 +385,6 @@ impl PacketHeader {
         let mut ack_dst = None;
         let mut source = SourceAddrRef::None;
         let mut sec_info = None;
-        let mut sec_info_range = cursor..cursor;
 
         match packet_type {
             PacketType::Broadcast => {
@@ -395,7 +406,6 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    sec_info_range,
                     body_range: cursor..buf.len(),
                     mic_range: buf.len()..buf.len(),
                     total_len: buf.len(),
@@ -415,7 +425,6 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    sec_info_range,
                     body_range: cursor..cursor + 8,
                     mic_range: cursor..cursor + 8,
                     total_len: cursor + 8,
@@ -437,11 +446,13 @@ impl PacketHeader {
                 let parsed_sec = SecInfo::decode(&buf[cursor..])?;
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
-                sec_info_range = cursor..cursor + sec_len;
                 cursor += sec_len;
                 let mic_len = parsed_sec.scf.mic_size()?.byte_len();
                 ensure_len(buf, cursor, mic_len)?;
-                let mic_start = buf.len().checked_sub(mic_len).ok_or(ParseError::Truncated)?;
+                let mic_start = buf
+                    .len()
+                    .checked_sub(mic_len)
+                    .ok_or(ParseError::Truncated)?;
                 if mic_start < cursor {
                     return Err(ParseError::Truncated);
                 }
@@ -454,7 +465,6 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    sec_info_range,
                     body_range: cursor..mic_start,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
@@ -467,16 +477,21 @@ impl PacketHeader {
                 let parsed_sec = SecInfo::decode(&buf[cursor..])?;
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
-                sec_info_range = cursor..cursor + sec_len;
                 cursor += sec_len;
                 let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf.len().checked_sub(mic_len).ok_or(ParseError::Truncated)?;
+                let mic_start = buf
+                    .len()
+                    .checked_sub(mic_len)
+                    .ok_or(ParseError::Truncated)?;
                 if mic_start < cursor {
                     return Err(ParseError::Truncated);
                 }
                 if parsed_sec.scf.encrypted() {
                     let src_len = source_len(fcf.full_source());
-                    source = SourceAddrRef::Encrypted { offset: cursor, len: src_len };
+                    source = SourceAddrRef::Encrypted {
+                        offset: cursor,
+                        len: src_len,
+                    };
                     Ok(Self {
                         fcf,
                         options_range,
@@ -486,7 +501,6 @@ impl PacketHeader {
                         ack_dst,
                         source,
                         sec_info,
-                        sec_info_range,
                         body_range: cursor..mic_start,
                         mic_range: mic_start..buf.len(),
                         total_len: buf.len(),
@@ -498,7 +512,11 @@ impl PacketHeader {
                         SourceAddrRef::FullKeyAt { offset: cursor }
                     } else {
                         ensure_len(buf, cursor, 3)?;
-                        SourceAddrRef::Hint(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]))
+                        SourceAddrRef::Hint(NodeHint([
+                            buf[cursor],
+                            buf[cursor + 1],
+                            buf[cursor + 2],
+                        ]))
                     };
                     cursor += src_len;
                     Ok(Self {
@@ -510,7 +528,6 @@ impl PacketHeader {
                         ack_dst,
                         source,
                         sec_info,
-                        sec_info_range,
                         body_range: cursor..mic_start,
                         mic_range: mic_start..buf.len(),
                         total_len: buf.len(),
@@ -524,17 +541,36 @@ impl PacketHeader {
                 let parsed_sec = SecInfo::decode(&buf[cursor..])?;
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
-                sec_info_range = cursor..cursor + sec_len;
                 cursor += sec_len;
                 let src_len = source_len(fcf.full_source());
                 ensure_len(buf, cursor, 3 + src_len)?;
-                source = SourceAddrRef::Encrypted {
-                    offset: cursor + 3,
-                    len: src_len,
-                };
-                cursor += 3 + src_len;
+                if parsed_sec.scf.encrypted() {
+                    source = SourceAddrRef::Encrypted {
+                        offset: cursor + 3,
+                        len: src_len,
+                    };
+                    cursor += 3 + src_len;
+                } else {
+                    dst = Some(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]));
+                    cursor += 3;
+                    source = if fcf.full_source() {
+                        ensure_len(buf, cursor, 32)?;
+                        SourceAddrRef::FullKeyAt { offset: cursor }
+                    } else {
+                        ensure_len(buf, cursor, 3)?;
+                        SourceAddrRef::Hint(NodeHint([
+                            buf[cursor],
+                            buf[cursor + 1],
+                            buf[cursor + 2],
+                        ]))
+                    };
+                    cursor += src_len;
+                }
                 let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf.len().checked_sub(mic_len).ok_or(ParseError::Truncated)?;
+                let mic_start = buf
+                    .len()
+                    .checked_sub(mic_len)
+                    .ok_or(ParseError::Truncated)?;
                 if mic_start < cursor {
                     return Err(ParseError::Truncated);
                 }
@@ -547,7 +583,6 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    sec_info_range,
                     body_range: cursor..mic_start,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
@@ -657,33 +692,23 @@ fn ensure_len(buf: &[u8], offset: usize, len: usize) -> Result<(), ParseError> {
 }
 
 fn scan_options_field(data: &[u8]) -> Result<usize, ParseError> {
-    let mut cursor = 0;
-    while cursor < data.len() {
-        let first = data[cursor];
-        cursor += 1;
-        if first == 0xFF {
-            return Ok(cursor);
-        }
-
-        let delta_nibble = first >> 4;
-        let len_nibble = first & 0x0F;
-        let (_, delta_extra) = scan_extended(&data[cursor..], delta_nibble)?;
-        cursor += delta_extra;
-        let (len, len_extra) = scan_extended(&data[cursor..], len_nibble)?;
-        cursor += len_extra;
-        if cursor + len as usize > data.len() {
-            return Err(ParseError::Truncated);
-        }
-        cursor += len as usize;
+    let mut decoder = OptionDecoder::new(data);
+    while let Some(result) = decoder.next() {
+        result?;
     }
-    Err(ParseError::MissingOptionTerminator)
+
+    Ok(data.len() - decoder.remainder().len())
 }
 
 pub(crate) fn source_len(full_source: bool) -> usize {
-    if full_source { 32 } else { 3 }
+    if full_source {
+        32
+    } else {
+        3
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UnsealedPacket<'a> {
     buf: &'a mut [u8],
     total_len: usize,
@@ -692,25 +717,6 @@ pub struct UnsealedPacket<'a> {
     mic_range: Range<usize>,
     sec_info_range: Range<usize>,
     aad_static_options: Range<usize>,
-}
-
-fn scan_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
-    match nibble {
-        0..=12 => Ok((nibble as u16, 0)),
-        13 => {
-            if data.is_empty() {
-                return Err(ParseError::Truncated);
-            }
-            Ok((data[0] as u16 + 13, 1))
-        }
-        14 => {
-            if data.len() < 2 {
-                return Err(ParseError::Truncated);
-            }
-            Ok((u16::from_be_bytes([data[0], data[1]]) + 269, 2))
-        }
-        _ => Err(ParseError::InvalidOptionNibble),
-    }
 }
 
 impl<'a> UnsealedPacket<'a> {
@@ -734,8 +740,8 @@ impl<'a> UnsealedPacket<'a> {
         }
     }
 
-    pub fn header(&self) -> Result<PacketHeader, ParseError> {
-        PacketHeader::parse(self.as_bytes())
+    pub fn header(&self) -> PacketHeader {
+        PacketHeader::parse(self.as_bytes()).expect("builder emitted invalid packet")
     }
 
     pub fn body(&self) -> &[u8] {
@@ -746,17 +752,17 @@ impl<'a> UnsealedPacket<'a> {
         &mut self.buf[self.body_range.clone()]
     }
 
-    pub fn mic_slot(&mut self) -> &mut [u8] {
-        &mut self.buf[self.mic_range.clone()]
+    pub fn blind_addr_range(&self) -> Option<Range<usize>> {
+        self.blind_addr_range.clone()
     }
 
     pub fn blind_addr(&self) -> Option<&[u8]> {
-        self.blind_addr_range.as_ref().map(|range| &self.buf[range.clone()])
+        let range = self.blind_addr_range.clone()?;
+        Some(&self.buf[range])
     }
 
-    pub fn blind_addr_mut(&mut self) -> Option<&mut [u8]> {
-        let range = self.blind_addr_range.clone()?;
-        Some(&mut self.buf[range])
+    pub fn mic_slot(&mut self) -> &mut [u8] {
+        &mut self.buf[self.mic_range.clone()]
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -773,10 +779,6 @@ impl<'a> UnsealedPacket<'a> {
 
     pub fn sec_info_range(&self) -> Range<usize> {
         self.sec_info_range.clone()
-    }
-
-    pub fn blind_addr_range(&self) -> Option<Range<usize>> {
-        self.blind_addr_range.clone()
     }
 
     pub fn aad_static_options(&self) -> Range<usize> {

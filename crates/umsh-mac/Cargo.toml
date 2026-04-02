@@ -1,0 +1,18 @@
+[package]
+name = "umsh-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std"]
+std = ["umsh-core/std", "umsh-crypto/std", "umsh-hal/std"]
+alloc = []
+software-crypto = ["umsh-crypto/software-crypto"]
+
+[dependencies]
+hamaddr.workspace = true
+heapless.workspace = true
+umsh-core = { path = "../umsh-core", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false }
+umsh-hal = { path = "../umsh-hal", default-features = false }
