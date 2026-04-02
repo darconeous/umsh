@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/darco/Projects/arngll-rust/hamaddr/**)",
+      "Read(//Users/darco/Projects/arngll-rust/hamaddr/src/**)"
+    ]
+  }
+}
