@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/umsh-core",
+    "crates/umsh-crypto",
+    "crates/umsh-hal",
+    "umsh",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+aes = { version = "0.8", default-features = false }
+curve25519-dalek = { version = "4", default-features = false }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }
+rand_core = { version = "0.6", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+zeroize = { version = "1", default-features = false, features = ["derive"] }

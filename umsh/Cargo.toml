@@ -1,0 +1,19 @@
+[package]
+name = "umsh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std", "software-crypto"]
+std = ["umsh-core/std", "umsh-crypto/std", "umsh-hal/std"]
+software-crypto = ["umsh-crypto/software-crypto"]
+
+[dependencies]
+umsh-core = { path = "../crates/umsh-core", default-features = false }
+umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
+umsh-hal = { path = "../crates/umsh-hal", default-features = false }
+
+[[example]]
+name = "generate_phase1_vectors"
+required-features = ["software-crypto"]

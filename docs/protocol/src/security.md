@@ -296,13 +296,15 @@ Dynamic options and the flood hop count are excluded from the AAD because they m
 Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:
 
 ```text
-+--------+--------+-------+
-| number | length | value |
-+--------+--------+-------+
-   1 B      1 B     var.
++----------+----------+-------+
+|  number  |  length  | value |
++----------+----------+-------+
+    2 B (BE)   2 B (BE)  var.
 ```
 
-Where `number` is the option's absolute option number (not a delta) and `length` is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.
+Where `number` is the option's absolute option number (not a delta), encoded as a 2-byte big-endian unsigned integer, and `length` is the value length in bytes, also encoded as a 2-byte big-endian unsigned integer. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.
+
+Using 2-byte fields for both `number` and `length` ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity.
 
 ### Ack Tag Construction
 

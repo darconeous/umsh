@@ -553,7 +553,8 @@ let full_mac = cmac.finalize();
 ```
 
 No intermediate buffer. Each `sink` call receives a small borrowed slice
-(1 byte for FCF, 2–3 bytes for an option TLV header, the option value slice,
+(1 byte for FCF, 4 bytes for an option TLV header — 2-byte big-endian number
+followed by 2-byte big-endian length — then the option value slice,
 2–3 bytes for DST, etc.).
 
 #### Packet Forwarding

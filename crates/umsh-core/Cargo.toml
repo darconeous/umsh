@@ -1,0 +1,13 @@
+[package]
+name = "umsh-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+
+[dependencies]
+zeroize.workspace = true

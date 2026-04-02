@@ -1,0 +1,28 @@
+[package]
+name = "umsh-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std", "software-crypto"]
+std = ["umsh-core/std"]
+alloc = []
+software-crypto = [
+	"dep:aes",
+	"dep:curve25519-dalek",
+	"dep:ed25519-dalek",
+	"dep:rand_core",
+	"dep:sha2",
+	"dep:x25519-dalek",
+]
+
+[dependencies]
+aes = { workspace = true, optional = true }
+curve25519-dalek = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+rand_core = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+x25519-dalek = { workspace = true, optional = true }
+zeroize.workspace = true
+umsh-core = { path = "../umsh-core", default-features = false }
