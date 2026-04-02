@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4ad01c26.js";
+            window.path_to_searchindex_js = "searchindex-86a79382.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -1023,12 +1023,13 @@ K_mic = okm[16..31]
 <p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
-<pre><code class="language-text">+--------+--------+-------+
-| number | length | value |
-+--------+--------+-------+
-   1 B      1 B     var.
+<pre><code class="language-text">+----------+----------+-------+
+|  number  |  length  | value |
++----------+----------+-------+
+    2 B (BE)   2 B (BE)  var.
 </code></pre>
-<p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
+<p>Where <code>number</code> is the option’s absolute option number (not a delta), encoded as a 2-byte big-endian unsigned integer, and <code>length</code> is the value length in bytes, also encoded as a 2-byte big-endian unsigned integer. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
+<p>Using 2-byte fields for both <code>number</code> and <code>length</code> ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity.</p>
 <h3 id="ack-tag-construction"><a class="header" href="#ack-tag-construction">Ack Tag Construction</a></h3>
 <p>When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an <strong>ack tag</strong> — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.</p>
 <p>The ack tag is computed as follows:</p>
@@ -1437,7 +1438,7 @@ delay = uniform_random(0, W)
 <p><strong>Bidirectional establishment</strong>: If Node A also needs a source route to Node B, it can include the trace-route option on its initial packet. When Node B responds (e.g., with an ack, beacon, or identity payload) using its learned route and also including a trace-route option, Node A can learn its own source route to Node B.</p>
 </li>
 </ol>
-<p>Because router hints are only one byte, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
+<p>Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
 <p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
 <ul>
@@ -2077,8 +2078,8 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <h3 id="bridge-hop-confirmation"><a class="header" href="#bridge-hop-confirmation">Bridge Hop Confirmation</a></h3>
 <p>A <strong>bridge</strong> is a node that relays UMSH packets over a different medium or channel than the one it received them on — for example, an internet backhaul, a wired link, or a different radio band connecting two geographically distant segments. Bridges are transparent to the protocol at the MAC layer: they consume source-route hints and forward packets exactly as repeaters do.</p>
 <p>The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment.</p>
-<p>However, retransmitting the entire packet just to communicate the fact that it was received could be considered wasteful. However, if the bridge doesn’t somehow acknowledge the packet, the previous-hop node cannot observe the bridge’s onward transmission and, upon not hearing the expected retransmission, will assume delivery failed and retry. These retries are even more wasteful: the bridge did receive the packet successfully, but there is no way for the previous hop to know that.</p>
-<p>To be honest, it isn’t entirely clear that this is a problem worth optimizing. Bridges aren’t expected to exactly be common. But it is worth thinking about.</p>
+<p>Retransmitting the entire packet solely to signal receipt is wasteful. However, if the bridge does not retransmit, the previous-hop node cannot observe the bridge’s onward transmission and will assume delivery failed — triggering retries that are even more wasteful, since the bridge did receive the packet successfully.</p>
+<p>To be honest, it isn’t entirely clear that this is a problem worth optimizing. Bridges aren’t expected to exactly be common. But it is worth thinking about, so here is a possible solution:</p>
 <h4 id="possibility-hop-signal-for-non-retransmitting-bridges"><a class="header" href="#possibility-hop-signal-for-non-retransmitting-bridges">Possibility: Hop Signal for non-retransmitting bridges</a></h4>
 <p>A <strong>Hop Signal</strong> is a local-only BCST (no FHOPS field, so it is never forwarded) emitted by the bridge on its inbound medium immediately after handling a packet. The BCST carries a MIC reference to the original packet for correlation, a signal type (Hop Ack or Hop Nak), and the bridge’s own 3-byte SRC hint for identification. It is smaller than a full retransmission and can also convey failure (Hop Nak) rather than just presence.</p>
 <p>Because only one packet type slot (value 5) remains reserved, a Hop Signal would be defined as a MAC option on BCST rather than a dedicated packet type, preserving the reserved slot for a future use case with stronger architectural justification.</p>
@@ -2086,27 +2087,23 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <h3 id="intermediate-node-error-feedback"><a class="header" href="#intermediate-node-error-feedback">Intermediate Node Error Feedback</a></h3>
 <h4 id="problem"><a class="header" href="#problem">Problem</a></h4>
 <p>When a packet cannot be delivered — for example, because a bridge’s backhaul link is down, or because a source-routed path is broken — intermediate nodes have no reliable way to inform the original sender. The sender can only detect failure by waiting for a MAC ack that never arrives.</p>
-<p>This timeout-based detection is slow (the sender must wait long enough to account for bridge round-trip latency) and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.</p>
-<p>A fully addressed error reply from an intermediate node is not possible in the general case. Unicast packets carry only a 3-byte source hint — insufficient to address a response or derive the sender’s public key. Only the final destination, which has the full source key (either from cache or the packet itself) and uses it to perform ECDH, can send an authenticated reply.</p>
-<h4 id="possible-approaches"><a class="header" href="#possible-approaches">Possible Approaches</a></h4>
-<p><strong>1. S=1 (full source key) enables complete error replies — no spec change needed</strong></p>
-<p>When the sender sets <code>S=1</code>, any intermediate node receives the full 32-byte Ed25519 public key and has everything needed to construct an authenticated unicast reply. Senders who want error feedback on a specific packet can opt in simply by including their key.</p>
-<p>The drawback is overhead: <code>S=1</code> costs 31 additional bytes and conflates “error feedback desired” with “I’m announcing my public key.” For packets already setting <code>S=1</code> (e.g., first contact, PFS session establishment), this is free. For routine traffic, it is a significant per-packet cost.</p>
-<p><strong>2. Feedback Address option — small, explicit opt-in</strong></p>
-<p>Define a new MAC option carrying only the sender’s own 3-byte hint. This is ~5 bytes with option encoding — much cheaper than <code>S=1</code>. Intermediate nodes that detect an error can address a best-effort response to this 3-byte hint.</p>
-<p>The returned error packet is unencrypted (no ECDH possible) and unauthenticated, but carries the original packet’s MIC-REF for correlation. A 3-byte destination hint gives ~1-in-16M false positives: the sender can treat a match as high-confidence even without cryptographic verification. The receiver must treat this as untrusted diagnostic information only.</p>
-<p>This approach requires a new option number and an unencrypted error packet type or convention.</p>
-<p><strong>3. Reversed trace route path notification</strong></p>
-<p>If the original packet carries a trace route option, the return path back to the sender accumulates hop by hop. An intermediate node that detects an error can reverse the accumulated trace to reconstruct a source route toward the sender, then emit an unencrypted error packet that hops back along that path.</p>
-<p>The sender’s 3-byte SRC hint is used as a coarse destination filter on the returning packet, giving a ~1-in-16M false-positive rate — a false match simply causes an unrelated node to read an error message it cannot correlate to any of its own traffic. The MIC-REF is the real correlator.</p>
-<p>This requires no new addressing mechanism but only works when the sender included a trace route option. It is naturally opt-in: senders who want error feedback include a trace route; senders who do not, don’t. It requires defining what this error packet looks like (a new packet type, or a BCST-with-option convention similar to the Hop Signal mechanism proposed for bridges).</p>
-<p><strong>4. Extend Hop Signal with a return path</strong></p>
-<p>The Hop Signal mechanism (a BCST with a MIC-REF option, emitted by bridges for local ack/nak) could be extended: when a trace route is present, append the reversed path to the Hop Signal so it can travel back toward the sender rather than remaining local. This unifies the bridge ack/nak mechanism with the broader error-feedback problem under a single option definition.</p>
-<h4 id="considerations"><a class="header" href="#considerations">Considerations</a></h4>
-<p>Options 2 and 3 compose well: the Feedback Address option provides a 3-byte return address, and the reversed trace route provides the return path. Together they form a lightweight opt-in error feedback mechanism with ~5–7 bytes of per-packet overhead when enabled.</p>
-<p>Option 1 is available today with no spec changes, covers more than just error feedback, and is already justified on packets that are already setting <code>S=1</code>.</p>
-<p>Any error feedback message traveling back through the network using options 2 and 3 is unencrypted and unauthenticated. The original senders MUST treat such messages as untrusted diagnostic information — a forged error message is equivalent in effect to a dropped packet, which is already in the threat model.</p>
-<p>This remains an open design question. No approach is specified in the current version of this protocol. Additionally, regardless of which addressing mechanism is chosen, the format and semantics of error reports themselves — error codes, what conditions trigger them, how they are encoded — have not yet been defined.</p>
+<p>This timeout-based detection is slow and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.</p>
+<p>Two independent gaps make this hard to address:</p>
+<ul>
+<li>
+<p><strong>Routing</strong>: an intermediate node needs a return path to send anything back. The sender’s 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops can be reversed.</p>
+</li>
+<li>
+<p><strong>Authentication</strong>: an intermediate node cannot send an authenticated reply without the sender’s full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination — which has the full source key and performs ECDH — can send a fully authenticated reply.</p>
+</li>
+</ul>
+<p>Without a trace route, there is no viable return path and no error feedback is possible.</p>
+<h4 id="possible-approach-reversed-trace-route"><a class="header" href="#possible-approach-reversed-trace-route">Possible Approach: Reversed Trace Route</a></h4>
+<p>If the original packet carries a trace route option, an intermediate node can reverse the accumulated hops to construct a source route back toward the original sender and emit an error packet along that path, addressed to the sender’s 3-byte SRC hint.</p>
+<p>This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.</p>
+<p>The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above — a compact notification carrying a signal type and a MIC reference — differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.</p>
+<p>Any such error is unencrypted and unauthenticated. Senders MUST treat it as untrusted diagnostic information only — a forged error is equivalent in effect to a dropped packet, which is already in the threat model.</p>
+<p>This remains an open design question. No mechanism is specified in the current version of this protocol. The format and semantics of error reports — error codes, triggering conditions, encoding — have not yet been defined.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
@@ -2890,22 +2887,29 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="test-vectors"><a class="header" href="#test-vectors">Test Vectors</a></h1>
-<p>This appendix contains byte-level packet examples for implementors. All values are in hexadecimal. Multi-byte numeric fields are big-endian.</p>
-<p>Cryptographic outputs (ciphertext, MIC values) are illustrative — they do not correspond to real key material. Implementations should verify field layout and byte counts, not the specific cryptographic values shown here.</p>
+<p>This appendix contains byte-level packet examples. All values are hexadecimal, and multi-byte numeric fields are big-endian.</p>
 <h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
-<p>The following fictional values are used consistently across examples:</p>
+<p>The generated examples use fixed Ed25519 private keys so the appendix covers the full path from private key to public key to X25519 ECDH to packet bytes.</p>
 <ul>
-<li><strong>Node A</strong> public key: <code>A1B2 0304 0506 0708 090A 0B0C 0D0E 0F10 1112 1314 1516 1718 191A 1B1C 1D1E 1F20</code>
+<li>Node A private key: <code>1112 1314 1516 1718 191A 1B1C 1D1E 1F20 2122 2324 2526 2728 292A 2B2C 2D2E 2F30</code></li>
+<li>Node A public key: <code>ED54 A59F B1AC 3A51 2393 5136 2941 B868 E85A 60E3 D7B2 485D 8288 21DC 7A69 C279</code>
 <ul>
-<li>As source or destination hint (3 bytes): <code>A1 B2 03</code></li>
+<li>Source hint: <code>ED 54 A5</code></li>
 </ul>
 </li>
-<li><strong>Node B</strong> public key: <code>C3D4 2526 2728 292A 2B2C 2D2E 2F30 3132 3334 3536 3738 393A 3B3C 3D3E 3F40</code>
+<li>Node B private key: <code>3132 3334 3536 3738 393A 3B3C 3D3E 3F40 4142 4344 4546 4748 494A 4B4C 4D4E 4F50</code></li>
+<li>Node B public key: <code>6C28 FD05 8C18 C88C 6CCE 2AF9 81D2 D11C 851B 123E D5B6 9B78 7677 3ED0 99EA 3F83</code>
 <ul>
-<li>As source or destination hint (3 bytes): <code>C3 D4 25</code></li>
+<li>Destination hint: <code>6C 28 FD</code></li>
 </ul>
 </li>
-<li><strong>Channel key</strong>: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code> (channel hint: <code>7E5F</code>)</li>
+<li>Pairwise shared secret: <code>5ADD 834F C109 FAD5 2F04 1C5A F84A 7966 526D 364D 1895 AFFC D794 E044 F3A9 DB14</code>
+<ul>
+<li>Derived from the two private keys via the implementation’s Ed25519-to-X25519 conversion and X25519 ECDH.</li>
+</ul>
+</li>
+<li>Channel key: <code>5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A</code></li>
+<li>Derived channel identifier: <code>B0 8D</code></li>
 </ul>
 <h3 id="fcf-bit-layout-reference"><a class="header" href="#fcf-bit-layout-reference">FCF Bit Layout Reference</a></h3>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
@@ -2920,7 +2924,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 +---+-------+---+---------------+
 </code></pre>
 <h2 id="example-1-broadcast-beacon-s0"><a class="header" href="#example-1-broadcast-beacon-s0">Example 1: Broadcast Beacon (S=0)</a></h2>
-<p>A minimal beacon — a broadcast with no payload and no security.</p>
+<p>A minimal beacon with a 3-byte source hint and no payload.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2928,15 +2932,15 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=0, O=0, H=0</td><td><code>C0</code></td></tr>
-<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">C0 A1 B2 03
+<pre><code class="language-text">C0 ED 54 A5
 </code></pre>
 <p>Total: 4 bytes.</p>
 <h2 id="example-2-broadcast-beacon-s1"><a class="header" href="#example-2-broadcast-beacon-s1">Example 2: Broadcast Beacon (S=1)</a></h2>
-<p>A first-contact beacon including the sender’s full 32-byte public key.</p>
+<p>A first-contact beacon carrying the sender’s full 32-byte public key.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2944,17 +2948,17 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=0 (broadcast), S=1, O=0, H=0</td><td><code>C4</code></td></tr>
-<tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
+<tr><td>SRC</td><td>Node A full key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">C4 A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
-10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
-20
+<pre><code class="language-text">C4 ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8
+68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2
+79
 </code></pre>
 <p>Total: 33 bytes.</p>
-<h2 id="example-3-unicast-packet-s0"><a class="header" href="#example-3-unicast-packet-s0">Example 3: Unicast Packet (S=0)</a></h2>
-<p>An encrypted unicast packet from Node A to Node B using source hints.</p>
+<h2 id="example-3-encrypted-unicast-s0"><a class="header" href="#example-3-encrypted-unicast-s0">Example 3: Encrypted Unicast (S=0)</a></h2>
+<p>An encrypted unicast from Node A to Node B using source hints and frame counter 42.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2962,22 +2966,22 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=0, H=0</td><td><code>D0</code></td></tr>
-<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
-<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>6C 28 FD</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted (5 bytes)</td><td><code>8B 3F C7 A2 15</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E 0F</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>4F A0 84 B2 92</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>EA 32 F4 91 09 E8 D4 E6 01 16 73 C1 5B 31 84 F0</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 C3 D4 25 A1 B2 03 E0 00 00 00 2A 8B 3F C7 A2
-15 F0 E1 D2 C3 B4 A5 96 87 78 69 5A 4B 3C 2D 1E
-0F
+<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A 4F A0 84 B2
+92 EA 32 F4 91 09 E8 D4 E6 01 16 73 C1 5B 31 84
+F0
 </code></pre>
-<p>Total: 33 bytes (1 + 3 + 3 + 5 + 5 + 16).</p>
-<h2 id="example-4-unicast-with-ack-requested-s1"><a class="header" href="#example-4-unicast-with-ack-requested-s1">Example 4: Unicast with Ack Requested (S=1)</a></h2>
-<p>A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included so the receiver can perform ECDH without prior state.</p>
+<p>Total: 33 bytes.</p>
+<h2 id="example-4-encrypted-unicast-with-ack-requested-s1"><a class="header" href="#example-4-encrypted-unicast-with-ack-requested-s1">Example 4: Encrypted Unicast with Ack Requested (S=1)</a></h2>
+<p>A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2985,23 +2989,23 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0</td><td><code>DC</code></td></tr>
-<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
-<tr><td>SRC</td><td>Node A full key</td><td><code>A1 B2 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>6C 28 FD</code></td></tr>
+<tr><td>SRC</td><td>Node A full key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
-<tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>55 AA 33</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>B0 B1 B2 B3 B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>68 CF 7B</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>96 3F CE BA 86 8C 92 96 DD E2 E5 0F 5B 54 42 3F</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">DC C3 D4 25 A1 B2 03 04 05 06 07 08 09 0A 0B 0C
-0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C
-1D 1E 1F 20 E0 00 00 00 01 55 AA 33 B0 B1 B2 B3
-B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF
+<pre><code class="language-text">DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
+29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
+7A 69 C2 79 E0 00 00 00 01 68 CF 7B 96 3F CE BA
+86 8C 92 96 DD E2 E5 0F 5B 54 42 3F
 </code></pre>
-<p>Total: 60 bytes (1 + 3 + 32 + 5 + 3 + 16).</p>
+<p>Total: 60 bytes.</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
-<p>An encrypted multicast from Node A. The source hint and payload are encrypted together, concealing the sender from observers without the channel key.</p>
+<p>An encrypted multicast from Node A on channel <code>B08D</code>. The encrypted body contains the source hint followed by the plaintext payload.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3009,20 +3013,20 @@ B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
-<tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
+<tr><td>CHANNEL</td><td>Derived channel identifier</td><td><code>B0 8D</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
-<tr><td>Encrypted data</td><td>ENCRYPT(SRC hint || payload) — 8 bytes</td><td><code>D4 9C 71 E8 3A 5B 02 17</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99</code></td></tr>
+<tr><td>Encrypted data</td><td>ENCRYPT(`SRC</td><td></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>30 35 87 B0 01 F2 17 98 7A 08 1C F5 6E DC 85 36</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F E0 00 00 00 05 D4 9C 71 E8 3A 5B 02 17
-AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
+<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 9B B6 F2 5E C7 DA 95 D2
+30 35 87 B0 01 F2 17 98 7A 08 1C F5 6E DC 85 36
 </code></pre>
-<p>Total: 32 bytes (1 + 2 + 5 + 8 + 16). The 8 encrypted bytes contain the 3-byte source hint and 5 bytes of plaintext payload.</p>
-<h2 id="example-6-unencrypted-multicast-e0"><a class="header" href="#example-6-unencrypted-multicast-e0">Example 6: Unencrypted Multicast (E=0)</a></h2>
-<p>An authenticated but unencrypted multicast from Node A. The source hint appears in cleartext.</p>
+<p>Total: 32 bytes.</p>
+<h2 id="example-6-authenticated-multicast-e0"><a class="header" href="#example-6-authenticated-multicast-e0">Example 6: Authenticated Multicast (E=0)</a></h2>
+<p>An authenticated but unencrypted multicast from Node A carrying payload type <code>03</code> followed by <code>"Hello"</code>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3030,22 +3034,22 @@ AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=4 (multicast), S=0, O=0, H=0</td><td><code>E0</code></td></tr>
-<tr><td>CHANNEL</td><td>Channel hint</td><td><code>7E 5F</code></td></tr>
+<tr><td>CHANNEL</td><td>Derived channel identifier</td><td><code>B0 8D</code></td></tr>
 <tr><td>SCF</td><td>E=0, MIC=3 (16-byte), S=0</td><td><code>60</code></td></tr>
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
-<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
-<tr><td>Payload</td><td>Payload type 3 (text message) + “Hello”</td><td><code>03 48 65 6C 6C 6F</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
+<tr><td>Payload</td><td>`03</td><td></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>7C 9A 9C 4B C0 DD B4 96 65 6A 9D F1 5F 5B 9C C4</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 7E 5F 60 00 00 00 03 A1 B2 03 03 48 65 6C 6C
-6F 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF
-00
+<pre><code class="language-text">E0 B0 8D 60 00 00 00 03 ED 54 A5 03 48 65 6C 6C
+6F 7C 9A 9C 4B C0 DD B4 96 65 6A 9D F1 5F 5B 9C
+C4
 </code></pre>
-<p>Total: 33 bytes (1 + 2 + 5 + 3 + 6 + 16).</p>
-<h2 id="example-7-unicast-with-options"><a class="header" href="#example-7-unicast-with-options">Example 7: Unicast with Options</a></h2>
-<p>An encrypted unicast from Node A to Node B with a flood hop limit of 4 (FHOPS_REM=4, FHOPS_ACC=0), a region code option, and an empty trace-route option (to be populated by repeaters during flooding).</p>
+<p>Total: 33 bytes.</p>
+<h2 id="example-7-encrypted-unicast-with-options-and-flood-hops"><a class="header" href="#example-7-encrypted-unicast-with-options-and-flood-hops">Example 7: Encrypted Unicast with Options and Flood Hops</a></h2>
+<p>An encrypted unicast with a region code option, an empty trace-route option, and flood hop limit 4.</p>
 <p><strong>Options encoding:</strong></p>
 <div class="table-wrapper">
 <table>
@@ -3059,7 +3063,6 @@ AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </tbody>
 </table>
 </div>
-<p>The region code value <code>7853</code> encodes “SJC” in ARNCE/HAM-64.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3067,22 +3070,45 @@ AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
-<tr><td>Options</td><td>Region code (1) + trace route (2) + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
+<tr><td>Options</td><td>Region code + trace route + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
 <tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
-<tr><td>DST</td><td>Node B hint (3 bytes)</td><td><code>C3 D4 25</code></td></tr>
-<tr><td>SRC</td><td>Node A hint (3 bytes)</td><td><code>A1 B2 03</code></td></tr>
+<tr><td>DST</td><td>Node B hint</td><td><code>6C 28 FD</code></td></tr>
+<tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted (3 bytes)</td><td><code>8B 3F C7</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA DB DC DD DE DF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>6F 2F A3</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>3C 80 D2 24 72 8E 15 FF 0C B6 EE CA 27 90 59 AF</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D3 12 78 53 10 FF 40 C3 D4 25 A1 B2 03 E0 00 00
-00 0A 8B 3F C7 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA
-DB DC DD DE DF
+<pre><code class="language-text">D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00
+00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE
+CA 27 90 59 AF
 </code></pre>
-<p>Total: 37 bytes (1 + 5 + 1 + 3 + 3 + 5 + 3 + 16).</p>
+<p>Total: 37 bytes.</p>
+<h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>
+<p>A blind unicast on channel <code>B08D</code>. The destination hint and source hint are encrypted together in <code>ENC_DST_SRC</code>, while the payload is encrypted with the blind-unicast payload keys.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Value</th><th>Hex</th></tr>
+</thead>
+<tbody>
+<tr><td>FCF</td><td>VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0</td><td><code>F0</code></td></tr>
+<tr><td>CHANNEL</td><td>Derived channel identifier</td><td><code>B0 8D</code></td></tr>
+<tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
+<tr><td>Frame Counter</td><td>7</td><td><code>00 00 00 07</code></td></tr>
+<tr><td>ENC_DST_SRC</td><td>ENCRYPT(`DST</td><td></td></tr>
+<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>1A 3B 73 CD 1B</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>42 9D E6 DD 47 AD 3A 6B E5 FF 89 BB 16 15 E8 7A</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 9C A3 DF 8D F8 A6 1A 3B
+73 CD 1B 42 9D E6 DD 47 AD 3A 6B E5 FF 89 BB 16
+15 E8 7A
+</code></pre>
+<p>Total: 35 bytes.</p>
 
                     </main>
 

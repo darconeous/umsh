@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4ad01c26.js";
+            window.path_to_searchindex_js = "searchindex-86a79382.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -399,12 +399,13 @@ K_mic = okm[16..31]
 <p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
-<pre><code class="language-text">+--------+--------+-------+
-| number | length | value |
-+--------+--------+-------+
-   1 B      1 B     var.
+<pre><code class="language-text">+----------+----------+-------+
+|  number  |  length  | value |
++----------+----------+-------+
+    2 B (BE)   2 B (BE)  var.
 </code></pre>
-<p>Where <code>number</code> is the option’s absolute option number (not a delta) and <code>length</code> is the value length in bytes. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
+<p>Where <code>number</code> is the option’s absolute option number (not a delta), encoded as a 2-byte big-endian unsigned integer, and <code>length</code> is the value length in bytes, also encoded as a 2-byte big-endian unsigned integer. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
+<p>Using 2-byte fields for both <code>number</code> and <code>length</code> ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity.</p>
 <h3 id="ack-tag-construction"><a class="header" href="#ack-tag-construction">Ack Tag Construction</a></h3>
 <p>When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an <strong>ack tag</strong> — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.</p>
 <p>The ack tag is computed as follows:</p>
