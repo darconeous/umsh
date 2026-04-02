@@ -556,6 +556,107 @@ No intermediate buffer. Each `sink` call receives a small borrowed slice
 (1 byte for FCF, 2–3 bytes for an option TLV header, the option value slice,
 2–3 bytes for DST, etc.).
 
+#### Packet Forwarding
+
+Forwarding is a **third packet-construction path** alongside parsing and building.
+It takes a received packet and produces a modified copy for retransmission, without
+touching the payload or MIC. Because crypto in UMSH is end-to-end, a repeater never
+re-seals the packet — the MAC layer cryptographically blinds only per-hop metadata.
+
+**Static vs. dynamic options.** The AAD covers only *static* options (those not
+modified by repeaters). The four per-hop mutations all touch *dynamic* fields:
+
+| Field / Option | Mutation |
+|---|---|
+| Flood hops (header field) | Decrement `FHOPS_REM`, increment `FHOPS_ACC` |
+| Source route (option 3) | Pop the leading `RouterHint`; omit option if emptied |
+| Trace route (option 2) | Prepend own `RouterHint` before existing entries |
+| Station callsign (option 7) | Replace (or insert, if absent) with repeater's callsign |
+
+Because dynamic options are not authenticated, none of these mutations require
+re-computing the MIC. The payload and MIC bytes are copied verbatim.
+
+**Why re-encode rather than patch in place.** Options use CoAP-style delta encoding:
+each option header encodes the *delta* from the previous option number. Prepending
+two bytes to the trace-route value shifts the length field for that option and may
+also shift the delta for the *next* option. Popping two bytes from source route has
+the same effect in reverse. Re-encoding the options section from a parsed
+representation is simpler and less error-prone than in-place byte manipulation.
+Header fields outside the options block (flood hops, addresses, SECINFO) are
+small and fixed-size, so they can be patched in place on the copied header.
+
+**API:**
+
+```rust
+/// Parameters for a single forwarding rewrite.
+pub struct ForwardParams {
+    /// This repeater's 2-byte router hint, prepended to the trace-route option
+    /// (if present in the source packet).
+    pub router_hint: RouterHint,
+    /// If `Some`, replace or insert option 7 (station callsign) with this value.
+    /// Required when `amateur_mode` is true.
+    pub station_callsign: Option<HamAddr>,
+}
+
+/// Rewrites a parsed packet into a TX buffer for forwarding.
+///
+/// Constructed from references to the RX buffer and its parsed metadata.
+/// `write()` copies the packet into `dst`, applying per-hop mutations.
+///
+/// The payload and MIC are copied verbatim — no crypto operations are performed.
+pub struct PacketForwarder<'src, 'dst> {
+    src: &'src [u8],
+    dst: &'dst mut [u8],
+    header: &'src PacketHeader,
+    options: &'src ParsedOptions,
+}
+
+impl<'src, 'dst> PacketForwarder<'src, 'dst> {
+    pub fn new(
+        src: &'src [u8],
+        dst: &'dst mut [u8],
+        header: &'src PacketHeader,
+        options: &'src ParsedOptions,
+    ) -> Self;
+
+    /// Perform the forwarding rewrite. Returns the number of bytes written to `dst`.
+    ///
+    /// Steps:
+    /// 1. Copy the fixed header fields; patch flood-hop counts in place.
+    /// 2. Re-encode the options section, applying mutations:
+    ///    - Option 2 (trace route): prepend `router_hint` before existing entries.
+    ///    - Option 3 (source route): skip the first 2-byte `RouterHint`; omit
+    ///      the option entirely if that was the only entry.
+    ///    - Option 7 (station callsign): replace with `params.station_callsign`
+    ///      if `Some`; copy verbatim if `None`.
+    ///    - All other options: copy verbatim, re-encoding deltas for any length
+    ///      changes caused by the mutations above.
+    /// 3. Copy payload and MIC verbatim from `src`.
+    pub fn write(self, params: &ForwardParams) -> Result<usize, ForwardError>;
+}
+
+pub enum ForwardError {
+    /// The destination buffer is too small to hold the forwarded packet.
+    /// (Trace-route prepend grows the packet by 2 bytes per hop.)
+    BufferTooSmall,
+    /// The packet has exhausted all forwarding budget: no remaining flood hops
+    /// and no source-route hints remaining. The MAC coordinator checks this
+    /// before constructing the `PacketForwarder`.
+    NotForwardable,
+}
+```
+
+**Forwarding eligibility** is checked by the MAC coordinator *before* constructing a
+`PacketForwarder`, not inside `write`. Eligibility criteria (remaining hops, region
+match, min-RSSI/SNR, duplicate cache, amateur-mode callsign availability) belong in
+the MAC policy layer. `PacketForwarder` is a mechanical rewriter and assumes the
+caller has already decided that forwarding should occur.
+
+**Buffer sizing.** The TX buffer must accommodate the original packet plus at most
++2 bytes (one prepended trace-route `RouterHint`). If `station_callsign` is inserted
+where none existed before, the packet grows by the encoded option TLV size (~4 bytes).
+The MAC coordinator allocates TX buffers large enough for the worst case.
+
 ---
 
 ### `umsh-crypto` --- Cryptographic Abstractions and UMSH Operations
@@ -1423,6 +1524,7 @@ pub enum MacEventRef<'a> {
         from: PublicKey,
         channel_id: ChannelId,
         payload: &'a [u8],
+        ack_requested: bool,
     },
     Broadcast {
         from_hint: NodeHint,
@@ -1446,7 +1548,7 @@ impl MacEventRef<'_> {
 pub enum MacEvent {
     Unicast { from: PublicKey, payload: alloc::vec::Vec<u8>, ack_requested: bool },
     Multicast { from: PublicKey, channel_id: ChannelId, payload: alloc::vec::Vec<u8> },
-    BlindUnicast { from: PublicKey, channel_id: ChannelId, payload: alloc::vec::Vec<u8> },
+    BlindUnicast { from: PublicKey, channel_id: ChannelId, payload: alloc::vec::Vec<u8>, ack_requested: bool },
     Broadcast { from_hint: NodeHint, from_key: Option<PublicKey>, payload: alloc::vec::Vec<u8> },
     AckReceived { peer: PublicKey, receipt: SendReceipt },
     AckTimeout { peer: PublicKey, receipt: SendReceipt },
@@ -1473,6 +1575,18 @@ pub struct SendOptions {
 
 impl Default for SendOptions {
     /* mic_size: Mic16, encrypted: true, ack_requested: false, flood_hops: Some(5) */
+}
+
+impl SendOptions {
+    pub fn with_mic_size(mut self, mic_size: MicSize) -> Self { self.mic_size = mic_size; self }
+    pub fn with_ack_requested(mut self, v: bool) -> Self { self.ack_requested = v; self }
+    pub fn with_flood_hops(mut self, hops: u8) -> Self { self.flood_hops = Some(hops); self }
+    pub fn no_flood(mut self) -> Self { self.flood_hops = None; self }
+    pub fn with_trace_route(mut self) -> Self { self.trace_route = true; self }
+    pub fn with_source_route(mut self, route: &[RouterHint]) -> Self { self.source_route = Some(route); self }
+    pub fn with_salt(mut self) -> Self { self.salt = true; self }
+    pub fn with_full_source(mut self) -> Self { self.full_source = true; self }
+    pub fn unencrypted(mut self) -> Self { self.encrypted = false; self }
 }
 ```
 
@@ -2228,11 +2342,9 @@ loop {
     let handle = mac.handle();
 
     // Send a sensor reading via the handle (enqueues to TX queue)
-    handle.send_unicast(sensor_id, &gateway_key, &payload, &SendOptions {
-        mic_size: MicSize::Mic4,
-        flood_hops: Some(3),
-        ..Default::default()
-    }).await?;
+    handle.send_unicast(sensor_id, &gateway_key, &payload,
+        &SendOptions::default().with_mic_size(MicSize::Mic4).with_flood_hops(3),
+    ).await?;
 
     // Run the coordinator just long enough to transmit
     // (in practice: run until TX queue is drained)
