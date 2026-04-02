@@ -28,7 +28,7 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 4. **Bidirectional establishment**: If Node A also needs a source route to Node B, it can include the trace-route option on its initial packet. When Node B responds (e.g., with an ack, beacon, or identity payload) using its learned route and also including a trace-route option, Node A can learn its own source route to Node B.
 
-Because router hints are only one byte, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
+Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
 
 ## Route Learning
 

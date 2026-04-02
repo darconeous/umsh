@@ -49,9 +49,9 @@ A **bridge** is a node that relays UMSH packets over a different medium or chann
 
 The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment.
 
-However, retransmitting the entire packet just to communicate the fact that it was received could be considered wasteful. However, if the bridge doesn't somehow acknowledge the packet, the previous-hop node cannot observe the bridge's onward transmission and, upon not hearing the expected retransmission, will assume delivery failed and retry. These retries are even more wasteful: the bridge did receive the packet successfully, but there is no way for the previous hop to know that.
+Retransmitting the entire packet solely to signal receipt is wasteful. However, if the bridge does not retransmit, the previous-hop node cannot observe the bridge's onward transmission and will assume delivery failed — triggering retries that are even more wasteful, since the bridge did receive the packet successfully.
 
-To be honest, it isn't entirely clear that this is a problem worth optimizing. Bridges aren't expected to exactly be common. But it is worth thinking about.
+To be honest, it isn't entirely clear that this is a problem worth optimizing. Bridges aren't expected to exactly be common. But it is worth thinking about, so here is a possible solution:
 
 #### Possibility: Hop Signal for non-retransmitting bridges
 
@@ -67,44 +67,24 @@ Hop signals would be informational only. A forged Hop Ack is equivalent to silen
 
 When a packet cannot be delivered — for example, because a bridge's backhaul link is down, or because a source-routed path is broken — intermediate nodes have no reliable way to inform the original sender. The sender can only detect failure by waiting for a MAC ack that never arrives.
 
-This timeout-based detection is slow (the sender must wait long enough to account for bridge round-trip latency) and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.
+This timeout-based detection is slow and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.
 
-A fully addressed error reply from an intermediate node is not possible in the general case. Unicast packets carry only a 3-byte source hint — insufficient to address a response or derive the sender's public key. Only the final destination, which has the full source key (either from cache or the packet itself) and uses it to perform ECDH, can send an authenticated reply.
+Two independent gaps make this hard to address:
 
-#### Possible Approaches
+- **Routing**: an intermediate node needs a return path to send anything back. The sender's 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops can be reversed.
 
-**1. S=1 (full source key) enables complete error replies — no spec change needed**
+- **Authentication**: an intermediate node cannot send an authenticated reply without the sender's full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination — which has the full source key and performs ECDH — can send a fully authenticated reply.
 
-When the sender sets `S=1`, any intermediate node receives the full 32-byte Ed25519 public key and has everything needed to construct an authenticated unicast reply. Senders who want error feedback on a specific packet can opt in simply by including their key.
+Without a trace route, there is no viable return path and no error feedback is possible.
 
-The drawback is overhead: `S=1` costs 31 additional bytes and conflates "error feedback desired" with "I'm announcing my public key." For packets already setting `S=1` (e.g., first contact, PFS session establishment), this is free. For routine traffic, it is a significant per-packet cost.
+#### Possible Approach: Reversed Trace Route
 
-**2. Feedback Address option — small, explicit opt-in**
+If the original packet carries a trace route option, an intermediate node can reverse the accumulated hops to construct a source route back toward the original sender and emit an error packet along that path, addressed to the sender's 3-byte SRC hint.
 
-Define a new MAC option carrying only the sender's own 3-byte hint. This is ~5 bytes with option encoding — much cheaper than `S=1`. Intermediate nodes that detect an error can address a best-effort response to this 3-byte hint.
+This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.
 
-The returned error packet is unencrypted (no ECDH possible) and unauthenticated, but carries the original packet's MIC-REF for correlation. A 3-byte destination hint gives ~1-in-16M false positives: the sender can treat a match as high-confidence even without cryptographic verification. The receiver must treat this as untrusted diagnostic information only.
+The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above — a compact notification carrying a signal type and a MIC reference — differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.
 
-This approach requires a new option number and an unencrypted error packet type or convention.
+Any such error is unencrypted and unauthenticated. Senders MUST treat it as untrusted diagnostic information only — a forged error is equivalent in effect to a dropped packet, which is already in the threat model.
 
-**3. Reversed trace route path notification**
-
-If the original packet carries a trace route option, the return path back to the sender accumulates hop by hop. An intermediate node that detects an error can reverse the accumulated trace to reconstruct a source route toward the sender, then emit an unencrypted error packet that hops back along that path.
-
-The sender's 3-byte SRC hint is used as a coarse destination filter on the returning packet, giving a ~1-in-16M false-positive rate — a false match simply causes an unrelated node to read an error message it cannot correlate to any of its own traffic. The MIC-REF is the real correlator.
-
-This requires no new addressing mechanism but only works when the sender included a trace route option. It is naturally opt-in: senders who want error feedback include a trace route; senders who do not, don't. It requires defining what this error packet looks like (a new packet type, or a BCST-with-option convention similar to the Hop Signal mechanism proposed for bridges).
-
-**4. Extend Hop Signal with a return path**
-
-The Hop Signal mechanism (a BCST with a MIC-REF option, emitted by bridges for local ack/nak) could be extended: when a trace route is present, append the reversed path to the Hop Signal so it can travel back toward the sender rather than remaining local. This unifies the bridge ack/nak mechanism with the broader error-feedback problem under a single option definition.
-
-#### Considerations
-
-Options 2 and 3 compose well: the Feedback Address option provides a 3-byte return address, and the reversed trace route provides the return path. Together they form a lightweight opt-in error feedback mechanism with ~5–7 bytes of per-packet overhead when enabled.
-
-Option 1 is available today with no spec changes, covers more than just error feedback, and is already justified on packets that are already setting `S=1`.
-
-Any error feedback message traveling back through the network using options 2 and 3 is unencrypted and unauthenticated. The original senders MUST treat such messages as untrusted diagnostic information — a forged error message is equivalent in effect to a dropped packet, which is already in the threat model.
-
-This remains an open design question. No approach is specified in the current version of this protocol. Additionally, regardless of which addressing mechanism is chosen, the format and semantics of error reports themselves — error codes, what conditions trigger them, how they are encoded — have not yet been defined.
+This remains an open design question. No mechanism is specified in the current version of this protocol. The format and semantics of error reports — error codes, triggering conditions, encoding — have not yet been defined.
