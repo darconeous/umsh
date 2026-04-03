@@ -426,6 +426,7 @@ dependencies = [
  "umsh-crypto",
  "umsh-hal",
  "umsh-mac",
+ "umsh-node",
 ]
 
 [[package]]
@@ -472,6 +473,18 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+]
+
+[[package]]
+name = "umsh-node"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "umsh-app",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
 ]
 
 [[package]]

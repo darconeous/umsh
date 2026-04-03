@@ -2469,15 +2469,15 @@ format UMSH URIs.
 
 **Goal:** High-level API that applications actually use.
 
-- [ ] `umsh-node`: `Endpoint` construction and configuration
-- [ ] `umsh-node`: Peer management (delegates to MacHandle)
-- [ ] `umsh-node`: Beacon sending and scheduling
-- [ ] `umsh-node`: Path discovery orchestration
-- [ ] `umsh-node`: PFS session manager (handshake policy, register/remove ephemeral)
-- [ ] `umsh-node`: Two-phase event handling: sync `handle_event()` + async `handle_deferred()`
-- [ ] `umsh-node`: UI acceptance policy (enforced in sync phase)
-- [ ] `umsh-node`: Application-level send helpers (send_text, etc.)
-- [ ] `umsh`: Umbrella crate with re-exports and prelude
+- [x] `umsh-node`: `Endpoint` construction and configuration
+- [x] `umsh-node`: Peer management (delegates to MacHandle)
+- [x] `umsh-node`: Beacon sending and scheduling
+- [x] `umsh-node`: Path discovery orchestration
+- [x] `umsh-node`: PFS session manager (handshake policy, register/remove ephemeral)
+- [x] `umsh-node`: Two-phase event handling: sync `handle_event()` + async `handle_deferred()`
+- [x] `umsh-node`: UI acceptance policy (enforced in sync phase)
+- [x] `umsh-node`: Application-level send helpers (send_text, etc.)
+- [x] `umsh`: Umbrella crate with re-exports and prelude
 
 ### Phase 5: Integration and Examples
 
@@ -2492,7 +2492,7 @@ desktop environments.
 - [ ] `examples/desktop-chat`: Tokio CLI chat client
 - [ ] End-to-end test: two simulated endpoints exchanging text messages
 - [ ] End-to-end test: multi-hop forwarding through a simulated repeater
-- [ ] End-to-end test: PFS session establishment, traffic, and teardown
+- [x] End-to-end test: PFS session establishment, traffic, and teardown
 
 ---
 

@@ -7,6 +7,7 @@ pub use umsh_crypto as crypto;
 pub use umsh_hal as hal;
 pub use umsh_mac as mac;
 pub use umsh_app as app;
+pub use umsh_node as node;
 
 pub trait Platform {
     type Identity: umsh_crypto::NodeIdentity;
@@ -37,6 +38,14 @@ pub mod prelude {
         MessageSequence, MessageType, NodeIdentityPayload, NodeRole, NodeUri, PayloadRef,
         PayloadType, Regarding, TextMessage, UmshUri,
     };
+    pub use umsh_node::{
+        DeferredAction, Endpoint, EndpointConfig, EndpointEvent, EventAction, NodeMac,
+        NodeMacError, OwnedMacCommand, OwnedNodeIdentityPayload, OwnedTextMessage,
+        UiAcceptancePolicy,
+    };
+
+    #[cfg(feature = "software-crypto")]
+    pub use umsh_node::{PfsSession, PfsSessionManager, PfsState};
 
     #[cfg(feature = "std")]
     pub use umsh_app::{EncodeError as AppEncodeError, ParseError as AppParseError};

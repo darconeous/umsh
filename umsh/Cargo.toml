@@ -7,8 +7,8 @@ license.workspace = true
 [features]
 default = ["std", "software-crypto", "chat-rooms"]
 chat-rooms = ["umsh-app/chat-rooms"]
-std = ["umsh-app/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std"]
-software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto"]
+std = ["umsh-app/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std", "umsh-node/std"]
+software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "umsh-node/software-crypto"]
 
 [dependencies]
 embedded-hal-async.workspace = true
@@ -17,6 +17,7 @@ umsh-core = { path = "../crates/umsh-core", default-features = false }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
 umsh-mac = { path = "../crates/umsh-mac", default-features = false }
+umsh-node = { path = "../crates/umsh-node", default-features = false }
 
 [[example]]
 name = "generate_phase1_vectors"

@@ -5,6 +5,7 @@ members = [
     "crates/umsh-hal",
     "crates/umsh-app",
     "crates/umsh-mac",
+    "crates/umsh-node",
     "umsh",
 ]
 resolver = "2"

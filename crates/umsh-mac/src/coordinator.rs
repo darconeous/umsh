@@ -418,6 +418,12 @@ impl<
         self.channels.try_add(key, derived)
     }
 
+    /// Adds or updates a named channel using the coordinator's channel-key derivation.
+    pub fn add_named_channel(&mut self, name: &str) -> Result<(), CapacityError> {
+        let key = self.crypto.derive_named_channel_key(name);
+        self.add_channel(key)
+    }
+
     pub fn identity_count(&self) -> usize {
         self.identities.iter().filter(|slot| slot.is_some()).count()
     }

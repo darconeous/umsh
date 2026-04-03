@@ -128,6 +128,11 @@ impl<
         self.with_mac(|mac| mac.add_channel(key))
     }
 
+    /// Adds or updates a named channel using the coordinator's channel-key derivation.
+    pub fn add_named_channel(&self, name: &str) -> Result<(), MacHandleError<CapacityError>> {
+        self.with_mac(|mac| mac.add_named_channel(name))
+    }
+
     /// Installs pairwise transport keys for one local identity and remote peer.
     pub fn install_pairwise_keys(
         &self,
@@ -180,6 +185,38 @@ impl<
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacHandleError<SendError>> {
         self.with_mac(|mac| mac.queue_blind_unicast(from, dst, channel, payload, options))
+    }
+
+    /// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
+    pub fn fill_random(&self, dest: &mut [u8]) -> Result<(), MacHandleError<core::convert::Infallible>> {
+        self.with_mac(|mac| {
+            mac.rng_mut().fill_bytes(dest);
+            Ok(())
+        })
+    }
+
+    /// Returns the current coordinator clock time in milliseconds.
+    pub fn now_ms(&self) -> Result<u64, MacHandleError<core::convert::Infallible>> {
+        self.with_mac(|mac| Ok(mac.clock().now_ms()))
+    }
+
+    #[cfg(feature = "software-crypto")]
+    /// Registers an ephemeral software identity with the shared coordinator.
+    pub fn register_ephemeral(
+        &self,
+        parent: LocalIdentityId,
+        identity: umsh_crypto::software::SoftwareIdentity,
+    ) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
+        self.with_mac(|mac| mac.register_ephemeral(parent, identity))
+    }
+
+    #[cfg(feature = "software-crypto")]
+    /// Removes a previously registered ephemeral identity.
+    pub fn remove_ephemeral(
+        &self,
+        id: LocalIdentityId,
+    ) -> Result<bool, MacHandleError<core::convert::Infallible>> {
+        self.with_mac(|mac| Ok(mac.remove_ephemeral(id)))
     }
 
     fn with_mac<T, E>(
