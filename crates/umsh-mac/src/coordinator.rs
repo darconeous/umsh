@@ -16,7 +16,8 @@ use crate::{
     cache::{DupCacheKey, DuplicateCache},
     peers::{ChannelTable, PeerCryptoMap, PeerCryptoState, PeerId, PeerRegistry},
     send::{PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue},
-    CapacityError, Platform, DEFAULT_DUP_CACHE_SIZE, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
+    CapacityError, Platform, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES,
+    DEFAULT_PEERS, DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
     ReplayVerdict, ReplayWindow,
 };
 
@@ -393,6 +394,8 @@ impl From<CryptoError> for SendError {
 pub enum MacError<RadioError> {
     /// Underlying radio driver failure.
     Radio(RadioError),
+    /// Internal queue capacity assumptions were violated.
+    QueueFull,
 }
 
 /// Errors returned while loading persisted counters through the MAC coordinator.
@@ -413,13 +416,13 @@ impl<RadioError> From<RadioError> for MacError<RadioError> {
 /// Central MAC coordinator that owns the radio-facing state machine.
 pub struct Mac<
     P: Platform,
-    const IDENTITIES: usize = 4,
-    const PEERS: usize = 16,
-    const CHANNELS: usize = 8,
-    const ACKS: usize = 16,
-    const TX: usize = 16,
+    const IDENTITIES: usize = DEFAULT_IDENTITIES,
+    const PEERS: usize = DEFAULT_PEERS,
+    const CHANNELS: usize = DEFAULT_CHANNELS,
+    const ACKS: usize = DEFAULT_ACKS,
+    const TX: usize = DEFAULT_TX,
     const FRAME: usize = MAX_RESEND_FRAME_LEN,
-    const DUP: usize = DEFAULT_DUP_CACHE_SIZE,
+    const DUP: usize = DEFAULT_DUP,
 > {
     radio: P::Radio,
     crypto: CryptoEngine<P::Aes, P::Sha>,
@@ -610,8 +613,8 @@ impl<
     }
 
     /// Registers or refreshes a known remote peer in the shared registry.
-    pub fn add_peer(&mut self, key: PublicKey) -> PeerId {
-        self.peer_registry.insert_or_update(key)
+    pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
+        self.peer_registry.try_insert_or_update(key)
     }
 
     /// Adds or updates a shared channel and derives its multicast keys.
@@ -845,14 +848,13 @@ impl<
         Ok(receipt)
     }
 
-    /// Transmits the highest-priority queued frame that is currently allowed to send.
+    /// Transmit the next eligible queued frame, if any.
     ///
     /// While a post-transmit forwarding listen window is active, only immediate MAC
     /// ACK traffic is permitted to bypass the listen state. Forwarded sends arm a new
     /// listen window after the radio transmit completes. Non-immediate traffic honors
     /// queued CAD backoff state and gives up after the configured maximum number of
     /// CAD attempts.
-    /// Transmit the next eligible queued frame, if any.
     pub async fn transmit_next(&mut self) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
         let Some(queued) = self.tx_queue.pop_next() else {
@@ -861,13 +863,12 @@ impl<
         let now_ms = self.clock.now_ms();
 
         if queued.not_before_ms > now_ms {
-            self.requeue_tx(&queued).expect("requeue during CAD backoff must fit in tx queue");
+            self.requeue_tx(&queued).map_err(|_| MacError::QueueFull)?;
             return Ok(None);
         }
 
         if self.post_tx_listen.is_some() && queued.priority != TxPriority::ImmediateAck {
-            self.requeue_tx(&queued)
-                .expect("requeue during post-transmit listen must fit in tx queue");
+            self.requeue_tx(&queued).map_err(|_| MacError::QueueFull)?;
             return Ok(None);
         }
 
@@ -887,7 +888,7 @@ impl<
                         now_ms.saturating_add(backoff_ms),
                         next_attempt,
                     )
-                    .expect("requeue after busy CAD must fit in tx queue");
+                    .map_err(|_| MacError::QueueFull)?;
                 return Ok(None);
             }
         }
@@ -900,11 +901,10 @@ impl<
         Ok(receipt)
     }
 
-    /// Drains queued transmissions until the queue is empty or no additional progress is possible.
+    /// Keep transmitting until the queue is empty.
     ///
     /// Progress stops when CAD keeps reporting busy, when a post-transmit listen window blocks
     /// normal traffic, or when the queue is otherwise unable to shrink further in the current cycle.
-    /// Keep transmitting until the queue is empty.
     pub async fn drain_tx_queue(&mut self) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         while !self.tx_queue.is_empty() {
             let queue_len = self.tx_queue.len();
@@ -940,7 +940,7 @@ impl<
         }
         self.drain_tx_queue().await?;
         self.service_pending_ack_timeouts(&mut on_event)
-            .expect("poll_cycle timeout servicing must fit in existing tx queue capacity");
+            .map_err(|_| MacError::QueueFull)?;
         Ok(())
     }
 
@@ -1263,10 +1263,10 @@ impl<
             let mut actions: Vec<Action<FRAME>, ACKS> = Vec::new();
             for (receipt, pending) in slot.pending_acks.iter_mut() {
                 if now_ms >= pending.ack_deadline_ms {
-                    let _ = actions.push(Action::Timeout {
+                    actions.push(Action::Timeout {
                         receipt: *receipt,
                         peer: pending.peer,
-                    });
+                    }).map_err(|_| CapacityError)?;
                     continue;
                 }
 
@@ -1277,10 +1277,10 @@ impl<
                         pending.state = crate::AckState::AwaitingForward {
                             confirm_deadline_ms: now_ms + confirm_window_ms,
                         };
-                        let _ = actions.push(Action::Retry {
+                        actions.push(Action::Retry {
                             receipt: *receipt,
                             resend: pending.resend.clone(),
-                        });
+                        }).map_err(|_| CapacityError)?;
                     }
                 }
             }

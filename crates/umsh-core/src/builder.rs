@@ -513,6 +513,10 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
     }
 
     /// Emit a blind-unicast packet without encrypting the payload.
+    ///
+    /// This exists primarily for tests and for explicit policy-rejection
+    /// scenarios where higher layers need to construct a frame they expect to
+    /// reject. Normal blind-unicast traffic should remain encrypted.
     pub fn unencrypted(mut self) -> Self {
         self.encrypted = false;
         self
@@ -609,7 +613,7 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
             self.buf
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
-        );
+        )?;
         let body_range = self.copy_staged_payload(&mut cursor)?;
         let mic_start = cursor;
         let mic_end = mic_start + self.mic_size.byte_len();
@@ -656,7 +660,7 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
             self.buf
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
-        );
+        )?;
         let body_start = cursor;
         self.write_source(&mut cursor)?;
         let payload_range = self.copy_staged_payload(&mut cursor)?;
@@ -710,7 +714,7 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
             self.buf
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
-        );
+        )?;
         let blind_addr_range = self.stage_blind_addr(&mut cursor)?;
         let body_range = self.copy_staged_payload(&mut cursor)?;
         let mic_start = cursor;

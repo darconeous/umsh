@@ -47,7 +47,7 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
-    let peer_id = mac.add_peer(*remote.public_key());
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();

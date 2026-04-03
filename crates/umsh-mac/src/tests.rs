@@ -45,10 +45,24 @@ fn replay_window_accepts_forward_jump_of_eight_without_panicking() {
 }
 
 #[test]
+fn replay_window_rejects_replay_after_recent_mic_eviction() {
+    let mut window = ReplayWindow::new();
+
+    for counter in 10..=18 {
+        let mic = [counter as u8; 8];
+        assert_eq!(window.check(counter, &mic, counter as u64), ReplayVerdict::Accept);
+        window.accept(counter, &mic, counter as u64);
+    }
+
+    assert_eq!(window.recent_mics.len(), crate::RECENT_MIC_CAPACITY);
+    assert_eq!(window.check(10, &[10u8; 8], 20), ReplayVerdict::Replay);
+}
+
+#[test]
 fn peer_registry_looks_up_by_hint_and_updates_route() {
     let mut registry = PeerRegistry::<4>::new();
     let key = PublicKey([0xA1; 32]);
-    let peer_id = registry.insert_or_update(key);
+    let peer_id = registry.try_insert_or_update(key).unwrap();
 
     let matches: heapless::Vec<PeerId, 4> = registry.lookup_by_hint(&key.hint()).map(|(id, _)| id).collect();
     assert_eq!(matches.as_slice(), &[peer_id]);
@@ -67,8 +81,8 @@ fn channel_table_updates_existing_channel() {
     let derived_a = umsh_crypto::DerivedChannelKeys { k_enc: [1; 16], k_mic: [2; 16], channel_id: ChannelId([0xAA, 0xBB]) };
     let derived_b = umsh_crypto::DerivedChannelKeys { k_enc: [3; 16], k_mic: [4; 16], channel_id: ChannelId([0xAA, 0xBB]) };
 
-    table.add(key_a, derived_a);
-    table.add(key_b.clone(), derived_b.clone());
+    table.try_add(key_a, derived_a).unwrap();
+    table.try_add(key_b.clone(), derived_b.clone()).unwrap();
 
     let stored = table.lookup_by_id(&derived_b.channel_id).next().unwrap();
     assert_eq!(stored.channel_key.0, key_b.0);
@@ -146,7 +160,7 @@ fn mac_adds_identities_peers_and_channels() {
 
     let id_a = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let id_b = mac.add_identity(DummyIdentity::new([0x20; 32])).unwrap();
-    let peer = mac.add_peer(PublicKey([0xAB; 32]));
+    let peer = mac.add_peer(PublicKey([0xAB; 32])).unwrap();
     mac.add_channel(ChannelKey([0x5A; 32])).unwrap();
 
     assert_eq!(id_a, LocalIdentityId(0));
@@ -162,7 +176,7 @@ fn queue_unicast_requires_installed_pairwise_keys() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let _peer_id = mac.add_peer(peer_key);
+    let _peer_id = mac.add_peer(peer_key).unwrap();
 
     assert_eq!(mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default()), Err(SendError::PairwiseKeysMissing));
 }
@@ -172,7 +186,7 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().with_ack_requested(true).no_flood()).unwrap().unwrap();
@@ -209,7 +223,7 @@ fn queue_blind_unicast_requires_known_channel() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     assert_eq!(
@@ -226,7 +240,7 @@ fn licensed_only_mode_rejects_encrypted_unicast() {
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     assert_eq!(
@@ -243,7 +257,7 @@ fn licensed_only_mode_rejects_encrypted_blind_unicast() {
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
@@ -263,7 +277,7 @@ fn licensed_only_mode_allows_unencrypted_blind_unicast_with_operator_callsign() 
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
@@ -281,7 +295,7 @@ fn hybrid_mode_allows_encrypted_unicast_without_operator_callsign() {
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     assert!(mac
@@ -296,7 +310,7 @@ fn unlicensed_mode_allows_blind_unicast_without_operator_callsign() {
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
@@ -478,7 +492,7 @@ fn queue_blind_unicast_enqueues_frame_and_pending_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
@@ -524,7 +538,7 @@ fn first_secure_send_schedules_counter_persist() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()).unwrap();
@@ -542,7 +556,7 @@ fn counter_persist_threshold_schedules_next_block() {
         .unwrap()
         .set_counter_persistence_state_for_test(true, None);
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     for _ in 0..100 {
@@ -559,7 +573,7 @@ fn service_counter_persistence_writes_and_clears_pending_targets() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
     mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()).unwrap();
 
@@ -596,7 +610,7 @@ fn secure_send_blocks_when_counter_window_exhausted() {
     mac.identity_mut(local_id).unwrap().load_persisted_counter(0);
     mac.identity_mut(local_id).unwrap().set_frame_counter(128);
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     assert_eq!(
@@ -730,7 +744,7 @@ fn receive_one_emits_ack_received_for_matching_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -759,7 +773,7 @@ fn receive_one_ignores_unmatched_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -787,7 +801,7 @@ fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
@@ -820,7 +834,7 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -850,7 +864,7 @@ fn receive_one_delivers_unicast_without_ack_when_not_requested() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -876,7 +890,7 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -919,8 +933,8 @@ fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
-    let _peer_a = mac.add_peer(candidate_a);
-    let peer_b = mac.add_peer(candidate_b);
+    let _peer_a = mac.add_peer(candidate_a).unwrap();
+    let peer_b = mac.add_peer(candidate_b).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_b, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -945,7 +959,7 @@ fn receive_one_delivers_blind_unicast_and_queues_immediate_ack() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -980,7 +994,7 @@ fn receive_one_delivers_unencrypted_blind_unicast() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -1010,7 +1024,7 @@ fn receive_one_delivers_source_routed_unicast_without_immediate_ack() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -1046,7 +1060,7 @@ fn receive_one_delivers_source_routed_blind_unicast_without_immediate_ack() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, pairwise.clone()).unwrap();
 
@@ -1092,7 +1106,7 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
@@ -1139,8 +1153,8 @@ fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
-    let _peer_a = mac.add_peer(candidate_a);
-    let peer_b = mac.add_peer(candidate_b);
+    let _peer_a = mac.add_peer(candidate_a).unwrap();
+    let peer_b = mac.add_peer(candidate_b).unwrap();
     let pairwise = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
@@ -1212,7 +1226,7 @@ fn receive_one_delivers_multicast_for_known_channel() {
     let peer_key = *remote.public_key();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_peer(peer_key);
+    mac.add_peer(peer_key).unwrap();
     mac.add_channel(channel_key.clone()).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
@@ -1245,7 +1259,7 @@ fn receive_one_drops_replayed_multicast_after_first_delivery() {
     let peer_key = *remote.public_key();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
-    mac.add_peer(peer_key);
+    mac.add_peer(peer_key).unwrap();
     mac.add_channel(channel_key.clone()).unwrap();
 
     let derived = mac.crypto().derive_channel_keys(&channel_key);
@@ -1280,7 +1294,7 @@ fn receive_one_ignores_multicast_for_unknown_channel() {
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     let derived = mac.crypto().derive_channel_keys(&channel_key);
     let keys = PairwiseKeys { k_enc: derived.k_enc, k_mic: derived.k_mic };
-    mac.add_peer(peer_key);
+    mac.add_peer(peer_key).unwrap();
     mac.radio_mut().queue_received_multicast(&remote, channel_id, &keys, b"group");
 
     let mut seen = false;
@@ -1300,7 +1314,7 @@ fn receive_one_multicast_with_full_registry_drops_unknown_sender_without_panicki
     let mut mac = make_small_peer_mac::<1>();
     let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let known_peer = PublicKey([0xCD; 32]);
-    let _peer_id = mac.add_peer(known_peer);
+    let _peer_id = mac.add_peer(known_peer).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -1322,7 +1336,7 @@ fn receive_one_learns_reversed_trace_route_for_unicast_sender() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -1346,7 +1360,7 @@ fn receive_one_learns_flood_hops_for_multicast_sender() {
     let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_channel(channel_key.clone()).unwrap();
@@ -1370,7 +1384,7 @@ fn receive_one_confirms_forwarded_send_when_same_frame_is_overheard() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let route = [RouterHint([1, 2])];
@@ -1498,7 +1512,7 @@ fn poll_cycle_holds_application_tx_while_forward_listen_is_active() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let route = [RouterHint([1, 2])];
@@ -1536,7 +1550,7 @@ fn poll_cycle_drains_tx_receives_unicast_and_sends_immediate_ack() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
     let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
@@ -1565,7 +1579,7 @@ fn poll_cycle_emits_ack_timeout_after_receive_phase() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -1592,7 +1606,7 @@ fn confirmed_forwarded_send_no_longer_retries_on_confirmation_timeout() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let route = [RouterHint([1, 2])];
@@ -1617,7 +1631,7 @@ fn forwarded_send_can_confirm_then_complete_on_later_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let route = [RouterHint([1, 2])];
@@ -1657,7 +1671,7 @@ fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -1690,7 +1704,7 @@ fn send_receipts_wrap_from_u32_max_back_to_zero() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
     mac.identity_mut(local_id).unwrap().set_next_receipt_for_test(u32::MAX);
 
@@ -1714,7 +1728,7 @@ fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -1741,7 +1755,7 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let route = [RouterHint([1, 2])];
@@ -1768,7 +1782,7 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = mac.add_peer(peer_key);
+    let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
 
     let receipt = mac
@@ -1860,7 +1874,7 @@ fn build_received_unicast_frame(
 
     let mut packet = builder.payload(payload).build().unwrap();
     if let Some((remaining, accumulated)) = flood_hops {
-        let header = packet.header();
+        let header = packet.header().unwrap();
         packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(remaining, accumulated).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha).seal_packet(&mut packet, keys).unwrap();
@@ -2047,7 +2061,7 @@ impl DummyRadio {
         };
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
-            let header = packet.header();
+            let header = packet.header().unwrap();
             packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha).seal_packet(&mut packet, keys).unwrap();
@@ -2186,7 +2200,7 @@ impl DummyRadio {
         };
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
-            let header = packet.header();
+            let header = packet.header().unwrap();
             packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha)

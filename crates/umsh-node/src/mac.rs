@@ -124,10 +124,7 @@ impl<
     type CapacityError = CapacityError;
 
     fn add_peer(&self, key: PublicKey) -> Result<PeerId, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.add_peer(key).map_err(|error| match error {
-            MacHandleError::Busy => NodeMacError::Busy,
-            MacHandleError::Inner(inner) => match inner {},
-        })
+        self.add_peer(key).map_err(NodeMacError::from_capacity_error)
     }
 
     fn add_private_channel(&self, key: ChannelKey) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {

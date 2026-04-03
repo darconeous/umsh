@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{options::OptionDecoder, ParseError};
+use crate::{options::OptionDecoder, EncodeError, ParseError};
 
 /// Current UMSH packet version encoded in the FCF high bits.
 pub const UMSH_VERSION: u8 = 0b11;
@@ -279,15 +279,17 @@ impl SecInfo {
     }
 
     /// Encode SECINFO into `buf` and return the number of bytes written.
-    pub fn encode(&self, buf: &mut [u8]) -> usize {
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, EncodeError> {
         let needed = self.wire_len();
-        assert!(buf.len() >= needed);
+        if buf.len() < needed {
+            return Err(EncodeError::BufferTooSmall);
+        }
         buf[0] = self.scf.0;
         buf[1..5].copy_from_slice(&self.frame_counter.to_be_bytes());
         if let Some(salt) = self.salt {
             buf[5..7].copy_from_slice(&salt.to_be_bytes());
         }
-        needed
+        Ok(needed)
     }
 
     /// Decode SECINFO from the start of `buf`.
@@ -672,10 +674,11 @@ impl ParsedOptions {
         if range.is_empty() {
             return Ok(parsed);
         }
-        let base_ptr = buf.as_ptr() as usize;
-        for entry in OptionDecoder::new(&buf[range]) {
+        let options = &buf[range.clone()];
+        for entry in OptionDecoder::new(options) {
             let (number, value) = entry?;
-            let value_start = value.as_ptr() as usize - base_ptr;
+            let relative_start = unsafe { value.as_ptr().offset_from(options.as_ptr()) } as usize;
+            let value_start = range.start + relative_start;
             let value_range = value_start..value_start + value.len();
             match OptionNumber::from(number) {
                 OptionNumber::RegionCode if value.len() == 2 => {
@@ -729,7 +732,9 @@ pub fn feed_aad(header: &PacketHeader, packet_buf: &[u8], mut sink: impl FnMut(&
     }
     if let Some(sec_info) = header.sec_info {
         let mut buf = [0u8; 7];
-        let len = sec_info.encode(&mut buf);
+        let Ok(len) = sec_info.encode(&mut buf) else {
+            return;
+        };
         sink(&buf[..len]);
     }
 }
@@ -791,8 +796,8 @@ impl<'a> UnsealedPacket<'a> {
         }
     }
 
-    pub fn header(&self) -> PacketHeader {
-        PacketHeader::parse(self.as_bytes()).expect("builder emitted invalid packet")
+    pub fn header(&self) -> Result<PacketHeader, ParseError> {
+        PacketHeader::parse(self.as_bytes())
     }
 
     pub fn body(&self) -> &[u8] {

@@ -21,20 +21,23 @@ use umsh_crypto::{
 };
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
 
-use crate::{Mac, OperatingPolicy, Platform, RepeaterConfig};
+use crate::{
+    Mac, OperatingPolicy, Platform, RepeaterConfig, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP,
+    DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
+};
 
 const DEFAULT_RSSI: i16 = -40;
 const DEFAULT_SNR: i8 = 10;
 
 /// Convenience alias for a `Mac` instantiated with the simulated test components.
 pub type TestMac<
-    const IDENTITIES: usize = 4,
-    const PEERS: usize = 16,
-    const CHANNELS: usize = 8,
-    const ACKS: usize = 16,
-    const TX: usize = 16,
-    const FRAME: usize = 256,
-    const DUP: usize = 64,
+    const IDENTITIES: usize = DEFAULT_IDENTITIES,
+    const PEERS: usize = DEFAULT_PEERS,
+    const CHANNELS: usize = DEFAULT_CHANNELS,
+    const ACKS: usize = DEFAULT_ACKS,
+    const TX: usize = DEFAULT_TX,
+    const FRAME: usize = DEFAULT_FRAME,
+    const DUP: usize = DEFAULT_DUP,
 > = Mac<
     TestPlatform,
     IDENTITIES,

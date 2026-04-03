@@ -17,6 +17,21 @@ pub(crate) const DEFAULT_DUP_CACHE_SIZE: usize = 64;
 pub(crate) const MAX_FORWARD_RETRIES: u8 = 3;
 pub(crate) const MAX_CAD_ATTEMPTS: u8 = 5;
 
+/// Default identity-slot capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_IDENTITIES: usize = 4;
+/// Default remote-peer capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_PEERS: usize = 16;
+/// Default shared-channel capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_CHANNELS: usize = 8;
+/// Default pending-ACK capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_ACKS: usize = 16;
+/// Default transmit-queue depth for the common `Mac<P>` configuration.
+pub const DEFAULT_TX: usize = 16;
+/// Default frame-buffer capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
+/// Default duplicate-cache capacity for the common `Mac<P>` configuration.
+pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
+
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapacityError;

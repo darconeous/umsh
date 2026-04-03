@@ -85,7 +85,7 @@ mod tests {
             salt: Some(0x1234),
         };
         let mut buf = [0u8; 7];
-        let len = sec.encode(&mut buf);
+        let len = sec.encode(&mut buf).unwrap();
         assert_eq!(len, 7);
         assert_eq!(SecInfo::decode(&buf).unwrap(), sec);
     }

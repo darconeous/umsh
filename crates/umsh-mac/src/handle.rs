@@ -9,7 +9,8 @@ use crate::{
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, SendError},
     peers::{PeerCryptoState, PeerId},
     send::{SendOptions, SendReceipt},
-    CapacityError, Platform,
+    CapacityError, Platform, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME,
+    DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
 };
 
 /// Error returned when a `MacHandle` operation cannot access the shared coordinator.
@@ -29,13 +30,13 @@ pub enum MacHandleError<E> {
 pub struct MacHandle<
     'a,
     P: Platform,
-    const IDENTITIES: usize,
-    const PEERS: usize,
-    const CHANNELS: usize,
-    const ACKS: usize,
-    const TX: usize,
-    const FRAME: usize,
-    const DUP: usize,
+    const IDENTITIES: usize = DEFAULT_IDENTITIES,
+    const PEERS: usize = DEFAULT_PEERS,
+    const CHANNELS: usize = DEFAULT_CHANNELS,
+    const ACKS: usize = DEFAULT_ACKS,
+    const TX: usize = DEFAULT_TX,
+    const FRAME: usize = DEFAULT_FRAME,
+    const DUP: usize = DEFAULT_DUP,
 > {
     mac: &'a RefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
 }
@@ -113,8 +114,8 @@ impl<
     }
 
     /// Registers or refreshes a remote peer in the shared registry.
-    pub fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| Ok(mac.add_peer(key)))
+    pub fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacHandleError<CapacityError>> {
+        self.with_mac(|mac| mac.add_peer(key))
     }
 
     /// Adds or updates a shared channel and derives its multicast keys.

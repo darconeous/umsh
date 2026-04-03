@@ -96,12 +96,6 @@ impl<const N: usize> PeerRegistry<N> {
         Ok(PeerId((self.peers.len() - 1) as u8))
     }
 
-    /// Insert or refresh a peer entry, panicking on capacity exhaustion.
-    pub fn insert_or_update(&mut self, key: PublicKey) -> PeerId {
-        self.try_insert_or_update(key)
-            .expect("peer registry capacity exceeded")
-    }
-
     /// Update the cached route for `id`.
     pub fn update_route(&mut self, id: PeerId, route: CachedRoute) {
         if let Some(peer) = self.get_mut(id) {
@@ -266,9 +260,4 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
             .map_err(|_| CapacityError)
     }
 
-    /// Add or replace a channel entry, panicking on capacity exhaustion.
-    pub fn add(&mut self, key: ChannelKey, derived: DerivedChannelKeys) {
-        self.try_add(key, derived)
-            .expect("channel table capacity exceeded")
-    }
 }

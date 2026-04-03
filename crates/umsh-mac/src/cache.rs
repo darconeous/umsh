@@ -133,11 +133,18 @@ impl ReplayWindow {
             return ReplayVerdict::OutOfWindow;
         }
 
-        if self.has_matching_recent_mic(counter, mic, now_ms) {
-            ReplayVerdict::Replay
+        let slot_occupied = if delta == 0 {
+            true
         } else {
-            ReplayVerdict::Accept
+            self.backward_bitmap & (1u8 << (delta - 1)) != 0
+        };
+
+        if !slot_occupied {
+            return ReplayVerdict::Accept;
         }
+
+        let _ = self.has_matching_recent_mic(counter, mic, now_ms);
+        ReplayVerdict::Replay
     }
 
     /// Record an accepted `counter` and `mic` at `now_ms`.

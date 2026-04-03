@@ -53,6 +53,8 @@ pub enum BuildError {
     MissingAckTag,
     /// Options were added in descending order.
     OptionOutOfOrder,
+    /// Builder output failed structural validation.
+    InvalidPacket,
 }
 
 impl From<EncodeError> for BuildError {

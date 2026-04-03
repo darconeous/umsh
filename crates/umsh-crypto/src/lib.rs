@@ -104,6 +104,19 @@ pub struct DerivedChannelKeys {
     pub channel_id: ChannelId,
 }
 
+impl Zeroize for DerivedChannelKeys {
+    fn zeroize(&mut self) {
+        self.k_enc.zeroize();
+        self.k_mic.zeroize();
+    }
+}
+
+impl Drop for DerivedChannelKeys {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Incremental AES-CMAC state.
 pub struct CmacState<C: AesCipher> {
     cipher: C,
@@ -255,7 +268,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
 
     /// Seal a unicast or multicast packet in place.
     pub fn seal_packet(&self, packet: &mut UnsealedPacket<'_>, keys: &PairwiseKeys) -> Result<usize, CryptoError> {
-        let header = packet.header();
+        let header = packet.header().map_err(|_| CryptoError::InvalidPacket)?;
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
             let bytes = packet.as_bytes();
@@ -283,7 +296,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         blind_keys: &PairwiseKeys,
         channel_keys: &DerivedChannelKeys,
     ) -> Result<usize, CryptoError> {
-        let header = packet.header();
+        let header = packet.header().map_err(|_| CryptoError::InvalidPacket)?;
         match header.packet_type() {
             PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {}
             _ => return Err(CryptoError::InvalidPacket),
@@ -482,12 +495,12 @@ fn increment_counter(counter: &mut [u8; 16]) {
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (lhs, rhs) in left.iter().zip(right.iter()) {
-        diff |= lhs ^ rhs;
+    let mut diff = left.len() ^ right.len();
+    let max_len = left.len().max(right.len());
+    for index in 0..max_len {
+        let lhs = left.get(index).copied().unwrap_or(0);
+        let rhs = right.get(index).copied().unwrap_or(0);
+        diff |= usize::from(lhs ^ rhs);
     }
     diff == 0
 }
@@ -698,6 +711,7 @@ mod tests {
     fn constant_time_eq_rejects_mismatch() {
         assert!(constant_time_eq(&[1, 2, 3], &[1, 2, 3]));
         assert!(!constant_time_eq(&[1, 2, 3], &[1, 2, 4]));
+        assert!(!constant_time_eq(&[1, 2, 3], &[1, 2, 3, 4]));
     }
 
     #[cfg(feature = "software-crypto")]
