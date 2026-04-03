@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-86a79382.js";
+            window.path_to_searchindex_js = "searchindex-95281a52.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -285,7 +285,8 @@
 <ul>
 <li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
 <li>Semantics: identifies the original packet sender’s amateur radio callsign.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
+<li>Use: required for locally originated packets in <code>Licensed-Only</code> amateur operation.</li>
+<li>In <code>Hybrid</code> operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.</li>
 </ul>
 <h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
 <ul>
@@ -301,7 +302,13 @@
 <li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
 <li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
 <li>This option is critical because repeaters must replace or remove it during forwarding.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
+<li>Use:
+<ul>
+<li>in <code>Licensed-Only</code> mode, repeaters replace or insert it on every forwarded packet</li>
+<li>in <code>Hybrid</code> mode, repeaters also replace or insert it on every forwarded packet</li>
+<li>in <code>Unlicensed</code> mode, repeaters remove it if present and do not add their own</li>
+</ul>
+</li>
 </ul>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>

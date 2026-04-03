@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-86a79382.js";
+            window.path_to_searchindex_js = "searchindex-95281a52.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -607,23 +607,39 @@ place that it appeared in encrypted multicast:</p>
 </code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
+<p>Like other channel-addressed packets, blind unicast honors the <code>E</code> flag in <code>SECINFO</code>.</p>
+<h3 id="encrypted-blind-unicast-e--1"><a class="header" href="#encrypted-blind-unicast-e--1">Encrypted Blind Unicast (E = 1)</a></h3>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 <p>The <code>MIC</code> is computed over the payload using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<h3 id="unencrypted-blind-unicast-e--0"><a class="header" href="#unencrypted-blind-unicast-e--0">Unencrypted Blind Unicast (E = 0)</a></h3>
+<p>When encryption is disabled, blind unicast still uses the channel identifier and
+the blind-unicast packet type, but the destination hint, source address, and
+payload appear in cleartext:</p>
+<pre><code class="language-text">+-----+-----------+------+---------+---------+-----+------+---------+------+
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | DST | SRC  | PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+-----+------+---------+------+
+  1 B    variable   0/1 B    2 B      5/7 B   3 B  3/32 B    var.   4-16 B
+</code></pre>
+<p>In this mode, the packet remains channel-associated and authenticated with the
+blind-unicast keys, but it does not conceal sender or destination metadata.
+This can still be useful when an implementation wants channel-associated
+unicast semantics without encryption.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
-<li>Receiver derives the channel’s <code>K_enc_channel</code> from the candidate channel key via HKDF.</li>
-<li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses <code>K_enc_channel</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver derives the channel’s candidate keys via HKDF.</li>
+<li>If <code>E = 1</code>, receiver reads the <code>MIC</code> and uses <code>K_enc_channel</code> plus <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the destination hint and sender address.</li>
+<li>If <code>E = 0</code>, receiver reads <code>DST</code> and <code>SRC</code> directly from the cleartext packet.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
 <li>Receiver performs ECDH and derives the stable pairwise keys.</li>
 <li>Receiver computes the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a> by XORing the pairwise keys with the channel keys.</li>
-<li>Receiver authenticates and decrypts <code>ENC_PAYLOAD</code> using the blind unicast payload keys.</li>
+<li>Receiver authenticates the packet using the blind-unicast MIC.</li>
+<li>If <code>E = 1</code>, receiver decrypts <code>ENC_PAYLOAD</code> using the blind unicast payload keys.</li>
 <li>If authentication fails, the packet is rejected.</li>
 </ol>
 <p>Some repeaters may decline to forward blind unicast packets for unknown channels.</p>
@@ -746,7 +762,8 @@ place that it appeared in encrypted multicast:</p>
 <ul>
 <li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
 <li>Semantics: identifies the original packet sender’s amateur radio callsign.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
+<li>Use: required for locally originated packets in <code>Licensed-Only</code> amateur operation.</li>
+<li>In <code>Hybrid</code> operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.</li>
 </ul>
 <h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
 <ul>
@@ -762,7 +779,13 @@ place that it appeared in encrypted multicast:</p>
 <li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
 <li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
 <li>This option is critical because repeaters must replace or remove it during forwarding.</li>
-<li>Use: required only when operating under amateur radio rules.</li>
+<li>Use:
+<ul>
+<li>in <code>Licensed-Only</code> mode, repeaters replace or insert it on every forwarded packet</li>
+<li>in <code>Hybrid</code> mode, repeaters also replace or insert it on every forwarded packet</li>
+<li>in <code>Unlicensed</code> mode, repeaters remove it if present and do not add their own</li>
+</ul>
+</li>
 </ul>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
@@ -2025,21 +2048,50 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <p>Blind unicast payload keys are <a href="#blind-unicast-payload-keys">derived by XORing</a> the pairwise unicast keys with the channel’s multicast keys. This ensures that decrypting a blind unicast payload requires both the pairwise shared secret and the channel key. Compromise of one without the other is insufficient.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="amateur-radio-operation"><a class="header" href="#amateur-radio-operation">Amateur Radio Operation</a></h1>
-<p>When operating under amateur radio rules, UMSH should generally be used in a non-encrypted form.</p>
-<h2 id="required-amateur-radio-behavior"><a class="header" href="#required-amateur-radio-behavior">Required Amateur-Radio Behavior</a></h2>
+<p>UMSH supports three distinct operating modes for devices or repeaters deployed on
+spectrum where amateur operation and unlicensed operation may coexist.</p>
+<h2 id="operating-modes"><a class="header" href="#operating-modes">Operating Modes</a></h2>
+<h3 id="unlicensed"><a class="header" href="#unlicensed">Unlicensed</a></h3>
+<p>In <code>Unlicensed</code> mode, the node operates only under non-amateur rules.</p>
 <ul>
-<li>Disable encryption</li>
-<li>Do not use blind unicast packet types</li>
-<li>Add an <a href="#operator-callsign-option-4">operator callsign</a> option to locally originated packets</li>
+<li>Locally originated packets are treated as unlicensed traffic.</li>
+<li>Encryption and blind unicast are allowed.</li>
+<li>A repeater may forward any packet it lawfully may retransmit under unlicensed rules.</li>
+<li>Maximum transmit power and duty cycle are determined by local rules for unlicensed operation.</li>
+<li>If a forwarded packet carries a <a href="#station-callsign-option-7">station callsign</a>, the repeater removes it rather than replacing it.</li>
+<li>The repeater must not add its own station callsign.</li>
 </ul>
-<h2 id="repeater-rules-under-amateur-operation"><a class="header" href="#repeater-rules-under-amateur-operation">Repeater Rules Under Amateur Operation</a></h2>
-<p>A repeater operating under amateur-radio rules should:</p>
+<p>The specific requirements for unlicensed transmission vary by jurisdiction and frequency, but may include restrictions on transmit power, antenna gain, and/or duty cycle.</p>
+<h3 id="licensed-only"><a class="header" href="#licensed-only">Licensed-Only</a></h3>
+<p>In <code>Licensed-Only</code> mode, all locally originated and forwarded traffic is treated
+as amateur-radio traffic.</p>
 <ul>
-<li>not forward packets lacking an operator callsign unless the retransmission can lawfully occur under non-amateur rules</li>
-<li>not forward encrypted packets</li>
-<li>update the <a href="#station-callsign-option-7">station callsign</a> option before retransmitting any packet forwarded under amateur-radio authority</li>
+<li>Encryption is forbidden. All encrypted packets encountered must be immediately dropped.</li>
+<li>Locally originated packets must include an <a href="#operator-callsign-option-4">operator callsign</a>.</li>
+<li>Restrictions on transmit power and duty cycle are generally more relaxed.</li>
+<li>A repeater forwards only packets that already carry an operator callsign.</li>
+<li>A repeater replaces or inserts the station callsign option with its own callsign on every forwarded packet.</li>
 </ul>
-<p>Because blind unicast is primarily useful in conjunction with encryption, it is generally not useful in amateur-radio-compliant operation.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Blind unicast is not categorically forbidden by this mode, but the expected utility of using it without encryption is limited.</p>
+</blockquote>
+<h3 id="hybrid"><a class="header" href="#hybrid">Hybrid</a></h3>
+<p>In <code>Hybrid</code> mode, the node may operate under either authority depending on the packet.</p>
+<ul>
+<li>A repeater always adds or replaces the station callsign option on forwarded packets.</li>
+<li>Packets carrying an operator callsign may be forwarded under amateur-radio authority.</li>
+<li>Packets lacking an operator callsign may still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.</li>
+<li>If encryption is enabled, the transmission must be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.</li>
+</ul>
+<p>Hybrid mode is useful where amateur stations may use higher power for qualifying amateur traffic, while still allowing encrypted or otherwise unlicensed-only traffic to transit the same repeater at unlicensed settings.</p>
+<h2 id="locally-originated-packets"><a class="header" href="#locally-originated-packets">Locally Originated Packets</a></h2>
+<p>The MAC layer should apply the following transmit rules:</p>
+<ul>
+<li><code>Unlicensed</code>: no amateur-specific restriction is implied, but restrictions on tx power and duty cycle may apply.</li>
+<li><code>Licensed-Only</code>: encrypted packets must be rejected, and an operator callsign is required. Max transmit power may increase.</li>
+<li><code>Hybrid</code>: encrypted packets are allowed, but they must be transmitted under unlicensed constraints rather than amateur-only ones.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="limitations--open-items"><a class="header" href="#limitations--open-items">Limitations &amp; Open Items</a></h1>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known Limitations</a></h2>
@@ -3076,14 +3128,14 @@ C4
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>6F 2F A3</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>3C 80 D2 24 72 8E 15 FF 0C B6 EE CA 27 90 59 AF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>12 68 A7</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>11 35 C3 C7 7A 51 0B 77 7F 50 C6 C0 72 86 43 65</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00
-00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE
-CA 27 90 59 AF
+00 0A 12 68 A7 11 35 C3 C7 7A 51 0B 77 7F 50 C6
+C0 72 86 43 65
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>

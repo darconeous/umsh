@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-86a79382.js";
+            window.path_to_searchindex_js = "searchindex-95281a52.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b09eb8a0.js"></script>
@@ -239,23 +239,39 @@ place that it appeared in encrypted multicast:</p>
 </code></pre>
 <h2 id="blind-unicast-packet"><a class="header" href="#blind-unicast-packet">Blind Unicast Packet</a></h2>
 <p>Blind unicast uses a multicast channel to conceal sender and destination metadata from observers without the channel key while still protecting the payload end-to-end for the actual destination.</p>
+<p>Like other channel-addressed packets, blind unicast honors the <code>E</code> flag in <code>SECINFO</code>.</p>
+<h3 id="encrypted-blind-unicast-e--1"><a class="header" href="#encrypted-blind-unicast-e--1">Encrypted Blind Unicast (E = 1)</a></h3>
 <pre><code class="language-text">+-----+-----------+------+---------+---------+-------------+-------------+------+
 | FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | ENC_DST_SRC | ENC_PAYLOAD | MIC  |
 +-----+-----------+------+---------+---------+-------------+-------------+------+
   1 B    variable   0/1 B    2 B     5/7 B        4/35 B         var.     4-16 B
 </code></pre>
 <p>The <code>MIC</code> is computed over the payload using the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="security.html#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<h3 id="unencrypted-blind-unicast-e--0"><a class="header" href="#unencrypted-blind-unicast-e--0">Unencrypted Blind Unicast (E = 0)</a></h3>
+<p>When encryption is disabled, blind unicast still uses the channel identifier and
+the blind-unicast packet type, but the destination hint, source address, and
+payload appear in cleartext:</p>
+<pre><code class="language-text">+-----+-----------+------+---------+---------+-----+------+---------+------+
+| FCF | [OPTIONS] |[FHOPS]| CHANNEL | SECINFO | DST | SRC  | PAYLOAD | MIC  |
++-----+-----------+------+---------+---------+-----+------+---------+------+
+  1 B    variable   0/1 B    2 B      5/7 B   3 B  3/32 B    var.   4-16 B
+</code></pre>
+<p>In this mode, the packet remains channel-associated and authenticated with the
+blind-unicast keys, but it does not conceal sender or destination metadata.
+This can still be useful when an implementation wants channel-associated
+unicast semantics without encryption.</p>
 <h3 id="blind-unicast-processing"><a class="header" href="#blind-unicast-processing">Blind Unicast Processing</a></h3>
 <ol>
 <li>Receiver uses <code>CHANNEL</code> to identify candidate channel keys.</li>
-<li>Receiver derives the channel’s <code>K_enc_channel</code> from the candidate channel key via HKDF.</li>
-<li>Receiver reads the <code>MIC</code> from the end of the packet.</li>
-<li>Receiver uses <code>K_enc_channel</code> and <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the sender’s public key.</li>
+<li>Receiver derives the channel’s candidate keys via HKDF.</li>
+<li>If <code>E = 1</code>, receiver reads the <code>MIC</code> and uses <code>K_enc_channel</code> plus <code>MIC</code> to decrypt <code>ENC_DST_SRC</code>, recovering the destination hint and sender address.</li>
+<li>If <code>E = 0</code>, receiver reads <code>DST</code> and <code>SRC</code> directly from the cleartext packet.</li>
 <li>Receiver converts the sender Ed25519 public key into an X25519 public key.</li>
 <li>Receiver converts its own Ed25519 private key into an X25519 private key.</li>
 <li>Receiver performs ECDH and derives the stable pairwise keys.</li>
 <li>Receiver computes the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a> by XORing the pairwise keys with the channel keys.</li>
-<li>Receiver authenticates and decrypts <code>ENC_PAYLOAD</code> using the blind unicast payload keys.</li>
+<li>Receiver authenticates the packet using the blind-unicast MIC.</li>
+<li>If <code>E = 1</code>, receiver decrypts <code>ENC_PAYLOAD</code> using the blind unicast payload keys.</li>
 <li>If authentication fails, the packet is rejected.</li>
 </ol>
 <p>Some repeaters may decline to forward blind unicast packets for unknown channels.</p>
