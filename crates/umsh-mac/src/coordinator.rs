@@ -1,5 +1,6 @@
 use heapless::{LinearMap, Vec};
 use hamaddr::HamAddr;
+use rand::{Rng, RngExt as _};
 use umsh_core::{
     options::OptionEncoder,
     feed_aad, BuildError, ChannelId, ChannelKey, OptionNumber, PacketBuilder, PacketHeader,
@@ -7,18 +8,21 @@ use umsh_core::{
     UnsealedPacket,
 };
 use umsh_crypto::{
-    AesProvider, CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity,
-    PairwiseKeys, Sha256Provider,
+    CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
 };
-use umsh_hal::{Clock, CounterStore, Radio, Rng, RxInfo};
+use umsh_hal::{Clock, CounterStore, Radio, RxInfo};
 
 use crate::{
     cache::{DupCacheKey, DuplicateCache},
     peers::{ChannelTable, PeerCryptoMap, PeerCryptoState, PeerId, PeerRegistry},
     send::{PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue},
-    CapacityError, DEFAULT_DUP_CACHE_SIZE, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
+    CapacityError, Platform, DEFAULT_DUP_CACHE_SIZE, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
     ReplayVerdict, ReplayWindow,
 };
+
+const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
+const COUNTER_PERSIST_BLOCK_MASK: u32 = COUNTER_PERSIST_BLOCK_SIZE - 1;
+const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PostTxListen {
@@ -28,16 +32,21 @@ struct PostTxListen {
     deadline_ms: u64,
 }
 
+/// Opaque identifier for a local identity slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LocalIdentityId(pub u8);
 
+/// Local identity variant stored by the MAC coordinator.
 pub enum LocalIdentity<I: NodeIdentity> {
+    /// Long-term platform identity.
     LongTerm(I),
     #[cfg(feature = "software-crypto")]
+    /// Software ephemeral identity used for PFS sessions.
     Ephemeral(umsh_crypto::software::SoftwareIdentity),
 }
 
 impl<I: NodeIdentity> LocalIdentity<I> {
+    /// Return the public key for this identity.
     pub fn public_key(&self) -> &PublicKey {
         match self {
             Self::LongTerm(identity) => identity.public_key(),
@@ -46,10 +55,12 @@ impl<I: NodeIdentity> LocalIdentity<I> {
         }
     }
 
+    /// Return the derived node hint for this identity.
     pub fn hint(&self) -> umsh_core::NodeHint {
         self.public_key().hint()
     }
 
+    /// Return whether this identity is ephemeral.
     pub fn is_ephemeral(&self) -> bool {
         match self {
             Self::LongTerm(_) => false,
@@ -65,6 +76,7 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
     }
 }
 
+/// Coordinator-owned per-identity state.
 pub struct IdentitySlot<
     I: NodeIdentity,
     const PEERS: usize,
@@ -74,6 +86,10 @@ pub struct IdentitySlot<
     identity: LocalIdentity<I>,
     peer_crypto: PeerCryptoMap<PEERS>,
     frame_counter: u32,
+    persisted_counter: u32,
+    pending_persist_target: Option<u32>,
+    save_scheduled_since_boot: bool,
+    counter_persistence_enabled: bool,
     pending_acks: LinearMap<SendReceipt, PendingAck<FRAME>, ACKS>,
     next_receipt: u32,
     pfs_parent: Option<LocalIdentityId>,
@@ -82,29 +98,90 @@ pub struct IdentitySlot<
 impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     IdentitySlot<I, PEERS, ACKS, FRAME>
 {
+    /// Create a new identity slot.
     pub fn new(identity: LocalIdentity<I>, frame_counter: u32, pfs_parent: Option<LocalIdentityId>) -> Self {
+        let counter_persistence_enabled = !identity.is_ephemeral();
         Self {
             identity,
             peer_crypto: PeerCryptoMap::new(),
             frame_counter,
+            persisted_counter: frame_counter,
+            pending_persist_target: None,
+            save_scheduled_since_boot: false,
+            counter_persistence_enabled,
             pending_acks: LinearMap::new(),
             next_receipt: 0,
             pfs_parent,
         }
     }
 
+    /// Borrow the underlying identity.
     pub fn identity(&self) -> &LocalIdentity<I> { &self.identity }
+    /// Borrow the per-peer secure-state map.
     pub fn peer_crypto(&self) -> &PeerCryptoMap<PEERS> { &self.peer_crypto }
+    /// Mutably borrow the per-peer secure-state map.
     pub fn peer_crypto_mut(&mut self) -> &mut PeerCryptoMap<PEERS> { &mut self.peer_crypto }
+    /// Return the current frame counter.
     pub fn frame_counter(&self) -> u32 { self.frame_counter }
+    /// Return the persisted frame-counter reservation boundary.
+    pub fn persisted_counter(&self) -> u32 { self.persisted_counter }
+    /// Overwrite the current frame counter.
     pub fn set_frame_counter(&mut self, value: u32) { self.frame_counter = value; }
+    /// Overwrite the persisted frame-counter reservation boundary.
+    pub fn set_persisted_counter(&mut self, value: u32) { self.persisted_counter = value; }
 
+    /// Return the next scheduled persist target, if any.
+    pub fn pending_persist_target(&self) -> Option<u32> { self.pending_persist_target }
+
+    /// Return whether counter persistence is enabled for this identity.
+    pub fn counter_persistence_enabled(&self) -> bool { self.counter_persistence_enabled }
+
+    /// Return the current frame counter and advance it with wrapping semantics.
     pub fn advance_frame_counter(&mut self) -> u32 {
         let current = self.frame_counter;
         self.frame_counter = self.frame_counter.wrapping_add(1);
         current
     }
 
+    /// Load a persisted counter boundary for this identity.
+    pub fn load_persisted_counter(&mut self, value: u32) {
+        let aligned = align_counter_boundary(value);
+        self.frame_counter = aligned;
+        self.persisted_counter = aligned;
+        self.pending_persist_target = None;
+        self.save_scheduled_since_boot = false;
+    }
+
+    fn schedule_counter_persist_if_needed(&mut self) {
+        if !self.counter_persistence_enabled {
+            return;
+        }
+
+        let should_schedule = !self.save_scheduled_since_boot
+            || (self.frame_counter & COUNTER_PERSIST_BLOCK_MASK) == COUNTER_PERSIST_SCHEDULE_OFFSET;
+        if !should_schedule {
+            return;
+        }
+
+        let target = next_counter_persist_target(self.frame_counter);
+        self.pending_persist_target = Some(self.pending_persist_target.map(|existing| existing.max(target)).unwrap_or(target));
+        self.save_scheduled_since_boot = true;
+    }
+
+    fn mark_counter_persisted(&mut self, value: u32) {
+        let aligned = align_counter_boundary(value);
+        self.persisted_counter = aligned;
+        if self.pending_persist_target == Some(aligned) {
+            self.pending_persist_target = None;
+        }
+    }
+
+    fn counter_window_exhausted(&self) -> bool {
+        self.counter_persistence_enabled
+            && self.frame_counter.wrapping_sub(self.persisted_counter) >= COUNTER_PERSIST_BLOCK_SIZE
+    }
+
+    /// Allocate the next send receipt.
     pub fn next_receipt(&mut self) -> SendReceipt {
         let receipt = SendReceipt(self.next_receipt);
         self.next_receipt = self.next_receipt.wrapping_add(1);
@@ -117,6 +194,18 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         self.next_receipt = value;
     }
 
+    /// Overrides counter-persistence scheduling state in tests.
+    #[cfg(test)]
+    pub(crate) fn set_counter_persistence_state_for_test(
+        &mut self,
+        save_scheduled_since_boot: bool,
+        pending_persist_target: Option<u32>,
+    ) {
+        self.save_scheduled_since_boot = save_scheduled_since_boot;
+        self.pending_persist_target = pending_persist_target;
+    }
+
+    /// Insert or replace pending-ACK state for a send receipt.
     pub fn try_insert_pending_ack(
         &mut self,
         receipt: SendReceipt,
@@ -125,27 +214,35 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         self.pending_acks.insert(receipt, pending).map_err(|_| PendingAckError::TableFull)
     }
 
+    /// Borrow pending-ACK state by receipt.
     pub fn pending_ack(&self, receipt: &SendReceipt) -> Option<&PendingAck<FRAME>> {
         self.pending_acks.get(receipt)
     }
 
+    /// Mutably borrow pending-ACK state by receipt.
     pub fn pending_ack_mut(&mut self, receipt: &SendReceipt) -> Option<&mut PendingAck<FRAME>> {
         self.pending_acks.get_mut(receipt)
     }
 
+    /// Remove pending-ACK state by receipt.
     pub fn remove_pending_ack(&mut self, receipt: &SendReceipt) -> Option<PendingAck<FRAME>> {
         self.pending_acks.remove(receipt)
     }
 
+    /// Return the parent long-term identity if this slot is ephemeral.
     pub fn pfs_parent(&self) -> Option<LocalIdentityId> { self.pfs_parent }
 }
 
 /// Per-channel operating-policy overrides enforced on outgoing traffic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelPolicy {
+    /// Channel to which this policy applies.
     pub channel_id: ChannelId,
+    /// Whether the channel must be sent unencrypted.
     pub require_unencrypted: bool,
+    /// Whether the channel requires the full source public key.
     pub require_full_source: bool,
+    /// Optional maximum flood-hop budget.
     pub max_flood_hops: Option<u8>,
 }
 
@@ -198,8 +295,11 @@ struct ForwardPlan {
 /// Local operating policy enforced by the MAC coordinator on transmit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperatingPolicy {
+    /// Amateur-radio operating mode.
     pub amateur_radio_mode: AmateurRadioMode,
+    /// Optional local operator callsign.
     pub operator_callsign: Option<HamAddr>,
+    /// Per-channel overrides.
     pub channel_policies: Vec<ChannelPolicy, 4>,
 }
 
@@ -216,11 +316,17 @@ impl Default for OperatingPolicy {
 /// Repeater-specific configuration stored alongside the coordinator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepeaterConfig {
+    /// Whether repeater forwarding is enabled.
     pub enabled: bool,
+    /// Allowed repeater region codes.
     pub regions: Vec<[u8; 2], 8>,
+    /// Minimum RSSI threshold for forwarding.
     pub min_rssi: Option<i16>,
+    /// Minimum SNR threshold for forwarding.
     pub min_snr: Option<i8>,
+    /// Amateur-radio operating mode for forwarding.
     pub amateur_radio_mode: AmateurRadioMode,
+    /// Optional station callsign injected on forwarded traffic.
     pub station_callsign: Option<HamAddr>,
 }
 
@@ -237,21 +343,37 @@ impl Default for RepeaterConfig {
     }
 }
 
+/// Errors returned while queueing or processing sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendError {
+    /// Referenced local identity was missing.
     IdentityMissing,
+    /// Referenced remote peer was missing.
     PeerMissing,
+    /// Pairwise transport keys were missing.
     PairwiseKeysMissing,
+    /// Referenced channel was missing.
     ChannelMissing,
+    /// Operating policy rejected the send.
     PolicyViolation,
+    /// Packet type does not support transport ACKs.
     AckUnsupported,
+    /// Requested encryption mode is unsupported.
     EncryptionUnsupported,
+    /// Requested salt mode is unsupported.
     SaltUnsupported,
+    /// Packet build failed.
     Build(BuildError),
+    /// Packet parse failed while reprocessing a built frame.
     Parse(ParseError),
+    /// Crypto sealing/opening failed.
     Crypto(CryptoError),
+    /// Transmit queue capacity was exhausted.
     QueueFull,
+    /// Pending-ACK table capacity was exhausted.
     PendingAckFull,
+    /// Secure sends are blocked until a scheduled counter persist completes.
+    CounterPersistenceLag,
 }
 
 impl From<BuildError> for SendError {
@@ -266,9 +388,20 @@ impl From<CryptoError> for SendError {
     fn from(value: CryptoError) -> Self { Self::Crypto(value) }
 }
 
+/// Runtime errors produced by the MAC coordinator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MacError<RadioError> {
+    /// Underlying radio driver failure.
     Radio(RadioError),
+}
+
+/// Errors returned while loading persisted counters through the MAC coordinator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CounterPersistenceError<StoreError> {
+    /// Referenced local identity was missing.
+    IdentityMissing,
+    /// Underlying counter-store operation failed.
+    Store(StoreError),
 }
 
 impl<RadioError> From<RadioError> for MacError<RadioError> {
@@ -277,14 +410,9 @@ impl<RadioError> From<RadioError> for MacError<RadioError> {
     }
 }
 
+/// Central MAC coordinator that owns the radio-facing state machine.
 pub struct Mac<
-    R: Radio,
-    I: NodeIdentity,
-    A: AesProvider,
-    S: Sha256Provider,
-    C: Clock,
-    G: Rng,
-    CS: CounterStore,
+    P: Platform,
     const IDENTITIES: usize = 4,
     const PEERS: usize = 16,
     const CHANNELS: usize = 8,
@@ -293,12 +421,12 @@ pub struct Mac<
     const FRAME: usize = MAX_RESEND_FRAME_LEN,
     const DUP: usize = DEFAULT_DUP_CACHE_SIZE,
 > {
-    radio: R,
-    crypto: CryptoEngine<A, S>,
-    clock: C,
-    rng: G,
-    counter_store: CS,
-    identities: Vec<Option<IdentitySlot<I, PEERS, ACKS, FRAME>>, IDENTITIES>,
+    radio: P::Radio,
+    crypto: CryptoEngine<P::Aes, P::Sha>,
+    clock: P::Clock,
+    rng: P::Rng,
+    counter_store: P::CounterStore,
+    identities: Vec<Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>, IDENTITIES>,
     peer_registry: PeerRegistry<PEERS>,
     channels: ChannelTable<CHANNELS>,
     dup_cache: DuplicateCache<DUP>,
@@ -309,13 +437,7 @@ pub struct Mac<
 }
 
 impl<
-        R: Radio,
-        I: NodeIdentity,
-        A: AesProvider,
-        S: Sha256Provider,
-        C: Clock,
-        G: Rng,
-        CS: CounterStore,
+        P: Platform,
         const IDENTITIES: usize,
         const PEERS: usize,
         const CHANNELS: usize,
@@ -323,15 +445,15 @@ impl<
         const TX: usize,
         const FRAME: usize,
         const DUP: usize,
-    > Mac<R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    > Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     /// Creates a MAC coordinator with the supplied radio, crypto, timing, and policy state.
     pub fn new(
-        radio: R,
-        crypto: CryptoEngine<A, S>,
-        clock: C,
-        rng: G,
-        counter_store: CS,
+        radio: P::Radio,
+        crypto: CryptoEngine<P::Aes, P::Sha>,
+        clock: P::Clock,
+        rng: P::Rng,
+        counter_store: P::CounterStore,
         repeater: RepeaterConfig,
         operating_policy: OperatingPolicy,
     ) -> Self {
@@ -352,30 +474,107 @@ impl<
         }
     }
 
-    pub fn radio(&self) -> &R { &self.radio }
-    pub fn radio_mut(&mut self) -> &mut R { &mut self.radio }
-    pub fn crypto(&self) -> &CryptoEngine<A, S> { &self.crypto }
-    pub fn clock(&self) -> &C { &self.clock }
-    pub fn rng(&self) -> &G { &self.rng }
-    pub fn rng_mut(&mut self) -> &mut G { &mut self.rng }
-    pub fn counter_store(&self) -> &CS { &self.counter_store }
+    /// Borrow the underlying radio.
+    pub fn radio(&self) -> &P::Radio { &self.radio }
+    /// Mutably borrow the underlying radio.
+    pub fn radio_mut(&mut self) -> &mut P::Radio { &mut self.radio }
+    /// Borrow the crypto engine.
+    pub fn crypto(&self) -> &CryptoEngine<P::Aes, P::Sha> { &self.crypto }
+    /// Borrow the monotonic clock.
+    pub fn clock(&self) -> &P::Clock { &self.clock }
+    /// Borrow the RNG.
+    pub fn rng(&self) -> &P::Rng { &self.rng }
+    /// Mutably borrow the RNG.
+    pub fn rng_mut(&mut self) -> &mut P::Rng { &mut self.rng }
+    /// Borrow the counter store.
+    pub fn counter_store(&self) -> &P::CounterStore { &self.counter_store }
+    /// Borrow the transmit queue.
     pub fn tx_queue(&self) -> &TxQueue<TX, FRAME> { &self.tx_queue }
+    /// Mutably borrow the transmit queue.
     pub fn tx_queue_mut(&mut self) -> &mut TxQueue<TX, FRAME> { &mut self.tx_queue }
+    /// Borrow the duplicate cache.
     pub fn dup_cache(&self) -> &DuplicateCache<DUP> { &self.dup_cache }
+    /// Borrow the peer registry.
     pub fn peer_registry(&self) -> &PeerRegistry<PEERS> { &self.peer_registry }
+    /// Mutably borrow the peer registry.
     pub fn peer_registry_mut(&mut self) -> &mut PeerRegistry<PEERS> { &mut self.peer_registry }
+    /// Borrow the channel table.
     pub fn channels(&self) -> &ChannelTable<CHANNELS> { &self.channels }
+    /// Mutably borrow the channel table.
     pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS> { &mut self.channels }
+    /// Borrow repeater configuration.
     pub fn repeater_config(&self) -> &RepeaterConfig { &self.repeater }
+    /// Mutably borrow repeater configuration.
     pub fn repeater_config_mut(&mut self) -> &mut RepeaterConfig { &mut self.repeater }
+    /// Borrow the local operating policy.
     pub fn operating_policy(&self) -> &OperatingPolicy { &self.operating_policy }
+    /// Mutably borrow the local operating policy.
     pub fn operating_policy_mut(&mut self) -> &mut OperatingPolicy { &mut self.operating_policy }
 
-    pub fn add_identity(&mut self, identity: I) -> Result<LocalIdentityId, CapacityError> {
+    /// Register one long-term local identity.
+    pub fn add_identity(&mut self, identity: P::Identity) -> Result<LocalIdentityId, CapacityError> {
         self.insert_identity(LocalIdentity::LongTerm(identity), None)
     }
 
+    /// Load the persisted frame-counter boundary for `id` from the counter store.
+    pub async fn load_persisted_counter(
+        &mut self,
+        id: LocalIdentityId,
+    ) -> Result<u32, CounterPersistenceError<<P::CounterStore as CounterStore>::Error>> {
+        let context = {
+            let slot = self.identity(id).ok_or(CounterPersistenceError::IdentityMissing)?;
+            if !slot.counter_persistence_enabled() {
+                return Ok(slot.frame_counter());
+            }
+            *slot.identity().public_key()
+        };
+        let loaded = self
+            .counter_store
+            .load(&context.0)
+            .await
+            .map_err(CounterPersistenceError::Store)?;
+        let aligned = align_counter_boundary(loaded);
+        let slot = self.identity_mut(id).ok_or(CounterPersistenceError::IdentityMissing)?;
+        slot.load_persisted_counter(aligned);
+        Ok(aligned)
+    }
+
+    /// Persist all currently scheduled frame-counter reservations.
+    pub async fn service_counter_persistence(&mut self) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        let mut pending = Vec::<(LocalIdentityId, [u8; 32], u32), IDENTITIES>::new();
+        for (index, slot) in self.identities.iter().enumerate() {
+            let Some(slot) = slot.as_ref() else {
+                continue;
+            };
+            let Some(target) = slot.pending_persist_target() else {
+                continue;
+            };
+            if !slot.counter_persistence_enabled() {
+                continue;
+            }
+            pending
+                .push((LocalIdentityId(index as u8), slot.identity().public_key().0, target))
+                .expect("identity enumeration must fit configured identity capacity");
+        }
+
+        let mut wrote = 0usize;
+        for (_, context, target) in pending.iter() {
+            self.counter_store.store(context, align_counter_boundary(*target)).await?;
+            wrote += 1;
+        }
+        if wrote > 0 {
+            self.counter_store.flush().await?;
+            for (id, _, target) in pending {
+                if let Some(slot) = self.identity_mut(id) {
+                    slot.mark_counter_persisted(target);
+                }
+            }
+        }
+        Ok(wrote)
+    }
+
     #[cfg(feature = "software-crypto")]
+    /// Register an ephemeral software identity linked to `parent`.
     pub fn register_ephemeral(
         &mut self,
         parent: LocalIdentityId,
@@ -385,6 +584,7 @@ impl<
     }
 
     #[cfg(feature = "software-crypto")]
+    /// Remove an ephemeral identity slot if one exists at `id`.
     pub fn remove_ephemeral(&mut self, id: LocalIdentityId) -> bool {
         if let Some(slot) = self.identities.get_mut(id.0 as usize) {
             let should_remove = slot
@@ -399,11 +599,13 @@ impl<
         false
     }
 
-    pub fn identity(&self, id: LocalIdentityId) -> Option<&IdentitySlot<I, PEERS, ACKS, FRAME>> {
+    /// Borrow an identity slot by identifier.
+    pub fn identity(&self, id: LocalIdentityId) -> Option<&IdentitySlot<P::Identity, PEERS, ACKS, FRAME>> {
         self.identities.get(id.0 as usize)?.as_ref()
     }
 
-    pub fn identity_mut(&mut self, id: LocalIdentityId) -> Option<&mut IdentitySlot<I, PEERS, ACKS, FRAME>> {
+    /// Mutably borrow an identity slot by identifier.
+    pub fn identity_mut(&mut self, id: LocalIdentityId) -> Option<&mut IdentitySlot<P::Identity, PEERS, ACKS, FRAME>> {
         self.identities.get_mut(id.0 as usize)?.as_mut()
     }
 
@@ -424,6 +626,7 @@ impl<
         self.add_channel(key)
     }
 
+    /// Return the number of occupied identity slots.
     pub fn identity_count(&self) -> usize {
         self.identities.iter().filter(|slot| slot.is_some()).count()
     }
@@ -448,7 +651,11 @@ impl<
         if options.ack_requested { return Err(SendError::AckUnsupported); }
         if options.salt { return Err(SendError::SaltUnsupported); }
 
-        let (source_key, _) = self.identity_and_advance(from)?;
+        let source_key = *self
+            .identity(from)
+            .ok_or(SendError::IdentityMissing)?
+            .identity()
+            .public_key();
         let mut buf = [0u8; FRAME];
         let builder = PacketBuilder::new(&mut buf).broadcast();
         let mut builder = if options.full_source { builder.source_full(&source_key) } else { builder.source_hint(source_key.hint()) };
@@ -570,6 +777,7 @@ impl<
     }
 
     /// Enqueues a blind-unicast frame and optional pending-ACK state.
+    /// Enqueues a blind-unicast frame and optional pending-ACK state.
     pub fn queue_blind_unicast(
         &mut self,
         from: LocalIdentityId,
@@ -644,7 +852,8 @@ impl<
     /// listen window after the radio transmit completes. Non-immediate traffic honors
     /// queued CAD backoff state and gives up after the configured maximum number of
     /// CAD attempts.
-    pub async fn transmit_next(&mut self) -> Result<Option<SendReceipt>, MacError<R::Error>> {
+    /// Transmit the next eligible queued frame, if any.
+    pub async fn transmit_next(&mut self) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
         let Some(queued) = self.tx_queue.pop_next() else {
             return Ok(None);
@@ -669,7 +878,7 @@ impl<
                 if next_attempt >= MAX_CAD_ATTEMPTS {
                     return Ok(None);
                 }
-                let backoff_ms = u64::from(self.rng.random_range(self.radio.t_frame_ms().saturating_add(1)));
+                let backoff_ms = u64::from(self.rng.random_range(..self.radio.t_frame_ms().saturating_add(1)));
                 self.tx_queue
                     .enqueue_with_state(
                         queued.priority,
@@ -695,7 +904,8 @@ impl<
     ///
     /// Progress stops when CAD keeps reporting busy, when a post-transmit listen window blocks
     /// normal traffic, or when the queue is otherwise unable to shrink further in the current cycle.
-    pub async fn drain_tx_queue(&mut self) -> Result<(), MacError<R::Error>> {
+    /// Keep transmitting until the queue is empty.
+    pub async fn drain_tx_queue(&mut self) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         while !self.tx_queue.is_empty() {
             let queue_len = self.tx_queue.len();
             let _ = self.transmit_next().await?;
@@ -717,10 +927,11 @@ impl<
     ///
     /// The callback may be invoked zero or more times depending on what the
     /// receive and timeout phases accept or resolve.
+    /// Service one MAC coordinator cycle.
     pub async fn poll_cycle(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<(), MacError<R::Error>> {
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         self.drain_tx_queue().await?;
         if self.post_tx_listen.is_some() {
             self.service_post_tx_listen(&mut on_event).await?;
@@ -737,10 +948,11 @@ impl<
     ///
     /// When a post-transmit listen window is active, forwarding confirmation is only accepted for
     /// the currently tracked receipt and duplicate-cache key.
+    /// Receive and process at most one inbound frame.
     pub async fn receive_one(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<bool, MacError<R::Error>> {
+    ) -> Result<bool, MacError<<P::Radio as Radio>::Error>> {
         let mut buf = [0u8; FRAME];
         let rx = self.radio.receive(&mut buf).await.map_err(MacError::Radio)?;
         if rx.len == 0 {
@@ -986,6 +1198,7 @@ impl<
         }
     }
 
+    /// Mark a pending receipt as acknowledged and emit an event through `on_event`.
     pub fn complete_ack(
         &mut self,
         peer: &PublicKey,
@@ -1020,6 +1233,7 @@ impl<
         None
     }
 
+    /// Expire or retry pending ACK state based on `now_ms`.
     pub fn service_pending_ack_timeouts(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
@@ -1089,13 +1303,17 @@ impl<
 
     fn identity_and_advance(&mut self, from: LocalIdentityId) -> Result<(PublicKey, u32), SendError> {
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
+        if slot.counter_window_exhausted() {
+            return Err(SendError::CounterPersistenceLag);
+        }
         let source_key = *slot.identity().public_key();
         let frame_counter = slot.advance_frame_counter();
+        slot.schedule_counter_persist_if_needed();
         Ok((source_key, frame_counter))
     }
 
     fn take_salt(&mut self, options: &SendOptions) -> Option<u16> {
-        options.salt.then(|| self.rng.random_u32() as u16)
+        options.salt.then(|| self.rng.next_u32() as u16)
     }
 
     fn enforce_send_policy(
@@ -1220,7 +1438,7 @@ impl<
 
     fn insert_identity(
         &mut self,
-        identity: LocalIdentity<I>,
+        identity: LocalIdentity<P::Identity>,
         pfs_parent: Option<LocalIdentityId>,
     ) -> Result<LocalIdentityId, CapacityError> {
         if let Some((index, slot)) = self.identities.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
@@ -1867,7 +2085,7 @@ impl<
         if window_ms == 0 {
             0
         } else {
-            u64::from(self.rng.random_range(window_ms.saturating_add(1)))
+            u64::from(self.rng.random_range(..window_ms.saturating_add(1)))
         }
     }
 
@@ -1899,7 +2117,7 @@ impl<
     async fn service_post_tx_listen(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<(), MacError<R::Error>> {
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         loop {
             self.expire_post_tx_listen_if_needed();
             if self.post_tx_listen.is_none() {
@@ -1952,7 +2170,7 @@ impl<
     fn sample_forward_confirm_window_ms(&mut self) -> u64 {
         let base = self.radio.t_frame_ms();
         let span = base.saturating_mul(2).saturating_add(1);
-        let jitter = self.rng.random_range(span);
+        let jitter = self.rng.random_range(..span);
         u64::from(base.saturating_add(jitter))
     }
 
@@ -2019,7 +2237,7 @@ impl<
 
     fn match_pending_peer_for_ack(
         &self,
-        slot: &IdentitySlot<I, PEERS, ACKS, FRAME>,
+        slot: &IdentitySlot<P::Identity, PEERS, ACKS, FRAME>,
         ack_tag_bytes: &[u8],
     ) -> Option<PublicKey> {
         if ack_tag_bytes.len() != 8 {
@@ -2030,4 +2248,12 @@ impl<
             .iter()
             .find_map(|(_, pending)| (pending.ack_tag == ack_tag_bytes).then_some(pending.peer))
     }
+}
+
+fn align_counter_boundary(value: u32) -> u32 {
+    value & !COUNTER_PERSIST_BLOCK_MASK
+}
+
+fn next_counter_persist_target(next_counter: u32) -> u32 {
+    next_counter.wrapping_add(COUNTER_PERSIST_BLOCK_SIZE) & !COUNTER_PERSIST_BLOCK_MASK
 }

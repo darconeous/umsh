@@ -2,12 +2,16 @@ use heapless::Deque;
 
 use crate::{RECENT_MIC_CAPACITY, REPLAY_BACKTRACK_SLOTS, REPLAY_STALE_MS};
 
+/// Duplicate-suppression key derived from an accepted packet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DupCacheKey {
+    /// Authenticated packet keyed by its MIC bytes.
     Mic { bytes: [u8; 16], len: u8 },
+    /// Unauthenticated packet keyed by a local hash.
     Hash32(u32),
 }
 
+/// Fixed-capacity cache of recently observed duplicate keys.
 #[derive(Clone, Debug)]
 pub struct DuplicateCache<const N: usize = 64> {
     entries: Deque<(DupCacheKey, u64), N>,
@@ -20,16 +24,19 @@ impl<const N: usize> Default for DuplicateCache<N> {
 }
 
 impl<const N: usize> DuplicateCache<N> {
+    /// Create an empty duplicate cache.
     pub fn new() -> Self {
         Self {
             entries: Deque::new(),
         }
     }
 
+    /// Return whether `key` is already present.
     pub fn contains(&self, key: &DupCacheKey) -> bool {
         self.entries.iter().any(|(entry, _)| entry == key)
     }
 
+    /// Insert `key`, evicting the oldest entry if necessary.
     pub fn insert(&mut self, key: DupCacheKey, now_ms: u64) {
         if self.contains(&key) {
             return;
@@ -40,36 +47,53 @@ impl<const N: usize> DuplicateCache<N> {
         let _ = self.entries.push_back((key, now_ms));
     }
 
+    /// Return the number of tracked entries.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Return whether the cache is empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }
 
+/// Recently accepted MIC tracked for backward-window replay handling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecentMic {
+    /// Accepted frame counter.
     pub counter: u32,
+    /// Normalized MIC bytes.
     pub mic: [u8; 16],
+    /// Number of valid bytes in [`mic`](Self::mic).
     pub mic_len: u8,
+    /// Acceptance timestamp in milliseconds.
     pub accepted_ms: u64,
 }
 
+/// Replay-detection window for secure traffic from one sender.
 #[derive(Clone, Debug)]
 pub struct ReplayWindow {
+    /// Highest accepted frame counter.
     pub last_accepted: u32,
+    /// Timestamp of the highest accepted frame.
     pub last_accepted_time_ms: u64,
+    /// Occupancy bitmap for the backward counter window.
     pub backward_bitmap: u8,
+    /// Accepted MICs retained for duplicate late-arrival checks.
     pub recent_mics: Deque<RecentMic, RECENT_MIC_CAPACITY>,
 }
 
+/// Result of checking a packet against a replay window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplayVerdict {
+    /// The packet is acceptable.
     Accept,
+    /// The exact counter/MIC pair was already accepted.
     Replay,
+    /// The counter is too far behind the tracked window.
     OutOfWindow,
+    /// The replay state is too stale to safely accept backward-window traffic.
     Stale,
 }
 
@@ -80,6 +104,7 @@ impl Default for ReplayWindow {
 }
 
 impl ReplayWindow {
+    /// Create a fresh replay window.
     pub fn new() -> Self {
         Self {
             last_accepted: 0,
@@ -89,6 +114,7 @@ impl ReplayWindow {
         }
     }
 
+    /// Evaluate whether `counter` and `mic` are acceptable at `now_ms`.
     pub fn check(&self, counter: u32, mic: &[u8], now_ms: u64) -> ReplayVerdict {
         if self.last_accepted_time_ms == 0 && self.recent_mics.is_empty() {
             return ReplayVerdict::Accept;
@@ -114,6 +140,7 @@ impl ReplayWindow {
         }
     }
 
+    /// Record an accepted `counter` and `mic` at `now_ms`.
     pub fn accept(&mut self, counter: u32, mic: &[u8], now_ms: u64) {
         self.prune_recent_mics(now_ms);
 
@@ -156,6 +183,7 @@ impl ReplayWindow {
         }
     }
 
+    /// Reset the replay window to a known baseline.
     pub fn reset(&mut self, baseline: u32, now_ms: u64) {
         self.last_accepted = baseline;
         self.last_accepted_time_ms = now_ms;

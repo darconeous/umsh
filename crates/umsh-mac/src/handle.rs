@@ -1,14 +1,15 @@
 use core::cell::RefCell;
 
+use rand::Rng;
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
-use umsh_crypto::{AesProvider, NodeIdentity, PairwiseKeys, Sha256Provider};
-use umsh_hal::{Clock, CounterStore, Radio, Rng};
+use umsh_crypto::PairwiseKeys;
+use umsh_hal::{Clock, CounterStore};
 
 use crate::{
-    coordinator::{LocalIdentityId, Mac, SendError},
+    coordinator::{CounterPersistenceError, LocalIdentityId, Mac, SendError},
     peers::{PeerCryptoState, PeerId},
     send::{SendOptions, SendReceipt},
-    CapacityError,
+    CapacityError, Platform,
 };
 
 /// Error returned when a `MacHandle` operation cannot access the shared coordinator.
@@ -27,13 +28,7 @@ pub enum MacHandleError<E> {
 /// loop continues to own radio receive/transmit progression.
 pub struct MacHandle<
     'a,
-    R: Radio,
-    I: NodeIdentity,
-    A: AesProvider,
-    S: Sha256Provider,
-    C: Clock,
-    G: Rng,
-    CS: CounterStore,
+    P: Platform,
     const IDENTITIES: usize,
     const PEERS: usize,
     const CHANNELS: usize,
@@ -42,18 +37,12 @@ pub struct MacHandle<
     const FRAME: usize,
     const DUP: usize,
 > {
-    mac: &'a RefCell<Mac<R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+    mac: &'a RefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
 }
 
 impl<
         'a,
-        R: Radio,
-        I: NodeIdentity,
-        A: AesProvider,
-        S: Sha256Provider,
-        C: Clock,
-        G: Rng,
-        CS: CounterStore,
+        P: Platform,
         const IDENTITIES: usize,
         const PEERS: usize,
         const CHANNELS: usize,
@@ -61,19 +50,13 @@ impl<
         const TX: usize,
         const FRAME: usize,
         const DUP: usize,
-    > Copy for MacHandle<'a, R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    > Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
 }
 
 impl<
         'a,
-        R: Radio,
-        I: NodeIdentity,
-        A: AesProvider,
-        S: Sha256Provider,
-        C: Clock,
-        G: Rng,
-        CS: CounterStore,
+        P: Platform,
         const IDENTITIES: usize,
         const PEERS: usize,
         const CHANNELS: usize,
@@ -81,7 +64,7 @@ impl<
         const TX: usize,
         const FRAME: usize,
         const DUP: usize,
-    > Clone for MacHandle<'a, R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    > Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     fn clone(&self) -> Self {
         *self
@@ -90,13 +73,7 @@ impl<
 
 impl<
         'a,
-        R: Radio,
-        I: NodeIdentity,
-        A: AesProvider,
-        S: Sha256Provider,
-        C: Clock,
-        G: Rng,
-        CS: CounterStore,
+        P: Platform,
         const IDENTITIES: usize,
         const PEERS: usize,
         const CHANNELS: usize,
@@ -104,18 +81,35 @@ impl<
         const TX: usize,
         const FRAME: usize,
         const DUP: usize,
-    > MacHandle<'a, R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    > MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
-        mac: &'a RefCell<Mac<R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+        mac: &'a RefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
     ) -> Self {
         Self { mac }
     }
 
     /// Registers a local identity with the shared coordinator.
-    pub fn add_identity(&self, identity: I) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
+    pub fn add_identity(&self, identity: P::Identity) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
         self.with_mac(|mac| mac.add_identity(identity))
+    }
+
+    /// Load the persisted frame-counter boundary for one identity.
+    pub async fn load_persisted_counter(
+        &self,
+        id: LocalIdentityId,
+    ) -> Result<u32, MacHandleError<CounterPersistenceError<<P::CounterStore as CounterStore>::Error>>> {
+        let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
+        mac.load_persisted_counter(id).await.map_err(MacHandleError::Inner)
+    }
+
+    /// Persist all currently scheduled frame-counter reservations.
+    pub async fn service_counter_persistence(
+        &self,
+    ) -> Result<usize, MacHandleError<<P::CounterStore as CounterStore>::Error>> {
+        let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
+        mac.service_counter_persistence().await.map_err(MacHandleError::Inner)
     }
 
     /// Registers or refreshes a remote peer in the shared registry.
@@ -165,6 +159,8 @@ impl<
     }
 
     /// Enqueues a unicast frame for transmission.
+    ///
+    /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
     pub fn send_unicast(
         &self,
         from: LocalIdentityId,
@@ -176,6 +172,8 @@ impl<
     }
 
     /// Enqueues a blind-unicast frame for transmission.
+    ///
+    /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
     pub fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
@@ -202,6 +200,8 @@ impl<
 
     #[cfg(feature = "software-crypto")]
     /// Registers an ephemeral software identity with the shared coordinator.
+    ///
+    /// This is primarily used by the node layer when a PFS session becomes active.
     pub fn register_ephemeral(
         &self,
         parent: LocalIdentityId,
@@ -221,7 +221,7 @@ impl<
 
     fn with_mac<T, E>(
         &self,
-        f: impl FnOnce(&mut Mac<R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Result<T, E>,
+        f: impl FnOnce(&mut Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Result<T, E>,
     ) -> Result<T, MacHandleError<E>> {
         let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
         f(&mut mac).map_err(MacHandleError::Inner)

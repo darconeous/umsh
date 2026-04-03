@@ -2,14 +2,22 @@ use crate::mac::{NodeMac, NodeMacError};
 
 /// Errors produced by the endpoint layer.
 pub enum EndpointError<M: NodeMac> {
+    /// Application payload parse failure.
     AppParse(umsh_app::ParseError),
+    /// Application payload encode failure.
     AppEncode(umsh_app::EncodeError),
+    /// Underlying MAC-layer failure.
     Mac(NodeMacError<M::SendError, M::CapacityError>),
+    /// An identity beacon was requested without configured identity data.
     MissingAdvertisedIdentity,
+    /// Referenced PFS session was missing.
     PfsSessionMissing,
+    /// The session table is full.
     PfsSessionTableFull,
+    /// A parsed payload could not be promoted into an owned representation.
     UnsupportedPayload,
     #[cfg(feature = "software-crypto")]
+    /// Crypto failure during PFS processing.
     Crypto(umsh_crypto::CryptoError),
 }
 

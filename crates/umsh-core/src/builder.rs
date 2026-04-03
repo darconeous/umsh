@@ -5,26 +5,38 @@ use crate::{
     PacketType, PublicKey, Scf, SecInfo, UnsealedPacket,
 };
 
+/// Typestate markers used by [`PacketBuilder`] and its specialized builders.
 pub mod state {
+    /// Builder state that still requires a source address.
     pub struct NeedsSource;
+    /// Builder state that still requires a frame counter.
     pub struct NeedsCounter;
+    /// Builder state where options and payload can be configured.
     pub struct Configuring;
+    /// Builder state after payload bytes have been staged.
     pub struct Complete;
 }
 
+/// Entry point for typestate packet construction.
+///
+/// The builder consumes itself as it transitions through required stages so
+/// invalid packet layouts are rejected at compile time where possible.
 pub struct PacketBuilder<'a> {
     buf: &'a mut [u8],
 }
 
 impl<'a> PacketBuilder<'a> {
+    /// Start building a packet into `buf`.
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self { buf }
     }
 
+    /// Begin a broadcast packet.
     pub fn broadcast(self) -> BroadcastBuilder<'a, state::NeedsSource> {
         Builder::new(self.buf, PacketType::Broadcast)
     }
 
+    /// Build a MAC ACK packet with all required addressing fixed up front.
     pub fn mac_ack(self, dst: [u8; 2], ack_tag: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
         let mut builder = Builder::new(self.buf, PacketType::MacAck);
         builder.ack_dst = Some(dst);
@@ -32,18 +44,21 @@ impl<'a> PacketBuilder<'a> {
         builder
     }
 
+    /// Begin a unicast packet to `dst`.
     pub fn unicast(self, dst: NodeHint) -> UnicastBuilder<'a, state::NeedsSource> {
         let mut builder = Builder::new(self.buf, PacketType::Unicast);
         builder.dst = Some(dst);
         builder
     }
 
+    /// Begin a multicast packet on `channel`.
     pub fn multicast(self, channel: ChannelId) -> MulticastBuilder<'a, state::NeedsSource> {
         let mut builder = Builder::new(self.buf, PacketType::Multicast);
         builder.channel = Some(channel);
         builder
     }
 
+    /// Begin a blind-unicast packet addressed through `channel` to `dst`.
     pub fn blind_unicast(
         self,
         channel: ChannelId,
@@ -56,16 +71,26 @@ impl<'a> PacketBuilder<'a> {
     }
 }
 
+/// Broadcast packet builder alias.
 pub type BroadcastBuilder<'a, S> = Builder<'a, BroadcastKind, S>;
+/// MAC ACK packet builder alias.
 pub type MacAckBuilder<'a, S> = Builder<'a, MacAckKind, S>;
+/// Unicast packet builder alias.
 pub type UnicastBuilder<'a, S> = Builder<'a, UnicastKind, S>;
+/// Multicast packet builder alias.
 pub type MulticastBuilder<'a, S> = Builder<'a, MulticastKind, S>;
+/// Blind-unicast packet builder alias.
 pub type BlindUnicastBuilder<'a, S> = Builder<'a, BlindUnicastKind, S>;
 
+/// Marker type for broadcast builders.
 pub struct BroadcastKind;
+/// Marker type for MAC ACK builders.
 pub struct MacAckKind;
+/// Marker type for unicast builders.
 pub struct UnicastKind;
+/// Marker type for multicast builders.
 pub struct MulticastKind;
+/// Marker type for blind-unicast builders.
 pub struct BlindUnicastKind;
 
 enum SourceValue {
@@ -73,6 +98,7 @@ enum SourceValue {
     Full(PublicKey),
 }
 
+/// Internal generic builder implementation shared by all packet kinds.
 pub struct Builder<'a, K, S> {
     buf: &'a mut [u8],
     packet_type: PacketType,
@@ -283,11 +309,13 @@ impl<'a, K, S> Builder<'a, K, S> {
 }
 
 impl<'a> BroadcastBuilder<'a, state::NeedsSource> {
+    /// Encode the source address as a three-byte hint.
     pub fn source_hint(mut self, hint: NodeHint) -> BroadcastBuilder<'a, state::Configuring> {
         self.source = Some(SourceValue::Hint(hint));
         self.with_state()
     }
 
+    /// Encode the source address as a full public key.
     pub fn source_full(mut self, key: &PublicKey) -> BroadcastBuilder<'a, state::Configuring> {
         self.source = Some(SourceValue::Full(*key));
         self.with_state()
@@ -295,11 +323,13 @@ impl<'a> BroadcastBuilder<'a, state::NeedsSource> {
 }
 
 impl<'a> UnicastBuilder<'a, state::NeedsSource> {
+    /// Encode the source address as a three-byte hint.
     pub fn source_hint(mut self, hint: NodeHint) -> UnicastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Hint(hint));
         self.with_state()
     }
 
+    /// Encode the source address as a full public key.
     pub fn source_full(mut self, key: &PublicKey) -> UnicastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Full(*key));
         self.with_state()
@@ -307,11 +337,13 @@ impl<'a> UnicastBuilder<'a, state::NeedsSource> {
 }
 
 impl<'a> MulticastBuilder<'a, state::NeedsSource> {
+    /// Encode the source address as a three-byte hint.
     pub fn source_hint(mut self, hint: NodeHint) -> MulticastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Hint(hint));
         self.with_state()
     }
 
+    /// Encode the source address as a full public key.
     pub fn source_full(mut self, key: &PublicKey) -> MulticastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Full(*key));
         self.with_state()
@@ -319,11 +351,13 @@ impl<'a> MulticastBuilder<'a, state::NeedsSource> {
 }
 
 impl<'a> BlindUnicastBuilder<'a, state::NeedsSource> {
+    /// Encode the source address as a three-byte hint.
     pub fn source_hint(mut self, hint: NodeHint) -> BlindUnicastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Hint(hint));
         self.with_state()
     }
 
+    /// Encode the source address as a full public key.
     pub fn source_full(mut self, key: &PublicKey) -> BlindUnicastBuilder<'a, state::NeedsCounter> {
         self.source = Some(SourceValue::Full(*key));
         self.with_state()
@@ -331,6 +365,7 @@ impl<'a> BlindUnicastBuilder<'a, state::NeedsSource> {
 }
 
 impl<'a> UnicastBuilder<'a, state::NeedsCounter> {
+    /// Set the frame counter for the secure packet.
     pub fn frame_counter(mut self, counter: u32) -> UnicastBuilder<'a, state::Configuring> {
         self.frame_counter = Some(counter);
         self.with_state()
@@ -338,6 +373,7 @@ impl<'a> UnicastBuilder<'a, state::NeedsCounter> {
 }
 
 impl<'a> MulticastBuilder<'a, state::NeedsCounter> {
+    /// Set the frame counter for the secure packet.
     pub fn frame_counter(mut self, counter: u32) -> MulticastBuilder<'a, state::Configuring> {
         self.frame_counter = Some(counter);
         self.with_state()
@@ -345,6 +381,7 @@ impl<'a> MulticastBuilder<'a, state::NeedsCounter> {
 }
 
 impl<'a> BlindUnicastBuilder<'a, state::NeedsCounter> {
+    /// Set the frame counter for the secure packet.
     pub fn frame_counter(mut self, counter: u32) -> BlindUnicastBuilder<'a, state::Configuring> {
         self.frame_counter = Some(counter);
         self.with_state()
@@ -354,6 +391,7 @@ impl<'a> BlindUnicastBuilder<'a, state::NeedsCounter> {
 macro_rules! impl_configuring_common {
     ($name:ident<$state:ty>) => {
         impl<'a> $name<'a, $state> {
+            /// Set the initial flood-hop budget.
             pub fn flood_hops(mut self, remaining: u8) -> Self {
                 if let Some(value) = FloodHops::new(remaining, 0) {
                     self.flood_hops = Some(value);
@@ -361,16 +399,19 @@ macro_rules! impl_configuring_common {
                 self
             }
 
+            /// Add the region-code option.
             pub fn region_code(mut self, code: [u8; 2]) -> Self {
                 self.push_option(OptionNumber::RegionCode.as_u16(), &code);
                 self
             }
 
+            /// Add an empty trace-route option.
             pub fn trace_route(mut self) -> Self {
                 self.push_option(OptionNumber::TraceRoute.as_u16(), &[]);
                 self
             }
 
+            /// Add a source-route option from a router-hint slice.
             pub fn source_route(mut self, hops: &[crate::RouterHint]) -> Self {
                 let mut encoded = [0u8; 30];
                 let needed = hops.len() * 2;
@@ -385,6 +426,7 @@ macro_rules! impl_configuring_common {
                 self
             }
 
+            /// Add an arbitrary option number/value pair.
             pub fn option(mut self, number: OptionNumber, value: &[u8]) -> Self {
                 self.push_option(number.as_u16(), value);
                 self
@@ -400,26 +442,31 @@ impl_configuring_common!(MulticastBuilder<state::Configuring>);
 impl_configuring_common!(BlindUnicastBuilder<state::Configuring>);
 
 impl<'a> UnicastBuilder<'a, state::Configuring> {
+    /// Upgrade the packet type to ACK-requested unicast.
     pub fn ack_requested(mut self) -> Self {
         self.packet_type = PacketType::UnicastAckReq;
         self
     }
 
+    /// Mark the packet body for encryption.
     pub fn encrypted(mut self) -> Self {
         self.encrypted = true;
         self
     }
 
+    /// Select the MIC size reserved in the packet footer.
     pub fn mic_size(mut self, size: MicSize) -> Self {
         self.mic_size = size;
         self
     }
 
+    /// Attach an explicit salt value to SECINFO.
     pub fn salt(mut self, salt: u16) -> Self {
         self.salt = Some(salt);
         self
     }
 
+    /// Stage the application payload and advance to the terminal builder state.
     pub fn payload(mut self, data: &[u8]) -> UnicastBuilder<'a, state::Complete> {
         self.stage_payload(data);
         self.with_state()
@@ -427,21 +474,25 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
 }
 
 impl<'a> MulticastBuilder<'a, state::Configuring> {
+    /// Mark the packet body for encryption.
     pub fn encrypted(mut self) -> Self {
         self.encrypted = true;
         self
     }
 
+    /// Select the MIC size reserved in the packet footer.
     pub fn mic_size(mut self, size: MicSize) -> Self {
         self.mic_size = size;
         self
     }
 
+    /// Attach an explicit salt value to SECINFO.
     pub fn salt(mut self, salt: u16) -> Self {
         self.salt = Some(salt);
         self
     }
 
+    /// Stage the application payload and advance to the terminal builder state.
     pub fn payload(mut self, data: &[u8]) -> MulticastBuilder<'a, state::Complete> {
         self.stage_payload(data);
         self.with_state()
@@ -449,31 +500,37 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
 }
 
 impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
+    /// Upgrade the packet type to ACK-requested blind unicast.
     pub fn ack_requested(mut self) -> Self {
         self.packet_type = PacketType::BlindUnicastAckReq;
         self
     }
 
+    /// Mark the body and blinded address block for encryption.
     pub fn encrypted(mut self) -> Self {
         self.encrypted = true;
         self
     }
 
+    /// Emit a blind-unicast packet without encrypting the payload.
     pub fn unencrypted(mut self) -> Self {
         self.encrypted = false;
         self
     }
 
+    /// Select the MIC size reserved in the packet footer.
     pub fn mic_size(mut self, size: MicSize) -> Self {
         self.mic_size = size;
         self
     }
 
+    /// Attach an explicit salt value to SECINFO.
     pub fn salt(mut self, salt: u16) -> Self {
         self.salt = Some(salt);
         self
     }
 
+    /// Stage the application payload and advance to the terminal builder state.
     pub fn payload(mut self, data: &[u8]) -> BlindUnicastBuilder<'a, state::Complete> {
         self.stage_payload(data);
         self.with_state()
@@ -481,11 +538,13 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
 }
 
 impl<'a> BroadcastBuilder<'a, state::Configuring> {
+    /// Stage a broadcast payload.
     pub fn payload(mut self, data: &[u8]) -> BroadcastBuilder<'a, state::Complete> {
         self.stage_payload(data);
         self.with_state()
     }
 
+    /// Finalize the broadcast packet and return the written frame bytes.
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
         self.write_source(&mut cursor)?;
@@ -497,12 +556,14 @@ impl<'a> BroadcastBuilder<'a, state::Configuring> {
 }
 
 impl<'a> BroadcastBuilder<'a, state::Complete> {
+    /// Finalize the broadcast packet and return the written frame bytes.
     pub fn build(self) -> Result<&'a [u8], BuildError> {
         self.with_state::<state::Configuring>().build()
     }
 }
 
 impl<'a> MacAckBuilder<'a, state::Configuring> {
+    /// Finalize the MAC ACK packet and return the written frame bytes.
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let dst = self.ack_dst.ok_or(BuildError::MissingDestination)?;

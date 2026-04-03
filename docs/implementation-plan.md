@@ -2191,6 +2191,10 @@ loop {
 
 ### 3. Desktop Client (Tokio)
 
+This sketch is illustrative only. Any host-to-radio serial transport remains
+explicitly provisional and should not be treated as the intended long-term
+companion-radio protocol.
+
 ```rust
 use umsh::prelude::*;
 
@@ -2484,14 +2488,14 @@ format UMSH URIs.
 **Goal:** Prove the stack works end-to-end on real hardware and in
 desktop environments.
 
-- [ ] Mock radio for testing (loopback + multi-node simulation)
-- [ ] Tokio delay/clock/RNG/storage implementations
-- [ ] Embassy delay/clock/RNG/storage implementations
-- [ ] Serial LoRa radio adapter (for desktop use with a companion radio module)
-- [ ] `examples/repeater`: Bare-metal Embassy repeater
-- [ ] `examples/desktop-chat`: Tokio CLI chat client
-- [ ] End-to-end test: two simulated endpoints exchanging text messages
-- [ ] End-to-end test: multi-hop forwarding through a simulated repeater
+- [x] Mock radio for testing (loopback + multi-node simulation)
+- [x] Tokio delay/clock/RNG/storage implementations
+- [x] Embassy delay/clock/RNG/storage implementations
+- [x] Serial LoRa radio adapter (for desktop use with a companion radio module)
+- [x] `examples/repeater`: Bare-metal Embassy repeater
+- [x] `examples/desktop-chat`: Tokio CLI chat client
+- [x] End-to-end test: two simulated endpoints exchanging text messages
+- [x] End-to-end test: multi-hop forwarding through a simulated repeater
 - [x] End-to-end test: PFS session establishment, traffic, and teardown
 
 ---

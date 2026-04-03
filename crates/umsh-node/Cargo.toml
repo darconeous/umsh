@@ -18,3 +18,6 @@ umsh-core = { path = "../umsh-core", default-features = false }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }
 umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-mac = { path = "../umsh-mac", default-features = false }
+
+[dev-dependencies]
+rand.workspace = true

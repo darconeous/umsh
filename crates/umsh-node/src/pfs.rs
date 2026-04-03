@@ -17,18 +17,31 @@ use crate::{error::EndpointError, mac::NodeMac};
 const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
 
 #[cfg(feature = "software-crypto")]
+/// Lifecycle state for a PFS session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PfsState {
+    /// Session requested but not fully activated.
     Requested,
+    /// Session active and mapped to an ephemeral MAC identity.
     Active,
 }
 
 #[cfg(feature = "software-crypto")]
+/// One tracked PFS session.
 pub struct PfsSession {
+    /// Peer long-term identity.
     pub peer_long_term: PublicKey,
+    /// Local ephemeral MAC identity.
     pub local_ephemeral_id: LocalIdentityId,
+    /// Peer ephemeral public key.
     pub peer_ephemeral: PublicKey,
+    /// Absolute expiry time in milliseconds.
+    ///
+    /// While the session is still [`Requested`](PfsState::Requested), this is a
+    /// provisional value computed at request time and replaced when the session
+    /// becomes active.
     pub expires_ms: u64,
+    /// Session lifecycle state.
     pub state: PfsState,
     pending_local: Option<SoftwareIdentity>,
 }
@@ -47,6 +60,7 @@ impl core::fmt::Debug for PfsSession {
 }
 
 #[cfg(feature = "software-crypto")]
+/// Fixed-capacity manager for endpoint-level PFS sessions.
 pub struct PfsSessionManager {
     sessions: Vec<PfsSession>,
     max_sessions: usize,
@@ -61,6 +75,7 @@ impl Default for PfsSessionManager {
 
 #[cfg(feature = "software-crypto")]
 impl PfsSessionManager {
+    /// Create an empty session manager.
     pub fn new() -> Self {
         Self {
             sessions: Vec::new(),
@@ -68,10 +83,12 @@ impl PfsSessionManager {
         }
     }
 
+    /// Borrow the tracked sessions.
     pub fn sessions(&self) -> &[PfsSession] {
         &self.sessions
     }
 
+    /// Return the active ephemeral route for `peer`, if any.
     pub fn active_route(&self, peer: &PublicKey, now_ms: u64) -> Option<(LocalIdentityId, PublicKey)> {
         self.sessions
             .iter()
@@ -79,6 +96,7 @@ impl PfsSessionManager {
             .map(|session| (session.local_ephemeral_id, session.peer_ephemeral))
     }
 
+    /// Initiate a new PFS session request.
     pub fn request_session<M: NodeMac>(
         &mut self,
         mac: &M,
@@ -114,6 +132,7 @@ impl PfsSessionManager {
         Ok(receipt)
     }
 
+    /// Accept an inbound PFS request.
     pub fn accept_request<M: NodeMac>(
         &mut self,
         mac: &M,
@@ -150,6 +169,7 @@ impl PfsSessionManager {
         Ok(())
     }
 
+    /// Accept an inbound PFS response for an existing request.
     pub fn accept_response<M: NodeMac>(
         &mut self,
         mac: &M,
@@ -175,6 +195,7 @@ impl PfsSessionManager {
         Ok(true)
     }
 
+    /// End one session and optionally notify the peer.
     pub fn end_session<M: NodeMac>(
         &mut self,
         mac: &M,
@@ -196,6 +217,7 @@ impl PfsSessionManager {
         Ok(true)
     }
 
+    /// Expire any sessions whose deadlines have passed.
     pub fn expire_sessions<M: NodeMac>(
         &mut self,
         mac: &M,

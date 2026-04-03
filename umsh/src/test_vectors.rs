@@ -5,7 +5,15 @@
 
 use std::fmt::Write;
 
-use crate::prelude::*;
+use crate::{
+    core::{ChannelKey, MicSize, NodeHint, PacketBuilder, PacketHeader, PublicKey},
+    crypto::{
+        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
+        CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
+    },
+};
+
+type SoftwareCryptoEngine = CryptoEngine<SoftwareAes, SoftwareSha256>;
 
 /// Render the canonical phase-1 test-vector appendix as Markdown.
 ///

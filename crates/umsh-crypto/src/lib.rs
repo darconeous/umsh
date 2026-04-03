@@ -2,6 +2,29 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+//! Cryptographic traits and UMSH-specific key/packet operations.
+//!
+//! This crate separates algorithm providers from protocol logic. The low-level
+//! traits such as [`AesProvider`] and [`Sha256Provider`] can be backed either by
+//! software implementations or hardware accelerators, while [`CryptoEngine`]
+//! implements the UMSH-specific derivation and packet-authentication rules.
+//!
+//! # Example
+//!
+//! ```rust
+//! use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
+//! use umsh_crypto::{CryptoEngine, NodeIdentity};
+//!
+//! let alice = SoftwareIdentity::from_secret_bytes(&[0x11; 32]);
+//! let bob = SoftwareIdentity::from_secret_bytes(&[0x22; 32]);
+//! let shared = alice.shared_secret_with(bob.public_key()).unwrap();
+//! let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+//! let keys = engine.derive_pairwise_keys(&shared);
+//!
+//! assert_ne!(keys.k_enc, [0u8; 16]);
+//! assert_ne!(keys.k_mic, [0u8; 16]);
+//! ```
+
 use core::ops::Range;
 
 use umsh_core::{
@@ -10,38 +33,54 @@ use umsh_core::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+/// AES block-cipher instance used by the protocol engine.
 pub trait AesCipher {
+    /// Encrypt one 16-byte block in place.
     fn encrypt_block(&self, block: &mut [u8; 16]);
+    /// Decrypt one 16-byte block in place.
     fn decrypt_block(&self, block: &mut [u8; 16]);
 }
 
+/// Factory for keyed AES cipher instances.
 pub trait AesProvider {
+    /// Concrete cipher type returned by [`new_cipher`](Self::new_cipher).
     type Cipher: AesCipher;
 
+    /// Create a new AES-128 cipher using `key`.
     fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher;
 }
 
+/// SHA-256 and HMAC-SHA-256 provider.
 pub trait Sha256Provider {
+    /// Hash a list of borrowed byte slices as one concatenated message.
     fn hash(&self, data: &[&[u8]]) -> [u8; 32];
+    /// Compute HMAC-SHA-256 over a list of borrowed byte slices.
     fn hmac(&self, key: &[u8], data: &[&[u8]]) -> [u8; 32];
 }
 
+/// Raw X25519 shared secret.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SharedSecret(pub [u8; 32]);
 
+/// Node identity capable of signing and key agreement.
 pub trait NodeIdentity {
     type Error;
 
+    /// Return the long-term Ed25519 public key for this identity.
     fn public_key(&self) -> &PublicKey;
 
+    /// Return the three-byte node hint derived from [`public_key`](Self::public_key).
     fn hint(&self) -> umsh_core::NodeHint {
         self.public_key().hint()
     }
 
+    /// Sign an arbitrary message.
     async fn sign(&self, message: &[u8]) -> Result<[u8; 64], Self::Error>;
+    /// Perform X25519-style key agreement with a peer public key.
     async fn agree(&self, peer: &PublicKey) -> Result<SharedSecret, Self::Error>;
 }
 
+/// Protocol-level crypto failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CryptoError {
     InvalidPublicKey,
@@ -50,12 +89,14 @@ pub enum CryptoError {
     AuthenticationFailed,
 }
 
+/// Derived pairwise transport keys.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct PairwiseKeys {
     pub k_enc: [u8; 16],
     pub k_mic: [u8; 16],
 }
 
+/// Derived multicast or channel transport keys.
 #[derive(Clone)]
 pub struct DerivedChannelKeys {
     pub k_enc: [u8; 16],
@@ -63,6 +104,7 @@ pub struct DerivedChannelKeys {
     pub channel_id: ChannelId,
 }
 
+/// Incremental AES-CMAC state.
 pub struct CmacState<C: AesCipher> {
     cipher: C,
     state: [u8; 16],
@@ -73,6 +115,7 @@ pub struct CmacState<C: AesCipher> {
 }
 
 impl<C: AesCipher> CmacState<C> {
+    /// Initialize a new incremental CMAC state.
     pub fn new(cipher: C) -> Self {
         let mut l = [0u8; 16];
         cipher.encrypt_block(&mut l);
@@ -88,6 +131,7 @@ impl<C: AesCipher> CmacState<C> {
         }
     }
 
+    /// Feed additional bytes into the MAC state.
     pub fn update(&mut self, mut data: &[u8]) {
         while !data.is_empty() {
             let space = 16 - self.pos;
@@ -101,6 +145,7 @@ impl<C: AesCipher> CmacState<C> {
         }
     }
 
+    /// Finalize and return the full 16-byte CMAC value.
     pub fn finalize(self) -> [u8; 16] {
         let this = self;
         let mut last = [0u8; 16];
@@ -128,16 +173,19 @@ impl<C: AesCipher> CmacState<C> {
     }
 }
 
+/// UMSH protocol crypto engine.
 pub struct CryptoEngine<A: AesProvider, S: Sha256Provider> {
     aes: A,
     sha: S,
 }
 
 impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
+    /// Create a new engine from algorithm providers.
     pub fn new(aes: A, sha: S) -> Self {
         Self { aes, sha }
     }
 
+    /// Derive stable pairwise encryption and MIC keys from a shared secret.
     pub fn derive_pairwise_keys(&self, shared_secret: &SharedSecret) -> PairwiseKeys {
         let mut okm = [0u8; 32];
         self.hkdf(&shared_secret.0, b"UMSH-PAIRWISE-SALT", b"UMSH-UNICAST-V1", &mut okm);
@@ -151,12 +199,14 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         keys
     }
 
+    /// Derive the channel identifier from a raw channel key.
     pub fn derive_channel_id(&self, channel_key: &ChannelKey) -> ChannelId {
         let mut out = [0u8; 2];
         self.hkdf(&channel_key.0, b"UMSH-CHAN-ID", b"", &mut out);
         ChannelId(out)
     }
 
+    /// Derive multicast transport keys and the channel identifier.
     pub fn derive_channel_keys(&self, channel_key: &ChannelKey) -> DerivedChannelKeys {
         let channel_id = self.derive_channel_id(channel_key);
         let mut info = [0u8; 15];
@@ -175,6 +225,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         derived
     }
 
+    /// Combine pairwise and channel keys for blind-unicast payload protection.
     pub fn derive_blind_keys(&self, pairwise: &PairwiseKeys, channel: &DerivedChannelKeys) -> PairwiseKeys {
         let mut keys = PairwiseKeys {
             k_enc: [0u8; 16],
@@ -197,10 +248,12 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         keys
     }
 
+    /// Derive a channel key from a human-readable channel name.
     pub fn derive_named_channel_key(&self, name: &str) -> ChannelKey {
         ChannelKey(self.sha.hmac(b"UMSH-CHANNEL-V1", &[name.as_bytes()]))
     }
 
+    /// Seal a unicast or multicast packet in place.
     pub fn seal_packet(&self, packet: &mut UnsealedPacket<'_>, keys: &PairwiseKeys) -> Result<usize, CryptoError> {
         let header = packet.header();
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
@@ -223,6 +276,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         Ok(mic_len)
     }
 
+    /// Seal a blind-unicast packet, including its hidden address block.
     pub fn seal_blind_packet(
         &self,
         packet: &mut UnsealedPacket<'_>,
@@ -255,6 +309,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         Ok(mic_len)
     }
 
+    /// Verify and, if needed, decrypt a received secure packet in place.
     pub fn open_packet(&self, buf: &mut [u8], header: &PacketHeader, keys: &PairwiseKeys) -> Result<Range<usize>, CryptoError> {
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let mut mic = [0u8; 16];
@@ -285,6 +340,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         Ok(body_range)
     }
 
+    /// Decrypt the blinded destination/source address block of a blind unicast.
     pub fn decrypt_blind_addr(
         &self,
         buf: &mut [u8],
@@ -328,6 +384,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         }
     }
 
+    /// Compute the 8-byte transport ACK tag from a full CMAC and `k_enc`.
     pub fn compute_ack_tag(&self, full_cmac: &[u8; 16], k_enc: &[u8; 16]) -> [u8; 8] {
         let cipher = self.aes.new_cipher(k_enc);
         let mut block = *full_cmac;
@@ -337,10 +394,12 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         ack
     }
 
+    /// Create a reusable incremental CMAC state.
     pub fn cmac_state(&self, key: &[u8; 16]) -> CmacState<A::Cipher> {
         CmacState::new(self.aes.new_cipher(key))
     }
 
+    /// Convenience wrapper for AES-CMAC over concatenated slices.
     pub fn aes_cmac(&self, key: &[u8; 16], data: &[&[u8]]) -> [u8; 16] {
         let mut state = self.cmac_state(key);
         for chunk in data {
@@ -349,6 +408,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         state.finalize()
     }
 
+    /// Apply AES-CTR using `iv` as the initial counter block.
     pub fn aes_ctr(&self, key: &[u8; 16], iv: &[u8; 16], data: &mut [u8]) {
         let cipher = self.aes.new_cipher(key);
         let mut counter = *iv;
@@ -362,6 +422,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         }
     }
 
+    /// Construct the CTR IV from MIC bytes and SECINFO bytes.
     pub fn build_ctr_iv(&self, mic: &[u8], sec_info_bytes: &[u8]) -> [u8; 16] {
         let mut iv = [0u8; 16];
         let mut written = 0usize;
@@ -372,6 +433,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         iv
     }
 
+    /// Run HKDF-SHA256 and write the output into `okm`.
     pub fn hkdf(&self, ikm: &[u8], salt: &[u8], info: &[u8], okm: &mut [u8]) {
         let prk = self.sha.hmac(salt, &[ikm]);
         let mut previous = [0u8; 32];

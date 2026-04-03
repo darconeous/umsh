@@ -2,8 +2,10 @@ use core::ops::Range;
 
 use crate::{options::OptionDecoder, ParseError};
 
+/// Current UMSH packet version encoded in the FCF high bits.
 pub const UMSH_VERSION: u8 = 0b11;
 
+/// Packet class encoded in the frame-control field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PacketType {
@@ -18,6 +20,7 @@ pub enum PacketType {
 }
 
 impl PacketType {
+    /// Decode a packet type from the three packet-type bits in the FCF.
     pub const fn from_bits(value: u8) -> Self {
         match value & 0x07 {
             0 => Self::Broadcast,
@@ -31,6 +34,7 @@ impl PacketType {
         }
     }
 
+    /// Return whether packets of this type carry SECINFO and a MIC.
     pub fn is_secure(self) -> bool {
         matches!(
             self,
@@ -42,15 +46,18 @@ impl PacketType {
         )
     }
 
+    /// Return whether this packet type requests a MAC ACK.
     pub fn ack_requested(self) -> bool {
         matches!(self, Self::UnicastAckReq | Self::BlindUnicastAckReq)
     }
 }
 
+/// Frame-control field wrapper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fcf(pub u8);
 
 impl Fcf {
+    /// Build an FCF from structured flags.
     pub const fn new(
         packet_type: PacketType,
         full_source: bool,
@@ -66,52 +73,64 @@ impl Fcf {
         )
     }
 
+    /// Return the encoded protocol version.
     pub const fn version(self) -> u8 {
         self.0 >> 6
     }
 
+    /// Return the encoded packet type.
     pub const fn packet_type(self) -> PacketType {
         PacketType::from_bits((self.0 >> 3) & 0x07)
     }
 
+    /// Return whether the source address is the full 32-byte public key.
     pub const fn full_source(self) -> bool {
         self.0 & 0x04 != 0
     }
 
+    /// Return whether an option block is present.
     pub const fn options_present(self) -> bool {
         self.0 & 0x02 != 0
     }
 
+    /// Return whether a flood-hop byte is present.
     pub const fn flood_hops_present(self) -> bool {
         self.0 & 0x01 != 0
     }
 }
 
+/// Security-control field wrapper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scf(pub u8);
 
 impl Scf {
+    /// Build an SCF from structured flags.
     pub const fn new(encrypted: bool, mic_size: MicSize, salt_present: bool) -> Self {
         Self(((encrypted as u8) << 7) | ((mic_size as u8) << 5) | ((salt_present as u8) << 4))
     }
 
+    /// Return whether the body is encrypted in place.
     pub const fn encrypted(self) -> bool {
         self.0 & 0x80 != 0
     }
 
+    /// Decode the configured MIC size.
     pub fn mic_size(self) -> Result<MicSize, ParseError> {
         MicSize::from_bits((self.0 >> 5) & 0x03)
     }
 
+    /// Return whether a salt field follows the frame counter.
     pub const fn salt_present(self) -> bool {
         self.0 & 0x10 != 0
     }
 
+    /// Return whether the reserved low nibble is valid for the current spec.
     pub const fn reserved_valid(self) -> bool {
         self.0 & 0x0F == 0
     }
 }
 
+/// Authenticator size carried by secured packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MicSize {
     Mic4 = 0,
@@ -121,6 +140,7 @@ pub enum MicSize {
 }
 
 impl MicSize {
+    /// Return the on-wire byte length of this MIC size.
     pub const fn byte_len(self) -> usize {
         match self {
             Self::Mic4 => 4,
@@ -130,6 +150,7 @@ impl MicSize {
         }
     }
 
+    /// Decode a MIC size from its two SCF bits.
     pub fn from_bits(value: u8) -> Result<Self, ParseError> {
         match value {
             0 => Ok(Self::Mic4),
@@ -141,10 +162,12 @@ impl MicSize {
     }
 }
 
+/// Combined remaining/accumulated flood-hop counters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FloodHops(pub u8);
 
 impl FloodHops {
+    /// Construct a flood-hop value if both nibbles fit in four bits.
     pub fn new(remaining: u8, accumulated: u8) -> Option<Self> {
         if remaining <= 0x0F && accumulated <= 0x0F {
             Some(Self((remaining << 4) | accumulated))
@@ -153,14 +176,17 @@ impl FloodHops {
         }
     }
 
+    /// Remaining forward-hop budget.
     pub const fn remaining(self) -> u8 {
         self.0 >> 4
     }
 
+    /// Number of hops already consumed.
     pub const fn accumulated(self) -> u8 {
         self.0 & 0x0F
     }
 
+    /// Return the next forwarded hop count.
     pub fn decremented(self) -> Self {
         let remaining = self.remaining();
         if remaining == 0 {
@@ -171,43 +197,53 @@ impl FloodHops {
     }
 }
 
+/// Three-byte node hint derived from a public key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodeHint(pub [u8; 3]);
 
 impl NodeHint {
+    /// Derive the hint from the first three public-key bytes.
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1], key.0[2]])
     }
 }
 
+/// Two-byte router hint used in learned routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RouterHint(pub [u8; 2]);
 
 impl RouterHint {
+    /// Derive the router hint from the first two public-key bytes.
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1]])
     }
 }
 
+/// Two-byte multicast channel identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChannelId(pub [u8; 2]);
 
+/// Node public key, which also acts as the full network address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PublicKey(pub [u8; 32]);
 
 impl PublicKey {
+    /// Return the node hint associated with this key.
     pub fn hint(&self) -> NodeHint {
         NodeHint::from_public_key(self)
     }
 
+    /// Return the router hint associated with this key.
     pub fn router_hint(&self) -> RouterHint {
         RouterHint::from_public_key(self)
     }
 }
 
+/// Raw 32-byte multicast channel secret.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct ChannelKey(pub [u8; 32]);
 
+/// Source address supplied while constructing packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceAddr<'a> {
     Hint(NodeHint),
@@ -215,6 +251,7 @@ pub enum SourceAddr<'a> {
 }
 
 impl SourceAddr<'_> {
+    /// Return the hint form of this address.
     pub fn hint(&self) -> NodeHint {
         match self {
             Self::Hint(hint) => *hint,
@@ -223,6 +260,7 @@ impl SourceAddr<'_> {
     }
 }
 
+/// Decoded SECINFO structure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SecInfo {
     pub scf: Scf,
@@ -231,6 +269,7 @@ pub struct SecInfo {
 }
 
 impl SecInfo {
+    /// Return the SECINFO on-wire length.
     pub fn wire_len(&self) -> usize {
         if self.salt.is_some() {
             7
@@ -239,6 +278,7 @@ impl SecInfo {
         }
     }
 
+    /// Encode SECINFO into `buf` and return the number of bytes written.
     pub fn encode(&self, buf: &mut [u8]) -> usize {
         let needed = self.wire_len();
         assert!(buf.len() >= needed);
@@ -250,6 +290,7 @@ impl SecInfo {
         needed
     }
 
+    /// Decode SECINFO from the start of `buf`.
     pub fn decode(buf: &[u8]) -> Result<Self, ParseError> {
         if buf.len() < 5 {
             return Err(ParseError::Truncated);
@@ -274,6 +315,7 @@ impl SecInfo {
     }
 }
 
+/// Known packet-option numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionNumber {
     RegionCode,
@@ -287,6 +329,7 @@ pub enum OptionNumber {
 }
 
 impl OptionNumber {
+    /// Return the numeric option number used on the wire.
     pub fn as_u16(self) -> u16 {
         match self {
             Self::RegionCode => 1,
@@ -300,10 +343,12 @@ impl OptionNumber {
         }
     }
 
+    /// Return whether the option is critical when unknown.
     pub fn is_critical(self) -> bool {
         self.as_u16() & 1 != 0
     }
 
+    /// Return whether the option is considered dynamic for AAD purposes.
     pub fn is_dynamic(self) -> bool {
         self.as_u16() & 2 != 0
     }
@@ -324,6 +369,7 @@ impl From<u16> for OptionNumber {
     }
 }
 
+/// Parsed source-address location used by zero-copy packet processing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceAddrRef {
     Hint(NodeHint),
@@ -332,6 +378,7 @@ pub enum SourceAddrRef {
     None,
 }
 
+/// Parsed packet header with borrowed ranges into the original frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PacketHeader {
     pub fcf: Fcf,
@@ -348,6 +395,7 @@ pub struct PacketHeader {
 }
 
 impl PacketHeader {
+    /// Parse a complete on-wire packet header and compute payload/MIC ranges.
     pub fn parse(buf: &[u8]) -> Result<Self, ParseError> {
         if buf.is_empty() {
             return Err(ParseError::Truncated);
@@ -592,14 +640,17 @@ impl PacketHeader {
         }
     }
 
+    /// Convenience accessor for the decoded packet type.
     pub fn packet_type(&self) -> PacketType {
         self.fcf.packet_type()
     }
 
+    /// Return whether the packet requests a MAC ACK.
     pub fn ack_requested(&self) -> bool {
         self.packet_type().ack_requested()
     }
 
+    /// Return whether the parsed packet is a beacon broadcast with empty body.
     pub fn is_beacon(&self) -> bool {
         self.packet_type() == PacketType::Broadcast && self.body_range.is_empty()
     }

@@ -2,14 +2,17 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
 };
+use core::convert::Infallible;
 
+use embedded_hal_async::delay::DelayNs;
+use rand::{Rng, TryCryptoRng, TryRng};
 use umsh_core::{PacketBuilder, PublicKey};
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider,
     SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Rng};
-use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
+use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
 
 #[test]
 fn mac_handle_send_unicast_queues_public_api_work() {
@@ -62,7 +65,7 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
     assert_eq!(mac.radio().transmitted.len(), 1);
 }
 
-fn make_mac() -> Mac<DummyRadio, DummyIdentity, DummyAes, DummySha, DummyClock, DummyRng, DummyCounterStore, 4, 16, 8, 16, 16, 256, 64> {
+fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
     Mac::new(
         DummyRadio::default(),
         CryptoEngine::new(DummyAes, DummySha),
@@ -255,17 +258,41 @@ impl Clock for DummyClock {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct DummyDelay;
+
+impl DelayNs for DummyDelay {
+    async fn delay_ns(&mut self, _ns: u32) {}
+}
+
 #[derive(Default)]
 struct DummyRng(u8);
 
-impl Rng for DummyRng {
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+impl TryRng for DummyRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        let mut bytes = [0u8; 4];
+        self.fill_bytes(&mut bytes);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        let mut bytes = [0u8; 8];
+        self.fill_bytes(&mut bytes);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         for byte in dest {
             *byte = self.0;
             self.0 = self.0.wrapping_add(1);
         }
+        Ok(())
     }
 }
+
+impl TryCryptoRng for DummyRng {}
 
 struct DummyCounterStore;
 
@@ -283,4 +310,36 @@ impl CounterStore for DummyCounterStore {
     async fn flush(&self) -> Result<(), Self::Error> {
         Ok(())
     }
+}
+
+struct DummyKeyValueStore;
+
+impl KeyValueStore for DummyKeyValueStore {
+    type Error = ();
+
+    async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+        Ok(None)
+    }
+
+    async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct DummyPlatform;
+
+impl Platform for DummyPlatform {
+    type Identity = DummyIdentity;
+    type Aes = DummyAes;
+    type Sha = DummySha;
+    type Radio = DummyRadio;
+    type Delay = DummyDelay;
+    type Clock = DummyClock;
+    type Rng = DummyRng;
+    type CounterStore = DummyCounterStore;
+    type KeyValueStore = DummyKeyValueStore;
 }

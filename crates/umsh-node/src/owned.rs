@@ -7,18 +7,28 @@ use umsh_mac::SendReceipt;
 /// Owned form of a parsed text-message payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnedTextMessage {
+    /// Rendering type.
     pub message_type: MessageType,
+    /// Optional sender handle.
     pub sender_handle: Option<String>,
+    /// Optional sender-local sequence metadata.
     pub sequence: Option<MessageSequence>,
+    /// Whether the sender reset its message sequence.
     pub sequence_reset: bool,
+    /// Optional reference to an earlier message.
     pub regarding: Option<Regarding>,
+    /// Optional edit/delete reference.
     pub editing: Option<u8>,
+    /// Suggested background color.
     pub bg_color: Option<[u8; 3]>,
+    /// Suggested text color.
     pub text_color: Option<[u8; 3]>,
+    /// UTF-8 body.
     pub body: String,
 }
 
 impl OwnedTextMessage {
+    /// Borrow this message as a zero-copy `umsh-app` view.
     pub fn as_borrowed(&self) -> TextMessage<'_> {
         TextMessage {
             message_type: self.message_type,
@@ -55,15 +65,22 @@ impl TryFrom<TextMessage<'_>> for OwnedTextMessage {
 /// Owned form of a parsed node-identity payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnedNodeIdentityPayload {
+    /// Identity timestamp.
     pub timestamp: u32,
+    /// Advertised role.
     pub role: NodeRole,
+    /// Advertised capabilities.
     pub capabilities: umsh_app::Capabilities,
+    /// Optional display name.
     pub name: Option<String>,
+    /// Optional raw option bytes.
     pub options: Option<Vec<u8>>,
+    /// Optional detached signature.
     pub signature: Option<[u8; 64]>,
 }
 
 impl OwnedNodeIdentityPayload {
+    /// Borrow this payload as a zero-copy `umsh-app` view.
     pub fn as_borrowed(&self) -> NodeIdentityPayload<'_> {
         NodeIdentityPayload {
             timestamp: self.timestamp,
@@ -128,26 +145,38 @@ impl From<umsh_app::MacCommand<'_>> for OwnedMacCommand {
 /// Owned endpoint events emitted by the application-facing node layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EndpointEvent {
+    /// Direct text received.
     TextReceived { from: PublicKey, message: OwnedTextMessage },
+    /// Channel text received.
     ChannelTextReceived { from: PublicKey, channel_id: ChannelId, message: OwnedTextMessage },
+    /// Node identity discovered or updated.
     NodeDiscovered { key: PublicKey, identity: OwnedNodeIdentityPayload },
+    /// Empty beacon broadcast received.
     BeaconReceived { from_hint: umsh_core::NodeHint, from_key: Option<PublicKey> },
+    /// ACK received for a previously queued send.
     AckReceived { peer: PublicKey, receipt: SendReceipt },
+    /// ACK timeout fired for a previously queued send.
     AckTimeout { peer: PublicKey, receipt: SendReceipt },
+    /// PFS session became active.
     PfsSessionEstablished { peer: PublicKey },
+    /// PFS session ended.
     PfsSessionEnded { peer: PublicKey },
+    /// Parsed MAC command surfaced to the caller.
     MacCommand { from: PublicKey, command: OwnedMacCommand },
 }
 
 /// Result of the synchronous endpoint event-handling phase.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventAction {
+    /// Event was handled inline, optionally producing an application event.
     Handled(Option<EndpointEvent>),
+    /// Event requires follow-up work after the MAC callback returns.
     NeedsAsync(DeferredAction),
 }
 
 /// Owned work item returned from `handle_event` for later processing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeferredAction {
+    /// Deferred MAC-command handling.
     MacCommand { from: PublicKey, command: OwnedMacCommand },
 }

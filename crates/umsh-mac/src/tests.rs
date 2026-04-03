@@ -1,9 +1,13 @@
 use super::*;
 use core::{cell::{Cell, RefCell}, future::Future, pin::pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+use core::convert::Infallible;
+use embedded_hal_async::delay::DelayNs;
 use hamaddr::HamAddr;
+use rand::{Rng, TryCryptoRng, TryRng};
+use std::collections::BTreeMap;
 use umsh_core::{iter_options, ChannelId, ChannelKey, FloodHops, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, RouterHint};
 use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
-use umsh_hal::{Clock, CounterStore, Radio, Rng, RxInfo};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
 
 #[test]
 fn duplicate_cache_evicts_oldest_entry() {
@@ -502,6 +506,103 @@ fn queue_multicast_enqueues_frame_for_known_channel() {
 
     mac.queue_multicast(local_id, &channel_id, b"hello", &SendOptions::default()).unwrap();
     assert_eq!(mac.tx_queue().len(), 1);
+}
+
+#[test]
+fn queue_broadcast_does_not_advance_secure_frame_counter() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    mac.queue_broadcast(local_id, b"hello", &SendOptions::default().unencrypted().no_flood())
+        .unwrap();
+
+    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 0);
+}
+
+#[test]
+fn first_secure_send_schedules_counter_persist() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key);
+    mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
+
+    mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()).unwrap();
+
+    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 1);
+    assert_eq!(mac.identity(local_id).unwrap().pending_persist_target(), Some(128));
+}
+
+#[test]
+fn counter_persist_threshold_schedules_next_block() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.identity_mut(local_id).unwrap().load_persisted_counter(128);
+    mac.identity_mut(local_id)
+        .unwrap()
+        .set_counter_persistence_state_for_test(true, None);
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key);
+    mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
+
+    for _ in 0..100 {
+        mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()).unwrap();
+        let _ = mac.tx_queue_mut().pop_next();
+    }
+
+    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 228);
+    assert_eq!(mac.identity(local_id).unwrap().pending_persist_target(), Some(256));
+}
+
+#[test]
+fn service_counter_persistence_writes_and_clears_pending_targets() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key);
+    mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
+    mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()).unwrap();
+
+    let wrote = block_on(mac.service_counter_persistence()).unwrap();
+
+    assert_eq!(wrote, 1);
+    assert_eq!(mac.identity(local_id).unwrap().pending_persist_target(), None);
+    assert_eq!(mac.identity(local_id).unwrap().persisted_counter(), 128);
+    assert_eq!(mac.counter_store().stored.borrow().len(), 1);
+    assert_eq!(mac.counter_store().stored.borrow()[0].1, 128);
+    assert_eq!(mac.counter_store().flushes.get(), 1);
+}
+
+#[test]
+fn load_persisted_counter_aligns_to_block_boundary() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.counter_store()
+        .loaded
+        .borrow_mut()
+        .insert(vec![0x10; 32], 255);
+
+    let loaded = block_on(mac.load_persisted_counter(local_id)).unwrap();
+
+    assert_eq!(loaded, 128);
+    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 128);
+    assert_eq!(mac.identity(local_id).unwrap().persisted_counter(), 128);
+}
+
+#[test]
+fn secure_send_blocks_when_counter_window_exhausted() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac.identity_mut(local_id).unwrap().load_persisted_counter(0);
+    mac.identity_mut(local_id).unwrap().set_frame_counter(128);
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key);
+    mac.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
+
+    assert_eq!(
+        mac.queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().no_flood()),
+        Err(SendError::CounterPersistenceLag)
+    );
 }
 
 #[test]
@@ -1680,25 +1781,25 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
     assert!(mac.identity(local_id).unwrap().pending_ack(&receipt).is_none());
 }
 
-fn make_mac() -> Mac<DummyRadio, DummyIdentity, DummyAes, DummySha, DummyClock, DummyRng, DummyCounterStore> {
+fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
     Mac::new(
         DummyRadio::default(),
         CryptoEngine::new(DummyAes, DummySha),
         DummyClock { now_ms: Cell::new(123) },
         DummyRng(7),
-        DummyCounterStore,
+        DummyCounterStore::default(),
         RepeaterConfig::default(),
         OperatingPolicy::default(),
     )
 }
 
-fn make_small_peer_mac<const PEERS: usize>() -> Mac<DummyRadio, DummyIdentity, DummyAes, DummySha, DummyClock, DummyRng, DummyCounterStore, 4, PEERS, 8, 16, 16, 256, 64> {
+fn make_small_peer_mac<const PEERS: usize>() -> Mac<DummyPlatform, 4, PEERS, 8, 16, 16, 256, 64> {
     Mac::new(
         DummyRadio::default(),
         CryptoEngine::new(DummyAes, DummySha),
         DummyClock { now_ms: Cell::new(123) },
         DummyRng(7),
-        DummyCounterStore,
+        DummyCounterStore::default(),
         RepeaterConfig::default(),
         OperatingPolicy::default(),
     )
@@ -2132,17 +2233,89 @@ impl DummyClock {
 
 impl Clock for DummyClock { fn now_ms(&self) -> u64 { self.now_ms.get() } }
 
+#[derive(Clone, Copy, Default)]
+struct DummyDelay;
+
+impl DelayNs for DummyDelay {
+    async fn delay_ns(&mut self, _ns: u32) {}
+}
+
 struct DummyRng(u8);
-impl Rng for DummyRng {
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+impl TryRng for DummyRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        let mut bytes = [0u8; 4];
+        self.fill_bytes(&mut bytes);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        let mut bytes = [0u8; 8];
+        self.fill_bytes(&mut bytes);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         for byte in dest.iter_mut() { *byte = self.0; self.0 = self.0.wrapping_add(1); }
+        Ok(())
     }
 }
 
-struct DummyCounterStore;
+impl TryCryptoRng for DummyRng {}
+
+#[derive(Default)]
+struct DummyCounterStore {
+    loaded: RefCell<BTreeMap<std::vec::Vec<u8>, u32>>,
+    stored: RefCell<std::vec::Vec<(std::vec::Vec<u8>, u32)>>,
+    flushes: Cell<u32>,
+}
+
 impl CounterStore for DummyCounterStore {
     type Error = ();
-    async fn load(&self, _context: &[u8]) -> Result<u32, Self::Error> { Ok(0) }
-    async fn store(&self, _context: &[u8], _value: u32) -> Result<(), Self::Error> { Ok(()) }
-    async fn flush(&self) -> Result<(), Self::Error> { Ok(()) }
+    async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
+        Ok(*self.loaded.borrow().get(context).unwrap_or(&0))
+    }
+    async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
+        self.loaded.borrow_mut().insert(context.to_vec(), value);
+        self.stored.borrow_mut().push((context.to_vec(), value));
+        Ok(())
+    }
+    async fn flush(&self) -> Result<(), Self::Error> {
+        self.flushes.set(self.flushes.get().wrapping_add(1));
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct DummyKeyValueStore;
+
+impl KeyValueStore for DummyKeyValueStore {
+    type Error = ();
+
+    async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+        Ok(None)
+    }
+
+    async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct DummyPlatform;
+
+impl Platform for DummyPlatform {
+    type Identity = DummyIdentity;
+    type Aes = DummyAes;
+    type Sha = DummySha;
+    type Radio = DummyRadio;
+    type Delay = DummyDelay;
+    type Clock = DummyClock;
+    type Rng = DummyRng;
+    type CounterStore = DummyCounterStore;
+    type KeyValueStore = DummyKeyValueStore;
 }

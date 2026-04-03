@@ -1,27 +1,38 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_crypto::PairwiseKeys;
-use umsh_mac::{CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerCryptoState, PeerId, SendError, SendOptions, SendReceipt};
+use umsh_mac::{CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerCryptoState, PeerId, Platform, SendError, SendOptions, SendReceipt};
 
 /// Endpoint-facing abstraction over the MAC send and configuration surface.
+///
+/// [`crate::Endpoint`] depends on this trait so it can be used with a real
+/// [`umsh_mac::MacHandle`] or with test doubles.
 pub trait NodeMac: Clone {
+    /// Error type returned by send-oriented operations.
     type SendError;
+    /// Error type returned by fixed-capacity operations.
     type CapacityError;
 
+    /// Add or refresh a peer.
     fn add_peer(&self, key: PublicKey) -> Result<PeerId, NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Add or refresh a private channel.
     fn add_private_channel(&self, key: ChannelKey) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Add or refresh a named channel.
     fn add_named_channel(&self, name: &str) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Install pairwise transport keys.
     fn install_pairwise_keys(
         &self,
         identity_id: LocalIdentityId,
         peer_id: PeerId,
         pairwise_keys: PairwiseKeys,
     ) -> Result<Option<PeerCryptoState>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Queue a broadcast frame.
     fn send_broadcast(
         &self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Queue a multicast frame.
     fn send_multicast(
         &self,
         from: LocalIdentityId,
@@ -29,6 +40,7 @@ pub trait NodeMac: Clone {
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Queue a unicast frame.
     fn send_unicast(
         &self,
         from: LocalIdentityId,
@@ -36,6 +48,7 @@ pub trait NodeMac: Clone {
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Queue a blind-unicast frame.
     fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
@@ -44,7 +57,9 @@ pub trait NodeMac: Clone {
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Fill `dest` with random bytes.
     fn fill_random(&self, dest: &mut [u8]) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    /// Return the current MAC clock time.
     fn now_ms(&self) -> Result<u64, NodeMacError<Self::SendError, Self::CapacityError>>;
 
     #[cfg(feature = "software-crypto")]
@@ -61,8 +76,11 @@ pub trait NodeMac: Clone {
 /// Normalized wrapper around MAC-handle failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeMacError<S, C> {
+    /// Shared MAC state was temporarily busy.
     Busy,
+    /// Send-oriented MAC failure.
     Send(S),
+    /// Capacity-related MAC failure.
     Capacity(C),
 }
 
@@ -91,13 +109,7 @@ impl<S, C> NodeMacError<S, C> {
 
 impl<
         'a,
-        R: umsh_hal::Radio,
-        I: umsh_crypto::NodeIdentity,
-        A: umsh_crypto::AesProvider,
-        S: umsh_crypto::Sha256Provider,
-        C: umsh_hal::Clock,
-        G: umsh_hal::Rng,
-        CS: umsh_hal::CounterStore,
+        P: Platform,
         const IDENTITIES: usize,
         const PEERS: usize,
         const CHANNELS: usize,
@@ -106,7 +118,7 @@ impl<
         const FRAME: usize,
         const DUP: usize,
     > NodeMac
-    for MacHandle<'a, R, I, A, S, C, G, CS, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     type SendError = SendError;
     type CapacityError = CapacityError;

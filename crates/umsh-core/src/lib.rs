@@ -1,5 +1,42 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+//! Core wire-format types and packet construction/parsing utilities for UMSH.
+//!
+//! This crate stays focused on byte layout, typed header fields, and zero-copy
+//! parsing. It does not perform any cryptographic operations or I/O.
+//!
+//! The main entry points are:
+//!
+//! - [`PacketHeader::parse`] to inspect a received frame.
+//! - [`PacketBuilder`] to construct outbound frames with typestate guards.
+//! - [`feed_aad`] to stream canonical authenticated data into a MAC state.
+//! - [`options::OptionEncoder`] and [`options::OptionDecoder`] for CoAP-style
+//!   option blocks used throughout the protocol.
+//!
+//! # Example
+//!
+//! ```rust
+//! use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PublicKey};
+//!
+//! let mut buf = [0u8; 128];
+//! let src = PublicKey([0x11; 32]);
+//! let dst = NodeHint([0xAA, 0xBB, 0xCC]);
+//!
+//! let packet = PacketBuilder::new(&mut buf)
+//!     .unicast(dst)
+//!     .source_full(&src)
+//!     .frame_counter(7)
+//!     .encrypted()
+//!     .mic_size(MicSize::Mic16)
+//!     .payload(b"hello")
+//!     .build()
+//!     .unwrap();
+//!
+//! let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+//! assert_eq!(header.dst, Some(dst));
+//! assert_eq!(header.body_range.len(), 5);
+//! ```
+
 mod builder;
 mod error;
 pub mod options;
@@ -21,8 +58,8 @@ mod tests {
     use crate::{
         feed_aad,
         options::{OptionDecoder, OptionEncoder},
-        Fcf, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, Scf, SecInfo,
-        SourceAddrRef,
+        Fcf, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey,
+        Scf, SecInfo, SourceAddrRef,
     };
 
     #[test]
@@ -122,7 +159,12 @@ mod tests {
         assert_eq!(header.packet_type(), PacketType::BlindUnicast);
         assert_eq!(header.channel, Some(channel));
         assert_eq!(header.dst, Some(dst));
-        assert_eq!(header.source, SourceAddrRef::FullKeyAt { offset: header.body_range.start - 32 });
+        assert_eq!(
+            header.source,
+            SourceAddrRef::FullKeyAt {
+                offset: header.body_range.start - 32
+            }
+        );
         assert!(!header.sec_info.unwrap().scf.encrypted());
         assert_eq!(header.body_range.len(), 5);
     }

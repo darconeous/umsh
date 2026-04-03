@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+//! Application-facing endpoint orchestration built on top of `umsh-mac`.
+
 #[cfg(not(feature = "alloc"))]
 compile_error!("umsh-node currently requires the alloc feature");
 
@@ -29,15 +31,19 @@ mod tests {
         rc::Rc,
         task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     };
+    use core::convert::Infallible;
 
+    use rand::{Rng, TryCryptoRng, TryRng};
     use umsh_core::{ChannelId, PublicKey};
     #[cfg(feature = "software-crypto")]
     use umsh_crypto::software::SoftwareIdentity;
     use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
-    use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Rng};
-    use umsh_mac::{CapacityError, LocalIdentityId, Mac, MacEventRef, MacHandle, OperatingPolicy, PeerCryptoState, PeerId, RepeaterConfig, SendError, SendOptions, SendReceipt};
+    use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
+    use umsh_mac::{CapacityError, LocalIdentityId, Mac, MacEventRef, MacHandle, OperatingPolicy, PeerCryptoState, PeerId, Platform, RepeaterConfig, SendError, SendOptions, SendReceipt};
+    #[cfg(feature = "std")]
+    use umsh_mac::test_support::{make_test_mac, DummyClock as SimClock, DummyDelay as SimDelay, DummyIdentity as SimIdentity, SimulatedNetwork};
 
-    use crate::{Endpoint, EndpointConfig, EndpointEvent, EventAction, NodeMac, NodeMacError, OwnedMacCommand, UiAcceptancePolicy};
+    use crate::{Endpoint, EndpointConfig, EndpointEvent, EventAction, NodeMac, NodeMacError, OwnedMacCommand, OwnedTextMessage, UiAcceptancePolicy};
 
     #[test]
     fn endpoint_send_text_queues_unicast() {
@@ -122,6 +128,176 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "std")]
+    #[test]
+    fn endpoints_exchange_text_over_simulated_network() {
+        let network = SimulatedNetwork::new();
+        let alice_radio = network.add_radio();
+        let bob_radio = network.add_radio();
+        network.connect_bidirectional(alice_radio.id(), bob_radio.id());
+
+        let alice_clock = SimClock::new(1_000);
+        let bob_clock = SimClock::new(1_000);
+        let alice_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(alice_radio, alice_clock));
+        let bob_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(bob_radio, bob_clock));
+        let alice_handle = MacHandle::new(&alice_mac);
+        let bob_handle = MacHandle::new(&bob_mac);
+
+        let alice_key = PublicKey([0x11; 32]);
+        let bob_key = PublicKey([0x22; 32]);
+        let alice_id = alice_handle.add_identity(SimIdentity::new(alice_key.0)).unwrap();
+        let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
+        let shared_keys = PairwiseKeys {
+            k_enc: [7; 16],
+            k_mic: [9; 16],
+        };
+        let bob_peer = alice_handle.add_peer(bob_key).unwrap();
+        let alice_peer = bob_handle.add_peer(alice_key).unwrap();
+        alice_handle.install_pairwise_keys(alice_id, bob_peer, shared_keys.clone()).unwrap();
+        bob_handle.install_pairwise_keys(bob_id, alice_peer, shared_keys).unwrap();
+
+        let alice = Endpoint::new(alice_id, alice_handle, EndpointConfig::default());
+        let mut bob = Endpoint::new(bob_id, bob_handle, EndpointConfig::default());
+        alice.send_text(&bob_key, "hello bob").unwrap();
+
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+        let mut bob_events = Vec::new();
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
+            EventAction::Handled(Some(endpoint_event)) => bob_events.push(endpoint_event),
+            EventAction::Handled(None) => {}
+            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
+        }))
+        .unwrap();
+        assert_eq!(
+            bob_events,
+            vec![EndpointEvent::TextReceived {
+                from: alice_key,
+                message: OwnedTextMessage {
+                    message_type: umsh_app::MessageType::Basic,
+                    sender_handle: None,
+                    sequence: None,
+                    sequence_reset: false,
+                    regarding: None,
+                    editing: None,
+                    bg_color: None,
+                    text_color: None,
+                    body: String::from("hello bob"),
+                },
+            }]
+        );
+
+        let mut alice = alice;
+        bob.send_text(&alice_key, "hello alice").unwrap();
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+        let mut alice_events = Vec::new();
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, event| match alice.handle_event(event) {
+            EventAction::Handled(Some(endpoint_event)) => alice_events.push(endpoint_event),
+            EventAction::Handled(None) => {}
+            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
+        }))
+        .unwrap();
+        assert_eq!(
+            alice_events,
+            vec![EndpointEvent::TextReceived {
+                from: bob_key,
+                message: OwnedTextMessage {
+                    message_type: umsh_app::MessageType::Basic,
+                    sender_handle: None,
+                    sequence: None,
+                    sequence_reset: false,
+                    regarding: None,
+                    editing: None,
+                    bg_color: None,
+                    text_color: None,
+                    body: String::from("hello alice"),
+                },
+            }]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn endpoints_exchange_text_through_simulated_repeater() {
+        let network = SimulatedNetwork::new();
+        let alice_radio = network.add_radio();
+        let repeater_radio = network.add_radio();
+        let bob_radio = network.add_radio();
+        network.connect_bidirectional(alice_radio.id(), repeater_radio.id());
+        network.connect_bidirectional(repeater_radio.id(), bob_radio.id());
+
+        let alice_clock = SimClock::new(1_000);
+        let repeater_clock = SimClock::new(1_000);
+        let bob_clock = SimClock::new(1_000);
+        let alice_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(alice_radio, alice_clock));
+        let repeater_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(repeater_radio, repeater_clock.clone()));
+        let bob_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(bob_radio, bob_clock));
+        repeater_mac.borrow_mut().repeater_config_mut().enabled = true;
+
+        let alice_handle = MacHandle::new(&alice_mac);
+        let repeater_handle = MacHandle::new(&repeater_mac);
+        let bob_handle = MacHandle::new(&bob_mac);
+
+        let alice_key = PublicKey([0x31; 32]);
+        let repeater_key = PublicKey([0x42; 32]);
+        let bob_key = PublicKey([0x53; 32]);
+        let alice_id = alice_handle.add_identity(SimIdentity::new(alice_key.0)).unwrap();
+        let _repeater_id = repeater_handle.add_identity(SimIdentity::new(repeater_key.0)).unwrap();
+        let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
+
+        let shared_keys = PairwiseKeys {
+            k_enc: [5; 16],
+            k_mic: [6; 16],
+        };
+        let bob_peer = alice_handle.add_peer(bob_key).unwrap();
+        let alice_peer = bob_handle.add_peer(alice_key).unwrap();
+        alice_handle.install_pairwise_keys(alice_id, bob_peer, shared_keys.clone()).unwrap();
+        bob_handle.install_pairwise_keys(bob_id, alice_peer, shared_keys).unwrap();
+
+        let alice = Endpoint::new(alice_id, alice_handle, EndpointConfig::default());
+        let mut bob = Endpoint::new(bob_id, bob_handle, EndpointConfig::default());
+        alice.send_text(&bob_key, "via repeater").unwrap();
+
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+
+        let mut premature_events = Vec::new();
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
+            EventAction::Handled(Some(endpoint_event)) => premature_events.push(endpoint_event),
+            EventAction::Handled(None) => {}
+            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for repeater test"),
+        }))
+        .unwrap();
+        assert!(premature_events.is_empty());
+
+        block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+        repeater_clock.advance_ms(1_000);
+        block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+
+        let mut bob_events = Vec::new();
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
+            EventAction::Handled(Some(endpoint_event)) => bob_events.push(endpoint_event),
+            EventAction::Handled(None) => {}
+            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for repeater test"),
+        }))
+        .unwrap();
+        assert_eq!(
+            bob_events,
+            vec![EndpointEvent::TextReceived {
+                from: alice_key,
+                message: OwnedTextMessage {
+                    message_type: umsh_app::MessageType::Basic,
+                    sender_handle: None,
+                    sequence: None,
+                    sequence_reset: false,
+                    regarding: None,
+                    editing: None,
+                    bg_color: None,
+                    text_color: None,
+                    body: String::from("via repeater"),
+                },
+            }]
+        );
+    }
+
     #[cfg(feature = "software-crypto")]
     #[test]
     fn endpoint_pfs_establishes_routes_and_tears_down() {
@@ -179,7 +355,7 @@ mod tests {
         assert!(matches!(error, crate::EndpointError::PfsSessionMissing));
     }
 
-    fn make_mac() -> Mac<DummyRadio, DummyIdentity, DummyAes, DummySha, DummyClock, DummyRng, DummyCounterStore, 4, 16, 8, 16, 16, 256, 64> {
+    fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
         Mac::new(
             DummyRadio::default(),
             CryptoEngine::new(DummyAes, DummySha),
@@ -325,14 +501,31 @@ mod tests {
     #[derive(Default)]
     struct DummyRng(u8);
 
-    impl Rng for DummyRng {
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+    impl TryRng for DummyRng {
+        type Error = Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            let mut bytes = [0u8; 4];
+            self.fill_bytes(&mut bytes);
+            Ok(u32::from_le_bytes(bytes))
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            let mut bytes = [0u8; 8];
+            self.fill_bytes(&mut bytes);
+            Ok(u64::from_le_bytes(bytes))
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             for byte in dest.iter_mut() {
                 *byte = self.0;
                 self.0 = self.0.wrapping_add(1);
             }
+            Ok(())
         }
     }
+
+    impl TryCryptoRng for DummyRng {}
 
     struct DummyCounterStore;
 
@@ -350,6 +543,38 @@ mod tests {
         async fn flush(&self) -> Result<(), Self::Error> {
             Ok(())
         }
+    }
+
+    struct DummyKeyValueStore;
+
+    impl KeyValueStore for DummyKeyValueStore {
+        type Error = ();
+
+        async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+            Ok(None)
+        }
+
+        async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    struct DummyPlatform;
+
+    impl Platform for DummyPlatform {
+        type Identity = DummyIdentity;
+        type Aes = DummyAes;
+        type Sha = DummySha;
+        type Radio = DummyRadio;
+        type Delay = SimDelay;
+        type Clock = DummyClock;
+        type Rng = DummyRng;
+        type CounterStore = DummyCounterStore;
+        type KeyValueStore = DummyKeyValueStore;
     }
 
     #[cfg(feature = "software-crypto")]

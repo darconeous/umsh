@@ -11,8 +11,10 @@ alloc = []
 software-crypto = ["umsh-crypto/software-crypto"]
 
 [dependencies]
+embedded-hal-async.workspace = true
 hamaddr.workspace = true
 heapless.workspace = true
+rand.workspace = true
 umsh-core = { path = "../umsh-core", default-features = false }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }
 umsh-hal = { path = "../umsh-hal", default-features = false }

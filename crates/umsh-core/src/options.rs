@@ -1,5 +1,9 @@
 use crate::{EncodeError, ParseError};
 
+/// Incremental encoder for CoAP-style delta/length option blocks.
+///
+/// The encoder writes directly into a caller-supplied buffer and tracks the last
+/// emitted option number so the on-wire delta encoding remains canonical.
 #[derive(Debug)]
 pub struct OptionEncoder<'a> {
     buf: &'a mut [u8],
@@ -9,6 +13,7 @@ pub struct OptionEncoder<'a> {
 }
 
 impl<'a> OptionEncoder<'a> {
+    /// Create an encoder starting at option number `0`.
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self {
             buf,
@@ -18,6 +23,7 @@ impl<'a> OptionEncoder<'a> {
         }
     }
 
+    /// Create an encoder that continues from an already-emitted option number.
     pub fn with_last_number(buf: &'a mut [u8], last_number: u16) -> Self {
         Self {
             buf,
@@ -27,6 +33,7 @@ impl<'a> OptionEncoder<'a> {
         }
     }
 
+    /// Encode one option value.
     pub fn put(&mut self, number: u16, value: &[u8]) -> Result<(), EncodeError> {
         if self.wrote_any && number < self.last_number {
             return Err(EncodeError::OptionOutOfOrder);
@@ -57,6 +64,7 @@ impl<'a> OptionEncoder<'a> {
         Ok(())
     }
 
+    /// Append the `0xFF` end marker for an option block.
     pub fn end_marker(&mut self) -> Result<(), EncodeError> {
         if self.pos >= self.buf.len() {
             return Err(EncodeError::BufferTooSmall);
@@ -66,11 +74,16 @@ impl<'a> OptionEncoder<'a> {
         Ok(())
     }
 
+    /// Finish the encoder and return the number of bytes written.
     pub fn finish(self) -> usize {
         self.pos
     }
 }
 
+/// Incremental decoder for CoAP-style delta/length option blocks.
+///
+/// This iterator yields absolute option numbers together with borrowed value
+/// slices from the original buffer.
 #[derive(Clone, Debug)]
 pub struct OptionDecoder<'a> {
     data: &'a [u8],
@@ -81,6 +94,7 @@ pub struct OptionDecoder<'a> {
 }
 
 impl<'a> OptionDecoder<'a> {
+    /// Create a decoder over a complete encoded option block.
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,
@@ -91,6 +105,10 @@ impl<'a> OptionDecoder<'a> {
         }
     }
 
+    /// Return the trailing bytes after a consumed end marker.
+    ///
+    /// This is typically used by higher-level codecs whose options are followed
+    /// by payload bytes.
     pub fn remainder(&self) -> &'a [u8] {
         if self.finished {
             &self.data[self.pos..]
