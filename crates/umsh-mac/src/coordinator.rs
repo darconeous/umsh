@@ -8,7 +8,7 @@ use hamaddr::HamAddr;
 use rand::{Rng, RngExt as _};
 use umsh_core::{
     options::OptionEncoder,
-    feed_aad, BuildError, ChannelId, ChannelKey, OptionNumber, PacketBuilder, PacketHeader,
+    feed_aad, BuildError, ChannelId, ChannelKey, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
     PacketType, ParseError, ParsedOptions, PublicKey, RouterHint, SourceAddrRef,
     UnsealedPacket,
 };
@@ -723,9 +723,9 @@ impl<
     }
 
     /// Enqueues an immediate MAC ACK frame.
-    pub fn queue_mac_ack(&mut self, dst: RouterHint, ack_tag: [u8; 8]) -> Result<(), SendError> {
+    pub fn queue_mac_ack(&mut self, dst: NodeHint, ack_tag: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
-        let frame = PacketBuilder::new(&mut buf).mac_ack(dst.0, ack_tag).build()?;
+        let frame = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag).build()?;
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
@@ -1024,7 +1024,7 @@ impl<
                     .identities
                     .iter()
                     .filter_map(|slot| slot.as_ref())
-                    .find(|slot| slot.identity().public_key().router_hint().0 == ack_dst)
+                    .find(|slot| slot.identity().public_key().hint() == ack_dst)
                     .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]))
                 else {
                     return Ok(false);
@@ -1064,7 +1064,7 @@ impl<
 
                         if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], &header) {
                             let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], &header, body_range.clone(), &keys);
-                            self.queue_mac_ack(peer_key.router_hint(), ack_tag).ok();
+                            self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
                         }
 
                         on_event(
@@ -1190,7 +1190,7 @@ impl<
 
                                 if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], &header) {
                                     let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], &header, body_range.clone(), &blind_keys);
-                                    self.queue_mac_ack(peer_key.router_hint(), ack_tag).ok();
+                                    self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
                                 }
 
                                 on_event(

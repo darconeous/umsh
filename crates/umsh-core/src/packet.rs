@@ -388,7 +388,7 @@ pub struct PacketHeader {
     pub flood_hops: Option<FloodHops>,
     pub dst: Option<NodeHint>,
     pub channel: Option<ChannelId>,
-    pub ack_dst: Option<[u8; 2]>,
+    pub ack_dst: Option<NodeHint>,
     pub source: SourceAddrRef,
     pub sec_info: Option<SecInfo>,
     pub body_range: Range<usize>,
@@ -462,9 +462,9 @@ impl PacketHeader {
                 })
             }
             PacketType::MacAck => {
-                ensure_len(buf, cursor, 2)?;
-                ack_dst = Some([buf[cursor], buf[cursor + 1]]);
-                cursor += 2;
+                ensure_len(buf, cursor, 3)?;
+                ack_dst = Some(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]));
+                cursor += 3;
                 ensure_len(buf, cursor, 8)?;
                 Ok(Self {
                     fcf,

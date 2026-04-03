@@ -5,7 +5,7 @@ use embedded_hal_async::delay::DelayNs;
 use hamaddr::HamAddr;
 use rand::{Rng, TryCryptoRng, TryRng};
 use std::collections::BTreeMap;
-use umsh_core::{iter_options, ChannelId, ChannelKey, FloodHops, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, RouterHint};
+use umsh_core::{iter_options, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, RouterHint};
 use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
 
@@ -712,7 +712,7 @@ fn transmit_next_immediate_ack_skips_cad() {
 #[test]
 fn queue_mac_ack_builds_immediate_ack_frame() {
     let mut mac = make_mac();
-    let dst = RouterHint([0x12, 0x34]);
+    let dst = NodeHint([0x12, 0x34, 0x56]);
     let ack_tag = [0xA5; 8];
 
     mac.queue_mac_ack(dst, ack_tag).unwrap();
@@ -721,7 +721,7 @@ fn queue_mac_ack_builds_immediate_ack_frame() {
     assert_eq!(queued.priority, TxPriority::ImmediateAck);
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    assert_eq!(header.ack_dst, Some(dst.0));
+    assert_eq!(header.ack_dst, Some(dst));
     assert_eq!(&queued.frame.as_slice()[header.mic_range], &ack_tag);
 }
 
@@ -729,7 +729,7 @@ fn queue_mac_ack_builds_immediate_ack_frame() {
 fn queued_mac_ack_transmits_before_application_traffic() {
     let mut mac = make_mac();
     mac.tx_queue_mut().enqueue(TxPriority::Application, b"app", None).unwrap();
-    mac.queue_mac_ack(RouterHint([0x55, 0x66]), [0xCC; 8]).unwrap();
+    mac.queue_mac_ack(NodeHint([0x55, 0x66, 0x77]), [0xCC; 8]).unwrap();
 
     block_on(mac.drain_tx_queue()).unwrap();
 
@@ -752,7 +752,7 @@ fn receive_one_emits_ack_received_for_matching_mac_ack() {
         .unwrap()
         .unwrap();
     let ack_tag = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap().ack_tag;
-    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().router_hint();
+    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().hint();
     mac.radio_mut().queue_received_mac_ack(ack_dst, ack_tag);
 
     let mut seen = None;
@@ -780,7 +780,7 @@ fn receive_one_ignores_unmatched_mac_ack() {
         .queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default().with_ack_requested(true).no_flood())
         .unwrap()
         .unwrap();
-    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().router_hint();
+    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().hint();
     mac.radio_mut().queue_received_mac_ack(ack_dst, [0xEE; 8]);
 
     let mut seen = false;
@@ -812,7 +812,7 @@ fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
         .unwrap()
         .unwrap();
     let ack_tag = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap().ack_tag;
-    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().router_hint();
+    let ack_dst = mac.identity(local_id).unwrap().identity().public_key().hint();
     mac.radio_mut().queue_received_mac_ack(ack_dst, ack_tag);
 
     let mut seen = None;
@@ -855,7 +855,7 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
     assert_eq!(queued.priority, TxPriority::ImmediateAck);
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    assert_eq!(header.ack_dst, Some(peer_key.router_hint().0));
+    assert_eq!(header.ack_dst, Some(peer_key.hint()));
 }
 
 #[test]
@@ -985,7 +985,7 @@ fn receive_one_delivers_blind_unicast_and_queues_immediate_ack() {
     assert_eq!(queued.priority, TxPriority::ImmediateAck);
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    assert_eq!(header.ack_dst, Some(peer_key.router_hint().0));
+    assert_eq!(header.ack_dst, Some(peer_key.hint()));
 }
 
 #[test]
@@ -1650,7 +1650,7 @@ fn forwarded_send_can_confirm_then_complete_on_later_mac_ack() {
     ));
 
     let ack_tag = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap().ack_tag;
-    let dst = mac.identity(local_id).unwrap().identity().public_key().router_hint();
+    let dst = mac.identity(local_id).unwrap().identity().public_key().hint();
     mac.radio_mut().queue_received_mac_ack(dst, ack_tag);
 
     let mut seen = None;
@@ -1679,7 +1679,7 @@ fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
         .unwrap()
         .unwrap();
     let ack_tag = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap().ack_tag;
-    let dst = mac.identity(local_id).unwrap().identity().public_key().router_hint();
+    let dst = mac.identity(local_id).unwrap().identity().public_key().hint();
 
     let _ = mac.tx_queue_mut().pop_next();
     mac.identity_mut(local_id).unwrap().pending_ack_mut(&receipt).unwrap().ack_deadline_ms = 0;
@@ -1983,9 +1983,9 @@ impl DummyRadio {
         self.queue_received_frame(&frame);
     }
 
-    fn queue_received_mac_ack(&mut self, dst: RouterHint, ack_tag: [u8; 8]) {
+    fn queue_received_mac_ack(&mut self, dst: NodeHint, ack_tag: [u8; 8]) {
         let mut buf = [0u8; 256];
-        let frame = PacketBuilder::new(&mut buf).mac_ack(dst.0, ack_tag).build().unwrap();
+        let frame = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag).build().unwrap();
         let mut stored = heapless::Vec::new();
         for byte in frame {
             stored.push(*byte).unwrap();

@@ -37,7 +37,7 @@ impl<'a> PacketBuilder<'a> {
     }
 
     /// Build a MAC ACK packet with all required addressing fixed up front.
-    pub fn mac_ack(self, dst: [u8; 2], ack_tag: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
+    pub fn mac_ack(self, dst: NodeHint, ack_tag: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
         let mut builder = Builder::new(self.buf, PacketType::MacAck);
         builder.ack_dst = Some(dst);
         builder.ack_tag = Some(ack_tag);
@@ -110,7 +110,7 @@ pub struct Builder<'a, K, S> {
     source: Option<SourceValue>,
     dst: Option<NodeHint>,
     channel: Option<ChannelId>,
-    ack_dst: Option<[u8; 2]>,
+    ack_dst: Option<NodeHint>,
     ack_tag: Option<[u8; 8]>,
     frame_counter: Option<u32>,
     encrypted: bool,
@@ -572,10 +572,10 @@ impl<'a> MacAckBuilder<'a, state::Configuring> {
         let mut cursor = self.write_common_prefix()?;
         let dst = self.ack_dst.ok_or(BuildError::MissingDestination)?;
         self.buf
-            .get_mut(cursor..cursor + 2)
+            .get_mut(cursor..cursor + 3)
             .ok_or(BuildError::BufferTooSmall)?
-            .copy_from_slice(&dst);
-        cursor += 2;
+            .copy_from_slice(&dst.0);
+        cursor += 3;
         let ack_tag = self.ack_tag.ok_or(BuildError::MissingAckTag)?;
         self.buf
             .get_mut(cursor..cursor + 8)
