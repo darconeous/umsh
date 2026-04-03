@@ -2457,13 +2457,13 @@ forward, and acknowledge packets.
 **Goal:** Encode/decode all defined application payloads. Parse and
 format UMSH URIs.
 
-- [ ] `umsh-app`: Payload type dispatch and validation
-- [ ] `umsh-app`: Text message encode/decode (all options)
-- [ ] `umsh-app`: Node identity encode/decode
-- [ ] `umsh-app`: MAC command encode/decode (all 9 commands)
-- [ ] `umsh-app`: Chat room actions (encode/decode, behind `chat-rooms` feature)
-- [ ] `umsh-app`: URI parsing and formatting (`umsh:n:`, `umsh:cs:`, `umsh:ck:`)
-- [ ] Round-trip tests for all payload types
+- [x] `umsh-app`: Payload type dispatch and validation
+- [x] `umsh-app`: Text message encode/decode (all options)
+- [x] `umsh-app`: Node identity encode/decode
+- [x] `umsh-app`: MAC command encode/decode (all 9 commands)
+- [x] `umsh-app`: Chat room actions (encode/decode, behind `chat-rooms` feature)
+- [x] `umsh-app`: URI parsing and formatting (`umsh:n:`, `umsh:cs:`, `umsh:ck:`)
+- [x] Round-trip tests for all payload types
 
 ### Phase 4: Endpoint Orchestration
 

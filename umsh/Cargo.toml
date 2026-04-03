@@ -5,12 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["std", "software-crypto"]
-std = ["umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std"]
+default = ["std", "software-crypto", "chat-rooms"]
+chat-rooms = ["umsh-app/chat-rooms"]
+std = ["umsh-app/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std"]
 software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto"]
 
 [dependencies]
 embedded-hal-async.workspace = true
+umsh-app = { path = "../crates/umsh-app", default-features = false }
 umsh-core = { path = "../crates/umsh-core", default-features = false }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
