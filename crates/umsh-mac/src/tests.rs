@@ -7,7 +7,7 @@ use rand::{Rng, TryCryptoRng, TryRng};
 use std::collections::BTreeMap;
 use umsh_core::{iter_options, ChannelId, ChannelKey, FloodHops, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey, RouterHint};
 use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
 
 #[test]
 fn duplicate_cache_evicts_oldest_entry() {
@@ -2212,7 +2212,13 @@ impl DummyRadio {
 
 impl Radio for DummyRadio {
     type Error = ();
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+    async fn transmit(&mut self, data: &[u8], options: TxOptions) -> Result<(), TxError<Self::Error>> {
+        if options.cad_timeout_ms.is_some() {
+            self.cad_calls = self.cad_calls.wrapping_add(1);
+            if self.cad_responses.pop_front().unwrap_or(false) {
+                return Err(TxError::CadTimeout);
+            }
+        }
         let mut stored = heapless::Vec::new();
         for byte in data {
             stored.push(*byte).unwrap();
@@ -2220,16 +2226,12 @@ impl Radio for DummyRadio {
         self.transmitted.push(stored).unwrap();
         Ok(())
     }
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<RxInfo, Self::Error> {
+    fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
         let Some(frame) = self.received.pop_front() else {
-            return Ok(RxInfo { len: 0, rssi: 0, snr: 0 });
+            return Poll::Pending;
         };
         buf[..frame.len()].copy_from_slice(frame.as_slice());
-        Ok(RxInfo { len: frame.len(), rssi: 0, snr: 0 })
-    }
-    async fn cad(&mut self) -> Result<bool, Self::Error> {
-        self.cad_calls = self.cad_calls.wrapping_add(1);
-        Ok(self.cad_responses.pop_front().unwrap_or(false))
+        Poll::Ready(Ok(RxInfo { len: frame.len(), rssi: 0, snr: 0 }))
     }
     fn max_frame_size(&self) -> usize { 255 }
     fn t_frame_ms(&self) -> u32 { 100 }

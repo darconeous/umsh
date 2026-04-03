@@ -1063,6 +1063,7 @@ dependencies = [
  "heapless",
  "rand",
  "rand_core 0.6.4",
+ "socket2",
  "tokio",
  "tokio-serial",
  "umsh-app",

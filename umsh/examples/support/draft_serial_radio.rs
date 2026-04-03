@@ -6,9 +6,11 @@
 //! intended long-term companion-radio interface.
 
 use std::io;
+use std::pin::Pin;
+use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use umsh::hal::{Radio, RxInfo};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use umsh::hal::{Radio, RxInfo, TxError, TxOptions};
 
 const CMD_TRANSMIT: u8 = 0x01;
 const CMD_RECEIVE: u8 = 0x02;
@@ -51,6 +53,17 @@ pub struct DraftSerialRadio<IO> {
     io: IO,
     max_frame_size: usize,
     t_frame_ms: u32,
+    receive_state: ReceiveState,
+    receive_payload: Vec<u8>,
+}
+
+enum ReceiveState {
+    Idle,
+    SendingCommand { written: usize },
+    FlushingCommand,
+    ReadingTag { filled: usize, tag: [u8; 1] },
+    ReadingMeta { filled: usize, meta: [u8; 5] },
+    ReadingPayload { len: usize, rssi: i16, snr: i8, filled: usize },
 }
 
 impl<IO> DraftSerialRadio<IO>
@@ -64,6 +77,8 @@ where
             io,
             max_frame_size,
             t_frame_ms,
+            receive_state: ReceiveState::Idle,
+            receive_payload: vec![0u8; max_frame_size],
         })
     }
 
@@ -79,6 +94,14 @@ where
             return Err(DraftSerialRadioError::Protocol("unexpected response tag"));
         }
         Ok(())
+    }
+
+    async fn cad_busy(&mut self) -> Result<bool, DraftSerialRadioError> {
+        self.send_tag(CMD_CAD).await?;
+        self.expect_tag(RESP_CAD).await?;
+        let mut busy = [0u8; 1];
+        self.io.read_exact(&mut busy).await.map_err(DraftSerialRadioError::Io)?;
+        Ok(busy[0] != 0)
     }
 }
 
@@ -100,45 +123,151 @@ where
 {
     type Error = DraftSerialRadioError;
 
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+    async fn transmit(&mut self, data: &[u8], options: TxOptions) -> Result<(), TxError<Self::Error>> {
         if data.len() > self.max_frame_size || data.len() > u16::MAX as usize {
-            return Err(DraftSerialRadioError::FrameTooLarge(data.len()));
+            return Err(TxError::Io(DraftSerialRadioError::FrameTooLarge(data.len())));
         }
-        self.send_tag(CMD_TRANSMIT).await?;
+
+        if let Some(cad_timeout_ms) = options.cad_timeout_ms {
+            let deadline = Instant::now() + Duration::from_millis(u64::from(cad_timeout_ms));
+            loop {
+                let busy = self.cad_busy().await.map_err(TxError::Io)?;
+                if !busy {
+                    break;
+                }
+                if cad_timeout_ms == 0 || Instant::now() >= deadline {
+                    return Err(TxError::CadTimeout);
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        }
+
+        self.send_tag(CMD_TRANSMIT).await.map_err(TxError::Io)?;
         self.io
             .write_all(&(data.len() as u16).to_le_bytes())
             .await
-            .map_err(DraftSerialRadioError::Io)?;
-        self.io.write_all(data).await.map_err(DraftSerialRadioError::Io)?;
-        self.io.flush().await.map_err(DraftSerialRadioError::Io)?;
-        self.expect_tag(RESP_TRANSMIT).await?;
+            .map_err(DraftSerialRadioError::Io)
+            .map_err(TxError::Io)?;
+        self.io.write_all(data).await.map_err(DraftSerialRadioError::Io).map_err(TxError::Io)?;
+        self.io.flush().await.map_err(DraftSerialRadioError::Io).map_err(TxError::Io)?;
+        self.expect_tag(RESP_TRANSMIT).await.map_err(TxError::Io)?;
         let mut status = [0u8; 1];
-        self.io.read_exact(&mut status).await.map_err(DraftSerialRadioError::Io)?;
+        self.io
+            .read_exact(&mut status)
+            .await
+            .map_err(DraftSerialRadioError::Io)
+            .map_err(TxError::Io)?;
         if status[0] != 0 {
-            return Err(DraftSerialRadioError::Protocol("companion transmit rejected frame"));
+            return Err(TxError::Io(DraftSerialRadioError::Protocol("companion transmit rejected frame")));
         }
         Ok(())
     }
 
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<RxInfo, Self::Error> {
-        self.send_tag(CMD_RECEIVE).await?;
-        self.expect_tag(RESP_RECEIVE).await?;
-        let len = read_u16(&mut self.io).await? as usize;
-        let rssi = read_i16(&mut self.io).await?;
-        let snr = read_i8(&mut self.io).await?;
-        if len > buf.len() {
-            return Err(DraftSerialRadioError::FrameTooLarge(len));
+    fn poll_receive(&mut self, cx: &mut core::task::Context<'_>, buf: &mut [u8]) -> core::task::Poll<Result<RxInfo, Self::Error>> {
+        loop {
+            let state = core::mem::replace(&mut self.receive_state, ReceiveState::Idle);
+            match state {
+                ReceiveState::Idle => {
+                    self.receive_state = ReceiveState::SendingCommand { written: 0 };
+                }
+                ReceiveState::SendingCommand { mut written } => {
+                    match poll_write_all(&mut self.io, cx, &[CMD_RECEIVE], &mut written) {
+                        core::task::Poll::Ready(Ok(())) => {
+                            self.receive_state = ReceiveState::FlushingCommand;
+                        }
+                        core::task::Poll::Ready(Err(error)) => {
+                            return core::task::Poll::Ready(Err(error));
+                        }
+                        core::task::Poll::Pending => {
+                            self.receive_state = ReceiveState::SendingCommand { written };
+                            return core::task::Poll::Pending;
+                        }
+                    }
+                }
+                ReceiveState::FlushingCommand => match Pin::new(&mut self.io).poll_flush(cx) {
+                    core::task::Poll::Ready(Ok(())) => {
+                        self.receive_state = ReceiveState::ReadingTag { filled: 0, tag: [0u8; 1] };
+                    }
+                    core::task::Poll::Ready(Err(error)) => {
+                        return core::task::Poll::Ready(Err(DraftSerialRadioError::Io(error)));
+                    }
+                    core::task::Poll::Pending => {
+                        self.receive_state = ReceiveState::FlushingCommand;
+                        return core::task::Poll::Pending;
+                    }
+                },
+                ReceiveState::ReadingTag { mut filled, mut tag } => match poll_read_exact(&mut self.io, cx, &mut tag, &mut filled) {
+                    core::task::Poll::Ready(Ok(())) => {
+                        if tag[0] != RESP_RECEIVE {
+                            return core::task::Poll::Ready(Err(DraftSerialRadioError::Protocol("unexpected response tag")));
+                        }
+                        self.receive_state = ReceiveState::ReadingMeta {
+                            filled: 0,
+                            meta: [0u8; 5],
+                        };
+                    }
+                    core::task::Poll::Ready(Err(error)) => {
+                        return core::task::Poll::Ready(Err(error));
+                    }
+                    core::task::Poll::Pending => {
+                        self.receive_state = ReceiveState::ReadingTag { filled, tag };
+                        return core::task::Poll::Pending;
+                    }
+                },
+                ReceiveState::ReadingMeta { mut filled, mut meta } => match poll_read_exact(&mut self.io, cx, &mut meta, &mut filled) {
+                    core::task::Poll::Ready(Ok(())) => {
+                        let len = u16::from_le_bytes([meta[0], meta[1]]) as usize;
+                        let rssi = i16::from_le_bytes([meta[2], meta[3]]);
+                        let snr = meta[4] as i8;
+                        if len == 0 {
+                            return core::task::Poll::Pending;
+                        }
+                        if len > self.max_frame_size {
+                            return core::task::Poll::Ready(Err(DraftSerialRadioError::FrameTooLarge(len)));
+                        }
+                        if self.receive_payload.len() < len {
+                            self.receive_payload.resize(len, 0);
+                        }
+                        self.receive_state = ReceiveState::ReadingPayload {
+                            len,
+                            rssi,
+                            snr,
+                            filled: 0,
+                        };
+                    }
+                    core::task::Poll::Ready(Err(error)) => {
+                        return core::task::Poll::Ready(Err(error));
+                    }
+                    core::task::Poll::Pending => {
+                        self.receive_state = ReceiveState::ReadingMeta { filled, meta };
+                        return core::task::Poll::Pending;
+                    }
+                },
+                ReceiveState::ReadingPayload { len, rssi, snr, mut filled } => {
+                    match poll_read_exact(&mut self.io, cx, &mut self.receive_payload[..len], &mut filled) {
+                        core::task::Poll::Ready(Ok(())) => {
+                            if len > buf.len() {
+                                return core::task::Poll::Ready(Err(DraftSerialRadioError::FrameTooLarge(len)));
+                            }
+                            buf[..len].copy_from_slice(&self.receive_payload[..len]);
+                            return core::task::Poll::Ready(Ok(RxInfo { len, rssi, snr }));
+                        }
+                        core::task::Poll::Ready(Err(error)) => {
+                            return core::task::Poll::Ready(Err(error));
+                        }
+                        core::task::Poll::Pending => {
+                            self.receive_state = ReceiveState::ReadingPayload {
+                                len,
+                                rssi,
+                                snr,
+                                filled,
+                            };
+                            return core::task::Poll::Pending;
+                        }
+                    }
+                }
+            }
         }
-        self.io.read_exact(&mut buf[..len]).await.map_err(DraftSerialRadioError::Io)?;
-        Ok(RxInfo { len, rssi, snr })
-    }
-
-    async fn cad(&mut self) -> Result<bool, Self::Error> {
-        self.send_tag(CMD_CAD).await?;
-        self.expect_tag(RESP_CAD).await?;
-        let mut busy = [0u8; 1];
-        self.io.read_exact(&mut busy).await.map_err(DraftSerialRadioError::Io)?;
-        Ok(busy[0] != 0)
     }
 
     fn max_frame_size(&self) -> usize {
@@ -196,27 +325,66 @@ where
     Ok(u32::from_le_bytes(bytes))
 }
 
-async fn read_i16<IO>(io: &mut IO) -> Result<i16, DraftSerialRadioError>
+fn poll_write_all<IO>(
+    io: &mut IO,
+    cx: &mut core::task::Context<'_>,
+    buf: &[u8],
+    written: &mut usize,
+) -> core::task::Poll<Result<(), DraftSerialRadioError>>
 where
-    IO: AsyncRead + Unpin,
+    IO: AsyncWrite + Unpin,
 {
-    let mut bytes = [0u8; 2];
-    io.read_exact(&mut bytes).await.map_err(DraftSerialRadioError::Io)?;
-    Ok(i16::from_le_bytes(bytes))
+    while *written < buf.len() {
+        match Pin::new(&mut *io).poll_write(cx, &buf[*written..]) {
+            core::task::Poll::Ready(Ok(0)) => {
+                return core::task::Poll::Ready(Err(DraftSerialRadioError::Protocol("short write while sending command")));
+            }
+            core::task::Poll::Ready(Ok(count)) => {
+                *written += count;
+            }
+            core::task::Poll::Ready(Err(error)) => {
+                return core::task::Poll::Ready(Err(DraftSerialRadioError::Io(error)));
+            }
+            core::task::Poll::Pending => return core::task::Poll::Pending,
+        }
+    }
+    *written = 0;
+    core::task::Poll::Ready(Ok(()))
 }
 
-async fn read_i8<IO>(io: &mut IO) -> Result<i8, DraftSerialRadioError>
+fn poll_read_exact<IO>(
+    io: &mut IO,
+    cx: &mut core::task::Context<'_>,
+    buf: &mut [u8],
+    filled: &mut usize,
+) -> core::task::Poll<Result<(), DraftSerialRadioError>>
 where
     IO: AsyncRead + Unpin,
 {
-    let mut bytes = [0u8; 1];
-    io.read_exact(&mut bytes).await.map_err(DraftSerialRadioError::Io)?;
-    Ok(bytes[0] as i8)
+    while *filled < buf.len() {
+        let mut read_buf = ReadBuf::new(&mut buf[*filled..]);
+        match Pin::new(&mut *io).poll_read(cx, &mut read_buf) {
+            core::task::Poll::Ready(Ok(())) => {
+                let count = read_buf.filled().len();
+                if count == 0 {
+                    return core::task::Poll::Ready(Err(DraftSerialRadioError::Protocol("unexpected end of stream")));
+                }
+                *filled += count;
+            }
+            core::task::Poll::Ready(Err(error)) => {
+                return core::task::Poll::Ready(Err(DraftSerialRadioError::Io(error)));
+            }
+            core::task::Poll::Pending => return core::task::Poll::Pending,
+        }
+    }
+    *filled = 0;
+    core::task::Poll::Ready(Ok(()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::future::poll_fn;
     use tokio::io::duplex;
 
     #[tokio::test]
@@ -237,15 +405,15 @@ mod tests {
                         server.write_all(&[RESP_T_FRAME_MS]).await.unwrap();
                         server.write_all(&42u32.to_le_bytes()).await.unwrap();
                     }
-                    CMD_CAD => {
-                        server.write_all(&[RESP_CAD, 1]).await.unwrap();
-                    }
                     CMD_RECEIVE => {
                         server.write_all(&[RESP_RECEIVE]).await.unwrap();
                         server.write_all(&4u16.to_le_bytes()).await.unwrap();
                         server.write_all(&(-70i16).to_le_bytes()).await.unwrap();
                         server.write_all(&[12u8]).await.unwrap();
                         server.write_all(b"pong").await.unwrap();
+                    }
+                    CMD_CAD => {
+                        server.write_all(&[RESP_CAD, 1]).await.unwrap();
                     }
                     CMD_TRANSMIT => {
                         let len = read_u16(&mut server).await.unwrap() as usize;
@@ -264,16 +432,23 @@ mod tests {
         let mut radio = DraftSerialRadio::from_stream(client).await.unwrap();
         assert_eq!(radio.max_frame_size(), 255);
         assert_eq!(radio.t_frame_ms(), 42);
-        assert!(radio.cad().await.unwrap());
 
         let mut buf = [0u8; 16];
-        let rx = radio.receive(&mut buf).await.unwrap();
+        let rx = poll_fn(|cx| radio.poll_receive(cx, &mut buf)).await.unwrap();
         assert_eq!(rx.len, 4);
         assert_eq!(rx.rssi, -70);
         assert_eq!(rx.snr, 12);
         assert_eq!(&buf[..rx.len], b"pong");
 
-        radio.transmit(b"ping").await.unwrap();
+        radio
+            .transmit(
+                b"ping",
+                TxOptions {
+                    cad_timeout_ms: Some(0),
+                },
+            )
+            .await
+            .unwrap();
         server_task.await.unwrap();
     }
 }

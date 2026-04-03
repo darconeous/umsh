@@ -19,7 +19,8 @@ use umsh_core::PublicKey;
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
+use core::task::{Context, Poll};
 
 use crate::{
     Mac, OperatingPolicy, Platform, RepeaterConfig, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP,
@@ -271,17 +272,18 @@ impl SimulatedRadio {
 impl Radio for SimulatedRadio {
     type Error = ();
 
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+    async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
         self.network.transmit(self.id, data);
         Ok(())
     }
 
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<RxInfo, Self::Error> {
-        Ok(self.network.receive(self.id, buf))
-    }
-
-    async fn cad(&mut self) -> Result<bool, Self::Error> {
-        Ok(false)
+    fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
+        let rx = self.network.receive(self.id, buf);
+        if rx.len == 0 {
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(rx))
+        }
     }
 
     fn max_frame_size(&self) -> usize {

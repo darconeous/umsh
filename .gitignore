@@ -1,4 +1,4 @@
 .DS_Store
 /old
 /target
-
+*.identity

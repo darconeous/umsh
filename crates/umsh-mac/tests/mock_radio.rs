@@ -3,6 +3,7 @@ use std::{
     collections::VecDeque,
 };
 use core::convert::Infallible;
+use core::task::{Context, Poll};
 
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
@@ -11,7 +12,7 @@ use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider,
     SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
 use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
 
 #[test]
@@ -219,23 +220,19 @@ impl DummyRadio {
 impl Radio for DummyRadio {
     type Error = ();
 
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+    async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
         self.transmitted.push(data.to_vec());
         Ok(())
     }
 
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<RxInfo, Self::Error> {
+    fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
         if let Some(frame) = self.received.pop_front() {
             let len = frame.len();
             buf[..len].copy_from_slice(&frame);
-            Ok(RxInfo { len, rssi: -40, snr: 10 })
+            Poll::Ready(Ok(RxInfo { len, rssi: -40, snr: 10 }))
         } else {
-            Ok(RxInfo { len: 0, rssi: 0, snr: 0 })
+            Poll::Pending
         }
-    }
-
-    async fn cad(&mut self) -> Result<bool, Self::Error> {
-        Ok(false)
     }
 
     fn max_frame_size(&self) -> usize {

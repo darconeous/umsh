@@ -9,7 +9,7 @@ default = ["std", "software-crypto", "chat-rooms"]
 chat-rooms = ["umsh-app/chat-rooms"]
 std = ["umsh-app/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std", "umsh-node/std"]
 software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "umsh-node/software-crypto"]
-tokio-support = ["std", "software-crypto", "dep:rand", "dep:tokio"]
+tokio-support = ["std", "software-crypto", "dep:rand", "dep:socket2", "dep:tokio"]
 serial-radio = ["tokio-support", "dep:tokio-serial"]
 embassy-support = ["std", "software-crypto", "dep:embassy-executor", "dep:embassy-time", "dep:rand"]
 
@@ -26,8 +26,9 @@ umsh-node = { path = "../crates/umsh-node", default-features = false }
 embassy-executor = { version = "0.7", optional = true, features = ["arch-std", "executor-thread"] }
 embassy-time = { version = "0.4", optional = true, features = ["std"] }
 rand = { workspace = true, optional = true, features = ["std", "thread_rng", "sys_rng"] }
-tokio = { version = "1", optional = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", optional = true, features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-serial = { version = "5", optional = true }
+socket2 = { version = "0.6", optional = true }
 
 [[example]]
 name = "generate_phase1_vectors"

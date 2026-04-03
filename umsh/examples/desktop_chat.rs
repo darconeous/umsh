@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     env,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -24,7 +25,10 @@ use umsh::{
     hal::Radio,
     mac::{test_support::SimulatedNetwork, Mac, MacHandle, OperatingPolicy, RepeaterConfig},
     node::{DeferredAction, Endpoint, EndpointConfig, EndpointEvent, EventAction},
-    tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform},
+    tokio_support::{
+        StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform,
+        UdpMulticastRadio,
+    },
 };
 
 #[cfg(feature = "serial-radio")]
@@ -69,9 +73,76 @@ type ChatEndpoint<'a, R> = Endpoint<ChatHandle<'a, R>, TokioFileKeyValueStore>;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = CliConfig::parse(env::args().skip(1).collect::<Vec<_>>())?;
     match config.mode {
+        Mode::PrintPublicKey => print_public_key(config.identity_path)?,
         Mode::Simulated => run_simulated_chat(config).await?,
+        Mode::Udp { group, port, peer } => run_udp_chat(config.identity_path, group, port, peer).await?,
         Mode::Serial { path, baud, peer } => run_serial_chat(config.identity_path, path, baud, peer).await?,
     }
+    Ok(())
+}
+
+fn print_public_key(identity_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let identity = load_or_create_identity(&identity_path)?;
+    println!("{}", hex_encode(&identity.public_key().0));
+    Ok(())
+}
+
+async fn run_udp_chat(
+    identity_path: PathBuf,
+    group: Ipv4Addr,
+    port: u16,
+    peer_key: PublicKey,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_identity = load_or_create_identity(&identity_path)?;
+    let local_key = *local_identity.public_key();
+    let pairwise = derive_pairwise_keys(&local_identity, &peer_key)?;
+
+    let session_root = unique_session_root("desktop-chat-udp");
+    let radio = UdpMulticastRadio::bind_v4(group, port)
+        .await
+        .map_err(|error| std::io::Error::other(format!("udp bind failed: {error:?}")))?;
+    let local_mac = RefCell::new(build_mac(radio, session_root.join("counters"))?);
+    let local_handle = MacHandle::new(&local_mac);
+    let local_id = local_handle.add_identity(local_identity).expect("local identity should fit");
+    let peer_id = local_handle.add_peer(peer_key).expect("peer should fit");
+    local_handle
+        .install_pairwise_keys(local_id, peer_id, pairwise)
+        .expect("pairwise keys should install");
+
+    let mut endpoint = Endpoint::new(local_id, local_handle, EndpointConfig::default())
+        .with_kv_store(TokioFileKeyValueStore::new(session_root.join("kv"))?);
+    let mut deferred = Vec::<DeferredAction>::new();
+    let mut ready = Vec::<EndpointEvent>::new();
+
+    print_banner("udp-multicast", local_key, Some(peer_key));
+    println!("group: {group}:{port}");
+    let mut stdin = BufReader::new(io::stdin()).lines();
+    println!("Type a message and press enter. Use /pfs [minutes] to start PFS, or /quit to exit.");
+
+    loop {
+        tokio::select! {
+            line = stdin.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        match handle_user_input(&mut endpoint, &peer_key, &line)? {
+                            UserInputOutcome::Continue(Some(message)) => println!("{message}"),
+                            UserInputOutcome::Continue(None) => {}
+                            UserInputOutcome::Quit => break,
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => return Err(Box::new(error)),
+                }
+            }
+            _ = sleep(Duration::from_millis(20)) => {}
+        }
+
+        poll_endpoint(&local_mac, &mut endpoint, &mut deferred, &mut ready).await?;
+        for event in ready.drain(..) {
+            println!("{}", format_event(&event));
+        }
+    }
+
     Ok(())
 }
 
@@ -117,19 +188,18 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
 
     print_banner("simulated", local_key, Some(remote_key));
     let mut stdin = BufReader::new(io::stdin()).lines();
-    println!("Type a message and press enter. Use /quit to exit.");
+    println!("Type a message and press enter. Use /pfs [minutes] to start PFS, or /quit to exit.");
 
     loop {
         tokio::select! {
             line = stdin.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        if line.trim() == "/quit" {
-                            break;
+                        match handle_user_input(&mut local_endpoint, &remote_key, &line)? {
+                            UserInputOutcome::Continue(Some(message)) => println!("{message}"),
+                            UserInputOutcome::Continue(None) => {}
+                            UserInputOutcome::Quit => break,
                         }
-                        local_endpoint
-                            .send_text(&remote_key, &line)
-                            .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
                     }
                     Ok(None) => break,
                     Err(error) => return Err(Box::new(error)),
@@ -186,7 +256,7 @@ async fn run_serial_chat(
 
         print_banner("serial-draft", local_key, Some(peer_key));
         let mut stdin = BufReader::new(io::stdin()).lines();
-        println!("Type a message and press enter. Use /quit to exit.");
+        println!("Type a message and press enter. Use /pfs [minutes] to start PFS, or /quit to exit.");
         println!("This serial mode uses an example-only draft transport shim and is not a specified UMSH companion-radio protocol.");
 
         loop {
@@ -194,12 +264,11 @@ async fn run_serial_chat(
                 line = stdin.next_line() => {
                     match line {
                         Ok(Some(line)) => {
-                            if line.trim() == "/quit" {
-                                break;
+                            match handle_user_input(&mut endpoint, &peer_key, &line)? {
+                                UserInputOutcome::Continue(Some(message)) => println!("{message}"),
+                                UserInputOutcome::Continue(None) => {}
+                                UserInputOutcome::Quit => break,
                             }
-                            endpoint
-                                .send_text(&peer_key, &line)
-                                .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
                         }
                         Ok(None) => break,
                         Err(error) => return Err(Box::new(error)),
@@ -222,6 +291,54 @@ async fn run_serial_chat(
         let _ = (identity_path, serial_path, baud_rate, peer_key);
         Err("serial-radio feature is required for the example-only serial draft mode".into())
     }
+}
+
+enum UserInputOutcome {
+    Continue(Option<String>),
+    Quit,
+}
+
+fn handle_user_input<R>(
+    endpoint: &mut ChatEndpoint<'_, R>,
+    peer_key: &PublicKey,
+    line: &str,
+) -> Result<UserInputOutcome, Box<dyn std::error::Error>>
+where
+    R: Radio,
+{
+    let trimmed = line.trim();
+    if trimmed == "/quit" {
+        return Ok(UserInputOutcome::Quit);
+    }
+
+    if let Some(args) = trimmed.strip_prefix("/pfs") {
+        let duration_minutes = parse_pfs_minutes(args)?;
+        endpoint
+            .request_pfs_session(peer_key, duration_minutes)
+            .map_err(|error| std::io::Error::other(format!("pfs request failed: {error:?}")))?;
+        return Ok(UserInputOutcome::Continue(Some(format!(
+            "requested PFS with {} for {duration_minutes} minute(s)",
+            hex_encode(&peer_key.0[..4])
+        ))));
+    }
+
+    endpoint
+        .send_text(peer_key, line)
+        .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
+    Ok(UserInputOutcome::Continue(None))
+}
+
+fn parse_pfs_minutes(args: &str) -> Result<u16, Box<dyn std::error::Error>> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return Ok(60);
+    }
+
+    let minutes = trimmed.parse::<u16>()?;
+    if minutes == 0 {
+        return Err("/pfs duration must be at least 1 minute".into());
+    }
+    Ok(minutes)
 }
 
 async fn poll_endpoint<R>(
@@ -391,7 +508,13 @@ struct CliConfig {
 }
 
 enum Mode {
+    PrintPublicKey,
     Simulated,
+    Udp {
+        group: Ipv4Addr,
+        port: u16,
+        peer: PublicKey,
+    },
     Serial {
         path: String,
         baud: u32,
@@ -403,9 +526,14 @@ impl CliConfig {
     fn parse(args: Vec<String>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut identity_path = PathBuf::from(".umsh/desktop-chat.identity");
         let mut mode = Mode::Simulated;
+        let mut peer = None;
+        let mut baud = 115_200u32;
         let mut index = 0usize;
         while index < args.len() {
             match args[index].as_str() {
+                "--print-public-key" => {
+                    mode = Mode::PrintPublicKey;
+                }
                 "--identity" => {
                     index += 1;
                     identity_path = PathBuf::from(args.get(index).ok_or("missing value for --identity")?);
@@ -413,41 +541,67 @@ impl CliConfig {
                 "--simulate" => {
                     mode = Mode::Simulated;
                 }
+                "--udp" => {
+                    index += 1;
+                    let endpoint = args.get(index).ok_or("missing value for --udp")?;
+                    let (group, port) = parse_multicast_endpoint(endpoint)?;
+                    mode = Mode::Udp {
+                        group,
+                        port,
+                        peer: PublicKey([0u8; 32]),
+                    };
+                }
                 "--serial" => {
                     index += 1;
                     let path = args.get(index).ok_or("missing value for --serial")?.clone();
-                    let mut baud = 115_200u32;
-                    let mut peer = None;
-                    let mut lookahead = index + 1;
-                    while lookahead < args.len() {
-                        match args[lookahead].as_str() {
-                            "--baud" => {
-                                lookahead += 1;
-                                baud = args.get(lookahead).ok_or("missing value for --baud")?.parse()?;
-                            }
-                            "--peer" => {
-                                lookahead += 1;
-                                peer = Some(decode_public_key(args.get(lookahead).ok_or("missing value for --peer")?)?);
-                            }
-                            _ => break,
-                        }
-                        lookahead += 1;
-                    }
                     mode = Mode::Serial {
                         path,
                         baud,
-                        peer: peer.ok_or("--peer is required in serial mode")?,
+                        peer: PublicKey([0u8; 32]),
                     };
-                    index = lookahead.saturating_sub(1);
                 }
-                "--baud" | "--peer" => {}
+                "--baud" => {
+                    index += 1;
+                    baud = args.get(index).ok_or("missing value for --baud")?.parse()?;
+                }
+                "--peer" => {
+                    index += 1;
+                    peer = Some(decode_public_key(args.get(index).ok_or("missing value for --peer")?)?);
+                }
                 other => return Err(format!("unknown argument: {other}").into()),
             }
             index += 1;
         }
+
+        mode = match mode {
+            Mode::PrintPublicKey => Mode::PrintPublicKey,
+            Mode::Simulated => Mode::Simulated,
+            Mode::Udp { group, port, .. } => Mode::Udp {
+                group,
+                port,
+                peer: peer.ok_or("--peer is required in udp mode")?,
+            },
+            Mode::Serial { path, .. } => Mode::Serial {
+                path,
+                baud,
+                peer: peer.ok_or("--peer is required in serial mode")?,
+            },
+        };
+
         Ok(Self {
             identity_path,
             mode,
         })
     }
+}
+
+fn parse_multicast_endpoint(input: &str) -> Result<(Ipv4Addr, u16), Box<dyn std::error::Error>> {
+    let (group, port) = input
+        .split_once(':')
+        .ok_or("multicast endpoint must be GROUP:PORT")?;
+    let group: Ipv4Addr = group.parse()?;
+    if !group.is_multicast() {
+        return Err("multicast group must be an IPv4 multicast address".into());
+    }
+    Ok((group, port.parse()?))
 }

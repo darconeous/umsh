@@ -1,3 +1,8 @@
+use core::{
+    future::poll_fn,
+    task::Poll,
+};
+
 use heapless::{LinearMap, Vec};
 use hamaddr::HamAddr;
 use rand::{Rng, RngExt as _};
@@ -10,7 +15,7 @@ use umsh_core::{
 use umsh_crypto::{
     CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
 };
-use umsh_hal::{Clock, CounterStore, Radio, RxInfo};
+use umsh_hal::{Clock, CounterStore, Radio, RxInfo, TxError, TxOptions};
 
 use crate::{
     cache::{DupCacheKey, DuplicateCache},
@@ -394,6 +399,8 @@ impl From<CryptoError> for SendError {
 pub enum MacError<RadioError> {
     /// Underlying radio driver failure.
     Radio(RadioError),
+    /// Underlying radio transmit failure.
+    Transmit(TxError<RadioError>),
     /// Internal queue capacity assumptions were violated.
     QueueFull,
 }
@@ -410,6 +417,12 @@ pub enum CounterPersistenceError<StoreError> {
 impl<RadioError> From<RadioError> for MacError<RadioError> {
     fn from(value: RadioError) -> Self {
         Self::Radio(value)
+    }
+}
+
+impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
+    fn from(value: TxError<RadioError>) -> Self {
+        Self::Transmit(value)
     }
 }
 
@@ -872,9 +885,17 @@ impl<
             return Ok(None);
         }
 
-        if queued.priority != TxPriority::ImmediateAck {
-            let activity_detected = self.radio.cad().await.map_err(MacError::Radio)?;
-            if activity_detected {
+        let receipt = queued.receipt;
+        let tx_options = if queued.priority == TxPriority::ImmediateAck {
+            TxOptions::default()
+        } else {
+            TxOptions {
+                cad_timeout_ms: Some(0),
+            }
+        };
+        match self.radio.transmit(queued.frame.as_slice(), tx_options).await {
+            Ok(()) => {}
+            Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
                     return Ok(None);
@@ -891,10 +912,8 @@ impl<
                     .map_err(|_| MacError::QueueFull)?;
                 return Ok(None);
             }
+            Err(error) => return Err(MacError::Transmit(error)),
         }
-
-        let receipt = queued.receipt;
-        self.radio.transmit(queued.frame.as_slice()).await.map_err(MacError::Radio)?;
         if let Some(receipt) = receipt {
             self.arm_post_tx_listen(receipt, queued.frame.as_slice());
         }
@@ -954,10 +973,15 @@ impl<
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<bool, MacError<<P::Radio as Radio>::Error>> {
         let mut buf = [0u8; FRAME];
-        let rx = self.radio.receive(&mut buf).await.map_err(MacError::Radio)?;
-        if rx.len == 0 {
+        let Some(rx) = poll_fn(|cx| match self.radio.poll_receive(cx, &mut buf) {
+            Poll::Ready(Ok(rx)) => Poll::Ready(Ok(Some(rx))),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Ready(Ok(None)),
+        })
+        .await
+        .map_err(MacError::Radio)? else {
             return Ok(false);
-        }
+        };
 
         let frame_len = rx.len.min(buf.len());
         let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
