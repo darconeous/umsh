@@ -161,6 +161,13 @@ impl UdpMulticastRadioConfig {
 /// Raw UMSH frames are sent and received over IPv4 multicast with no additional
 /// framing. Multicast loopback is enabled by default so that multiple processes
 /// on the same host can exchange frames via the loopback interface.
+///
+/// Because multicast loopback echoes every sent frame back to the sender,
+/// [`UdpMulticastRadio`] stores the last transmitted frame and silently drops
+/// any received frame that is an exact byte-for-byte match.  A legitimately
+/// forwarded copy of the frame is never an exact match: repeaters always modify
+/// the packet (decrementing the hop count or removing a source-route entry), so
+/// only the loopback echo is affected.
 pub struct UdpMulticastRadio {
     socket: UdpSocket,
     group_addr: SocketAddrV4,
@@ -169,6 +176,7 @@ pub struct UdpMulticastRadio {
     rssi: i16,
     snr: i8,
     recv_buf: Vec<u8>,
+    last_sent: Vec<u8>,
 }
 
 impl UdpMulticastRadio {
@@ -208,6 +216,7 @@ impl UdpMulticastRadio {
             rssi: config.rssi,
             snr: config.snr,
             recv_buf: vec![0u8; config.max_frame_size],
+            last_sent: Vec::new(),
         })
     }
 }
@@ -220,6 +229,9 @@ impl Radio for UdpMulticastRadio {
             return Err(TxError::Io(UdpMulticastRadioError::FrameTooLarge(data.len())));
         }
 
+        self.last_sent.clear();
+        self.last_sent.extend_from_slice(data);
+
         let sent = self.socket
             .send_to(data, self.group_addr)
             .await
@@ -230,26 +242,35 @@ impl Radio for UdpMulticastRadio {
     }
 
     fn poll_receive(&mut self, cx: &mut core::task::Context<'_>, buf: &mut [u8]) -> core::task::Poll<Result<RxInfo, Self::Error>> {
-        let mut read_buf = ReadBuf::new(&mut self.recv_buf);
-        let len = match self.socket.poll_recv(cx, &mut read_buf) {
-            core::task::Poll::Ready(Ok(())) => read_buf.filled().len(),
-            core::task::Poll::Ready(Err(error)) => {
-                return core::task::Poll::Ready(Err(UdpMulticastRadioError::Io(error)));
+        loop {
+            let mut read_buf = ReadBuf::new(&mut self.recv_buf);
+            let len = match self.socket.poll_recv(cx, &mut read_buf) {
+                core::task::Poll::Ready(Ok(())) => read_buf.filled().len(),
+                core::task::Poll::Ready(Err(error)) => {
+                    return core::task::Poll::Ready(Err(UdpMulticastRadioError::Io(error)));
+                }
+                core::task::Poll::Pending => return core::task::Poll::Pending,
+            };
+            if len == 0 {
+                return core::task::Poll::Pending;
             }
-            core::task::Poll::Pending => return core::task::Poll::Pending,
-        };
-        if len == 0 {
-            return core::task::Poll::Pending;
-        }
 
-        let copy_len = len.min(buf.len());
-        buf[..copy_len].copy_from_slice(&self.recv_buf[..copy_len]);
-        eprintln!("[udp-radio] RX {} bytes", copy_len);
-        core::task::Poll::Ready(Ok(RxInfo {
-            len: copy_len,
-            rssi: self.rssi,
-            snr: self.snr,
-        }))
+            // Drop exact loopback echoes of our own last transmission.  A frame
+            // forwarded by a repeater is never an exact match because repeaters
+            // always modify at least the hop-count or source-route field.
+            if self.recv_buf[..len] == self.last_sent[..] {
+                continue;
+            }
+
+            let copy_len = len.min(buf.len());
+            buf[..copy_len].copy_from_slice(&self.recv_buf[..copy_len]);
+            eprintln!("[udp-radio] RX {} bytes", copy_len);
+            return core::task::Poll::Ready(Ok(RxInfo {
+                len: copy_len,
+                rssi: self.rssi,
+                snr: self.snr,
+            }));
+        }
     }
 
     fn max_frame_size(&self) -> usize {
