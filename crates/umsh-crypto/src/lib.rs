@@ -853,6 +853,41 @@ mod tests {
         assert_eq!(&wire[range], b"hello");
     }
 
+    /// Verify compute_ack_tag produces a deterministic 8-byte value and that
+    /// the same CMAC+key always yields the same tag.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn compute_ack_tag_is_deterministic() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let cmac = hex_16("070a16b46b4d4144f79bdd9dd04a287c"); // RFC 4493 example 2
+        let tag1 = engine.compute_ack_tag(&cmac, &key);
+        let tag2 = engine.compute_ack_tag(&cmac, &key);
+        assert_eq!(tag1, tag2);
+        assert_eq!(tag1.len(), 8);
+        // Tag should be the first 8 bytes of AES-ECB(key, cmac)
+        let cipher = SoftwareAes.new_cipher(&key);
+        let mut block = cmac;
+        cipher.encrypt_block(&mut block);
+        assert_eq!(tag1, block[..8]);
+    }
+
+    /// Verify that compute_ack_tag with different CMACs produces different tags,
+    /// and that the tag is the first 8 bytes of AES-ECB(k_enc, cmac).
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn compute_ack_tag_differs_for_different_cmacs() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let cmac_a = hex_16("070a16b46b4d4144f79bdd9dd04a287c");
+        let cmac_b = hex_16("51f0bebf7e3b9d92fc49741779363cfe");
+        let tag_a = engine.compute_ack_tag(&cmac_a, &key);
+        let tag_b = engine.compute_ack_tag(&cmac_b, &key);
+        assert_ne!(tag_a, tag_b);
+        assert_ne!(tag_a, [0u8; 8]);
+        assert_ne!(tag_b, [0u8; 8]);
+    }
+
     #[cfg(feature = "software-crypto")]
     #[test]
     fn encrypted_multicast_round_trip_preserves_source_prefix() {

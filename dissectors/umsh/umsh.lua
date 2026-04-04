@@ -98,6 +98,14 @@ f.enc_addr     = ProtoField.bytes  ("umsh.enc_addr",          "Encrypted Addr Bl
 f.dec_dst      = ProtoField.bytes  ("umsh.dec_dst",           "Decrypted DST Hint")
 f.dec_src      = ProtoField.bytes  ("umsh.dec_src",           "Decrypted SRC")
 
+-- ACK tracking (cross-frame references)
+f.ack_req_frame = ProtoField.framenum("umsh.ack.request_frame", "Acknowledges packet in frame",
+                                       base.NONE, frametype.ACK)
+f.ack_rsp_frame = ProtoField.framenum("umsh.ack.response_frame","Acknowledged in frame",
+                                       base.NONE, frametype.RESPONSE)
+f.ack_rsp_time  = ProtoField.string  ("umsh.ack.response_time", "ACK Response Time")
+f.ack_expected  = ProtoField.bytes   ("umsh.ack.expected_tag",  "Expected ACK Tag")
+
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_opts, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
@@ -108,6 +116,7 @@ umsh.fields = {
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
   f.frame_ctr, f.salt, f.mic,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
+  f.ack_req_frame, f.ack_rsp_frame, f.ack_rsp_time, f.ack_expected,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -162,6 +171,17 @@ umsh.prefs.keyfile      = Pref.string("Key File",  "",
 -- ──────────────────────────────────────────────────────────────────────────
 local _udp_table       = DissectorTable.get("udp.port")
 local _registered_port = 0
+
+-- ACK tracking tables (cleared on each new capture via init)
+-- _ack_by_tag:  ack_tag_hex → {frame=N, timestamp=T, src_label=S, dst_label=D}
+-- _ack_by_frame: frame_num → {ack_frame=N, rsp_time=delta_seconds} (back-annotation)
+local _ack_by_tag   = {}
+local _ack_by_frame = {}
+
+function umsh.init()
+  _ack_by_tag   = {}
+  _ack_by_frame = {}
+end
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Byte-string helpers
@@ -362,10 +382,31 @@ local function dissect_mack(buf, pinfo, tree, off)
   off = off + 3
 
   if off + 8 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
+  local tag_bytes = tvb_bytes(buf, off, 8)
   tree:add(f.ack_tag, buf(off, 8))
 
   local to_label = dst_name or hint_hex(dst_bytes)
   pinfo.cols.info = "UMSH MACK to " .. to_label
+
+  -- ACK correlation: look up the tag in the tracking table
+  local tag_hex = bytes_to_hex(tag_bytes)
+  local origin = _ack_by_tag[tag_hex]
+  if origin then
+    tree:add(f.ack_req_frame, buf(off, 8), origin.frame)
+    local rsp_time = pinfo.abs_ts - origin.timestamp
+    tree:add(f.ack_rsp_time, buf(off, 8),
+      string.format("%.6f seconds", rsp_time)):set_text(
+      string.format("ACK Response Time: %.3f ms", rsp_time * 1000))
+    pinfo.cols.info = "UMSH MACK to " .. to_label
+      .. " (ack for #" .. origin.frame .. ")"
+    -- Store back-reference so the UACK/BUAK frame can show "Acknowledged in frame N"
+    if not pinfo.visited then
+      _ack_by_frame[origin.frame] = {
+        ack_frame = pinfo.number,
+        rsp_time  = rsp_time,
+      }
+    end
+  end
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -436,7 +477,8 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
     is_encrypted             = is_enc,
   }
   local privkeys = keystore.get_all_privkeys()
-  local ok, plain, status = pcall(crypto.try_decrypt_unicast, pkt_info, privkeys, full_src)
+  local ok, plain, status, dec_keys, full_cmac =
+    pcall(crypto.try_decrypt_unicast, pkt_info, privkeys, full_src)
   if ok and plain then
     tree:add_proto_expert_info(ef.mic_ok)
     if is_enc then
@@ -444,6 +486,32 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
         "Decrypted Payload (" .. #plain .. " B): " .. bytes_to_hex(plain))
     end
     if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
+
+    -- ACK tracking: compute expected ACK tag for UACK packets
+    if ack_req and dec_keys and full_cmac then
+      local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
+      if ack_tag then
+        local tag_hex = bytes_to_hex(ack_tag)
+        tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
+          :set_text("Expected ACK Tag: " .. tag_hex)
+        if not pinfo.visited then
+          _ack_by_tag[tag_hex] = {
+            frame     = pinfo.number,
+            timestamp = pinfo.abs_ts,
+            src_label = sl,
+            dst_label = dl,
+          }
+        end
+        -- Back-annotation: show MACK frame if already matched
+        local back = _ack_by_frame[pinfo.number]
+        if back then
+          tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+          tree:add(f.ack_rsp_time, buf(0, 0),
+            string.format("%.6f seconds", back.rsp_time)):set_text(
+            string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
+        end
+      end
+    end
   else
     tree:add_proto_expert_info(ef.no_key)
   end
@@ -639,20 +707,21 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       is_encrypted   = true,
     }
     local privkeys = keystore.get_all_privkeys()
-    local ok2, payload, dst_hint, dec_src, status =
+    local ok2, payload, dst_hint, dec_src, status, dec_keys, full_cmac =
       pcall(crypto.try_decrypt_blind_unicast, pkt_info, privkeys,
             keystore.get_all_channels(), full_src)
     if ok2 and payload then
       tree:add_proto_expert_info(ef.mic_ok)
+      local d_name, s_name
       if dst_hint then
-        local d_name = keystore.lookup_node(dst_hint)
+        d_name = keystore.lookup_node(dst_hint)
         tree:add(f.dec_dst, buf(addr_start, 3)):set_text(
           "Decrypted DST: " .. (d_name or hint_hex(dst_hint)))
       end
       if dec_src then
         local src_disp_len = full_src and 32 or 3
-        local s_name = full_src and keystore.lookup_node_by_key(dec_src)
-                                 or keystore.lookup_node(dec_src)
+        s_name = full_src and keystore.lookup_node_by_key(dec_src)
+                            or keystore.lookup_node(dec_src)
         tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
           "Decrypted SRC: " .. (s_name or bytes_to_hex(dec_src)))
         if s_name then pinfo.cols.info = type_label .. " [" .. ch_label .. "] from " .. s_name end
@@ -661,6 +730,30 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
         if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto) end
+      end
+      -- ACK tracking for BUAK
+      if ack_req and dec_keys and full_cmac then
+        local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
+        if ack_tag then
+          local tag_hex = bytes_to_hex(ack_tag)
+          tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
+            :set_text("Expected ACK Tag: " .. tag_hex)
+          if not pinfo.visited then
+            _ack_by_tag[tag_hex] = {
+              frame     = pinfo.number,
+              timestamp = pinfo.abs_ts,
+              src_label = s_name or (dec_src and bytes_to_hex(dec_src:sub(1,3))) or "?",
+              dst_label = d_name or (dst_hint and hint_hex(dst_hint)) or "?",
+            }
+          end
+          local back = _ack_by_frame[pinfo.number]
+          if back then
+            tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+            tree:add(f.ack_rsp_time, buf(0, 0),
+              string.format("%.6f seconds", back.rsp_time)):set_text(
+              string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
+          end
+        end
       end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
@@ -746,16 +839,42 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       end
 
       for _, x25519_peer in ipairs(peer_x25519_list) do
-        local ok2, plain, status = pcall(function()
+        local ok2, plain, status, blind_keys, full_cmac = pcall(function()
           local ss    = crypto.x25519(x25519_priv, x25519_peer)
           local pw    = crypto.derive_pairwise_keys(ss)
           if not pw then return nil, "no_pw" end
           local blind = crypto.derive_blind_keys(pw, ch_entry.derived_keys)
-          return crypto.verify_and_decrypt(blind, pkt_info)
+          local b, s, fc = crypto.verify_and_decrypt(blind, pkt_info)
+          if b then return b, s, blind, fc end
+          return nil, s
         end)
         if ok2 and plain then
           tree:add_proto_expert_info(ef.mic_ok)
           if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
+          -- ACK tracking for E=0 BUAK
+          if ack_req and blind_keys and full_cmac then
+            local ack_tag = crypto.compute_ack_tag(full_cmac, blind_keys.k_enc)
+            if ack_tag then
+              local tag_hex = bytes_to_hex(ack_tag)
+              tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
+                :set_text("Expected ACK Tag: " .. tag_hex)
+              if not pinfo.visited then
+                _ack_by_tag[tag_hex] = {
+                  frame     = pinfo.number,
+                  timestamp = pinfo.abs_ts,
+                  src_label = sl,
+                  dst_label = dl,
+                }
+              end
+              local back = _ack_by_frame[pinfo.number]
+              if back then
+                tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+                tree:add(f.ack_rsp_time, buf(0, 0),
+                  string.format("%.6f seconds", back.rsp_time)):set_text(
+                  string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
+              end
+            end
+          end
           found = true; break
         elseif ok2 and status == "mic_mismatch" then
           tree:add_proto_expert_info(ef.mic_bad)

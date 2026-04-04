@@ -298,7 +298,8 @@ end
 -- keys:       {k_enc, k_mic}
 -- pkt:        {fcf_byte, static_opts, dst_or_chan, src_bytes_or_nil,
 --              secinfo_raw, scf, body_bytes, mic_bytes, is_encrypted}
--- Returns plaintext string on success, nil + reason on failure.
+-- Returns: plaintext, "ok", full_cmac  on success
+--          nil, reason               on failure
 -- ---------------------------------------------------------------------------
 
 function M.verify_and_decrypt(keys, pkt)
@@ -325,7 +326,18 @@ function M.verify_and_decrypt(keys, pkt)
     return nil, "mic_mismatch"
   end
 
-  return body, "ok"
+  return body, "ok", full_cmac
+end
+
+-- ---------------------------------------------------------------------------
+-- Compute the 8-byte ACK tag from a full 16-byte CMAC and k_enc.
+-- ack_tag = truncate_8( AES-ECB(k_enc, full_cmac) )
+-- ---------------------------------------------------------------------------
+
+function M.compute_ack_tag(full_cmac, k_enc)
+  if not _has_aes then return nil end
+  local encrypted = aes_ecb_fn(k_enc, full_cmac)
+  return encrypted:sub(1, 8)
 end
 
 -- ---------------------------------------------------------------------------
@@ -784,8 +796,8 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, full_src_flag)
     local shared_secret = M.x25519(x25519_priv, x25519_peer_pub)
     local keys, kerr = M.derive_pairwise_keys(shared_secret)
     if not keys then return nil end
-    local plain, status = M.verify_and_decrypt(keys, vpkt)
-    if plain then return plain, keys end
+    local plain, status, full_cmac = M.verify_and_decrypt(keys, vpkt)
+    if plain then return plain, keys, full_cmac end
     return nil
   end
 
@@ -804,17 +816,17 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, full_src_flag)
     if peer_ed_pubkey then
       local x25519_peer = M.ed25519_pub_to_x25519_pub(peer_ed_pubkey)
       if x25519_peer then
-        local plain, keys = try_with_x25519(x25519_priv, x25519_peer)
-        if plain then return plain, "ok", keys end
+        local plain, keys, full_cmac = try_with_x25519(x25519_priv, x25519_peer)
+        if plain then return plain, "ok", keys, full_cmac end
       end
     else
       -- Path 2: peer's Ed25519 pubkey unknown — try all other privkeys as
       -- potential peer using their precomputed X25519 pubkeys.
       for idx2, pk2 in ipairs(privkey_list) do
         if pk2 ~= pk and pk2.x25519_pubkey then
-          local ok_try, plain, keys = pcall(try_with_x25519, x25519_priv, pk2.x25519_pubkey)
+          local ok_try, plain, keys, full_cmac = pcall(try_with_x25519, x25519_priv, pk2.x25519_pubkey)
           if ok_try and plain then
-            return plain, "ok", keys
+            return plain, "ok", keys, full_cmac
           end
         end
       end
@@ -870,8 +882,8 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     local pairwise_keys = M.derive_pairwise_keys(shared_secret)
     if not pairwise_keys then return nil end
     local blind_keys = M.derive_blind_keys(pairwise_keys, channel_entry.derived_keys)
-    local plain, status = M.verify_and_decrypt(blind_keys, vpkt)
-    if plain then return plain end
+    local plain, status, full_cmac = M.verify_and_decrypt(blind_keys, vpkt)
+    if plain then return plain, blind_keys, full_cmac end
     return nil
   end
 
@@ -883,15 +895,15 @@ function M.try_decrypt_blind_unicast(pkt_info, privkey_list, channel_list, full_
     if full_src_flag and #src_bytes == 32 then
       local x25519_peer = M.ed25519_pub_to_x25519_pub(src_bytes)
       if x25519_peer then
-        local plain = try_blind_ecdh(x25519_priv, x25519_peer)
-        if plain then return plain, dst_hint, src_bytes, "ok" end
+        local plain, keys, full_cmac = try_blind_ecdh(x25519_priv, x25519_peer)
+        if plain then return plain, dst_hint, src_bytes, "ok", keys, full_cmac end
       end
     else
       -- Try all other privkeys as potential peer
       for _, pk2 in ipairs(privkey_list) do
         if pk2 ~= pk and pk2.x25519_pubkey then
-          local plain = try_blind_ecdh(x25519_priv, pk2.x25519_pubkey)
-          if plain then return plain, dst_hint, src_bytes, "ok" end
+          local plain, keys, full_cmac = try_blind_ecdh(x25519_priv, pk2.x25519_pubkey)
+          if plain then return plain, dst_hint, src_bytes, "ok", keys, full_cmac end
         end
       end
     end

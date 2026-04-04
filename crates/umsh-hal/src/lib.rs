@@ -64,6 +64,20 @@ pub trait Radio {
 pub trait Clock {
     /// Return milliseconds since an arbitrary monotonic epoch.
     fn now_ms(&self) -> u64;
+
+    /// Poll a delay that completes when the monotonic clock reaches `deadline_ms`.
+    ///
+    /// Returns `Poll::Ready(())` if the deadline has already passed.  Otherwise
+    /// the implementation should register `cx.waker()` with a platform timer and
+    /// return `Poll::Pending`.
+    ///
+    /// The default implementation returns `Ready(())` immediately, which causes
+    /// callers to busy-poll on timer deadlines.  Platform clocks backed by a
+    /// real timer (tokio, embassy, etc.) should override this.
+    fn poll_delay_until(&self, cx: &mut Context<'_>, deadline_ms: u64) -> Poll<()> {
+        let _ = (cx, deadline_ms);
+        Poll::Ready(())
+    }
 }
 
 /// Persistent frame-counter storage.

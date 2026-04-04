@@ -1,7 +1,12 @@
 //! Tokio-friendly runtime adapters and simple std-backed stores.
 
-use core::marker::PhantomData;
+use core::{
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fs,
     io,
@@ -34,15 +39,29 @@ impl DelayNs for TokioDelay {
 }
 
 /// Monotonic clock backed by `std::time::Instant`.
-#[derive(Clone, Debug)]
+///
+/// Implements [`Clock::poll_delay_until`] using `tokio::time::Sleep` so that
+/// the MAC coordinator can efficiently await timer deadlines.
+#[derive(Debug)]
 pub struct StdClock {
     origin: Instant,
+    pending_sleep: RefCell<Option<Pin<Box<tokio::time::Sleep>>>>,
+}
+
+impl Clone for StdClock {
+    fn clone(&self) -> Self {
+        Self {
+            origin: self.origin,
+            pending_sleep: RefCell::new(None),
+        }
+    }
 }
 
 impl Default for StdClock {
     fn default() -> Self {
         Self {
             origin: Instant::now(),
+            pending_sleep: RefCell::new(None),
         }
     }
 }
@@ -57,6 +76,21 @@ impl StdClock {
 impl Clock for StdClock {
     fn now_ms(&self) -> u64 {
         self.origin.elapsed().as_millis() as u64
+    }
+
+    fn poll_delay_until(&self, cx: &mut Context<'_>, deadline_ms: u64) -> Poll<()> {
+        let now = self.now_ms();
+        if now >= deadline_ms {
+            return Poll::Ready(());
+        }
+
+        let remaining = Duration::from_millis(deadline_ms - now);
+        let target = tokio::time::Instant::now() + remaining;
+
+        let mut cell = self.pending_sleep.borrow_mut();
+        let sleep = cell.get_or_insert_with(|| Box::pin(tokio::time::sleep_until(target)));
+        sleep.as_mut().reset(target);
+        sleep.as_mut().poll(cx)
     }
 }
 

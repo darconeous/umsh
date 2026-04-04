@@ -963,11 +963,415 @@ impl<
         Ok(())
     }
 
-    /// Receives and processes at most one inbound frame.
+    /// Compute the earliest deadline across all coordinator timers.
     ///
-    /// When a post-transmit listen window is active, forwarding confirmation is only accepted for
-    /// the currently tracked receipt and duplicate-cache key.
-    /// Receive and process at most one inbound frame.
+    /// Returns `None` when there are no pending timers.  The returned value
+    /// covers pending ACK deadlines (both `ack_deadline_ms` and forwarding
+    /// `confirm_deadline_ms`), the post-transmit listen window, and deferred
+    /// transmit-queue entries.
+    pub fn earliest_deadline_ms(&self) -> Option<u64> {
+        let mut earliest: Option<u64> = None;
+
+        if let Some(listen) = &self.post_tx_listen {
+            earliest = Some(earliest.map_or(listen.deadline_ms, |e: u64| e.min(listen.deadline_ms)));
+        }
+
+        for slot in self.identities.iter().filter_map(|s| s.as_ref()) {
+            for (_, pending) in slot.pending_acks.iter() {
+                earliest = Some(earliest.map_or(pending.ack_deadline_ms, |e: u64| e.min(pending.ack_deadline_ms)));
+                if let crate::AckState::AwaitingForward { confirm_deadline_ms } = pending.state {
+                    earliest = Some(earliest.map_or(confirm_deadline_ms, |e: u64| e.min(confirm_deadline_ms)));
+                }
+            }
+        }
+
+        if let Some(nb) = self.tx_queue.earliest_not_before_ms() {
+            earliest = Some(earliest.map_or(nb, |e: u64| e.min(nb)));
+        }
+
+        earliest
+    }
+
+    /// Run the coordinator's event loop until at least one event is delivered
+    /// or a timer-driven action (retransmit, timeout) is processed.
+    ///
+    /// Unlike [`poll_cycle`](Self::poll_cycle), this method properly awaits the
+    /// radio and timer deadlines instead of returning immediately when nothing
+    /// is ready.  Callers can use `tokio::select!` (or equivalent) to multiplex
+    /// user input alongside MAC events:
+    ///
+    /// ```ignore
+    /// loop {
+    ///     tokio::select! {
+    ///         line = stdin.next_line() => { /* handle input */ }
+    ///         result = mac.next_event(|id, event| { /* handle event */ }) => {
+    ///             result?;
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn next_event(
+        &mut self,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        loop {
+            // Phase 1: Drain ready transmit work.
+            self.drain_tx_queue().await?;
+
+            // Phase 2: Wait for a radio frame or the earliest timer deadline.
+            let mut buf = [0u8; FRAME];
+            enum WakeReason {
+                Received(RxInfo),
+                TimerExpired,
+            }
+            let reason = poll_fn(|cx| {
+                // Try to receive a frame (non-blocking poll).
+                match self.radio.poll_receive(cx, &mut buf) {
+                    Poll::Ready(Ok(rx)) => return Poll::Ready(Ok(WakeReason::Received(rx))),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => {}
+                }
+
+                // Check whether any timer has expired.
+                let now_ms = self.clock.now_ms();
+                if let Some(deadline) = self.earliest_deadline_ms() {
+                    if now_ms >= deadline {
+                        return Poll::Ready(Ok(WakeReason::TimerExpired));
+                    }
+                    // Register for wakeup at the earliest deadline.
+                    let _ = self.clock.poll_delay_until(cx, deadline);
+                }
+
+                // Check for tx_queue items that became ready.
+                if self.tx_queue.has_ready(now_ms) {
+                    return Poll::Ready(Ok(WakeReason::TimerExpired));
+                }
+
+                Poll::Pending
+            })
+            .await
+            .map_err(MacError::Radio)?;
+
+            // Phase 3: Process what woke us up.
+            match reason {
+                WakeReason::Received(rx) => {
+                    let frame_len = rx.len.min(buf.len());
+                    let _ = self.process_received_frame(&mut buf, frame_len, &rx, &mut on_event);
+                }
+                WakeReason::TimerExpired => {
+                    // Timers are handled in phase 4 below.
+                }
+            }
+
+            // Phase 4: Drain any immediate ACKs generated during receive.
+            self.drain_tx_queue().await?;
+
+            // Phase 5: Service pending ACK timers.
+            self.service_pending_ack_timeouts(&mut on_event)
+                .map_err(|_| MacError::QueueFull)?;
+
+            // If the tx_queue has new work (e.g. retransmits just enqueued),
+            // loop back to drain it before waiting again.
+            if !self.tx_queue.is_empty() {
+                continue;
+            }
+
+            return Ok(());
+        }
+    }
+
+    /// Process a received frame, dispatching events through `on_event`.
+    ///
+    /// This is the shared implementation used by both [`receive_one`](Self::receive_one)
+    /// and [`next_event`](Self::next_event).  Returns `true` when the frame
+    /// produced at least one event or side-effect.
+    fn process_received_frame(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        frame_len: usize,
+        _rx: &RxInfo,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
+            return false;
+        };
+        let forwarding_confirmed = self.observe_forwarding_confirmation(&buf[..frame_len]);
+
+        match header.packet_type() {
+            PacketType::Broadcast => self.process_broadcast(buf, frame_len, &header, &mut on_event),
+            PacketType::MacAck => self.process_mac_ack(buf, frame_len, &header, forwarding_confirmed, &mut on_event),
+            PacketType::Unicast | PacketType::UnicastAckReq => self.process_unicast(buf, frame_len, &header, _rx, forwarding_confirmed, &mut on_event),
+            PacketType::Multicast => self.process_multicast(buf, frame_len, &header, _rx, forwarding_confirmed, &mut on_event),
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => self.process_blind_unicast(buf, frame_len, &header, _rx, forwarding_confirmed, &mut on_event),
+            PacketType::Reserved5 => false,
+        }
+    }
+
+    fn process_broadcast(
+        &mut self,
+        buf: &[u8; FRAME],
+        frame_len: usize,
+        header: &PacketHeader,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let Some((from_hint, from_key)) = Self::resolve_broadcast_source(&buf[..frame_len], header) else {
+            return false;
+        };
+        if !Self::payload_is_allowed(header.packet_type(), &buf[header.body_range.clone()]) {
+            return false;
+        }
+        let mut delivered = false;
+        for (index, slot) in self.identities.iter().enumerate() {
+            if slot.is_none() {
+                continue;
+            }
+            delivered = true;
+            on_event(
+                LocalIdentityId(index as u8),
+                crate::MacEventRef::Broadcast {
+                    from_hint,
+                    from_key,
+                    payload: &buf[header.body_range.clone()],
+                },
+            );
+        }
+        delivered
+    }
+
+    fn process_mac_ack(
+        &mut self,
+        buf: &[u8; FRAME],
+        _frame_len: usize,
+        header: &PacketHeader,
+        forwarding_confirmed: bool,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let Some(ack_dst) = header.ack_dst else {
+            return false;
+        };
+        let Some(target_peer) = self
+            .identities
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .find(|slot| slot.identity().public_key().hint() == ack_dst)
+            .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]))
+        else {
+            return false;
+        };
+        let mut ack_tag = [0u8; 8];
+        ack_tag.copy_from_slice(&buf[header.mic_range.clone()]);
+        if let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_tag) {
+            on_event(identity_id, crate::MacEventRef::AckReceived { peer: target_peer, receipt });
+            return true;
+        }
+        forwarding_confirmed
+    }
+
+    fn process_unicast(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        frame_len: usize,
+        header: &PacketHeader,
+        rx: &RxInfo,
+        forwarding_confirmed: bool,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let mut original = [0u8; FRAME];
+        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
+            let mut handled = false;
+            for (peer_id, peer_key) in self.resolve_source_peer_candidates(&buf[..frame_len], header) {
+                let Some(keys) = self
+                    .identity(local_id)
+                    .and_then(|slot| slot.peer_crypto().get(&peer_id))
+                    .map(|state| state.pairwise_keys.clone())
+                else {
+                    continue;
+                };
+                let Ok(body_range) = self.crypto.open_packet(&mut buf[..frame_len], header, &keys) else {
+                    continue;
+                };
+                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
+                    continue;
+                }
+                if !self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len]) {
+                    continue;
+                }
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+
+                if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], header) {
+                    let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], header, body_range.clone(), &keys);
+                    self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                }
+
+                on_event(
+                    local_id,
+                    crate::MacEventRef::Unicast {
+                        from: peer_key,
+                        payload: &buf[body_range],
+                        ack_requested: header.ack_requested(),
+                    },
+                );
+                handled = true;
+                break;
+            }
+            handled
+        } else {
+            false
+        };
+        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
+        handled || forwarding_confirmed || forwarded
+    }
+
+    fn process_multicast(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        frame_len: usize,
+        header: &PacketHeader,
+        rx: &RxInfo,
+        forwarding_confirmed: bool,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let mut original = [0u8; FRAME];
+        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let delivered = if let Some(channel_id) = header.channel {
+            let derived = {
+                self.channels
+                    .lookup_by_id(&channel_id)
+                    .next()
+                    .map(|channel| channel.derived.clone())
+            };
+            if let Some(derived) = derived {
+                let keys = PairwiseKeys {
+                    k_enc: derived.k_enc,
+                    k_mic: derived.k_mic,
+                };
+                if let Ok(body_range) = self.crypto.open_packet(&mut buf[..frame_len], header, &keys) {
+                    if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
+                        false
+                    } else if let Some((peer_id, from)) = self.resolve_multicast_source(&buf[..frame_len], header) {
+                        if self.accept_multicast_replay(channel_id, peer_id, header, &buf[..frame_len]) {
+                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                            let mut delivered = false;
+                            for (index, slot) in self.identities.iter().enumerate() {
+                                if slot.is_none() {
+                                    continue;
+                                }
+                                delivered = true;
+                                on_event(
+                                    LocalIdentityId(index as u8),
+                                    crate::MacEventRef::Multicast {
+                                        from,
+                                        channel_id,
+                                        payload: &buf[body_range.clone()],
+                                    },
+                                );
+                            }
+                            delivered
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, false);
+        delivered || forwarding_confirmed || forwarded
+    }
+
+    fn process_blind_unicast(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        frame_len: usize,
+        header: &PacketHeader,
+        rx: &RxInfo,
+        forwarding_confirmed: bool,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        let mut original = [0u8; FRAME];
+        original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let handled = if let Some(channel_id) = header.channel {
+            let channel_candidates: Vec<DerivedChannelKeys, CHANNELS> =
+                self.channels.lookup_by_id(&channel_id).map(|channel| channel.derived.clone()).collect();
+            if channel_candidates.is_empty() {
+                false
+            } else {
+                let mut handled = false;
+                for channel_keys in channel_candidates {
+                    buf[..frame_len].copy_from_slice(&original[..frame_len]);
+                    let Ok((dst, source_addr)) = self
+                        .crypto
+                        .decrypt_blind_addr(&mut buf[..frame_len], header, &channel_keys)
+                    else {
+                        continue;
+                    };
+                    let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
+                        continue;
+                    };
+                    for (peer_id, peer_key) in self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr) {
+                        let Some(pairwise_keys) = self
+                            .identity(local_id)
+                            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+                            .map(|state| state.pairwise_keys.clone())
+                        else {
+                            continue;
+                        };
+                        let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
+                        let body_range = match self.crypto.open_packet(&mut buf[..frame_len], header, &blind_keys) {
+                            Ok(range) => range,
+                            Err(_) => continue,
+                        };
+                        if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
+                            continue;
+                        }
+                        if !self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len]) {
+                            continue;
+                        }
+                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+
+                        if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], header) {
+                            let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], header, body_range.clone(), &blind_keys);
+                            self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                        }
+
+                        on_event(
+                            local_id,
+                            crate::MacEventRef::BlindUnicast {
+                                from: peer_key,
+                                channel_id,
+                                payload: &buf[body_range],
+                                ack_requested: header.ack_requested(),
+                            },
+                        );
+                        handled = true;
+                        break;
+                    }
+                    if handled {
+                        break;
+                    }
+                }
+                handled
+            }
+        } else {
+            false
+        };
+        let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
+        handled || forwarding_confirmed || forwarded
+    }
+
+    /// Non-blocking receive: polls the radio once and processes a frame if available.
+    ///
+    /// This is the legacy non-blocking API used by [`poll_cycle`](Self::poll_cycle).
+    /// For new code, prefer [`next_event`](Self::next_event) which properly awaits
+    /// the radio and timer deadlines.
     pub async fn receive_one(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
@@ -984,242 +1388,7 @@ impl<
         };
 
         let frame_len = rx.len.min(buf.len());
-        let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
-            return Ok(false);
-        };
-        let forwarding_confirmed = self.observe_forwarding_confirmation(&buf[..frame_len]);
-
-        match header.packet_type() {
-            PacketType::Broadcast => {
-                let Some((from_hint, from_key)) = Self::resolve_broadcast_source(&buf[..frame_len], &header) else {
-                    return Ok(false);
-                };
-                if !Self::payload_is_allowed(header.packet_type(), &buf[header.body_range.clone()]) {
-                    return Ok(false);
-                }
-
-                let mut delivered = false;
-                for (index, slot) in self.identities.iter().enumerate() {
-                    if slot.is_none() {
-                        continue;
-                    }
-                    delivered = true;
-                    on_event(
-                        LocalIdentityId(index as u8),
-                        crate::MacEventRef::Broadcast {
-                            from_hint,
-                            from_key,
-                            payload: &buf[header.body_range.clone()],
-                        },
-                    );
-                }
-                Ok(delivered)
-            }
-            PacketType::MacAck => {
-                let Some(ack_dst) = header.ack_dst else {
-                    return Ok(false);
-                };
-
-                let Some(target_peer) = self
-                    .identities
-                    .iter()
-                    .filter_map(|slot| slot.as_ref())
-                    .find(|slot| slot.identity().public_key().hint() == ack_dst)
-                    .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]))
-                else {
-                    return Ok(false);
-                };
-
-                let mut ack_tag = [0u8; 8];
-                ack_tag.copy_from_slice(&buf[header.mic_range]);
-                if let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_tag) {
-                    on_event(identity_id, crate::MacEventRef::AckReceived { peer: target_peer, receipt });
-                    return Ok(true);
-                }
-                Ok(forwarding_confirmed)
-            }
-            PacketType::Unicast | PacketType::UnicastAckReq => {
-                let mut original = [0u8; FRAME];
-                original[..frame_len].copy_from_slice(&buf[..frame_len]);
-                let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
-                    let mut handled = false;
-                    for (peer_id, peer_key) in self.resolve_source_peer_candidates(&buf[..frame_len], &header) {
-                        let Some(keys) = self
-                            .identity(local_id)
-                            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-                            .map(|state| state.pairwise_keys.clone())
-                        else {
-                            continue;
-                        };
-                        let Ok(body_range) = self.crypto.open_packet(&mut buf[..frame_len], &header, &keys) else {
-                            continue;
-                        };
-                        if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
-                            continue;
-                        }
-                        if !self.accept_unicast_replay(local_id, peer_id, &header, &buf[..frame_len]) {
-                            continue;
-                        }
-                        self.learn_route_for_peer(peer_id, &buf[..frame_len], &header);
-
-                        if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], &header) {
-                            let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], &header, body_range.clone(), &keys);
-                            self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
-                        }
-
-                        on_event(
-                            local_id,
-                            crate::MacEventRef::Unicast {
-                                from: peer_key,
-                                payload: &buf[body_range],
-                                ack_requested: header.ack_requested(),
-                            },
-                        );
-                        handled = true;
-                        break;
-                    }
-                    handled
-                } else {
-                    false
-                };
-                let forwarded = self.maybe_forward_received(&original[..frame_len], &header, &rx, handled);
-                Ok(handled || forwarding_confirmed || forwarded)
-            }
-            PacketType::Multicast => {
-                let mut original = [0u8; FRAME];
-                original[..frame_len].copy_from_slice(&buf[..frame_len]);
-                let delivered = if let Some(channel_id) = header.channel {
-                    let derived = {
-                        self.channels
-                            .lookup_by_id(&channel_id)
-                            .next()
-                            .map(|channel| channel.derived.clone())
-                    };
-                    if let Some(derived) = derived {
-                        let keys = PairwiseKeys {
-                            k_enc: derived.k_enc,
-                            k_mic: derived.k_mic,
-                        };
-
-                        if let Ok(body_range) = self.crypto.open_packet(&mut buf[..frame_len], &header, &keys) {
-                                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
-                                    false
-                                } else 
-                            if let Some((peer_id, from)) = self.resolve_multicast_source(&buf[..frame_len], &header) {
-                                if self.accept_multicast_replay(channel_id, peer_id, &header, &buf[..frame_len]) {
-                                    self.learn_route_for_peer(peer_id, &buf[..frame_len], &header);
-
-                                    let mut delivered = false;
-                                    for (index, slot) in self.identities.iter().enumerate() {
-                                        if slot.is_none() {
-                                            continue;
-                                        }
-                                        delivered = true;
-                                        on_event(
-                                            LocalIdentityId(index as u8),
-                                            crate::MacEventRef::Multicast {
-                                                from,
-                                                channel_id,
-                                                payload: &buf[body_range.clone()],
-                                            },
-                                        );
-                                    }
-                                    delivered
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                let forwarded = self.maybe_forward_received(&original[..frame_len], &header, &rx, false);
-                Ok(delivered || forwarding_confirmed || forwarded)
-            }
-            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
-                let mut original = [0u8; FRAME];
-                original[..frame_len].copy_from_slice(&buf[..frame_len]);
-                let handled = if let Some(channel_id) = header.channel {
-                    let channel_candidates: Vec<DerivedChannelKeys, CHANNELS> =
-                        self.channels.lookup_by_id(&channel_id).map(|channel| channel.derived.clone()).collect();
-                    if channel_candidates.is_empty() {
-                        false
-                    } else {
-                        let mut handled = false;
-
-                        for channel_keys in channel_candidates {
-                            buf[..frame_len].copy_from_slice(&original[..frame_len]);
-
-                            let Ok((dst, source_addr)) = self
-                                .crypto
-                                .decrypt_blind_addr(&mut buf[..frame_len], &header, &channel_keys)
-                            else {
-                                continue;
-                            };
-                            let Some(local_id) = self.find_local_identity_for_dst(Some(dst)) else {
-                                continue;
-                            };
-                            for (peer_id, peer_key) in self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr) {
-                                let Some(pairwise_keys) = self
-                                    .identity(local_id)
-                                    .and_then(|slot| slot.peer_crypto().get(&peer_id))
-                                    .map(|state| state.pairwise_keys.clone())
-                                else {
-                                    continue;
-                                };
-                                let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
-
-                                let body_range = match self.crypto.open_packet(&mut buf[..frame_len], &header, &blind_keys) {
-                                    Ok(range) => range,
-                                    Err(_) => continue,
-                                };
-                                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
-                                    continue;
-                                }
-                                if !self.accept_unicast_replay(local_id, peer_id, &header, &buf[..frame_len]) {
-                                    continue;
-                                }
-                                self.learn_route_for_peer(peer_id, &buf[..frame_len], &header);
-
-                                if header.ack_requested() && self.should_emit_destination_ack(&buf[..frame_len], &header) {
-                                    let ack_tag = self.compute_received_ack_tag(&buf[..frame_len], &header, body_range.clone(), &blind_keys);
-                                    self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
-                                }
-
-                                on_event(
-                                    local_id,
-                                    crate::MacEventRef::BlindUnicast {
-                                        from: peer_key,
-                                        channel_id,
-                                        payload: &buf[body_range],
-                                        ack_requested: header.ack_requested(),
-                                    },
-                                );
-                                handled = true;
-                                break;
-                            }
-                            if handled {
-                                break;
-                            }
-                        }
-
-                        handled
-                    }
-                } else {
-                    false
-                };
-                let forwarded = self.maybe_forward_received(&original[..frame_len], &header, &rx, handled);
-                Ok(handled || forwarding_confirmed || forwarded)
-            }
-            _ => Ok(forwarding_confirmed),
-        }
+        Ok(self.process_received_frame(&mut buf, frame_len, &rx, &mut on_event))
     }
 
     /// Mark a pending receipt as acknowledged and emit an event through `on_event`.

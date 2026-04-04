@@ -387,6 +387,20 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         Some(self.entries.swap_remove(index))
     }
 
+    /// Return the earliest `not_before_ms` across all entries, if any are deferred.
+    pub fn earliest_not_before_ms(&self) -> Option<u64> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.not_before_ms > 0)
+            .map(|entry| entry.not_before_ms)
+            .min()
+    }
+
+    /// Return whether the queue contains any entry that is ready to send now.
+    pub fn has_ready(&self, now_ms: u64) -> bool {
+        self.entries.iter().any(|entry| entry.not_before_ms <= now_ms)
+    }
+
     /// Remove and return the first queued frame matching `predicate`.
     pub fn remove_first_matching(
         &mut self,

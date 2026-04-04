@@ -7,10 +7,7 @@ use std::{
 };
 
 use rand::{rng, Rng};
-use tokio::{
-    io::{self, AsyncBufReadExt, BufReader},
-    time::{sleep, Duration},
-};
+use tokio::io::{self, AsyncBufReadExt, BufReader};
 
 #[cfg(feature = "serial-radio")]
 #[path = "support/draft_serial_radio.rs"]
@@ -134,13 +131,12 @@ async fn run_udp_chat(
                     Err(error) => return Err(Box::new(error)),
                 }
             }
-            _ = sleep(Duration::from_millis(20)) => {}
+            result = run_mac_event(&local_mac, &mut endpoint, &mut deferred, &mut ready) => {
+                result?;
+            }
         }
 
-        poll_endpoint(&local_mac, &mut endpoint, &mut deferred, &mut ready).await?;
-        for event in ready.drain(..) {
-            println!("{}", format_event(&event));
-        }
+        handle_deferred_and_ready(&mut endpoint, &mut deferred, &mut ready).await;
     }
 
     Ok(())
@@ -205,11 +201,13 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
                     Err(error) => return Err(Box::new(error)),
                 }
             }
-            _ = sleep(Duration::from_millis(20)) => {}
+            result = run_mac_event(&local_mac, &mut local_endpoint, &mut local_deferred, &mut local_ready) => {
+                result?;
+            }
+            result = run_mac_event(&remote_mac, &mut remote_endpoint, &mut remote_deferred, &mut remote_ready) => {
+                result?;
+            }
         }
-
-        poll_endpoint(&local_mac, &mut local_endpoint, &mut local_deferred, &mut local_ready).await?;
-        poll_endpoint(&remote_mac, &mut remote_endpoint, &mut remote_deferred, &mut remote_ready).await?;
 
         for event in remote_ready.drain(..) {
             if let EndpointEvent::TextReceived { message, .. } = event {
@@ -219,9 +217,8 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
             }
         }
 
-        for event in local_ready.drain(..) {
-            println!("{}", format_event(&event));
-        }
+        handle_deferred_and_ready(&mut local_endpoint, &mut local_deferred, &mut local_ready).await;
+        handle_deferred_and_ready(&mut remote_endpoint, &mut remote_deferred, &mut remote_ready).await;
     }
 
     Ok(())
@@ -274,13 +271,12 @@ async fn run_serial_chat(
                         Err(error) => return Err(Box::new(error)),
                     }
                 }
-                _ = sleep(Duration::from_millis(20)) => {}
+                result = run_mac_event(&local_mac, &mut endpoint, &mut deferred, &mut ready) => {
+                    result?;
+                }
             }
 
-            poll_endpoint(&local_mac, &mut endpoint, &mut deferred, &mut ready).await?;
-            for event in ready.drain(..) {
-                println!("{}", format_event(&event));
-            }
+            handle_deferred_and_ready(&mut endpoint, &mut deferred, &mut ready).await;
         }
 
         return Ok(());
@@ -341,7 +337,7 @@ fn parse_pfs_minutes(args: &str) -> Result<u16, Box<dyn std::error::Error>> {
     Ok(minutes)
 }
 
-async fn poll_endpoint<R>(
+async fn run_mac_event<R>(
     mac: &RefCell<ChatMac<R>>,
     endpoint: &mut ChatEndpoint<'_, R>,
     deferred: &mut Vec<DeferredAction>,
@@ -352,20 +348,31 @@ where
     R::Error: core::fmt::Debug,
 {
     mac.borrow_mut()
-        .poll_cycle(|_, event| match endpoint.handle_event(event) {
+        .next_event(|_, event| match endpoint.handle_event(event) {
             EventAction::Handled(Some(endpoint_event)) => ready.push(endpoint_event),
             EventAction::Handled(None) => {}
             EventAction::NeedsAsync(action) => deferred.push(action),
         })
         .await
         .map_err(|error| format!("mac error: {error:?}"))?;
+    Ok(())
+}
 
+async fn handle_deferred_and_ready<R>(
+    endpoint: &mut ChatEndpoint<'_, R>,
+    deferred: &mut Vec<DeferredAction>,
+    ready: &mut Vec<EndpointEvent>,
+) where
+    R: Radio,
+{
     for action in deferred.drain(..) {
         if let Some(endpoint_event) = endpoint.handle_deferred(action).await {
             ready.push(endpoint_event);
         }
     }
-    Ok(())
+    for event in ready.drain(..) {
+        println!("{}", format_event(&event));
+    }
 }
 
 fn build_mac<R>(radio: R, counter_root: PathBuf) -> Result<ChatMac<R>, Box<dyn std::error::Error>>
