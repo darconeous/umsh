@@ -190,9 +190,9 @@ test vectors. Without `luagcrypt`, crypto tests are skipped.
 | Type | Name | Decryption |
 |---|---|---|
 | 0 | BCST (Broadcast/Beacon) | N/A (no crypto) |
-| 1 | MACK (MAC Ack) | N/A (no crypto) |
+| 1 | UACK (MAC Ack) | N/A (no crypto) |
 | 2 | UNIC (Unicast) | Private key required |
-| 3 | UACK (Unicast Ack-Req) | Private key required |
+| 3 | UNAR (Unicast Ack-Req) | Private key required |
 | 4 | MCST (Multicast) | Channel key required |
 | 6 | BUNI (Blind Unicast) | Channel key + private key required |
-| 7 | BUAK (Blind Unicast Ack-Req) | Channel key + private key required |
+| 7 | BUAR (Blind Unicast Ack-Req) | Channel key + private key required |

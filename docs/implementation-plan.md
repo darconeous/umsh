@@ -277,7 +277,7 @@ pub struct PacketHeader {
     pub sec_info: Option<SecInfo>,
 
     pub body_range: Range<usize>,      // payload (or ciphertext) byte range
-    pub mic_range: Range<usize>,       // MIC byte range (or ack tag for MACK)
+    pub mic_range: Range<usize>,       // MIC byte range (or ack tag for UACK)
     pub total_len: usize,
 }
 

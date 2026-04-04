@@ -308,7 +308,7 @@ Using 2-byte fields for both `number` and `length` ensures that option numbers a
 
 ### Ack Tag Construction
 
-When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an **ack tag** — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.
+When a packet type requests an acknowledgement (UNAR or BUAR), both the sender and receiver independently compute an **ack tag** — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.
 
 The ack tag is computed as follows:
 

@@ -46,13 +46,13 @@ Where:
 | Value | Name                         |
 |------:|------------------------------|
 | 0     | `BCST`: Broadcast                    |
-| 1     | `MACK`: MAC Ack                      |
+| 1     | `UACK`: MAC Ack                      |
 | 2     | `UNIC`: Unicast                      |
-| 3     | `UACK`: Unicast, Ack-Requested       |
+| 3     | `UNAR`: Unicast, Ack-Requested       |
 | 4     | `MCST`: Multicast                    |
 | 5     | *RESERVED*                           |
 | 6     | `BUNI`: Blind Unicast                |
-| 7     | `BUAK`: Blind Unicast, Ack-Requested |
+| 7     | `BUAR`: Blind Unicast, Ack-Requested |
 
 ## Common Optional Fields
 

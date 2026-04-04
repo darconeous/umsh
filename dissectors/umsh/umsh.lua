@@ -29,12 +29,12 @@ local umsh = Proto("umsh", "UMSH Mesh Network")
 -- Value strings
 -- ──────────────────────────────────────────────────────────────────────────
 local VS_TYPE = {
-  [0] = "BCST (Broadcast)",        [1] = "MACK (MAC Ack)",
-  [2] = "UNIC (Unicast)",          [3] = "UACK (Unicast Ack-Req)",
+  [0] = "BCST (Broadcast)",        [1] = "UACK (MAC Ack)",
+  [2] = "UNIC (Unicast)",          [3] = "UNAR (Unicast Ack-Req)",
   [4] = "MCST (Multicast)",        [5] = "RSVD (Reserved)",
-  [6] = "BUNI (Blind Unicast)",    [7] = "BUAK (Blind Unicast Ack-Req)",
+  [6] = "BUNI (Blind Unicast)",    [7] = "BUAR (Blind Unicast Ack-Req)",
 }
-local TYPE_SHORT = {"BCST","MACK","UNIC","UACK","MCST","RSVD","BUNI","BUAK"}
+local TYPE_SHORT = {"BCST","UACK","UNIC","UNAR","MCST","RSVD","BUNI","BUAR"}
 local VS_MIC = {[0]="4 bytes",[1]="8 bytes",[2]="12 bytes",[3]="16 bytes"}
 local VS_VER = {[3]="UMSH v3"}
 
@@ -371,7 +371,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- MAC Ack
 -- ──────────────────────────────────────────────────────────────────────────
-local function dissect_mack(buf, pinfo, tree, off)
+local function dissect_uack(buf, pinfo, tree, off)
   local buf_len = buf:len()
 
   if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
@@ -386,7 +386,7 @@ local function dissect_mack(buf, pinfo, tree, off)
   tree:add(f.ack_tag, buf(off, 8))
 
   local to_label = dst_name or hint_hex(dst_bytes)
-  pinfo.cols.info = "UMSH MACK to " .. to_label
+  pinfo.cols.info = "UMSH UACK to " .. to_label
 
   -- ACK correlation: look up the tag in the tracking table
   local tag_hex = bytes_to_hex(tag_bytes)
@@ -397,9 +397,9 @@ local function dissect_mack(buf, pinfo, tree, off)
     tree:add(f.ack_rsp_time, buf(off, 8),
       string.format("%.6f seconds", rsp_time)):set_text(
       string.format("ACK Response Time: %.3f ms", rsp_time * 1000))
-    pinfo.cols.info = "UMSH MACK to " .. to_label
+    pinfo.cols.info = "UMSH UACK to " .. to_label
       .. " (ack for #" .. origin.frame .. ")"
-    -- Store back-reference so the UACK/BUAK frame can show "Acknowledged in frame N"
+    -- Store back-reference so the UNAR/BUAR frame can show "Acknowledged in frame N"
     if not pinfo.visited then
       _ack_by_frame[origin.frame] = {
         ack_frame = pinfo.number,
@@ -410,7 +410,7 @@ local function dissect_mack(buf, pinfo, tree, off)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
--- Unicast (UNIC and UACK)
+-- Unicast (UNIC and UNAR)
 -- ──────────────────────────────────────────────────────────────────────────
 local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static_opts, ack_req)
   local buf_len = buf:len()
@@ -461,7 +461,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   -- Info column
   local sl = src_name or hint_hex(src_bytes:sub(1, 3))
   local dl = dst_name or hint_hex(dst_bytes)
-  pinfo.cols.info = (ack_req and "UMSH UACK" or "UMSH UNIC") .. " " .. sl .. " -> " .. dl
+  pinfo.cols.info = (ack_req and "UMSH UNAR" or "UMSH UNIC") .. " " .. sl .. " -> " .. dl
 
   -- Crypto: try to decrypt / verify MIC
   if not crypto then return end
@@ -487,7 +487,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
     end
     if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
 
-    -- ACK tracking: compute expected ACK tag for UACK packets
+    -- ACK tracking: compute expected ACK tag for UNAR packets
     if ack_req and dec_keys and full_cmac then
       local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
       if ack_tag then
@@ -502,7 +502,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
             dst_label = dl,
           }
         end
-        -- Back-annotation: show MACK frame if already matched
+        -- Back-annotation: show UACK frame if already matched
         local back = _ack_by_frame[pinfo.number]
         if back then
           tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
@@ -648,7 +648,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
--- Blind Unicast (BUNI and BUAK)
+-- Blind Unicast (BUNI and BUAR)
 -- ──────────────────────────────────────────────────────────────────────────
 local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static_opts, ack_req)
   local buf_len = buf:len()
@@ -671,7 +671,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   -- Info column base
   local chan_hex = bytes_to_hex(chan_bytes)
   local ch_label = (ch_entry and ch_entry.name ~= "" and ch_entry.name) or chan_hex
-  local type_label = ack_req and "UMSH BUAK" or "UMSH BUNI"
+  local type_label = ack_req and "UMSH BUAR" or "UMSH BUNI"
   pinfo.cols.info = type_label .. " [" .. ch_label .. "]"
 
   if is_enc then
@@ -731,7 +731,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
         if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto) end
       end
-      -- ACK tracking for BUAK
+      -- ACK tracking for BUAR
       if ack_req and dec_keys and full_cmac then
         local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
         if ack_tag then
@@ -851,7 +851,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         if ok2 and plain then
           tree:add_proto_expert_info(ef.mic_ok)
           if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
-          -- ACK tracking for E=0 BUAK
+          -- ACK tracking for E=0 BUAR
           if ack_req and blind_keys and full_cmac then
             local ack_tag = crypto.compute_ack_tag(full_cmac, blind_keys.k_enc)
             if ack_tag then
@@ -946,7 +946,7 @@ function umsh.dissector(buf, pinfo, tree)
   if pkt_type == 0 then
     dissect_broadcast(buf, pinfo, root, off, full_src, fcf_byte, static_opts)
   elseif pkt_type == 1 then
-    dissect_mack(buf, pinfo, root, off)
+    dissect_uack(buf, pinfo, root, off)
   elseif pkt_type == 2 or pkt_type == 3 then
     dissect_unicast(buf, pinfo, root, off, full_src, fcf_byte, static_opts, pkt_type == 3)
   elseif pkt_type == 4 then
@@ -975,13 +975,13 @@ end
 -- FCF(1) + type-specific minimums.
 local MIN_LEN = {
   [0] = 1 + 3,    -- BCST:  FCF + SRC_hint (beacon)
-  [1] = 1 + 3 + 8,-- MACK:  FCF + DST_hint + ACK_TAG
+  [1] = 1 + 3 + 8,-- UACK:  FCF + DST_hint + ACK_TAG
   [2] = 1 + 3 + 3 + 5 + 4,  -- UNIC:  FCF+DST+SRC_hint+SECINFO+MIC4
-  [3] = 1 + 3 + 3 + 5 + 4,  -- UACK:  same
+  [3] = 1 + 3 + 3 + 5 + 4,  -- UNAR:  same
   [4] = 1 + 2 + 5 + 4,       -- MCST:  FCF+CHANNEL+SECINFO+MIC4
   [5] = 1,                    -- RSVD (will be rejected)
   [6] = 1 + 2 + 5 + 4,       -- BUNI:  FCF+CHANNEL+SECINFO+MIC4
-  [7] = 1 + 2 + 5 + 4,       -- BUAK:  same
+  [7] = 1 + 2 + 5 + 4,       -- BUAR:  same
 }
 
 local function validate_min_length(fcf, buf_len)

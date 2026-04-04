@@ -56,6 +56,6 @@ After computing the delay, the repeater waits. If it overhears the same packet f
 
 ## Immediate ACK Transmission
 
-When a node is the final destination of an ack-requested packet (UACK or BUAK) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.
+When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.
 
 If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.
