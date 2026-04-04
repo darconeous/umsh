@@ -164,7 +164,7 @@ impl<M: NodeMac, KV> Endpoint<M, KV> {
         #[cfg(not(feature = "software-crypto"))]
         let (from_id, routed_to) = (self.id, *to);
         let payload = Self::encode_basic_text_payload(text)?;
-        self.mac.send_unicast(from_id, &routed_to, &payload, &self.default_send_options()).map_err(Into::into)
+        self.mac.send_unicast(from_id, &routed_to, &payload, &self.default_send_options().with_ack_requested(true)).map_err(Into::into)
     }
 
     /// Encode and queue a channel text message.
@@ -185,7 +185,7 @@ impl<M: NodeMac, KV> Endpoint<M, KV> {
         #[cfg(not(feature = "software-crypto"))]
         let (from_id, routed_to) = (self.id, *to);
         let payload = Self::encode_basic_text_payload(text)?;
-        self.mac.send_blind_unicast(from_id, &routed_to, channel, &payload, &self.default_send_options()).map_err(Into::into)
+        self.mac.send_blind_unicast(from_id, &routed_to, channel, &payload, &self.default_send_options().with_ack_requested(true)).map_err(Into::into)
     }
 
     /// Queue an empty broadcast beacon.

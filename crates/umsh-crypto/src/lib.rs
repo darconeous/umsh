@@ -677,6 +677,120 @@ mod tests {
 
     #[cfg(feature = "software-crypto")]
     #[test]
+    fn aes_cmac_matches_rfc4493_example_1_empty() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let expected = hex_16("bb1d6929e95937287fa37d129b756746");
+        assert_eq!(engine.aes_cmac(&key, &[&[]]), expected);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_cmac_matches_rfc4493_example_3_64b() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let msg = hex_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef\
+             f69f2445df4f9b17ad2b417be66c3710",
+        );
+        let expected = hex_16("51f0bebf7e3b9d92fc49741779363cfe");
+        assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_cmac_matches_rfc4493_example_4_40b() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let msg = hex_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411",
+        );
+        let expected = hex_16("dfa66747de9ae63030ca32611497c827");
+        assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
+    }
+
+    /// NIST SP 800-38A Section F.5.1 — AES-128 CTR mode, single block.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_ctr_matches_nist_sp800_38a_block_1() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let mut data = hex_vec("6bc1bee22e409f96e93d7e117393172a");
+        engine.aes_ctr(&key, &iv, &mut data);
+        assert_eq!(data, hex_vec("874d6191b620e3261bef6864990db6ce"));
+    }
+
+    /// NIST SP 800-38A Section F.5.1 — AES-128 CTR mode, 4 blocks.
+    /// Verifies counter increment across multiple blocks.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_ctr_matches_nist_sp800_38a_4_blocks() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let mut data = hex_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef\
+             f69f2445df4f9b17ad2b417be66c3710",
+        );
+        let expected = hex_vec(
+            "874d6191b620e3261bef6864990db6ce\
+             9806f66b7970fdff8617187bb9fffdff\
+             5ae4df3edbd5d35e5b4f09020db03eab\
+             1e031dda2fbe03d1792170a0f3009cee",
+        );
+        engine.aes_ctr(&key, &iv, &mut data);
+        assert_eq!(data, expected);
+    }
+
+    /// NIST SP 800-38A — CTR decrypt (symmetric operation).
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_ctr_decrypt_matches_nist_sp800_38a() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let mut data = hex_vec(
+            "874d6191b620e3261bef6864990db6ce\
+             9806f66b7970fdff8617187bb9fffdff\
+             5ae4df3edbd5d35e5b4f09020db03eab\
+             1e031dda2fbe03d1792170a0f3009cee",
+        );
+        let expected = hex_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef\
+             f69f2445df4f9b17ad2b417be66c3710",
+        );
+        engine.aes_ctr(&key, &iv, &mut data);
+        assert_eq!(data, expected);
+    }
+
+    /// AES-CTR with partial final block (non-aligned length).
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_ctr_partial_block() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        // Encrypt 5 bytes (less than one block)
+        let mut data = hex_vec("6bc1bee22e");
+        engine.aes_ctr(&key, &iv, &mut data);
+        // Should match first 5 bytes of full block 1 ciphertext
+        assert_eq!(data, hex_vec("874d6191b6"));
+        // Decrypt back
+        engine.aes_ctr(&key, &iv, &mut data);
+        assert_eq!(data, hex_vec("6bc1bee22e"));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
     fn hmac_sha256_matches_rfc4231_case_1() {
         let sha = SoftwareSha256;
         let key = [0x0bu8; 20];
@@ -861,4 +975,5 @@ mod tests {
             _ => panic!("invalid hex"),
         }
     }
+
 }

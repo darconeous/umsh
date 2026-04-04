@@ -190,28 +190,38 @@ mod tests {
         bob.send_text(&alice_key, "hello alice").unwrap();
         block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
         let mut alice_events = Vec::new();
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, event| match alice.handle_event(event) {
-            EventAction::Handled(Some(endpoint_event)) => alice_events.push(endpoint_event),
-            EventAction::Handled(None) => {}
-            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
-        }))
-        .unwrap();
+        // Two poll_cycles: first receives the MAC ACK for "hello bob", second
+        // receives Bob's "hello alice" text.
+        for _ in 0..2 {
+            block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, event| match alice.handle_event(event) {
+                EventAction::Handled(Some(endpoint_event)) => alice_events.push(endpoint_event),
+                EventAction::Handled(None) => {}
+                EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
+            }))
+            .unwrap();
+        }
         assert_eq!(
             alice_events,
-            vec![EndpointEvent::TextReceived {
-                from: bob_key,
-                message: OwnedTextMessage {
-                    message_type: umsh_app::MessageType::Basic,
-                    sender_handle: None,
-                    sequence: None,
-                    sequence_reset: false,
-                    regarding: None,
-                    editing: None,
-                    bg_color: None,
-                    text_color: None,
-                    body: String::from("hello alice"),
+            vec![
+                EndpointEvent::AckReceived {
+                    peer: bob_key,
+                    receipt: umsh_mac::SendReceipt(0),
                 },
-            }]
+                EndpointEvent::TextReceived {
+                    from: bob_key,
+                    message: OwnedTextMessage {
+                        message_type: umsh_app::MessageType::Basic,
+                        sender_handle: None,
+                        sequence: None,
+                        sequence_reset: false,
+                        regarding: None,
+                        editing: None,
+                        bg_color: None,
+                        text_color: None,
+                        body: String::from("hello alice"),
+                    },
+                },
+            ]
         );
     }
 

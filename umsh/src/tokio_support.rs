@@ -63,8 +63,6 @@ impl Clock for StdClock {
 /// Thread-local cryptographic RNG seeded from the operating system.
 pub use rand::rngs::ThreadRng;
 
-const UDP_SIM_HEADER_LEN: usize = core::mem::size_of::<u64>();
-
 /// Errors returned by the std-backed file and memory stores.
 #[derive(Debug)]
 pub enum FileStoreError {
@@ -105,7 +103,6 @@ pub struct UdpMulticastRadioConfig {
     pub rssi: i16,
     pub snr: i8,
     pub loopback: bool,
-    pub sender_id: Option<u64>,
 }
 
 impl UdpMulticastRadioConfig {
@@ -121,21 +118,18 @@ impl UdpMulticastRadioConfig {
             rssi: -40,
             snr: 10,
             loopback: true,
-            sender_id: None,
         }
     }
 }
 
 /// Host-side radio simulator backed by UDP multicast.
 ///
-/// Frames are transported inside a small simulator envelope that prefixes an
-/// instance identifier. That keeps multiple local processes on the same
-/// multicast group from receiving their own transmissions while preserving the
-/// raw UMSH frame bytes seen by the MAC layer.
+/// Raw UMSH frames are sent and received over IPv4 multicast with no additional
+/// framing. Multicast loopback is enabled by default so that multiple processes
+/// on the same host can exchange frames via the loopback interface.
 pub struct UdpMulticastRadio {
     socket: UdpSocket,
     group_addr: SocketAddrV4,
-    sender_id: u64,
     max_frame_size: usize,
     t_frame_ms: u32,
     rssi: i16,
@@ -175,12 +169,11 @@ impl UdpMulticastRadio {
         Ok(Self {
             socket,
             group_addr: group,
-            sender_id: config.sender_id.unwrap_or_else(random_sender_id),
             max_frame_size: config.max_frame_size,
             t_frame_ms: config.t_frame_ms,
             rssi: config.rssi,
             snr: config.snr,
-            recv_buf: vec![0u8; UDP_SIM_HEADER_LEN + config.max_frame_size],
+            recv_buf: vec![0u8; config.max_frame_size],
         })
     }
 }
@@ -193,45 +186,36 @@ impl Radio for UdpMulticastRadio {
             return Err(TxError::Io(UdpMulticastRadioError::FrameTooLarge(data.len())));
         }
 
-        let mut frame = Vec::with_capacity(UDP_SIM_HEADER_LEN + data.len());
-        frame.extend_from_slice(&self.sender_id.to_be_bytes());
-        frame.extend_from_slice(data);
-        self.socket
-            .send_to(&frame, self.group_addr)
+        let sent = self.socket
+            .send_to(data, self.group_addr)
             .await
             .map_err(UdpMulticastRadioError::Io)
             .map_err(TxError::Io)?;
+        eprintln!("[udp-radio] TX {} bytes to {}", sent, self.group_addr);
         Ok(())
     }
 
     fn poll_receive(&mut self, cx: &mut core::task::Context<'_>, buf: &mut [u8]) -> core::task::Poll<Result<RxInfo, Self::Error>> {
-        loop {
-            let mut read_buf = ReadBuf::new(&mut self.recv_buf);
-            let len = match self.socket.poll_recv(cx, &mut read_buf) {
-                core::task::Poll::Ready(Ok(())) => read_buf.filled().len(),
-                core::task::Poll::Ready(Err(error)) => {
-                    return core::task::Poll::Ready(Err(UdpMulticastRadioError::Io(error)));
-                }
-                core::task::Poll::Pending => return core::task::Poll::Pending,
-            };
-            if len < UDP_SIM_HEADER_LEN {
-                continue;
+        let mut read_buf = ReadBuf::new(&mut self.recv_buf);
+        let len = match self.socket.poll_recv(cx, &mut read_buf) {
+            core::task::Poll::Ready(Ok(())) => read_buf.filled().len(),
+            core::task::Poll::Ready(Err(error)) => {
+                return core::task::Poll::Ready(Err(UdpMulticastRadioError::Io(error)));
             }
-
-            let sender_id = u64::from_be_bytes(self.recv_buf[..UDP_SIM_HEADER_LEN].try_into().expect("fixed sender id header"));
-            if sender_id == self.sender_id {
-                continue;
-            }
-
-            let payload = &self.recv_buf[UDP_SIM_HEADER_LEN..len];
-            let copy_len = payload.len().min(buf.len());
-            buf[..copy_len].copy_from_slice(&payload[..copy_len]);
-            return core::task::Poll::Ready(Ok(RxInfo {
-                len: copy_len,
-                rssi: self.rssi,
-                snr: self.snr,
-            }));
+            core::task::Poll::Pending => return core::task::Poll::Pending,
+        };
+        if len == 0 {
+            return core::task::Poll::Pending;
         }
+
+        let copy_len = len.min(buf.len());
+        buf[..copy_len].copy_from_slice(&self.recv_buf[..copy_len]);
+        eprintln!("[udp-radio] RX {} bytes", copy_len);
+        core::task::Poll::Ready(Ok(RxInfo {
+            len: copy_len,
+            rssi: self.rssi,
+            snr: self.snr,
+        }))
     }
 
     fn max_frame_size(&self) -> usize {
@@ -423,12 +407,6 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn lock_entries<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, FileStoreError> {
     mutex.lock().map_err(|_| FileStoreError::Poisoned)
-}
-
-fn random_sender_id() -> u64 {
-    use rand::RngExt as _;
-
-    rand::rng().random()
 }
 
 #[cfg(test)]
