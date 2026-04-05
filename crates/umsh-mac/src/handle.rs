@@ -2,15 +2,14 @@ use core::cell::RefCell;
 
 use rand::Rng;
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
-use umsh_crypto::PairwiseKeys;
 use umsh_hal::{Clock, CounterStore};
 
 use crate::{
+    CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES,
+    DEFAULT_PEERS, DEFAULT_TX, Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, SendError},
-    peers::{PeerCryptoState, PeerId},
+    peers::PeerId,
     send::{SendOptions, SendReceipt},
-    CapacityError, Platform, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME,
-    DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
 };
 
 /// Error returned when a `MacHandle` operation cannot access the shared coordinator.
@@ -42,30 +41,30 @@ pub struct MacHandle<
 }
 
 impl<
-        'a,
-        P: Platform,
-        const IDENTITIES: usize,
-        const PEERS: usize,
-        const CHANNELS: usize,
-        const ACKS: usize,
-        const TX: usize,
-        const FRAME: usize,
-        const DUP: usize,
-    > Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    'a,
+    P: Platform,
+    const IDENTITIES: usize,
+    const PEERS: usize,
+    const CHANNELS: usize,
+    const ACKS: usize,
+    const TX: usize,
+    const FRAME: usize,
+    const DUP: usize,
+> Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
 }
 
 impl<
-        'a,
-        P: Platform,
-        const IDENTITIES: usize,
-        const PEERS: usize,
-        const CHANNELS: usize,
-        const ACKS: usize,
-        const TX: usize,
-        const FRAME: usize,
-        const DUP: usize,
-    > Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    'a,
+    P: Platform,
+    const IDENTITIES: usize,
+    const PEERS: usize,
+    const CHANNELS: usize,
+    const ACKS: usize,
+    const TX: usize,
+    const FRAME: usize,
+    const DUP: usize,
+> Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     fn clone(&self) -> Self {
         *self
@@ -73,16 +72,16 @@ impl<
 }
 
 impl<
-        'a,
-        P: Platform,
-        const IDENTITIES: usize,
-        const PEERS: usize,
-        const CHANNELS: usize,
-        const ACKS: usize,
-        const TX: usize,
-        const FRAME: usize,
-        const DUP: usize,
-    > MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    'a,
+    P: Platform,
+    const IDENTITIES: usize,
+    const PEERS: usize,
+    const CHANNELS: usize,
+    const ACKS: usize,
+    const TX: usize,
+    const FRAME: usize,
+    const DUP: usize,
+> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
@@ -92,7 +91,10 @@ impl<
     }
 
     /// Registers a local identity with the shared coordinator.
-    pub fn add_identity(&self, identity: P::Identity) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
+    pub fn add_identity(
+        &self,
+        identity: P::Identity,
+    ) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
         self.with_mac(|mac| mac.add_identity(identity))
     }
 
@@ -100,17 +102,30 @@ impl<
     pub async fn load_persisted_counter(
         &self,
         id: LocalIdentityId,
-    ) -> Result<u32, MacHandleError<CounterPersistenceError<<P::CounterStore as CounterStore>::Error>>> {
-        let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
-        mac.load_persisted_counter(id).await.map_err(MacHandleError::Inner)
+    ) -> Result<
+        u32,
+        MacHandleError<CounterPersistenceError<<P::CounterStore as CounterStore>::Error>>,
+    > {
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.load_persisted_counter(id)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Persist all currently scheduled frame-counter reservations.
     pub async fn service_counter_persistence(
         &self,
     ) -> Result<usize, MacHandleError<<P::CounterStore as CounterStore>::Error>> {
-        let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
-        mac.service_counter_persistence().await.map_err(MacHandleError::Inner)
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.service_counter_persistence()
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Registers or refreshes a remote peer in the shared registry.
@@ -128,54 +143,114 @@ impl<
         self.with_mac(|mac| mac.add_named_channel(name))
     }
 
+    /// Return whether inbound secure packets carrying a full source key may auto-register peers.
+    pub fn auto_register_full_key_peers(
+        &self,
+    ) -> Result<bool, MacHandleError<core::convert::Infallible>> {
+        self.with_mac(|mac| Ok(mac.auto_register_full_key_peers()))
+    }
+
+    /// Enable or disable inbound full-key peer auto-registration.
+    pub fn set_auto_register_full_key_peers(
+        &self,
+        enabled: bool,
+    ) -> Result<(), MacHandleError<core::convert::Infallible>> {
+        self.with_mac(|mac| {
+            mac.set_auto_register_full_key_peers(enabled);
+            Ok(())
+        })
+    }
+
     /// Installs pairwise transport keys for one local identity and remote peer.
-    pub fn install_pairwise_keys(
+    ///
+    /// This is a crate-internal method. External callers should use the
+    /// `unsafe-advanced` feature or go through the node-layer PFS session manager.
+    #[cfg(any(feature = "unsafe-advanced", test))]
+    pub(crate) fn install_pairwise_keys(
         &self,
         identity_id: LocalIdentityId,
         peer_id: PeerId,
-        pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, MacHandleError<SendError>> {
+        pairwise_keys: umsh_crypto::PairwiseKeys,
+    ) -> Result<Option<crate::peers::PeerCryptoState>, MacHandleError<SendError>> {
         self.with_mac(|mac| mac.install_pairwise_keys(identity_id, peer_id, pairwise_keys))
     }
 
+    /// Installs pairwise transport keys for one local identity and remote peer.
+    ///
+    /// # Safety (logical)
+    /// Installing wrong keys will silently corrupt the session. This method
+    /// is deliberately gated behind the `unsafe-advanced` feature. Prefer
+    /// going through the node-layer PFS session manager instead.
+    #[cfg(feature = "unsafe-advanced")]
+    pub fn install_pairwise_keys_advanced(
+        &self,
+        identity_id: LocalIdentityId,
+        peer_id: PeerId,
+        pairwise_keys: umsh_crypto::PairwiseKeys,
+    ) -> Result<Option<crate::peers::PeerCryptoState>, MacHandleError<SendError>> {
+        self.install_pairwise_keys(identity_id, peer_id, pairwise_keys)
+    }
+
     /// Enqueues a broadcast frame for transmission.
-    pub fn send_broadcast(
+    ///
+    /// Returns a [`SendReceipt`] for tracking transmission progress.
+    pub async fn send_broadcast(
         &self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), MacHandleError<SendError>> {
-        self.with_mac(|mac| mac.queue_broadcast(from, payload, options))
+    ) -> Result<SendReceipt, MacHandleError<SendError>> {
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.send_broadcast(from, payload, options)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Enqueues a multicast frame for transmission.
-    pub fn send_multicast(
+    ///
+    /// Returns a [`SendReceipt`] for tracking transmission progress.
+    pub async fn send_multicast(
         &self,
         from: LocalIdentityId,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), MacHandleError<SendError>> {
-        self.with_mac(|mac| mac.queue_multicast(from, channel, payload, options))
+    ) -> Result<SendReceipt, MacHandleError<SendError>> {
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.send_multicast(from, channel, payload, options)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Enqueues a unicast frame for transmission.
     ///
     /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
-    pub fn send_unicast(
+    pub async fn send_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacHandleError<SendError>> {
-        self.with_mac(|mac| mac.queue_unicast(from, dst, payload, options))
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.send_unicast(from, dst, payload, options)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Enqueues a blind-unicast frame for transmission.
     ///
     /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
-    pub fn send_blind_unicast(
+    pub async fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
@@ -183,11 +258,20 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacHandleError<SendError>> {
-        self.with_mac(|mac| mac.queue_blind_unicast(from, dst, channel, payload, options))
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.send_blind_unicast(from, dst, channel, payload, options)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
-    pub fn fill_random(&self, dest: &mut [u8]) -> Result<(), MacHandleError<core::convert::Infallible>> {
+    pub fn fill_random(
+        &self,
+        dest: &mut [u8],
+    ) -> Result<(), MacHandleError<core::convert::Infallible>> {
         self.with_mac(|mac| {
             mac.rng_mut().fill_bytes(dest);
             Ok(())
@@ -220,11 +304,25 @@ impl<
         self.with_mac(|mac| Ok(mac.remove_ephemeral(id)))
     }
 
+    /// Cancel a pending ACK-requested send, stopping retransmissions.
+    ///
+    /// Returns `true` if the pending ACK was found and removed. Returns
+    /// `false` if the send was not found or the coordinator was busy.
+    pub fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool {
+        self.mac
+            .try_borrow_mut()
+            .map(|mut mac| mac.cancel_pending_ack(identity_id, receipt))
+            .unwrap_or(false)
+    }
+
     fn with_mac<T, E>(
         &self,
         f: impl FnOnce(&mut Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Result<T, E>,
     ) -> Result<T, MacHandleError<E>> {
-        let mut mac = self.mac.try_borrow_mut().map_err(|_| MacHandleError::Busy)?;
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
         f(&mut mac).map_err(MacHandleError::Inner)
     }
 }

@@ -1,8 +1,7 @@
 use alloc::{string::String, vec::Vec};
 
 use umsh_app::{MessageSequence, MessageType, NodeIdentityPayload, NodeRole, Regarding, TextMessage};
-use umsh_core::{ChannelId, PublicKey};
-use umsh_mac::SendReceipt;
+use umsh_core::PublicKey;
 
 /// Owned form of a parsed text-message payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,41 +141,3 @@ impl From<umsh_app::MacCommand<'_>> for OwnedMacCommand {
     }
 }
 
-/// Owned endpoint events emitted by the application-facing node layer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EndpointEvent {
-    /// Direct text received.
-    TextReceived { from: PublicKey, message: OwnedTextMessage },
-    /// Channel text received.
-    ChannelTextReceived { from: PublicKey, channel_id: ChannelId, message: OwnedTextMessage },
-    /// Node identity discovered or updated.
-    NodeDiscovered { key: PublicKey, identity: OwnedNodeIdentityPayload },
-    /// Empty beacon broadcast received.
-    BeaconReceived { from_hint: umsh_core::NodeHint, from_key: Option<PublicKey> },
-    /// ACK received for a previously queued send.
-    AckReceived { peer: PublicKey, receipt: SendReceipt },
-    /// ACK timeout fired for a previously queued send.
-    AckTimeout { peer: PublicKey, receipt: SendReceipt },
-    /// PFS session became active.
-    PfsSessionEstablished { peer: PublicKey },
-    /// PFS session ended.
-    PfsSessionEnded { peer: PublicKey },
-    /// Parsed MAC command surfaced to the caller.
-    MacCommand { from: PublicKey, command: OwnedMacCommand },
-}
-
-/// Result of the synchronous endpoint event-handling phase.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EventAction {
-    /// Event was handled inline, optionally producing an application event.
-    Handled(Option<EndpointEvent>),
-    /// Event requires follow-up work after the MAC callback returns.
-    NeedsAsync(DeferredAction),
-}
-
-/// Owned work item returned from `handle_event` for later processing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DeferredAction {
-    /// Deferred MAC-command handling.
-    MacCommand { from: PublicKey, command: OwnedMacCommand },
-}

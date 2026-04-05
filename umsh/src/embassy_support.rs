@@ -1,7 +1,7 @@
 //! Embassy-friendly runtime adapters and fixed-capacity in-memory stores.
 
-use core::{cell::RefCell, marker::PhantomData};
 use core::convert::Infallible;
+use core::{cell::RefCell, marker::PhantomData};
 
 use embedded_hal_async::delay::DelayNs;
 use heapless::Vec;
@@ -10,8 +10,8 @@ use umsh_hal::{Clock, CounterStore, KeyValueStore};
 
 #[cfg(feature = "software-crypto")]
 use crate::{
-    crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     Platform,
+    crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
 
 /// [`DelayNs`] adapter backed by `embassy_time`.
@@ -64,9 +64,7 @@ pub struct XorShift64Rng {
 impl XorShift64Rng {
     /// Create the RNG with a non-zero seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            state: seed.max(1),
-        }
+        Self { state: seed.max(1) }
     }
 
     fn next_word(&mut self) -> u64 {
@@ -122,7 +120,9 @@ impl<const ENTRIES: usize, const KEY_LEN: usize> Default for MemoryCounterStore<
     }
 }
 
-impl<const ENTRIES: usize, const KEY_LEN: usize> CounterStore for MemoryCounterStore<ENTRIES, KEY_LEN> {
+impl<const ENTRIES: usize, const KEY_LEN: usize> CounterStore
+    for MemoryCounterStore<ENTRIES, KEY_LEN>
+{
     type Error = MemoryStoreError;
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
@@ -137,12 +137,17 @@ impl<const ENTRIES: usize, const KEY_LEN: usize> CounterStore for MemoryCounterS
 
     async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
         let mut entries = self.entries.borrow_mut();
-        if let Some((_, stored)) = entries.iter_mut().find(|(key, _)| key.as_slice() == context) {
+        if let Some((_, stored)) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_slice() == context)
+        {
             *stored = value;
             return Ok(());
         }
         let key = to_heapless_vec::<KEY_LEN>(context).map_err(|_| MemoryStoreError::KeyTooLarge)?;
-        entries.push((key, value)).map_err(|_| MemoryStoreError::Capacity)
+        entries
+            .push((key, value))
+            .map_err(|_| MemoryStoreError::Capacity)
     }
 
     async fn flush(&self) -> Result<(), Self::Error> {
@@ -151,11 +156,7 @@ impl<const ENTRIES: usize, const KEY_LEN: usize> CounterStore for MemoryCounterS
 }
 
 /// Fixed-capacity in-memory key-value store.
-pub struct MemoryKeyValueStore<
-    const ENTRIES: usize,
-    const KEY_LEN: usize,
-    const VALUE_LEN: usize,
-> {
+pub struct MemoryKeyValueStore<const ENTRIES: usize, const KEY_LEN: usize, const VALUE_LEN: usize> {
     entries: RefCell<Vec<(Vec<u8, KEY_LEN>, Vec<u8, VALUE_LEN>), ENTRIES>>,
 }
 
@@ -176,7 +177,10 @@ impl<const ENTRIES: usize, const KEY_LEN: usize, const VALUE_LEN: usize> KeyValu
 
     async fn load(&self, key: &[u8], buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
         let entries = self.entries.borrow();
-        let Some((_, value)) = entries.iter().find(|(stored_key, _)| stored_key.as_slice() == key) else {
+        let Some((_, value)) = entries
+            .iter()
+            .find(|(stored_key, _)| stored_key.as_slice() == key)
+        else {
             return Ok(None);
         };
         if value.len() > buf.len() {
@@ -188,8 +192,12 @@ impl<const ENTRIES: usize, const KEY_LEN: usize, const VALUE_LEN: usize> KeyValu
 
     async fn store(&self, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
         let mut entries = self.entries.borrow_mut();
-        let value_vec = to_heapless_vec::<VALUE_LEN>(value).map_err(|_| MemoryStoreError::ValueTooLarge)?;
-        if let Some((_, stored_value)) = entries.iter_mut().find(|(stored_key, _)| stored_key.as_slice() == key) {
+        let value_vec =
+            to_heapless_vec::<VALUE_LEN>(value).map_err(|_| MemoryStoreError::ValueTooLarge)?;
+        if let Some((_, stored_value)) = entries
+            .iter_mut()
+            .find(|(stored_key, _)| stored_key.as_slice() == key)
+        {
             *stored_value = value_vec;
             return Ok(());
         }
@@ -201,7 +209,10 @@ impl<const ENTRIES: usize, const KEY_LEN: usize, const VALUE_LEN: usize> KeyValu
 
     async fn delete(&self, key: &[u8]) -> Result<(), Self::Error> {
         let mut entries = self.entries.borrow_mut();
-        if let Some(index) = entries.iter().position(|(stored_key, _)| stored_key.as_slice() == key) {
+        if let Some(index) = entries
+            .iter()
+            .position(|(stored_key, _)| stored_key.as_slice() == key)
+        {
             entries.swap_remove(index);
         }
         Ok(())
@@ -248,7 +259,9 @@ mod tests {
 
     fn block_on_ready<F: Future>(future: F) -> F::Output {
         fn raw_waker() -> RawWaker {
-            fn clone(_: *const ()) -> RawWaker { raw_waker() }
+            fn clone(_: *const ()) -> RawWaker {
+                raw_waker()
+            }
             fn wake(_: *const ()) {}
             fn wake_by_ref(_: *const ()) {}
             fn drop(_: *const ()) {}

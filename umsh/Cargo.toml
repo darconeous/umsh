@@ -8,6 +8,7 @@ license.workspace = true
 default = ["std", "software-crypto", "chat-rooms"]
 chat-rooms = ["umsh-app/chat-rooms"]
 std = ["umsh-app/std", "umsh-core/std", "umsh-crypto/std", "umsh-hal/std", "umsh-mac/std", "umsh-node/std"]
+unsafe-advanced = ["umsh-mac/unsafe-advanced", "umsh-node/unsafe-advanced"]
 software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "umsh-node/software-crypto"]
 tokio-support = ["std", "software-crypto", "dep:rand", "dep:socket2", "dep:tokio"]
 serial-radio = ["tokio-support", "dep:tokio-serial"]

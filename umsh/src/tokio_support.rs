@@ -8,8 +8,7 @@ use core::{
 use std::{
     cell::RefCell,
     collections::BTreeMap,
-    fs,
-    io,
+    fs, io,
     net::{Ipv4Addr, SocketAddrV4},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
@@ -24,8 +23,8 @@ use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOpt
 
 #[cfg(feature = "software-crypto")]
 use crate::{
-    crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     Platform,
+    crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
 
 /// [`DelayNs`] adapter backed by `tokio::time::sleep`.
@@ -186,12 +185,18 @@ impl UdpMulticastRadio {
     }
 
     /// Bind a UDP multicast simulator socket using the provided configuration.
-    pub async fn bind_with_config(config: UdpMulticastRadioConfig) -> Result<Self, UdpMulticastRadioError> {
+    pub async fn bind_with_config(
+        config: UdpMulticastRadioConfig,
+    ) -> Result<Self, UdpMulticastRadioError> {
         if !config.group_addr.is_multicast() {
-            return Err(UdpMulticastRadioError::InvalidConfig("group_addr must be an IPv4 multicast address"));
+            return Err(UdpMulticastRadioError::InvalidConfig(
+                "group_addr must be an IPv4 multicast address",
+            ));
         }
         if config.max_frame_size == 0 {
-            return Err(UdpMulticastRadioError::InvalidConfig("max_frame_size must be non-zero"));
+            return Err(UdpMulticastRadioError::InvalidConfig(
+                "max_frame_size must be non-zero",
+            ));
         }
 
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -224,15 +229,22 @@ impl UdpMulticastRadio {
 impl Radio for UdpMulticastRadio {
     type Error = UdpMulticastRadioError;
 
-    async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
+    async fn transmit(
+        &mut self,
+        data: &[u8],
+        _options: TxOptions,
+    ) -> Result<(), TxError<Self::Error>> {
         if data.len() > self.max_frame_size {
-            return Err(TxError::Io(UdpMulticastRadioError::FrameTooLarge(data.len())));
+            return Err(TxError::Io(UdpMulticastRadioError::FrameTooLarge(
+                data.len(),
+            )));
         }
 
         self.last_sent.clear();
         self.last_sent.extend_from_slice(data);
 
-        let sent = self.socket
+        let sent = self
+            .socket
             .send_to(data, self.group_addr)
             .await
             .map_err(UdpMulticastRadioError::Io)
@@ -241,7 +253,11 @@ impl Radio for UdpMulticastRadio {
         Ok(())
     }
 
-    fn poll_receive(&mut self, cx: &mut core::task::Context<'_>, buf: &mut [u8]) -> core::task::Poll<Result<RxInfo, Self::Error>> {
+    fn poll_receive(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> core::task::Poll<Result<RxInfo, Self::Error>> {
         loop {
             let mut read_buf = ReadBuf::new(&mut self.recv_buf);
             let len = match self.socket.poll_recv(cx, &mut read_buf) {
@@ -306,7 +322,9 @@ impl CounterStore for TokioFileCounterStore {
 
     async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
         match fs::read(self.path_for(context)) {
-            Ok(bytes) if bytes.len() == 4 => Ok(u32::from_be_bytes(bytes.try_into().expect("fixed counter bytes"))),
+            Ok(bytes) if bytes.len() == 4 => Ok(u32::from_be_bytes(
+                bytes.try_into().expect("fixed counter bytes"),
+            )),
             Ok(_) => Ok(0),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
             Err(error) => Err(FileStoreError::Io(error)),
@@ -490,10 +508,12 @@ mod tests {
 
     #[tokio::test]
     async fn udp_multicast_radio_exchanges_frames_between_instances() {
-        let port = 40_000 + (SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .subsec_nanos() % 10_000) as u16;
+        let port = 40_000
+            + (SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .subsec_nanos()
+                % 10_000) as u16;
         let group = Ipv4Addr::new(239, 255, 42, 42);
 
         let mut left = UdpMulticastRadio::bind_v4(group, port).await.unwrap();
@@ -502,10 +522,13 @@ mod tests {
         left.transmit(b"ping", TxOptions::default()).await.unwrap();
 
         let mut buf = [0u8; 16];
-        let rx = tokio::time::timeout(Duration::from_secs(1), poll_fn(|cx| right.poll_receive(cx, &mut buf)))
-            .await
-            .expect("udp multicast receive should complete")
-            .unwrap();
+        let rx = tokio::time::timeout(
+            Duration::from_secs(1),
+            poll_fn(|cx| right.poll_receive(cx, &mut buf)),
+        )
+        .await
+        .expect("udp multicast receive should complete")
+        .unwrap();
 
         assert_eq!(rx.len, 4);
         assert_eq!(&buf[..rx.len], b"ping");

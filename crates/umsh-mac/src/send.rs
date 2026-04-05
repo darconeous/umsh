@@ -1,7 +1,7 @@
 use heapless::Vec;
-use umsh_core::{ChannelId, MicSize, NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelId, ChannelKey, MicSize, NodeHint, PublicKey, RouterHint};
 
-use crate::{CapacityError, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
+use crate::{CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
 
 /// Opaque tracking token returned for ACK-requested transmissions.
 ///
@@ -33,7 +33,7 @@ pub struct SendReceipt(pub u32);
 /// care about:
 ///
 /// ```rust
-/// # use umsh_mac::send::SendOptions;
+/// # use umsh_mac::SendOptions;
 /// # use umsh_core::MicSize;
 /// let opts = SendOptions::default()
 ///     .with_ack_requested(true)
@@ -133,8 +133,7 @@ impl SendOptions {
             owned.push(*hop).map_err(|_| CapacityError)?;
         }
         self.source_route = Some(owned);
-        self
-            .flood_hops
+        self.flood_hops
             .get_or_insert(route.len().min(u8::MAX as usize) as u8);
         Ok(self)
     }
@@ -214,7 +213,10 @@ pub struct ResendRecord<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
 
 impl<const FRAME: usize> ResendRecord<FRAME> {
     /// Copy frame bytes and an optional route into fixed-capacity storage.
-    pub fn try_new(frame: &[u8], source_route: Option<&[RouterHint]>) -> Result<Self, CapacityError> {
+    pub fn try_new(
+        frame: &[u8],
+        source_route: Option<&[RouterHint]>,
+    ) -> Result<Self, CapacityError> {
         let mut stored_frame = Vec::new();
         for byte in frame {
             stored_frame.push(*byte).map_err(|_| CapacityError)?;
@@ -409,6 +411,9 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub frame: Vec<u8, FRAME>,
     /// Optional receipt associated with the frame.
     pub receipt: Option<SendReceipt>,
+    /// Identity that owns this send; set for identity-originated sends, `None` for
+    /// internally generated frames (MAC ACKs, forwarded frames).
+    pub identity_id: Option<LocalIdentityId>,
     /// Monotonic sequence number for stable ordering.
     pub sequence: u32,
     /// Earliest transmission timestamp.
@@ -423,9 +428,10 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
         priority: TxPriority,
         frame: &[u8],
         receipt: Option<SendReceipt>,
+        identity_id: Option<LocalIdentityId>,
         sequence: u32,
     ) -> Result<Self, CapacityError> {
-        Self::try_new_with_state(priority, frame, receipt, sequence, 0, 0)
+        Self::try_new_with_state(priority, frame, receipt, identity_id, sequence, 0, 0)
     }
 
     /// Create a queue entry with explicit timer and CAD state.
@@ -433,6 +439,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
         priority: TxPriority,
         frame: &[u8],
         receipt: Option<SendReceipt>,
+        identity_id: Option<LocalIdentityId>,
         sequence: u32,
         not_before_ms: u64,
         cad_attempts: u8,
@@ -446,6 +453,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             priority,
             frame: stored_frame,
             receipt,
+            identity_id,
             sequence,
             not_before_ms,
             cad_attempts,
@@ -506,9 +514,10 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         priority: TxPriority,
         frame: &[u8],
         receipt: Option<SendReceipt>,
+        identity_id: Option<LocalIdentityId>,
     ) -> Result<u32, CapacityError> {
         let sequence = self.next_sequence;
-        let entry = QueuedTx::try_new(priority, frame, receipt, sequence)?;
+        let entry = QueuedTx::try_new(priority, frame, receipt, identity_id, sequence)?;
         self.entries.push(entry).map_err(|_| CapacityError)?;
         self.next_sequence = self.next_sequence.wrapping_add(1);
         Ok(sequence)
@@ -520,6 +529,7 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         priority: TxPriority,
         frame: &[u8],
         receipt: Option<SendReceipt>,
+        identity_id: Option<LocalIdentityId>,
         not_before_ms: u64,
         cad_attempts: u8,
     ) -> Result<u32, CapacityError> {
@@ -528,6 +538,7 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
             priority,
             frame,
             receipt,
+            identity_id,
             sequence,
             not_before_ms,
             cad_attempts,
@@ -559,7 +570,9 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
 
     /// Return whether the queue contains any entry that is ready to send now.
     pub fn has_ready(&self, now_ms: u64) -> bool {
-        self.entries.iter().any(|entry| entry.not_before_ms <= now_ms)
+        self.entries
+            .iter()
+            .any(|entry| entry.not_before_ms <= now_ms)
     }
 
     /// Remove and return the first queued frame matching `predicate`.
@@ -589,12 +602,14 @@ pub enum MacEventRef<'a> {
     Multicast {
         from: PublicKey,
         channel_id: ChannelId,
+        channel_key: ChannelKey,
         payload: &'a [u8],
     },
     /// Accepted blind-unicast payload.
     BlindUnicast {
         from: PublicKey,
         channel_id: ChannelId,
+        channel_key: ChannelKey,
         payload: &'a [u8],
         ack_requested: bool,
     },
@@ -613,5 +628,20 @@ pub enum MacEventRef<'a> {
     AckTimeout {
         peer: PublicKey,
         receipt: SendReceipt,
+    },
+    /// Frame was successfully handed to the radio transmitter.
+    ///
+    /// `identity_id` + `receipt` together form the identity-scoped send token.
+    /// `receipt` is `Some` only for ACK-requested sends.
+    Transmitted {
+        identity_id: LocalIdentityId,
+        receipt: Option<SendReceipt>,
+    },
+    /// A repeater was overheard forwarding this frame
+    /// (AwaitingForward → AwaitingAck transition).
+    Forwarded {
+        identity_id: LocalIdentityId,
+        receipt: SendReceipt,
+        hint: Option<RouterHint>,
     },
 }

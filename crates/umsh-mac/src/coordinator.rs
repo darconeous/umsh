@@ -18,7 +18,7 @@ use crate::{
     DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, Platform,
     ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
-    peers::{ChannelTable, PeerCryptoMap, PeerCryptoState, PeerId, PeerRegistry},
+    peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
     send::{
         PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue,
     },
@@ -117,8 +117,8 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 ///
 /// - The [`LocalIdentity`] (public key + ECDH capability).
 /// - A [`PeerCryptoMap`](crate::peers::PeerCryptoMap) mapping each known remote peer to its
-///   established [`umsh_crypto::PairwiseKeys`] and replay window. Entries are populated by
-///   [`Mac::install_pairwise_keys`].
+///   established [`umsh_crypto::PairwiseKeys`] and replay window. Entries are populated on
+///   first secure contact, or through the advanced manual-install escape hatch.
 /// - A monotonically increasing **frame counter** stamped into SECINFO of every sealed
 ///   packet, plus the bookkeeping needed to persist it safely (see below).
 /// - A [`LinearMap`] of in-flight [`PendingAck`](crate::send::PendingAck) records keyed by
@@ -207,14 +207,13 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         self.persisted_counter
     }
     /// Overwrite the current frame counter.
-    pub fn set_frame_counter(&mut self, value: u32) {
+    ///
+    /// # Safety (logical)
+    /// Misuse can break replay protection.
+    #[cfg(test)]
+    pub(crate) fn set_frame_counter(&mut self, value: u32) {
         self.frame_counter = value;
     }
-    /// Overwrite the persisted frame-counter reservation boundary.
-    pub fn set_persisted_counter(&mut self, value: u32) {
-        self.persisted_counter = value;
-    }
-
     /// Return the next scheduled persist target, if any.
     pub fn pending_persist_target(&self) -> Option<u32> {
         self.pending_persist_target
@@ -226,7 +225,7 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     }
 
     /// Return the current frame counter and advance it with wrapping semantics.
-    pub fn advance_frame_counter(&mut self) -> u32 {
+    pub(crate) fn advance_frame_counter(&mut self) -> u32 {
         let current = self.frame_counter;
         self.frame_counter = self.frame_counter.wrapping_add(1);
         current
@@ -525,9 +524,12 @@ pub enum SendError {
     /// The destination [`umsh_core::PublicKey`] is not present in the peer registry.
     /// Register the peer first via [`Mac::add_peer`].
     PeerMissing,
-    /// No pairwise session keys exist for the target peer on this identity.
-    /// Keys must be installed via [`Mac::install_pairwise_keys`] after a key exchange.
+    /// No cached pairwise session keys exist for the target peer on this identity.
+    /// This is only returned by the low-level `queue_*` APIs; the public async send APIs
+    /// derive and cache peer state automatically.
     PairwiseKeysMissing,
+    /// The local identity failed to derive a shared secret for this peer.
+    IdentityAgreementFailed,
     /// The target [`umsh_core::ChannelId`] is not present in the channel table.
     /// Register the channel first via [`Mac::add_channel`] or [`Mac::add_named_channel`].
     ChannelMissing,
@@ -659,8 +661,8 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 /// 2. **Register identities** via [`Mac::add_identity`]; call
 ///    [`Mac::load_persisted_counter`] on each long-term identity to restore the safe
 ///    frame-counter start point from non-volatile storage.
-/// 3. **Register peers** via [`Mac::add_peer`] and install pairwise keys via
-///    [`Mac::install_pairwise_keys`] after completing a key-exchange handshake.
+/// 3. **Register peers** via [`Mac::add_peer`]. Secure unicast and blind-unicast state is
+///    derived lazily from the local private key and peer public key on first use.
 /// 4. **Register channels** via [`Mac::add_channel`] or [`Mac::add_named_channel`].
 /// 5. **Drive the event loop** by awaiting [`Mac::next_event`] in a loop. The coordinator
 ///    handles incoming frames, outgoing transmits, forwarding, ACK matching, retransmission
@@ -710,6 +712,7 @@ pub struct Mac<
     post_tx_listen: Option<PostTxListen>,
     repeater: RepeaterConfig,
     operating_policy: OperatingPolicy,
+    auto_register_full_key_peers: bool,
 }
 
 impl<
@@ -747,6 +750,7 @@ impl<
             post_tx_listen: None,
             repeater,
             operating_policy,
+            auto_register_full_key_peers: false,
         }
     }
 
@@ -827,6 +831,16 @@ impl<
     /// Mutably borrow the local operating policy.
     pub fn operating_policy_mut(&mut self) -> &mut OperatingPolicy {
         &mut self.operating_policy
+    }
+
+    /// Return whether inbound secure packets carrying a full source key may auto-register peers.
+    pub fn auto_register_full_key_peers(&self) -> bool {
+        self.auto_register_full_key_peers
+    }
+
+    /// Enable or disable inbound full-key peer auto-registration.
+    pub fn set_auto_register_full_key_peers(&mut self, enabled: bool) {
+        self.auto_register_full_key_peers = enabled;
     }
 
     /// Register one long-term local identity.
@@ -971,24 +985,46 @@ impl<
     }
 
     /// Installs pairwise transport keys for one local identity and remote peer.
-    pub fn install_pairwise_keys(
+    ///
+    /// # Safety (logical)
+    /// Installing wrong keys will silently corrupt the session. This method
+    /// is crate-internal; external callers should use the `unsafe-advanced`
+    /// feature or go through the node-layer PFS session manager.
+    #[cfg(any(feature = "unsafe-advanced", test))]
+    pub(crate) fn install_pairwise_keys(
         &mut self,
         identity_id: LocalIdentityId,
         peer_id: PeerId,
         pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, SendError> {
+    ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
         let slot = self
             .identity_mut(identity_id)
             .ok_or(SendError::IdentityMissing)?;
         slot.peer_crypto_mut()
             .insert(
                 peer_id,
-                PeerCryptoState {
+                crate::peers::PeerCryptoState {
                     pairwise_keys,
                     replay_window: ReplayWindow::new(),
                 },
             )
             .map_err(|_| SendError::QueueFull)
+    }
+
+    /// Installs pairwise transport keys for one local identity and remote peer.
+    ///
+    /// # Safety (logical)
+    /// Installing wrong keys will silently corrupt the session. This method
+    /// is deliberately gated behind the `unsafe-advanced` feature. Prefer
+    /// going through the node-layer PFS session manager instead.
+    #[cfg(feature = "unsafe-advanced")]
+    pub fn install_pairwise_keys_advanced(
+        &mut self,
+        identity_id: LocalIdentityId,
+        peer_id: PeerId,
+        pairwise_keys: PairwiseKeys,
+    ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
+        self.install_pairwise_keys(identity_id, peer_id, pairwise_keys)
     }
 
     /// Enqueues a broadcast frame for transmission.
@@ -997,7 +1033,7 @@ impl<
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), SendError> {
+    ) -> Result<SendReceipt, SendError> {
         self.enforce_send_policy(None, options, false)?;
         if options.encrypted {
             return Err(SendError::EncryptionUnsupported);
@@ -1009,11 +1045,9 @@ impl<
             return Err(SendError::SaltUnsupported);
         }
 
-        let source_key = *self
-            .identity(from)
-            .ok_or(SendError::IdentityMissing)?
-            .identity()
-            .public_key();
+        let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
+        let source_key = *slot.identity().public_key();
+        let receipt = slot.next_receipt();
         let mut buf = [0u8; FRAME];
         let builder = PacketBuilder::new(&mut buf).broadcast();
         let mut builder = if options.full_source {
@@ -1041,9 +1075,19 @@ impl<
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
         self.tx_queue
-            .enqueue(TxPriority::Application, frame, None)
+            .enqueue(TxPriority::Application, frame, Some(receipt), Some(from))
             .map_err(|_| SendError::QueueFull)?;
-        Ok(())
+        Ok(receipt)
+    }
+
+    /// Enqueue a broadcast frame for transmission.
+    pub async fn send_broadcast(
+        &mut self,
+        from: LocalIdentityId,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<SendReceipt, SendError> {
+        self.queue_broadcast(from, payload, options)
     }
 
     /// Enqueues a multicast frame using the configured channel keys.
@@ -1053,7 +1097,7 @@ impl<
         channel_id: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), SendError> {
+    ) -> Result<SendReceipt, SendError> {
         self.enforce_send_policy(Some(*channel_id), options, false)?;
         if options.ack_requested {
             return Err(SendError::AckUnsupported);
@@ -1070,6 +1114,10 @@ impl<
             k_enc: derived.k_enc,
             k_mic: derived.k_mic,
         };
+        let receipt = self
+            .identity_mut(from)
+            .ok_or(SendError::IdentityMissing)?
+            .next_receipt();
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
@@ -1104,7 +1152,19 @@ impl<
         }
         let mut packet = builder.payload(payload).build()?;
         self.crypto.seal_packet(&mut packet, &keys)?;
-        self.enqueue_packet(packet, None)
+        self.enqueue_packet(packet, Some(receipt), Some(from))?;
+        Ok(receipt)
+    }
+
+    /// Enqueue a multicast frame for transmission.
+    pub async fn send_multicast(
+        &mut self,
+        from: LocalIdentityId,
+        channel_id: &ChannelId,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<SendReceipt, SendError> {
+        self.queue_multicast(from, channel_id, payload, options)
     }
 
     /// Enqueues an immediate MAC ACK frame.
@@ -1115,7 +1175,7 @@ impl<
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
         self.tx_queue
-            .enqueue(TxPriority::ImmediateAck, frame, None)
+            .enqueue(TxPriority::ImmediateAck, frame, None, None)
             .map_err(|_| SendError::QueueFull)?;
         Ok(())
     }
@@ -1194,7 +1254,7 @@ impl<
                 options.source_route.as_ref().map(|route| route.as_slice()),
             )?;
         }
-        if let Err(err) = self.enqueue_packet(packet, receipt) {
+        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
             if let Some(receipt) = receipt {
                 let _ = self
                     .identity_mut(from)
@@ -1203,6 +1263,22 @@ impl<
             return Err(err);
         }
         Ok(receipt)
+    }
+
+    /// Enqueue a unicast frame for transmission, deriving secure peer state on first use.
+    pub async fn send_unicast(
+        &mut self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<Option<SendReceipt>, SendError> {
+        let (peer_id, _) = self
+            .peer_registry
+            .lookup_by_key(peer)
+            .ok_or(SendError::PeerMissing)?;
+        let _ = self.ensure_peer_crypto(from, peer_id).await?;
+        self.queue_unicast(from, peer, payload, options)
     }
 
     /// Enqueues a blind-unicast frame and optional pending-ACK state.
@@ -1290,7 +1366,7 @@ impl<
                 options.source_route.as_ref().map(|route| route.as_slice()),
             )?;
         }
-        if let Err(err) = self.enqueue_packet(packet, receipt) {
+        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
             if let Some(receipt) = receipt {
                 let _ = self
                     .identity_mut(from)
@@ -1299,6 +1375,23 @@ impl<
             return Err(err);
         }
         Ok(receipt)
+    }
+
+    /// Enqueue a blind-unicast frame for transmission, deriving secure peer state on first use.
+    pub async fn send_blind_unicast(
+        &mut self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+        channel_id: &ChannelId,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<Option<SendReceipt>, SendError> {
+        let (peer_id, _) = self
+            .peer_registry
+            .lookup_by_key(peer)
+            .ok_or(SendError::PeerMissing)?;
+        let _ = self.ensure_peer_crypto(from, peer_id).await?;
+        self.queue_blind_unicast(from, peer, channel_id, payload, options)
     }
 
     /// Transmit the next eligible queued frame, if any.
@@ -1310,6 +1403,7 @@ impl<
     /// CAD attempts.
     pub async fn transmit_next(
         &mut self,
+        on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
         let Some(queued) = self.tx_queue.pop_next() else {
@@ -1328,6 +1422,7 @@ impl<
         }
 
         let receipt = queued.receipt;
+        let identity_id = queued.identity_id;
         let tx_options = if queued.priority == TxPriority::ImmediateAck {
             TxOptions::default()
         } else {
@@ -1355,6 +1450,7 @@ impl<
                         queued.priority,
                         queued.frame.as_slice(),
                         queued.receipt,
+                        queued.identity_id,
                         now_ms.saturating_add(backoff_ms),
                         next_attempt,
                     )
@@ -1362,6 +1458,15 @@ impl<
                 return Ok(None);
             }
             Err(error) => return Err(MacError::Transmit(error)),
+        }
+        if let Some(identity_id) = identity_id {
+            on_event(
+                identity_id,
+                crate::MacEventRef::Transmitted {
+                    identity_id,
+                    receipt,
+                },
+            );
         }
         if let Some(receipt) = receipt {
             self.arm_post_tx_listen(receipt, queued.frame.as_slice());
@@ -1373,10 +1478,13 @@ impl<
     ///
     /// Progress stops when CAD keeps reporting busy, when a post-transmit listen window blocks
     /// normal traffic, or when the queue is otherwise unable to shrink further in the current cycle.
-    pub async fn drain_tx_queue(&mut self) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+    pub async fn drain_tx_queue(
+        &mut self,
+        on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         while !self.tx_queue.is_empty() {
             let queue_len = self.tx_queue.len();
-            let _ = self.transmit_next().await?;
+            let _ = self.transmit_next(on_event).await?;
             if self.tx_queue.len() >= queue_len {
                 break;
             }
@@ -1400,13 +1508,13 @@ impl<
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
-        self.drain_tx_queue().await?;
+        self.drain_tx_queue(&mut on_event).await?;
         if self.post_tx_listen.is_some() {
             self.service_post_tx_listen(&mut on_event).await?;
         } else {
             let _ = self.receive_one(&mut on_event).await?;
         }
-        self.drain_tx_queue().await?;
+        self.drain_tx_queue(&mut on_event).await?;
         self.service_pending_ack_timeouts(&mut on_event)
             .map_err(|_| MacError::QueueFull)?;
         Ok(())
@@ -1473,7 +1581,7 @@ impl<
     ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
         loop {
             // Phase 1: Drain ready transmit work.
-            self.drain_tx_queue().await?;
+            self.drain_tx_queue(&mut on_event).await?;
 
             // Phase 2: Wait for a radio frame or the earliest timer deadline.
             let mut buf = [0u8; FRAME];
@@ -1513,7 +1621,9 @@ impl<
             match reason {
                 WakeReason::Received(rx) => {
                     let frame_len = rx.len.min(buf.len());
-                    let _ = self.process_received_frame(&mut buf, frame_len, &rx, &mut on_event);
+                    let _ = self
+                        .process_received_frame(&mut buf, frame_len, &rx, &mut on_event)
+                        .await;
                 }
                 WakeReason::TimerExpired => {
                     // Timers are handled in phase 4 below.
@@ -1521,7 +1631,7 @@ impl<
             }
 
             // Phase 4: Drain any immediate ACKs generated during receive.
-            self.drain_tx_queue().await?;
+            self.drain_tx_queue(&mut on_event).await?;
 
             // Phase 5: Service pending ACK timers.
             self.service_pending_ack_timeouts(&mut on_event)
@@ -1542,7 +1652,7 @@ impl<
     /// This is the shared implementation used by both [`receive_one`](Self::receive_one)
     /// and [`next_event`](Self::next_event).  Returns `true` when the frame
     /// produced at least one event or side-effect.
-    fn process_received_frame(
+    async fn process_received_frame(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -1552,21 +1662,49 @@ impl<
         let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
             return false;
         };
-        let forwarding_confirmed = self.observe_forwarding_confirmation(&buf[..frame_len]);
+        let forwarding_confirmed = if let Some((identity_id, receipt)) =
+            self.observe_forwarding_confirmation(&buf[..frame_len])
+        {
+            // Extract the router hint from the forwarding frame's source, if available.
+            let hint = match header.source {
+                SourceAddrRef::Hint(h) => Some(RouterHint([h.0[0], h.0[1]])),
+                SourceAddrRef::FullKeyAt { offset } => {
+                    let mut key_bytes = [0u8; 32];
+                    key_bytes.copy_from_slice(&buf[offset..offset + 32]);
+                    let h = PublicKey(key_bytes).hint();
+                    Some(RouterHint([h.0[0], h.0[1]]))
+                }
+                _ => None,
+            };
+            on_event(
+                identity_id,
+                crate::MacEventRef::Forwarded {
+                    identity_id,
+                    receipt,
+                    hint,
+                },
+            );
+            true
+        } else {
+            false
+        };
 
         match header.packet_type() {
             PacketType::Broadcast => self.process_broadcast(buf, frame_len, &header, &mut on_event),
             PacketType::MacAck => {
                 self.process_mac_ack(buf, frame_len, &header, forwarding_confirmed, &mut on_event)
             }
-            PacketType::Unicast | PacketType::UnicastAckReq => self.process_unicast(
-                buf,
-                frame_len,
-                &header,
-                _rx,
-                forwarding_confirmed,
-                &mut on_event,
-            ),
+            PacketType::Unicast | PacketType::UnicastAckReq => {
+                self.process_unicast(
+                    buf,
+                    frame_len,
+                    &header,
+                    _rx,
+                    forwarding_confirmed,
+                    &mut on_event,
+                )
+                .await
+            }
             PacketType::Multicast => self.process_multicast(
                 buf,
                 frame_len,
@@ -1575,15 +1713,17 @@ impl<
                 forwarding_confirmed,
                 &mut on_event,
             ),
-            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => self
-                .process_blind_unicast(
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                self.process_blind_unicast(
                     buf,
                     frame_len,
                     &header,
                     _rx,
                     forwarding_confirmed,
                     &mut on_event,
-                ),
+                )
+                .await
+            }
             PacketType::Reserved5 => false,
         }
     }
@@ -1655,7 +1795,7 @@ impl<
         forwarding_confirmed
     }
 
-    fn process_unicast(
+    async fn process_unicast(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -1671,11 +1811,7 @@ impl<
             for (peer_id, peer_key) in
                 self.resolve_source_peer_candidates(&buf[..frame_len], header)
             {
-                let Some(keys) = self
-                    .identity(local_id)
-                    .and_then(|slot| slot.peer_crypto().get(&peer_id))
-                    .map(|state| state.pairwise_keys.clone())
-                else {
+                let Ok(keys) = self.ensure_peer_crypto(local_id, peer_id).await else {
                     continue;
                 };
                 let Ok(body_range) = self
@@ -1735,13 +1871,13 @@ impl<
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
         let delivered = if let Some(channel_id) = header.channel {
-            let derived = {
+            let channel_info = {
                 self.channels
                     .lookup_by_id(&channel_id)
                     .next()
-                    .map(|channel| channel.derived.clone())
+                    .map(|channel| (channel.channel_key.clone(), channel.derived.clone()))
             };
-            if let Some(derived) = derived {
+            if let Some((channel_key, derived)) = channel_info {
                 let keys = PairwiseKeys {
                     k_enc: derived.k_enc,
                     k_mic: derived.k_mic,
@@ -1773,6 +1909,7 @@ impl<
                                     crate::MacEventRef::Multicast {
                                         from,
                                         channel_id,
+                                        channel_key: channel_key.clone(),
                                         payload: &buf[body_range.clone()],
                                     },
                                 );
@@ -1797,7 +1934,7 @@ impl<
         delivered || forwarding_confirmed || forwarded
     }
 
-    fn process_blind_unicast(
+    async fn process_blind_unicast(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -1809,16 +1946,16 @@ impl<
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
         let handled = if let Some(channel_id) = header.channel {
-            let channel_candidates: Vec<DerivedChannelKeys, CHANNELS> = self
+            let channel_candidates: Vec<(ChannelKey, DerivedChannelKeys), CHANNELS> = self
                 .channels
                 .lookup_by_id(&channel_id)
-                .map(|channel| channel.derived.clone())
+                .map(|channel| (channel.channel_key.clone(), channel.derived.clone()))
                 .collect();
             if channel_candidates.is_empty() {
                 false
             } else {
                 let mut handled = false;
-                for channel_keys in channel_candidates {
+                for (resolved_channel_key, channel_keys) in channel_candidates {
                     buf[..frame_len].copy_from_slice(&original[..frame_len]);
                     let Ok((dst, source_addr)) = self.crypto.decrypt_blind_addr(
                         &mut buf[..frame_len],
@@ -1833,11 +1970,7 @@ impl<
                     for (peer_id, peer_key) in
                         self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr)
                     {
-                        let Some(pairwise_keys) = self
-                            .identity(local_id)
-                            .and_then(|slot| slot.peer_crypto().get(&peer_id))
-                            .map(|state| state.pairwise_keys.clone())
-                        else {
+                        let Ok(pairwise_keys) = self.ensure_peer_crypto(local_id, peer_id).await else {
                             continue;
                         };
                         let blind_keys =
@@ -1877,6 +2010,7 @@ impl<
                             crate::MacEventRef::BlindUnicast {
                                 from: peer_key,
                                 channel_id,
+                                channel_key: resolved_channel_key.clone(),
                                 payload: &buf[body_range],
                                 ack_requested: header.ack_requested(),
                             },
@@ -1919,7 +2053,9 @@ impl<
         };
 
         let frame_len = rx.len.min(buf.len());
-        Ok(self.process_received_frame(&mut buf, frame_len, &rx, &mut on_event))
+        Ok(self
+            .process_received_frame(&mut buf, frame_len, &rx, &mut on_event)
+            .await)
     }
 
     /// Mark a pending receipt as acknowledged and emit an event through `on_event`.
@@ -2023,6 +2159,7 @@ impl<
                             TxPriority::Retry,
                             resend.frame.as_slice(),
                             Some(receipt),
+                            Some(LocalIdentityId(index as u8)),
                         )?;
                     }
                     Action::Timeout { receipt, peer } => {
@@ -2037,6 +2174,36 @@ impl<
         }
 
         Ok(())
+    }
+
+    /// Cancel a pending ACK-requested send, stopping retransmissions.
+    ///
+    /// Removes the pending ACK entry for the given identity slot and receipt,
+    /// and removes any matching entry from the transmit queue. Returns `true`
+    /// if a pending ACK was found and removed.
+    pub fn cancel_pending_ack(
+        &mut self,
+        identity_id: LocalIdentityId,
+        receipt: SendReceipt,
+    ) -> bool {
+        let removed = self
+            .identity_mut(identity_id)
+            .and_then(|slot| slot.remove_pending_ack(&receipt))
+            .is_some();
+
+        // Also remove any queued retransmission for this receipt.
+        self.tx_queue.remove_first_matching(|entry| {
+            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+        });
+
+        // Clear the post-tx listen if it was tracking this receipt.
+        if let Some(listen) = &self.post_tx_listen {
+            if listen.identity_id == identity_id && listen.receipt == receipt {
+                self.post_tx_listen = None;
+            }
+        }
+
+        removed
     }
 
     fn identity_and_advance(
@@ -2127,12 +2294,18 @@ impl<
         &mut self,
         packet: UnsealedPacket<'_>,
         receipt: Option<SendReceipt>,
+        identity_id: Option<LocalIdentityId>,
     ) -> Result<(), SendError> {
         if packet.total_len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
         self.tx_queue
-            .enqueue(TxPriority::Application, packet.as_bytes(), receipt)
+            .enqueue(
+                TxPriority::Application,
+                packet.as_bytes(),
+                receipt,
+                identity_id,
+            )
             .map_err(|_| SendError::QueueFull)?;
         Ok(())
     }
@@ -2203,24 +2376,104 @@ impl<
         Ok(receipt)
     }
 
+    async fn derive_pairwise_keys_for_peer(
+        &self,
+        local_id: LocalIdentityId,
+        peer_key: &PublicKey,
+    ) -> Result<PairwiseKeys, SendError> {
+        let shared_secret = {
+            let slot = self.identity(local_id).ok_or(SendError::IdentityMissing)?;
+            match slot.identity() {
+                LocalIdentity::LongTerm(identity) => identity
+                    .agree(peer_key)
+                    .await
+                    .map_err(|_| SendError::IdentityAgreementFailed)?,
+                #[cfg(feature = "software-crypto")]
+                LocalIdentity::Ephemeral(identity) => identity
+                    .agree(peer_key)
+                    .await
+                    .map_err(|_| SendError::IdentityAgreementFailed)?,
+            }
+        };
+
+        Ok(self.crypto.derive_pairwise_keys(&shared_secret))
+    }
+
+    fn cache_peer_crypto(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        pairwise_keys: PairwiseKeys,
+    ) -> Result<(), SendError> {
+        let slot = self.identity_mut(local_id).ok_or(SendError::IdentityMissing)?;
+        if slot.peer_crypto().get(&peer_id).is_some() {
+            return Ok(());
+        }
+        slot.peer_crypto_mut()
+            .insert(
+                peer_id,
+                crate::peers::PeerCryptoState {
+                    pairwise_keys,
+                    replay_window: ReplayWindow::new(),
+                },
+            )
+            .map_err(|_| SendError::QueueFull)?;
+        Ok(())
+    }
+
+    async fn ensure_peer_crypto(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+    ) -> Result<PairwiseKeys, SendError> {
+        if let Some(keys) = self
+            .identity(local_id)
+            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+            .map(|state| state.pairwise_keys.clone())
+        {
+            return Ok(keys);
+        }
+
+        let peer_key = self
+            .peer_registry
+            .get(peer_id)
+            .ok_or(SendError::PeerMissing)?
+            .public_key;
+        let pairwise_keys = self
+            .derive_pairwise_keys_for_peer(local_id, &peer_key)
+            .await?;
+        self.cache_peer_crypto(local_id, peer_id, pairwise_keys.clone())?;
+        Ok(pairwise_keys)
+    }
+
     fn insert_identity(
         &mut self,
         identity: LocalIdentity<P::Identity>,
         pfs_parent: Option<LocalIdentityId>,
     ) -> Result<LocalIdentityId, CapacityError> {
+        let initial_frame_counter = self.rng.next_u32();
+
         if let Some((index, slot)) = self
             .identities
             .iter_mut()
             .enumerate()
             .find(|(_, slot)| slot.is_none())
         {
-            *slot = Some(IdentitySlot::new(identity, 0, pfs_parent));
+            *slot = Some(IdentitySlot::new(
+                identity,
+                initial_frame_counter,
+                pfs_parent,
+            ));
             return Ok(LocalIdentityId(index as u8));
         }
 
         let next_id = self.identities.len();
         self.identities
-            .push(Some(IdentitySlot::new(identity, 0, pfs_parent)))
+            .push(Some(IdentitySlot::new(
+                identity,
+                initial_frame_counter,
+                pfs_parent,
+            )))
             .map_err(|_| CapacityError)?;
         Ok(LocalIdentityId(next_id as u8))
     }
@@ -2244,6 +2497,7 @@ impl<
             queued.priority,
             queued.frame.as_slice(),
             queued.receipt,
+            queued.identity_id,
             queued.not_before_ms,
             queued.cad_attempts,
         )
@@ -2310,6 +2564,12 @@ impl<
         Some((counter, mic))
     }
 
+    fn full_key_at(frame: &[u8], offset: usize) -> Option<PublicKey> {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(frame.get(offset..offset + 32)?);
+        Some(PublicKey(key))
+    }
+
     fn find_local_identity_for_dst(
         &self,
         dst: Option<umsh_core::NodeHint>,
@@ -2326,41 +2586,33 @@ impl<
             .map(|(index, _)| LocalIdentityId(index as u8))
     }
 
-    fn resolve_source_peer(
-        &self,
-        frame: &[u8],
-        header: &PacketHeader,
-    ) -> Option<(PeerId, PublicKey)> {
-        match header.source {
-            SourceAddrRef::FullKeyAt { offset } => {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(frame.get(offset..offset + 32)?);
-                let public_key = PublicKey(key);
-                let (peer_id, _) = self.peer_registry.lookup_by_key(&public_key)?;
-                Some((peer_id, public_key))
-            }
-            SourceAddrRef::Hint(hint) => {
-                let mut matches = self.peer_registry.lookup_by_hint(&hint);
-                let (peer_id, info) = matches.next()?;
-                if matches.next().is_some() {
-                    return None;
-                }
-                Some((peer_id, info.public_key))
-            }
-            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => None,
-        }
-    }
-
     fn resolve_source_peer_candidates(
-        &self,
+        &mut self,
         frame: &[u8],
         header: &PacketHeader,
     ) -> Vec<(PeerId, PublicKey), PEERS> {
         match header.source {
-            SourceAddrRef::FullKeyAt { .. } => self
-                .resolve_source_peer(frame, header)
-                .into_iter()
-                .collect(),
+            SourceAddrRef::FullKeyAt { offset } => {
+                let Some(peer_key) = Self::full_key_at(frame, offset) else {
+                    return Vec::new();
+                };
+
+                if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer_key) {
+                    let mut out = Vec::new();
+                    let _ = out.push((peer_id, peer_key));
+                    return out;
+                }
+
+                if self.auto_register_full_key_peers {
+                    if let Ok(peer_id) = self.peer_registry.try_insert_or_update(peer_key) {
+                        let mut out = Vec::new();
+                        let _ = out.push((peer_id, peer_key));
+                        return out;
+                    }
+                }
+
+                Vec::new()
+            }
             SourceAddrRef::Hint(hint) => self
                 .peer_registry
                 .lookup_by_hint(&hint)
@@ -2406,34 +2658,33 @@ impl<
         }
     }
 
-    fn resolve_blind_source_peer(
-        &self,
-        frame: &[u8],
-        source: SourceAddrRef,
-    ) -> Option<(PeerId, PublicKey)> {
-        match source {
-            SourceAddrRef::FullKeyAt { offset } => {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(frame.get(offset..offset + 32)?);
-                let public_key = PublicKey(key);
-                let (peer_id, _) = self.peer_registry.lookup_by_key(&public_key)?;
-                Some((peer_id, public_key))
-            }
-            SourceAddrRef::Hint(hint) => self.resolve_unique_hint(hint),
-            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => None,
-        }
-    }
-
     fn resolve_blind_source_peer_candidates(
-        &self,
+        &mut self,
         frame: &[u8],
         source: SourceAddrRef,
     ) -> Vec<(PeerId, PublicKey), PEERS> {
         match source {
-            SourceAddrRef::FullKeyAt { .. } => self
-                .resolve_blind_source_peer(frame, source)
-                .into_iter()
-                .collect(),
+            SourceAddrRef::FullKeyAt { offset } => {
+                let Some(peer_key) = Self::full_key_at(frame, offset) else {
+                    return Vec::new();
+                };
+
+                if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer_key) {
+                    let mut out = Vec::new();
+                    let _ = out.push((peer_id, peer_key));
+                    return out;
+                }
+
+                if self.auto_register_full_key_peers {
+                    if let Ok(peer_id) = self.peer_registry.try_insert_or_update(peer_key) {
+                        let mut out = Vec::new();
+                        let _ = out.push((peer_id, peer_key));
+                        return out;
+                    }
+                }
+
+                Vec::new()
+            }
             SourceAddrRef::Hint(hint) => self
                 .peer_registry
                 .lookup_by_hint(&hint)
@@ -2597,6 +2848,7 @@ impl<
             .enqueue_with_state(
                 TxPriority::Forward,
                 &rewritten[..total_len],
+                None,
                 None,
                 now_ms.saturating_add(plan.delay_ms),
                 0,
@@ -3029,35 +3281,38 @@ impl<
         })
     }
 
-    fn observe_forwarding_confirmation(&mut self, frame: &[u8]) -> bool {
+    /// Check if a received frame confirms forwarding of a pending send.
+    ///
+    /// Returns `Some((identity_id, receipt))` on successful confirmation
+    /// (AwaitingForward → AwaitingAck transition), `None` otherwise.
+    fn observe_forwarding_confirmation(
+        &mut self,
+        frame: &[u8],
+    ) -> Option<(LocalIdentityId, SendReceipt)> {
         self.expire_post_tx_listen_if_needed();
-        let Some(listen) = self.post_tx_listen.clone() else {
-            return false;
-        };
+        let listen = self.post_tx_listen.clone()?;
 
-        let Some(received_key) = Self::confirmation_key(frame) else {
-            return false;
-        };
+        let received_key = Self::confirmation_key(frame)?;
         if received_key != listen.confirm_key {
-            return false;
+            return None;
         }
 
         let Some(slot) = self.identity_mut(listen.identity_id) else {
             self.post_tx_listen = None;
-            return false;
+            return None;
         };
         let Some(pending) = slot.pending_ack_mut(&listen.receipt) else {
             self.post_tx_listen = None;
-            return false;
+            return None;
         };
         if !matches!(pending.state, crate::AckState::AwaitingForward { .. }) {
             self.post_tx_listen = None;
-            return false;
+            return None;
         }
 
         pending.state = crate::AckState::AwaitingAck;
         self.post_tx_listen = None;
-        true
+        Some((listen.identity_id, listen.receipt))
     }
 
     fn match_pending_peer_for_ack(

@@ -8,8 +8,8 @@ use std::fmt::Write;
 use crate::{
     core::{ChannelKey, MicSize, NodeHint, PacketBuilder, PacketHeader, PublicKey},
     crypto::{
-        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
         CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
+        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
 };
 
@@ -199,20 +199,36 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         "Example 4: Encrypted Unicast with Ack Requested (S=1)",
         "A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowledgement. The full 32-byte source key is included.",
         &[
-            ("FCF", "VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0", "DC".into()),
-            ("DST", "Node B hint", hex_spaced(&vectors.node_b_public.hint().0)),
-            ("SRC", "Node A full key", hex_spaced(&vectors.node_a_public.0)),
+            (
+                "FCF",
+                "VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0",
+                "DC".into(),
+            ),
+            (
+                "DST",
+                "Node B hint",
+                hex_spaced(&vectors.node_b_public.hint().0),
+            ),
+            (
+                "SRC",
+                "Node A full key",
+                hex_spaced(&vectors.node_a_public.0),
+            ),
             ("SCF", "E=1, MIC=3 (16-byte), S=0", "E0".into()),
             ("Frame Counter", "1", hex_spaced(&1u32.to_be_bytes())),
             (
                 "Payload",
                 "Encrypted `68 65 79` (`\"hey\"`)",
-                hex_spaced(&vectors.unicast_ackreq_fullsrc[unicast_ackreq_header.body_range.clone()]),
+                hex_spaced(
+                    &vectors.unicast_ackreq_fullsrc[unicast_ackreq_header.body_range.clone()],
+                ),
             ),
             (
                 "MIC",
                 "16 bytes",
-                hex_spaced(&vectors.unicast_ackreq_fullsrc[unicast_ackreq_header.mic_range.clone()]),
+                hex_spaced(
+                    &vectors.unicast_ackreq_fullsrc[unicast_ackreq_header.mic_range.clone()],
+                ),
             ),
         ],
         &vectors.unicast_ackreq_fullsrc,
@@ -223,19 +239,31 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         "Example 5: Encrypted Multicast (E=1)",
         "An encrypted multicast from Node A on channel `B08D`. The encrypted body contains the source hint followed by the plaintext payload.",
         &[
-            ("FCF", "VER=3, TYPE=4 (multicast), S=0, O=0, H=0", "E0".into()),
-            ("CHANNEL", "Derived channel identifier", hex_spaced(&vectors.channel.channel_id.0)),
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=0, O=0, H=0",
+                "E0".into(),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
             ("SCF", "E=1, MIC=3 (16-byte), S=0", "E0".into()),
             ("Frame Counter", "5", hex_spaced(&5u32.to_be_bytes())),
             (
                 "Encrypted data",
                 "ENCRYPT(`SRC || \"Hello\"`)",
-                hex_spaced(&vectors.multicast_encrypted[multicast_encrypted_header.body_range.clone()]),
+                hex_spaced(
+                    &vectors.multicast_encrypted[multicast_encrypted_header.body_range.clone()],
+                ),
             ),
             (
                 "MIC",
                 "16 bytes",
-                hex_spaced(&vectors.multicast_encrypted[multicast_encrypted_header.mic_range.clone()]),
+                hex_spaced(
+                    &vectors.multicast_encrypted[multicast_encrypted_header.mic_range.clone()],
+                ),
             ),
         ],
         &vectors.multicast_encrypted,
@@ -246,20 +274,38 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         "Example 6: Authenticated Multicast (E=0)",
         "An authenticated but unencrypted multicast from Node A carrying payload type `03` followed by `\"Hello\"`.",
         &[
-            ("FCF", "VER=3, TYPE=4 (multicast), S=0, O=0, H=0", "E0".into()),
-            ("CHANNEL", "Derived channel identifier", hex_spaced(&vectors.channel.channel_id.0)),
+            (
+                "FCF",
+                "VER=3, TYPE=4 (multicast), S=0, O=0, H=0",
+                "E0".into(),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
             ("SCF", "E=0, MIC=3 (16-byte), S=0", "60".into()),
             ("Frame Counter", "3", hex_spaced(&3u32.to_be_bytes())),
-            ("SRC", "Node A hint", hex_spaced(&vectors.node_a_public.hint().0)),
+            (
+                "SRC",
+                "Node A hint",
+                hex_spaced(&vectors.node_a_public.hint().0),
+            ),
             (
                 "Payload",
                 "`03 || \"Hello\"`",
-                hex_spaced(&vectors.multicast_authenticated[multicast_authenticated_header.body_range.clone()]),
+                hex_spaced(
+                    &vectors.multicast_authenticated
+                        [multicast_authenticated_header.body_range.clone()],
+                ),
             ),
             (
                 "MIC",
                 "16 bytes",
-                hex_spaced(&vectors.multicast_authenticated[multicast_authenticated_header.mic_range.clone()]),
+                hex_spaced(
+                    &vectors.multicast_authenticated
+                        [multicast_authenticated_header.mic_range.clone()],
+                ),
             ),
         ],
         &vectors.multicast_authenticated,
@@ -347,8 +393,16 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         "Example 8: Blind Unicast (S=0)",
         "A blind unicast on channel `B08D`. The destination hint and source hint are encrypted together in `ENC_DST_SRC`, while the payload is encrypted with the blind-unicast payload keys.",
         &[
-            ("FCF", "VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0", "F0".into()),
-            ("CHANNEL", "Derived channel identifier", hex_spaced(&vectors.channel.channel_id.0)),
+            (
+                "FCF",
+                "VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0",
+                "F0".into(),
+            ),
+            (
+                "CHANNEL",
+                "Derived channel identifier",
+                hex_spaced(&vectors.channel.channel_id.0),
+            ),
             ("SCF", "E=1, MIC=3 (16-byte), S=0", "E0".into()),
             ("Frame Counter", "7", hex_spaced(&7u32.to_be_bytes())),
             (

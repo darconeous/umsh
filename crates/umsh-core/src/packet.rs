@@ -240,8 +240,22 @@ impl PublicKey {
 }
 
 /// Raw 32-byte multicast channel secret.
-#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+#[derive(Clone, Copy, zeroize::Zeroize)]
 pub struct ChannelKey(pub [u8; 32]);
+
+impl PartialEq for ChannelKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ChannelKey {}
+
+impl core::fmt::Debug for ChannelKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("ChannelKey([redacted])")
+    }
+}
 
 /// Source address supplied while constructing packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

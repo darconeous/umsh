@@ -5,12 +5,14 @@ use embedded_hal_async::delay::DelayNs;
 use rand::rngs::ThreadRng;
 use umsh::{
     crypto::{
-        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
         CryptoEngine, NodeIdentity,
+        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
-    embassy_support::{EmbassyClock, EmbassyDelay, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore},
-    mac::{test_support::SimulatedNetwork, Mac, MacHandle, OperatingPolicy, RepeaterConfig},
-    node::{Endpoint, EndpointConfig, EndpointEvent, EventAction},
+    embassy_support::{
+        EmbassyClock, EmbassyDelay, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
+    },
+    mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
+    node::{EventSink, NodeEvent, NodeRuntime, Transport},
 };
 
 const IDENTITIES: usize = 4;
@@ -28,16 +30,18 @@ type RepeaterPlatform = EmbassyPlatform<
     MemoryKeyValueStore<4, 32, 128>,
 >;
 
-type RepeaterMac = Mac<
-    RepeaterPlatform,
-    IDENTITIES,
-    PEERS,
-    CHANNELS,
-    ACKS,
-    TX,
-    FRAME,
-    DUP,
->;
+type RepeaterMac = Mac<RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
+
+/// Simple EventSink that stores events in a shared Vec.
+struct VecSink {
+    events: std::rc::Rc<RefCell<Vec<NodeEvent>>>,
+}
+
+impl EventSink for VecSink {
+    fn send_event(&mut self, event: NodeEvent) {
+        self.events.borrow_mut().push(event);
+    }
+}
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -53,8 +57,6 @@ async fn main(_spawner: Spawner) {
     let bob_identity = SoftwareIdentity::from_secret_bytes(&[0x33; 32]);
     let alice_key = *alice_identity.public_key();
     let bob_key = *bob_identity.public_key();
-    let shared = CryptoEngine::new(SoftwareAes, SoftwareSha256)
-        .derive_pairwise_keys(&alice_identity.shared_secret_with(&bob_key).expect("valid shared secret"));
 
     let alice_mac = RefCell::new(build_mac(alice_radio, false));
     let repeater_mac = RefCell::new(build_mac(repeater_radio, true));
@@ -64,39 +66,76 @@ async fn main(_spawner: Spawner) {
     let repeater_handle = MacHandle::new(&repeater_mac);
     let bob_handle = MacHandle::new(&bob_mac);
 
-    let alice_id = alice_handle.add_identity(alice_identity).expect("alice identity should fit");
-    let _repeater_id = repeater_handle.add_identity(repeater_identity).expect("repeater identity should fit");
-    let bob_id = bob_handle.add_identity(bob_identity).expect("bob identity should fit");
+    let alice_id = alice_handle
+        .add_identity(alice_identity)
+        .expect("alice identity should fit");
+    let _repeater_id = repeater_handle
+        .add_identity(repeater_identity)
+        .expect("repeater identity should fit");
+    let bob_id = bob_handle
+        .add_identity(bob_identity)
+        .expect("bob identity should fit");
 
-    let bob_peer = alice_handle.add_peer(bob_key).expect("bob peer should fit");
-    let alice_peer = bob_handle.add_peer(alice_key).expect("alice peer should fit");
-    alice_handle
-        .install_pairwise_keys(alice_id, bob_peer, shared.clone())
-        .expect("alice pairwise keys should install");
-    bob_handle
-        .install_pairwise_keys(bob_id, alice_peer, shared)
-        .expect("bob pairwise keys should install");
+    let _bob_peer = alice_handle.add_peer(bob_key).expect("bob peer should fit");
+    let _alice_peer = bob_handle
+        .add_peer(alice_key)
+        .expect("alice peer should fit");
 
-    let alice = Endpoint::new(alice_id, alice_handle, EndpointConfig::default());
-    let mut bob = Endpoint::new(bob_id, bob_handle, EndpointConfig::default())
-        .with_kv_store(MemoryKeyValueStore::<4, 32, 128>::default());
+    let alice_runtime = NodeRuntime::new(alice_handle);
+    let bob_runtime = NodeRuntime::new(bob_handle);
 
-    alice
-        .send_text(&bob_key, "hello through the embassy repeater")
+    let alice_node = alice_runtime.create_node_without_sink(alice_id);
+    let bob_events = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let bob_sink = VecSink {
+        events: bob_events.clone(),
+    };
+    let _bob_node = bob_runtime.create_node(bob_id, Box::new(bob_sink));
+
+    let payload = encode_text_payload("hello through the embassy repeater");
+    alice_node
+        .send(
+            &bob_key,
+            &payload,
+            &umsh::mac::SendOptions::default()
+                .with_ack_requested(true)
+                .with_flood_hops(5),
+        )
+        .await
         .expect("alice send should queue successfully");
 
     let mut delay = EmbassyDelay;
     for _ in 0..64 {
-        alice_mac.borrow_mut().poll_cycle(|_, _| {}).await.expect("alice poll should succeed");
-        repeater_mac.borrow_mut().poll_cycle(|_, _| {}).await.expect("repeater poll should succeed");
+        alice_mac
+            .borrow_mut()
+            .poll_cycle(|id, ev| alice_runtime.dispatch(id, &ev))
+            .await
+            .expect("alice poll should succeed");
+        repeater_mac
+            .borrow_mut()
+            .poll_cycle(|_, _| {})
+            .await
+            .expect("repeater poll should succeed");
 
         let mut delivered = false;
-        bob_mac.borrow_mut().poll_cycle(|_, event| {
-            if let EventAction::Handled(Some(EndpointEvent::TextReceived { from, message })) = bob.handle_event(event) {
-                println!("repeater delivered {} -> {}", hex_encode(&from.0[..4]), message.body);
+        bob_mac
+            .borrow_mut()
+            .poll_cycle(|id, ev| {
+                bob_runtime.dispatch(id, &ev);
+            })
+            .await
+            .expect("bob poll should succeed");
+
+        for event in bob_events.borrow().iter() {
+            if let NodeEvent::TextReceived { from, body } = event {
+                println!(
+                    "repeater delivered {} -> {}",
+                    hex_encode(&from.0[..4]),
+                    body
+                );
                 delivered = true;
             }
-        }).await.expect("bob poll should succeed");
+        }
+        bob_events.borrow_mut().clear();
 
         if delivered {
             return;
@@ -106,6 +145,29 @@ async fn main(_spawner: Spawner) {
     }
 
     panic!("repeater example timed out before delivery");
+}
+
+fn encode_text_payload(text: &str) -> Vec<u8> {
+    use umsh::app::{PayloadType, text_message};
+    use umsh::node::OwnedTextMessage;
+
+    let message = OwnedTextMessage {
+        message_type: umsh::app::MessageType::Basic,
+        sender_handle: None,
+        sequence: None,
+        sequence_reset: false,
+        regarding: None,
+        editing: None,
+        bg_color: None,
+        text_color: None,
+        body: String::from(text),
+    };
+    let mut body = [0u8; 512];
+    let len = text_message::encode(&message.as_borrowed(), &mut body).unwrap();
+    let mut payload = Vec::with_capacity(len + 1);
+    payload.push(PayloadType::TextMessage as u8);
+    payload.extend_from_slice(&body[..len]);
+    payload
 }
 
 fn build_mac(radio: umsh::mac::test_support::SimulatedRadio, repeater: bool) -> RepeaterMac {

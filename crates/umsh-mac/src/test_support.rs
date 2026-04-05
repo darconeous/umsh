@@ -5,14 +5,15 @@
 //! and RNG implementations are deliberately insecure and must not be used for
 //! real deployments.
 
+use core::convert::Infallible;
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
     vec::Vec,
 };
-use core::convert::Infallible;
 
+use core::task::{Context, Poll};
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
 use umsh_core::PublicKey;
@@ -20,11 +21,10 @@ use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret,
 };
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
-use core::task::{Context, Poll};
 
 use crate::{
-    Mac, OperatingPolicy, Platform, RepeaterConfig, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP,
-    DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
+    DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS,
+    DEFAULT_TX, Mac, OperatingPolicy, Platform, RepeaterConfig,
 };
 
 const DEFAULT_RSSI: i16 = -40;
@@ -39,16 +39,7 @@ pub type TestMac<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = DEFAULT_FRAME,
     const DUP: usize = DEFAULT_DUP,
-> = Mac<
-    TestPlatform,
-    IDENTITIES,
-    PEERS,
-    CHANNELS,
-    ACKS,
-    TX,
-    FRAME,
-    DUP,
->;
+> = Mac<TestPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 
 /// Platform bundle for the simulated test components.
 pub struct TestPlatform;
@@ -272,12 +263,20 @@ impl SimulatedRadio {
 impl Radio for SimulatedRadio {
     type Error = ();
 
-    async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
+    async fn transmit(
+        &mut self,
+        data: &[u8],
+        _options: TxOptions,
+    ) -> Result<(), TxError<Self::Error>> {
         self.network.transmit(self.id, data);
         Ok(())
     }
 
-    fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
+    fn poll_receive(
+        &mut self,
+        _cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<RxInfo, Self::Error>> {
         let rx = self.network.receive(self.id, buf);
         if rx.len == 0 {
             Poll::Pending
@@ -412,8 +411,7 @@ impl DummyClock {
 
     /// Advance the clock by `delta_ms`.
     pub fn advance_ms(&self, delta_ms: u64) {
-        self.now_ms
-            .set(self.now_ms.get().saturating_add(delta_ms));
+        self.now_ms.set(self.now_ms.get().saturating_add(delta_ms));
     }
 
     /// Set the current clock value.

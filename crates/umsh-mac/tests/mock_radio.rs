@@ -1,19 +1,20 @@
+#![cfg(feature = "unsafe-advanced")]
+
+use core::convert::Infallible;
+use core::task::{Context, Poll};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
 };
-use core::convert::Infallible;
-use core::task::{Context, Poll};
 
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
 use umsh_core::{PacketBuilder, PublicKey};
-use umsh_crypto::{
-    AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider,
-    SharedSecret,
-};
+use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
-use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
+use umsh_mac::{
+    Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions,
+};
 
 #[test]
 fn mac_handle_send_unicast_queues_public_api_work() {
@@ -23,23 +24,32 @@ fn mac_handle_send_unicast_queues_public_api_work() {
 
     let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = handle_clone.add_peer(peer_key).unwrap();
-    handle
-        .install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] })
-        .unwrap();
+    let _peer_id = handle_clone.add_peer(peer_key).unwrap();
 
-    let receipt = handle_clone
-        .send_unicast(local_id, &peer_key, b"hello", &SendOptions::default().with_ack_requested(true).no_flood())
-        .unwrap()
-        .unwrap();
+    let receipt = block_on(handle_clone
+        .send_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true).no_flood(),
+        )
+    )
+    .unwrap()
+    .unwrap();
 
     {
         let borrowed = mac.borrow();
         assert_eq!(borrowed.tx_queue().len(), 1);
-        assert!(borrowed.identity(local_id).unwrap().pending_ack(&receipt).is_some());
+        assert!(
+            borrowed
+                .identity(local_id)
+                .unwrap()
+                .pending_ack(&receipt)
+                .is_some()
+        );
     }
 
-    block_on(mac.borrow_mut().drain_tx_queue()).unwrap();
+    block_on(mac.borrow_mut().drain_tx_queue(&mut |_, _| {})).unwrap();
     assert_eq!(mac.borrow().radio().transmitted.len(), 1);
 }
 
@@ -49,20 +59,38 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_id = mac.add_peer(*remote.public_key()).unwrap();
-    let keys = PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] };
-    mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
-    let dst_hint = mac.identity(local_id).unwrap().identity().public_key().hint();
-    mac.radio_mut().queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys_advanced(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
 
     let mut seen = None;
     block_on(mac.poll_cycle(|identity, event| {
-        if let MacEventRef::Unicast { from, payload, ack_requested } = event {
+        if let MacEventRef::Unicast {
+            from,
+            payload,
+            ack_requested,
+        } = event
+        {
             seen = Some((identity, from, payload.to_vec(), ack_requested));
         }
     }))
     .unwrap();
 
-    assert_eq!(seen, Some((local_id, *remote.public_key(), b"hello".to_vec(), true)));
+    assert_eq!(
+        seen,
+        Some((local_id, *remote.public_key(), b"hello".to_vec(), true))
+    );
     assert_eq!(mac.radio().transmitted.len(), 1);
 }
 
@@ -80,7 +108,9 @@ fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
     fn raw_waker() -> std::task::RawWaker {
-        fn clone(_: *const ()) -> std::task::RawWaker { raw_waker() }
+        fn clone(_: *const ()) -> std::task::RawWaker {
+            raw_waker()
+        }
         fn wake(_: *const ()) {}
         fn wake_by_ref(_: *const ()) {}
         fn drop(_: *const ()) {}
@@ -208,7 +238,11 @@ impl DummyRadio {
             .source_full(source.public_key())
             .frame_counter(7)
             .encrypted();
-        let builder = if ack_requested { builder.ack_requested() } else { builder };
+        let builder = if ack_requested {
+            builder.ack_requested()
+        } else {
+            builder
+        };
         let mut packet = builder.payload(payload).build().unwrap();
         CryptoEngine::new(DummyAes, DummySha)
             .seal_packet(&mut packet, keys)
@@ -220,16 +254,28 @@ impl DummyRadio {
 impl Radio for DummyRadio {
     type Error = ();
 
-    async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
+    async fn transmit(
+        &mut self,
+        data: &[u8],
+        _options: TxOptions,
+    ) -> Result<(), TxError<Self::Error>> {
         self.transmitted.push(data.to_vec());
         Ok(())
     }
 
-    fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
+    fn poll_receive(
+        &mut self,
+        _cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<RxInfo, Self::Error>> {
         if let Some(frame) = self.received.pop_front() {
             let len = frame.len();
             buf[..len].copy_from_slice(&frame);
-            Poll::Ready(Ok(RxInfo { len, rssi: -40, snr: 10 }))
+            Poll::Ready(Ok(RxInfo {
+                len,
+                rssi: -40,
+                snr: 10,
+            }))
         } else {
             Poll::Pending
         }

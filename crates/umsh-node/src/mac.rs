@@ -1,81 +1,99 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
+#[cfg(feature = "unsafe-advanced")]
 use umsh_crypto::PairwiseKeys;
-use umsh_mac::{CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerCryptoState, PeerId, Platform, SendError, SendOptions, SendReceipt};
+use umsh_mac::{CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerId, Platform, SendError, SendOptions, SendReceipt};
+#[cfg(feature = "unsafe-advanced")]
+use umsh_mac::PeerCryptoState;
 
-/// Endpoint-facing abstraction over the MAC send and configuration surface.
+/// Pluggable backend that the node layer delegates to for MAC operations.
 ///
-/// [`crate::Endpoint`] depends on this trait so it can be used with a real
-/// [`umsh_mac::MacHandle`] or with test doubles.
-pub trait NodeMac: Clone {
+/// [`MacHandle`](umsh_mac::MacHandle) implements `MacBackend`, and test code can provide a
+/// lightweight fake.
+pub trait MacBackend: Clone {
     /// Error type returned by send-oriented operations.
     type SendError;
     /// Error type returned by fixed-capacity operations.
     type CapacityError;
 
     /// Add or refresh a peer.
-    fn add_peer(&self, key: PublicKey) -> Result<PeerId, NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Add or refresh a private channel.
-    fn add_private_channel(&self, key: ChannelKey) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn add_private_channel(&self, key: ChannelKey) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Add or refresh a named channel.
-    fn add_named_channel(&self, name: &str) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
-    /// Install pairwise transport keys.
-    fn install_pairwise_keys(
-        &self,
-        identity_id: LocalIdentityId,
-        peer_id: PeerId,
-        pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn add_named_channel(&self, name: &str) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a broadcast frame.
-    fn send_broadcast(
+    async fn send_broadcast(
         &self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a multicast frame.
-    fn send_multicast(
+    async fn send_multicast(
         &self,
         from: LocalIdentityId,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a unicast frame.
-    fn send_unicast(
+    async fn send_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Queue a blind-unicast frame.
-    fn send_blind_unicast(
+    async fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>>;
+    ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Fill `dest` with random bytes.
-    fn fill_random(&self, dest: &mut [u8]) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn fill_random(&self, dest: &mut [u8]) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Return the current MAC clock time.
-    fn now_ms(&self) -> Result<u64, NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>>;
 
     #[cfg(feature = "software-crypto")]
     fn register_ephemeral(
         &self,
         parent: LocalIdentityId,
         identity: umsh_crypto::software::SoftwareIdentity,
-    ) -> Result<LocalIdentityId, NodeMacError<Self::SendError, Self::CapacityError>>;
+    ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>>;
 
     #[cfg(feature = "software-crypto")]
-    fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, NodeMacError<Self::SendError, Self::CapacityError>>;
+    fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>>;
+}
+
+/// Extension trait for operations that can corrupt protocol state if misused.
+///
+/// Separated from [`MacBackend`] so that these dangerous operations require
+/// explicit opt-in via the `unsafe-advanced` cargo feature. The public
+/// `MacBackend` trait exposes only safe send/query operations.
+///
+/// **Stability:** This trait is `pub(crate)` and not part of the stable
+/// public API.
+#[cfg(feature = "unsafe-advanced")]
+pub trait MacBackendInternal: MacBackend {
+    /// Install pairwise transport keys for a peer.
+    fn install_pairwise_keys(
+        &self,
+        identity_id: LocalIdentityId,
+        peer_id: PeerId,
+        pairwise_keys: PairwiseKeys,
+    ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>>;
+
+    /// Cancel a pending ACK-requested send, stopping retransmissions.
+    fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool;
 }
 
 /// Normalized wrapper around MAC-handle failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NodeMacError<S, C> {
+pub enum MacBackendError<S, C> {
     /// Shared MAC state was temporarily busy.
     Busy,
     /// Send-oriented MAC failure.
@@ -84,7 +102,7 @@ pub enum NodeMacError<S, C> {
     Capacity(C),
 }
 
-impl<S, C> NodeMacError<S, C> {
+impl<S, C> MacBackendError<S, C> {
     fn from_send_error(error: MacHandleError<S>) -> Self {
         match error {
             MacHandleError::Busy => Self::Busy,
@@ -117,84 +135,78 @@ impl<
         const TX: usize,
         const FRAME: usize,
         const DUP: usize,
-    > NodeMac
+    > MacBackend
     for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     type SendError = SendError;
     type CapacityError = CapacityError;
 
-    fn add_peer(&self, key: PublicKey) -> Result<PeerId, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.add_peer(key).map_err(NodeMacError::from_capacity_error)
+    fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.add_peer(key).map_err(MacBackendError::from_capacity_error)
     }
 
-    fn add_private_channel(&self, key: ChannelKey) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.add_channel(key).map_err(NodeMacError::from_capacity_error)
+    fn add_private_channel(&self, key: ChannelKey) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.add_channel(key).map_err(MacBackendError::from_capacity_error)
     }
 
-    fn add_named_channel(&self, name: &str) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.add_named_channel(name).map_err(NodeMacError::from_capacity_error)
+    fn add_named_channel(&self, name: &str) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.add_named_channel(name).map_err(MacBackendError::from_capacity_error)
     }
 
-    fn install_pairwise_keys(
-        &self,
-        identity_id: LocalIdentityId,
-        peer_id: PeerId,
-        pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.install_pairwise_keys(identity_id, peer_id, pairwise_keys)
-            .map_err(NodeMacError::from_send_error)
-    }
-
-    fn send_broadcast(
+    async fn send_broadcast(
         &self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
+    ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_broadcast(from, payload, options)
-            .map_err(NodeMacError::from_send_error)
+            .await
+            .map_err(MacBackendError::from_send_error)
     }
 
-    fn send_multicast(
+    async fn send_multicast(
         &self,
         from: LocalIdentityId,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
+    ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_multicast(from, channel, payload, options)
-            .map_err(NodeMacError::from_send_error)
+            .await
+            .map_err(MacBackendError::from_send_error)
     }
 
-    fn send_unicast(
+    async fn send_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>> {
+    ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_unicast(from, dst, payload, options)
-            .map_err(NodeMacError::from_send_error)
+            .await
+            .map_err(MacBackendError::from_send_error)
     }
 
-    fn send_blind_unicast(
+    async fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>> {
+    ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_blind_unicast(from, dst, channel, payload, options)
-            .map_err(NodeMacError::from_send_error)
+            .await
+            .map_err(MacBackendError::from_send_error)
     }
 
-    fn fill_random(&self, dest: &mut [u8]) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.fill_random(dest).map_err(NodeMacError::from_infallible_error)
+    fn fill_random(&self, dest: &mut [u8]) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.fill_random(dest).map_err(MacBackendError::from_infallible_error)
     }
 
-    fn now_ms(&self) -> Result<u64, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.now_ms().map_err(NodeMacError::from_infallible_error)
+    fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.now_ms().map_err(MacBackendError::from_infallible_error)
     }
 
     #[cfg(feature = "software-crypto")]
@@ -202,12 +214,41 @@ impl<
         &self,
         parent: LocalIdentityId,
         identity: umsh_crypto::software::SoftwareIdentity,
-    ) -> Result<LocalIdentityId, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.register_ephemeral(parent, identity).map_err(NodeMacError::from_capacity_error)
+    ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.register_ephemeral(parent, identity).map_err(MacBackendError::from_capacity_error)
     }
 
     #[cfg(feature = "software-crypto")]
-    fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, NodeMacError<Self::SendError, Self::CapacityError>> {
-        self.remove_ephemeral(id).map_err(NodeMacError::from_infallible_error)
+    fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.remove_ephemeral(id).map_err(MacBackendError::from_infallible_error)
+    }
+}
+
+#[cfg(feature = "unsafe-advanced")]
+impl<
+        'a,
+        P: Platform,
+        const IDENTITIES: usize,
+        const PEERS: usize,
+        const CHANNELS: usize,
+        const ACKS: usize,
+        const TX: usize,
+        const FRAME: usize,
+        const DUP: usize,
+    > MacBackendInternal
+    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+{
+    fn install_pairwise_keys(
+        &self,
+        identity_id: LocalIdentityId,
+        peer_id: PeerId,
+        pairwise_keys: PairwiseKeys,
+    ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>> {
+        self.install_pairwise_keys_advanced(identity_id, peer_id, pairwise_keys)
+            .map_err(MacBackendError::from_send_error)
+    }
+
+    fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool {
+        MacHandle::cancel_pending_ack(self, identity_id, receipt)
     }
 }

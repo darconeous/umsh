@@ -9,6 +9,7 @@ default = ["std"]
 std = ["umsh-core/std", "umsh-crypto/std", "umsh-hal/std"]
 alloc = []
 software-crypto = ["umsh-crypto/software-crypto"]
+unsafe-advanced = []
 
 [dependencies]
 embedded-hal-async.workspace = true

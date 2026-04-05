@@ -1,13 +1,12 @@
+#![allow(async_fn_in_trait)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! Application-facing endpoint orchestration built on top of [`umsh-mac`](umsh_mac).
+//! Application-facing node layer built on top of [`umsh-mac`](umsh_mac).
 //!
-//! `umsh-node` is the layer between the radio-facing MAC coordinator in `umsh-mac` and the
-//! application that the user actually interacts with. Where `umsh-mac` thinks in raw frames,
-//! keys, replay windows, and transmit queues, `umsh-node` thinks in text messages, node
-//! identities, beacons, and PFS sessions. The two crates are intentionally separated: an
-//! application that wants full control over the MAC surface can use `umsh-mac` directly;
-//! `umsh-node` is the batteries-included entry point for most use cases.
+//! `umsh-node` sits between the radio-facing MAC coordinator in `umsh-mac` and the
+//! application. Where `umsh-mac` thinks in raw frames, keys, replay windows, and transmit
+//! queues, `umsh-node` provides composable abstractions for sending and receiving messages,
+//! tracking in-flight sends, and managing channel membership.
 //!
 //! This crate requires `alloc` (heap allocation for `String`, `Vec`, etc.). It is
 //! otherwise `no_std` compatible.
@@ -15,154 +14,71 @@
 //! # Architecture overview
 //!
 //! ```text
-//! ┌───────────────────────────────────────────────────────────────┐
+//! ┌──────────────────────────────────────────────────────────────┐
 //! │  Application                                                  │
-//! │  endpoint.send_text() / endpoint.handle_event() / …          │
-//! └──────────────────────────┬────────────────────────────────────┘
-//!                            │  EndpointEvent · DeferredAction
-//!                            ▼
-//! ┌───────────────────────────────────────────────────────────────┐
-//! │  Endpoint<M>  (endpoint.rs)                                   │
+//! │  TextSession · PeerConnection · BoundChannel                  │
+//! └──────────────────────┬───────────────────────────────────────┘
+//!                        │  Transport trait
+//! ┌──────────────────────┴───────────────────────────────────────┐
+//! │  LocalNode<M>                                                 │
+//! │    ├── sends down through MacBackend                          │
+//! │    └── reads events from EventDispatcher                      │
 //! │                                                               │
-//! │  ┌────────────────────┐  ┌────────────────────────────────┐   │
-//! │  │ EndpointConfig     │  │ PfsSessionManager (pfs.rs)     │   │
-//! │  │  default_mic_size  │  │  PfsSession × N                │   │
-//! │  │  beacon_interval   │  │  ephemeral MAC identity mgmt   │   │
-//! │  │  UiAcceptancePolicy│  └────────────────────────────────┘   │
-//! │  └────────────────────┘                                        │
-//! └──────────────────────────┬────────────────────────────────────┘
-//!                            │  NodeMac trait (mac.rs)
-//!                            ▼
-//! ┌───────────────────────────────────────────────────────────────┐
-//! │  umsh_mac::MacHandle  →  umsh_mac::Mac<P>                     │
-//! │  (radio, crypto, tx queue, dup cache, replay windows, …)      │
-//! └───────────────────────────────────────────────────────────────┘
+//! │  NodeRuntime (owns dispatcher, drives MAC event dispatch)     │
+//! └──────────────────────┬───────────────────────────────────────┘
+//!                        │  MacBackend trait
+//! ┌──────────────────────┴───────────────────────────────────────┐
+//! │  MacHandle → Mac<P>  (no_std, heapless)                       │
+//! └──────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Modules and key types
+//! # Key types
 //!
-//! ## [`endpoint`] — the primary application interface
+//! - [`NodeRuntime`] — owns the event dispatcher and creates [`LocalNode`] handles.
+//! - [`LocalNode`] — per-identity application handle. Implements [`Transport`] (unicast /
+//!   broadcast). Manages channel membership via `join`/`leave`/`bound_channel`.
+//! - [`BoundChannel`] — a channel bound to a `LocalNode`. Implements [`Transport`]
+//!   (blind unicast / multicast). Available with the `software-crypto` feature.
+//! - [`PeerConnection`] — relationship with one remote peer, generic over transport context.
+//! - [`Transport`] — shared send interface (`send` / `send_all`).
+//! - [`SendProgressTicket`] — lightweight polling handle for observing in-flight send
+//!   progress (`was_transmitted`, `was_acked`, `is_finished`).
+//! - [`NodeEvent`] — typed event enum delivered to registered [`EventSink`] instances.
+//! - [`MacBackend`] — pluggable MAC backend trait for testability.
 //!
-//! [`Endpoint<M>`] is the top-level type most applications interact with. It wraps a
-//! [`LocalIdentityId`](umsh_mac::LocalIdentityId) and a [`NodeMac`] handle, and provides:
+//! # Owned payload types
 //!
-//! - **High-level send helpers** — `send_text`, `send_channel_text`, `send_blind_text`,
-//!   `send_beacon`, `send_identity_beacon`, `request_path_discovery`. Each helper encodes
-//!   the appropriate `umsh-app` payload type and calls through to the underlying MAC handle.
-//! - **Event processing** — `handle_event` accepts a [`MacEventRef`](umsh_mac::MacEventRef)
-//!   (produced by the `umsh-mac` event loop), parses the payload, applies the
-//!   [`UiAcceptancePolicy`] filter, and returns an [`EventAction`] indicating whether the
-//!   event was handled inline or requires deferred async follow-up work.
-//! - **Scheduled beacons** — `send_scheduled_beacon` checks an internal timer and sends
-//!   a beacon when the configured `beacon_interval_ms` has elapsed.
-//! - **PFS session management** — when the `software-crypto` feature is enabled,
-//!   `request_pfs_session`, `end_pfs_session`, and the deferred handling of PFS MAC
-//!   commands are all routed through the endpoint. After a session is established,
-//!   subsequent `send_text` calls to that peer are automatically redirected through the
-//!   ephemeral identity and keyed to the peer's ephemeral public key.
+//! [`OwnedTextMessage`], [`OwnedNodeIdentityPayload`], [`OwnedMacCommand`] are heap-allocated
+//! equivalents of the zero-copy borrowed types from `umsh-app`, suitable for storing and
+//! cloning across async task boundaries.
 //!
-//! [`EndpointConfig`] holds the per-endpoint defaults (default MIC size, flood hops,
-//! encryption flag, beacon interval, and the [`UiAcceptancePolicy`] filter).
+//! # MAC abstraction
 //!
-//! [`UiAcceptancePolicy`] is a compact set of boolean flags that suppress specific event
-//! categories before they reach the application — for example, `allow_direct_text: false`
-//! silently drops all incoming direct unicast text messages at the endpoint layer. All
-//! flags default to `true`.
+//! [`MacBackend`] exposes the public send/configure surface of the MAC coordinator.
+//! [`MacBackendInternal`] (crate-private, requires `unsafe-advanced`) extends it with operations
+//! that can corrupt protocol state if misused (`install_pairwise_keys`,
+//! `cancel_pending_ack`). Safe PFS session management is available with
+//! `software-crypto` and builds on the public `MacBackend` surface.
 //!
-//! ## [`owned`] — heap-allocated event and payload types
-//!
-//! The `umsh-app` crate uses zero-copy borrowed types (`TextMessage<'_>`,
-//! `NodeIdentityPayload<'_>`, `MacCommand<'_>`) that borrow from the underlying frame
-//! buffer. `umsh-node` provides owned heap-allocated equivalents that can be stored,
-//! cloned, and sent across async task boundaries without lifetime constraints:
-//!
-//! - [`OwnedTextMessage`] — owned parsed text message with all optional fields.
-//! - [`OwnedNodeIdentityPayload`] — owned node identity advertisement (role, caps, name,
-//!   signature).
-//! - [`OwnedMacCommand`] — owned MAC command variant, with `Vec<u8>` for variable-length
-//!   fields like echo data.
-//! - [`EndpointEvent`] — the top-level event enum emitted by `handle_event` and
-//!   `handle_deferred`. Variants cover text received, channel text, node discovery, beacon
-//!   received, ACK confirmation, ACK timeout, PFS session lifecycle, and surfaced MAC
-//!   commands.
-//! - [`EventAction`] — the return type of `handle_event`. Either `Handled(Option<EndpointEvent>)`
-//!   for events resolved synchronously, or `NeedsAsync(DeferredAction)` for events that
-//!   require async follow-up (e.g., PFS key derivation after receiving a session response).
-//! - [`DeferredAction`] — the work item passed back to `handle_deferred` when follow-up is
-//!   needed. Currently contains only MAC command handling, but is designed to accommodate
-//!   future async event types.
-//!
-//! ## [`mac`] — MAC abstraction trait for testability
-//!
-//! [`NodeMac`] is the trait that `Endpoint` depends on instead of being generic over
-//! `MacHandle` directly. It exposes the send/configure surface of the MAC coordinator:
-//! `add_peer`, `install_pairwise_keys`, `send_broadcast`, `send_unicast`,
-//! `send_multicast`, `send_blind_unicast`, `fill_random`, `now_ms`, and (with
-//! `software-crypto`) the ephemeral identity lifecycle methods.
-//!
-//! [`MacHandle`](umsh_mac::MacHandle) implements `NodeMac`, and test code can provide a
-//! fake implementation to drive `Endpoint` deterministically without a real radio or
-//! cryptographic state — the pattern used throughout the integration tests in this file.
-//!
-//! [`NodeMacError`] normalizes the two error dimensions of a MAC handle — `Busy` (the
-//! `RefCell` was already borrowed), `Send` (a `SendError`), and `Capacity` (a
-//! `CapacityError`) — into a single error type that `EndpointError` can wrap.
-//!
-//! ## [`pfs`] — Perfect Forward Secrecy session management
-//!
-//! Available when the `software-crypto` feature is enabled. Implements the two-message
-//! PFS handshake defined in the `umsh-app` MAC command layer:
-//!
-//! 1. The initiator generates a fresh [`SoftwareIdentity`](umsh_crypto::software::SoftwareIdentity)
-//!    and sends a `PfsSessionRequest` MAC command carrying the ephemeral public key and a
-//!    requested duration.
-//! 2. The responder generates its own ephemeral identity, replies with a
-//!    `PfsSessionResponse`, derives the shared pairwise keys from the two ephemeral keys
-//!    via ECDH, and installs them into the MAC coordinator.
-//! 3. The initiator receives the `PfsSessionResponse`, performs its own ECDH, installs the
-//!    keys, and registers the ephemeral MAC identity via `register_ephemeral`.
-//!
-//! [`PfsSessionManager`] tracks all active sessions (up to `DEFAULT_MAX_PFS_SESSIONS`).
-//! Each [`PfsSession`] records the peer's long-term key, both ephemeral keys, the mapped
-//! [`LocalIdentityId`](umsh_mac::LocalIdentityId), an expiry timestamp, and the
-//! [`PfsState`] (either `Requested` or `Active`). `Endpoint` consults the session manager
-//! on every outbound unicast to transparently redirect traffic through the ephemeral
-//! identity when a session exists.
-//!
-//! ## [`error`] — endpoint error type
-//!
-//! [`EndpointError`] is the single error type returned by all `Endpoint` methods. It wraps
-//! `umsh-app` parse/encode errors, [`NodeMacError`], missing-identity / PFS-not-found
-//! errors, and (with `software-crypto`) cryptographic failures. The variants mirror the
-//! layers the operation touches: application parsing, payload encoding, MAC send, and
-//! PFS crypto.
+//! [`MacHandle`](umsh_mac::MacHandle) implements `MacBackend`, and test code can provide
+//! a fake implementation to drive the node layer deterministically.
 //!
 //! # Typical usage
 //!
 //! ```rust,ignore
-//! // After setting up mac + handle as in umsh-mac docs:
-//! let endpoint = Endpoint::new(identity_id, mac_handle, EndpointConfig {
-//!     beacon_interval_ms: Some(60_000),
-//!     ..EndpointConfig::default()
-//! });
+//! let runtime = NodeRuntime::new(mac_handle.clone());
+//! let node = runtime.create_node(identity_id, Box::new(my_sink));
 //!
-//! // Send a text message:
-//! let receipt = endpoint.send_text(&peer_key, "hello")?;
+//! // Send a raw payload via the Transport trait:
+//! let ticket = node.send(&peer_key, &payload, &SendOptions::default()).await?;
 //!
-//! // In the mac event loop callback:
-//! match endpoint.handle_event(mac_event) {
-//!     EventAction::Handled(Some(EndpointEvent::TextReceived { from, message })) => {
-//!         println!("{}: {}", from, message.body);
-//!     }
-//!     EventAction::NeedsAsync(deferred) => {
-//!         let event = endpoint.handle_deferred(deferred).await;
-//!         // ...
-//!     }
-//!     _ => {}
-//! }
+//! // Dispatch MAC events from the event loop:
+//! mac.poll_cycle(|identity_id, event| {
+//!     runtime.dispatch(identity_id, &event);
+//! }).await?;
 //!
-//! // Periodically call from the event loop:
-//! endpoint.send_scheduled_beacon(now_ms)?;
+//! // Poll ticket progress:
+//! if ticket.was_acked() { /* ... */ }
 //! ```
 
 #[cfg(not(feature = "alloc"))]
@@ -170,17 +86,33 @@ compile_error!("umsh-node currently requires the alloc feature");
 
 extern crate alloc;
 
-mod endpoint;
-mod error;
+#[cfg(feature = "software-crypto")]
+mod channel;
+mod dispatch;
+mod events;
 mod mac;
+mod node;
 mod owned;
+mod peer;
 #[cfg(feature = "software-crypto")]
 mod pfs;
+mod runtime;
+mod ticket;
+mod transport;
 
-pub use endpoint::{Endpoint, EndpointConfig, UiAcceptancePolicy};
-pub use error::EndpointError;
-pub use mac::{NodeMac, NodeMacError};
-pub use owned::{DeferredAction, EndpointEvent, EventAction, OwnedMacCommand, OwnedNodeIdentityPayload, OwnedTextMessage};
+#[cfg(feature = "software-crypto")]
+pub use channel::Channel;
+pub use dispatch::EventSink;
+pub use events::NodeEvent;
+pub use mac::{MacBackend, MacBackendError};
+#[cfg(feature = "software-crypto")]
+pub use node::BoundChannel;
+pub use node::{LocalNode, NodeError};
+pub use owned::{OwnedMacCommand, OwnedNodeIdentityPayload, OwnedTextMessage};
+pub use peer::PeerConnection;
+pub use runtime::NodeRuntime;
+pub use ticket::{SendToken, SendProgressTicket};
+pub use transport::Transport;
 #[cfg(feature = "software-crypto")]
 pub use pfs::{PfsSession, PfsSessionManager, PfsState};
 
@@ -189,111 +121,115 @@ mod tests {
     use std::{
         cell::{Cell, RefCell},
         collections::VecDeque,
+        rc::Rc,
+        task::{Context, Poll},
+    };
+    #[cfg(feature = "unsafe-advanced")]
+    use std::{
         future::Future,
         pin::pin,
-        rc::Rc,
-        task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+        task::{RawWaker, RawWakerVTable, Waker},
     };
     use core::convert::Infallible;
 
     use rand::{Rng, TryCryptoRng, TryRng};
-    use umsh_core::{ChannelId, PublicKey};
-    #[cfg(feature = "software-crypto")]
+    use umsh_core::PublicKey;
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     use umsh_crypto::software::SoftwareIdentity;
-    use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
+    use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret};
     use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
-    use umsh_mac::{CapacityError, LocalIdentityId, Mac, MacEventRef, MacHandle, OperatingPolicy, PeerCryptoState, PeerId, Platform, RepeaterConfig, SendError, SendOptions, SendReceipt};
-    #[cfg(feature = "std")]
+    use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    #[cfg(feature = "unsafe-advanced")]
+    use umsh_mac::{CapacityError, LocalIdentityId, PeerCryptoState, PeerId, SendError, SendOptions, SendReceipt};
+    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
     use umsh_mac::test_support::{make_test_mac, DummyClock as SimClock, DummyDelay as SimDelay, DummyIdentity as SimIdentity, SimulatedNetwork};
+    #[cfg(all(feature = "std", not(feature = "unsafe-advanced")))]
+    use umsh_mac::test_support::DummyDelay as SimDelay;
 
-    use crate::{Endpoint, EndpointConfig, EndpointEvent, EventAction, NodeMac, NodeMacError, OwnedMacCommand, OwnedTextMessage, UiAcceptancePolicy};
+    use crate::{NodeEvent, NodeRuntime};
+    use crate::dispatch::EventSink;
+    #[cfg(feature = "unsafe-advanced")]
+    use crate::{MacBackend, MacBackendError, OwnedMacCommand, OwnedTextMessage};
+    #[cfg(feature = "unsafe-advanced")]
+    use crate::mac::MacBackendInternal;
+    #[cfg(feature = "unsafe-advanced")]
+    use umsh_crypto::PairwiseKeys;
+    #[cfg(feature = "unsafe-advanced")]
+    use umsh_core::ChannelId;
 
-    #[test]
-    fn endpoint_send_text_queues_unicast() {
-        let mac = RefCell::new(make_mac());
-        let handle = MacHandle::new(&mac);
-        let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-        let peer_key = PublicKey([0xAB; 32]);
-        let peer_id = handle.add_peer(peer_key).unwrap();
-        handle.install_pairwise_keys(local_id, peer_id, PairwiseKeys { k_enc: [1; 16], k_mic: [2; 16] }).unwrap();
+    /// Simple EventSink that collects events into a shared Vec.
+    struct VecEventSink {
+        events: Rc<RefCell<Vec<NodeEvent>>>,
+    }
 
-        let endpoint = Endpoint::new(local_id, handle, EndpointConfig::default());
-        endpoint.send_text(&peer_key, "hello").unwrap();
+    impl VecEventSink {
+        fn new() -> (Self, Rc<RefCell<Vec<NodeEvent>>>) {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            (Self { events: events.clone() }, events)
+        }
+    }
 
-        assert_eq!(mac.borrow().tx_queue().len(), 1);
+    impl EventSink for VecEventSink {
+        fn send_event(&mut self, event: NodeEvent) {
+            self.events.borrow_mut().push(event);
+        }
     }
 
     #[test]
-    fn endpoint_handle_event_parses_text_messages() {
+    fn dispatch_delivers_text_event_to_node_sink() {
         let mac = RefCell::new(make_mac());
         let handle = MacHandle::new(&mac);
         let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-        let mut endpoint = Endpoint::new(local_id, handle, EndpointConfig::default());
-        let payload = [umsh_app::PayloadType::TextMessage as u8, 0xFF, b'h', b'i'];
 
-        match endpoint.handle_event(MacEventRef::Unicast {
+        let runtime = NodeRuntime::new(handle);
+        let (sink, events) = VecEventSink::new();
+        let _node = runtime.create_node(local_id, Box::new(sink));
+
+        let payload = [umsh_app::PayloadType::TextMessage as u8, 0xFF, b'h', b'i'];
+        runtime.dispatch(local_id, &MacEventRef::Unicast {
             from: PublicKey([0x22; 32]),
             payload: &payload,
             ack_requested: false,
-        }) {
-            EventAction::Handled(Some(EndpointEvent::TextReceived { from, message })) => {
-                assert_eq!(from, PublicKey([0x22; 32]));
-                assert_eq!(message.body, "hi");
+        });
+
+        let received = events.borrow();
+        assert_eq!(received.len(), 1);
+        match &received[0] {
+            NodeEvent::TextReceived { from, body } => {
+                assert_eq!(*from, PublicKey([0x22; 32]));
+                assert_eq!(body, "hi");
             }
-            other => panic!("unexpected event action: {other:?}"),
+            other => panic!("unexpected event: {other:?}"),
         }
     }
 
     #[test]
-    fn endpoint_beacon_schedule_fires_once_due() {
+    fn dispatch_delivers_beacon_event() {
         let mac = RefCell::new(make_mac());
         let handle = MacHandle::new(&mac);
         let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-        let mut endpoint = Endpoint::new(
-            local_id,
-            handle,
-            EndpointConfig {
-                beacon_interval_ms: Some(100),
-                ..EndpointConfig::default()
-            },
-        );
 
-        assert!(!endpoint.send_scheduled_beacon(50).unwrap());
-        assert!(endpoint.send_scheduled_beacon(100).unwrap());
-        assert_eq!(mac.borrow().tx_queue().len(), 1);
+        let runtime = NodeRuntime::new(handle);
+        let (sink, events) = VecEventSink::new();
+        let _node = runtime.create_node(local_id, Box::new(sink));
+
+        let from_hint = umsh_core::NodeHint([0xAA, 0xBB, 0xCC]);
+        runtime.dispatch(local_id, &MacEventRef::Broadcast {
+            from_hint,
+            from_key: None,
+            payload: &[],
+        });
+
+        let received = events.borrow();
+        assert_eq!(received.len(), 1);
+        assert!(matches!(&received[0], NodeEvent::BeaconReceived { from_key: None, .. }));
     }
 
+    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
     #[test]
-    fn endpoint_sync_policy_can_filter_direct_text() {
-        let mac = RefCell::new(make_mac());
-        let handle = MacHandle::new(&mac);
-        let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-        let mut endpoint = Endpoint::new(
-            local_id,
-            handle,
-            EndpointConfig {
-                ui_acceptance: UiAcceptancePolicy {
-                    allow_direct_text: false,
-                    ..UiAcceptancePolicy::default()
-                },
-                ..EndpointConfig::default()
-            },
-        );
-        let payload = [umsh_app::PayloadType::TextMessage as u8, 0xFF, b'h', b'i'];
+    fn nodes_exchange_text_over_simulated_network() {
+        use crate::Transport;
 
-        match endpoint.handle_event(MacEventRef::Unicast {
-            from: PublicKey([0x22; 32]),
-            payload: &payload,
-            ack_requested: false,
-        }) {
-            EventAction::Handled(None) => {}
-            other => panic!("unexpected event action: {other:?}"),
-        }
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn endpoints_exchange_text_over_simulated_network() {
         let network = SimulatedNetwork::new();
         let alice_radio = network.add_radio();
         let bob_radio = network.add_radio();
@@ -310,87 +246,60 @@ mod tests {
         let bob_key = PublicKey([0x22; 32]);
         let alice_id = alice_handle.add_identity(SimIdentity::new(alice_key.0)).unwrap();
         let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
-        let shared_keys = PairwiseKeys {
-            k_enc: [7; 16],
-            k_mic: [9; 16],
-        };
-        let bob_peer = alice_handle.add_peer(bob_key).unwrap();
-        let alice_peer = bob_handle.add_peer(alice_key).unwrap();
-        alice_handle.install_pairwise_keys(alice_id, bob_peer, shared_keys.clone()).unwrap();
-        bob_handle.install_pairwise_keys(bob_id, alice_peer, shared_keys).unwrap();
+        let _bob_peer = alice_handle.add_peer(bob_key).unwrap();
+        let _alice_peer = bob_handle.add_peer(alice_key).unwrap();
 
-        let alice = Endpoint::new(alice_id, alice_handle, EndpointConfig::default());
-        let mut bob = Endpoint::new(bob_id, bob_handle, EndpointConfig::default());
-        alice.send_text(&bob_key, "hello bob").unwrap();
+        let alice_runtime = NodeRuntime::new(alice_handle);
+        let bob_runtime = NodeRuntime::new(bob_handle);
+        let (alice_sink, alice_events) = VecEventSink::new();
+        let (bob_sink, bob_events) = VecEventSink::new();
+        let alice_node = alice_runtime.create_node(alice_id, Box::new(alice_sink));
+        let _bob_node = bob_runtime.create_node(bob_id, Box::new(bob_sink));
 
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
-        let mut bob_events = Vec::new();
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
-            EventAction::Handled(Some(endpoint_event)) => bob_events.push(endpoint_event),
-            EventAction::Handled(None) => {}
-            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
-        }))
-        .unwrap();
-        assert_eq!(
-            bob_events,
-            vec![EndpointEvent::TextReceived {
-                from: alice_key,
-                message: OwnedTextMessage {
-                    message_type: umsh_app::MessageType::Basic,
-                    sender_handle: None,
-                    sequence: None,
-                    sequence_reset: false,
-                    regarding: None,
-                    editing: None,
-                    bg_color: None,
-                    text_color: None,
-                    body: String::from("hello bob"),
-                },
-            }]
-        );
+        // Encode and send a text payload via the Transport trait.
+        let payload = encode_text_payload("hello bob");
+        let options = SendOptions::default()
+            .with_ack_requested(true)
+            .with_flood_hops(5);
+        let ticket = block_on_ready(alice_node.send(&bob_key, &payload, &options)).unwrap();
+        assert!(!ticket.was_transmitted());
 
-        let mut alice = alice;
-        bob.send_text(&alice_key, "hello alice").unwrap();
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
-        let mut alice_events = Vec::new();
-        // Two poll_cycles: first receives the MAC ACK for "hello bob", second
-        // receives Bob's "hello alice" text.
-        for _ in 0..2 {
-            block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, event| match alice.handle_event(event) {
-                EventAction::Handled(Some(endpoint_event)) => alice_events.push(endpoint_event),
-                EventAction::Handled(None) => {}
-                EventAction::NeedsAsync(_) => panic!("unexpected deferred action for text exchange"),
-            }))
-            .unwrap();
+        // Alice transmits.
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, event| {
+            alice_runtime.dispatch(id, &event);
+        })).unwrap();
+
+        // Bob receives.
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, event| {
+            bob_runtime.dispatch(id, &event);
+        })).unwrap();
+
+        let received = bob_events.borrow();
+        assert_eq!(received.len(), 1);
+        match &received[0] {
+            NodeEvent::TextReceived { from, body } => {
+                assert_eq!(*from, alice_key);
+                assert_eq!(body, "hello bob");
+            }
+            other => panic!("unexpected event: {other:?}"),
         }
-        assert_eq!(
-            alice_events,
-            vec![
-                EndpointEvent::AckReceived {
-                    peer: bob_key,
-                    receipt: umsh_mac::SendReceipt(0),
-                },
-                EndpointEvent::TextReceived {
-                    from: bob_key,
-                    message: OwnedTextMessage {
-                        message_type: umsh_app::MessageType::Basic,
-                        sender_handle: None,
-                        sequence: None,
-                        sequence_reset: false,
-                        regarding: None,
-                        editing: None,
-                        bg_color: None,
-                        text_color: None,
-                        body: String::from("hello alice"),
-                    },
-                },
-            ]
-        );
+
+        // Alice receives the ACK.
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, event| {
+            alice_runtime.dispatch(id, &event);
+        })).unwrap();
+
+        let alice_received = alice_events.borrow();
+        assert!(alice_received.iter().any(|e| matches!(e, NodeEvent::AckReceived { peer, .. } if *peer == bob_key)));
+        assert!(ticket.was_acked());
+        assert!(ticket.is_finished());
     }
 
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
     #[test]
-    fn endpoints_exchange_text_through_simulated_repeater() {
+    fn nodes_exchange_text_through_simulated_repeater() {
+        use crate::Transport;
+
         let network = SimulatedNetwork::new();
         let alice_radio = network.add_radio();
         let repeater_radio = network.add_radio();
@@ -417,69 +326,65 @@ mod tests {
         let _repeater_id = repeater_handle.add_identity(SimIdentity::new(repeater_key.0)).unwrap();
         let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
 
-        let shared_keys = PairwiseKeys {
-            k_enc: [5; 16],
-            k_mic: [6; 16],
-        };
-        let bob_peer = alice_handle.add_peer(bob_key).unwrap();
-        let alice_peer = bob_handle.add_peer(alice_key).unwrap();
-        alice_handle.install_pairwise_keys(alice_id, bob_peer, shared_keys.clone()).unwrap();
-        bob_handle.install_pairwise_keys(bob_id, alice_peer, shared_keys).unwrap();
+        let _bob_peer = alice_handle.add_peer(bob_key).unwrap();
+        let _alice_peer = bob_handle.add_peer(alice_key).unwrap();
 
-        let alice = Endpoint::new(alice_id, alice_handle, EndpointConfig::default());
-        let mut bob = Endpoint::new(bob_id, bob_handle, EndpointConfig::default());
-        alice.send_text(&bob_key, "via repeater").unwrap();
+        let alice_runtime = NodeRuntime::new(alice_handle);
+        let bob_runtime = NodeRuntime::new(bob_handle);
+        let (bob_sink, bob_events) = VecEventSink::new();
+        let alice_node = alice_runtime.create_node_without_sink(alice_id);
+        let _bob_node = bob_runtime.create_node(bob_id, Box::new(bob_sink));
 
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
+        let payload = encode_text_payload("via repeater");
+        let options = SendOptions::default()
+            .with_ack_requested(true)
+            .with_flood_hops(5);
+        block_on_ready(alice_node.send(&bob_key, &payload, &options)).unwrap();
 
-        let mut premature_events = Vec::new();
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
-            EventAction::Handled(Some(endpoint_event)) => premature_events.push(endpoint_event),
-            EventAction::Handled(None) => {}
-            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for repeater test"),
-        }))
-        .unwrap();
-        assert!(premature_events.is_empty());
+        // Alice transmits.
+        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, ev| alice_runtime.dispatch(id, &ev))).unwrap();
 
+        // Bob doesn't see it yet (not directly connected).
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, ev| bob_runtime.dispatch(id, &ev))).unwrap();
+        assert!(bob_events.borrow().is_empty());
+
+        // Repeater forwards.
         block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
         repeater_clock.advance_ms(1_000);
         block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
 
-        let mut bob_events = Vec::new();
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|_, event| match bob.handle_event(event) {
-            EventAction::Handled(Some(endpoint_event)) => bob_events.push(endpoint_event),
-            EventAction::Handled(None) => {}
-            EventAction::NeedsAsync(_) => panic!("unexpected deferred action for repeater test"),
-        }))
-        .unwrap();
-        assert_eq!(
-            bob_events,
-            vec![EndpointEvent::TextReceived {
-                from: alice_key,
-                message: OwnedTextMessage {
-                    message_type: umsh_app::MessageType::Basic,
-                    sender_handle: None,
-                    sequence: None,
-                    sequence_reset: false,
-                    regarding: None,
-                    editing: None,
-                    bg_color: None,
-                    text_color: None,
-                    body: String::from("via repeater"),
-                },
-            }]
-        );
+        // Bob receives the forwarded frame.
+        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, ev| bob_runtime.dispatch(id, &ev))).unwrap();
+
+        let received = bob_events.borrow();
+        assert_eq!(received.len(), 1);
+        match &received[0] {
+            NodeEvent::TextReceived { from, body } => {
+                assert_eq!(*from, alice_key);
+                assert_eq!(body, "via repeater");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
-    fn endpoint_pfs_establishes_routes_and_tears_down() {
+    fn pfs_session_manager_request_and_teardown() {
+        use crate::pfs::PfsSessionManager;
+
         let mac = FakeMac::new(vec![[3u8; 32]]);
         let peer_long_term = PublicKey([0x55; 32]);
-        let peer_ephemeral = PublicKey([0x66; 32]);
-        let mut endpoint = Endpoint::new(LocalIdentityId(1), mac.clone(), EndpointConfig::default());
+        let options = SendOptions::default().with_ack_requested(true);
 
-        endpoint.request_pfs_session(&peer_long_term, 60).unwrap();
+        let mut pfs = PfsSessionManager::new();
+        block_on_ready(pfs.request_session(
+            &mac,
+            LocalIdentityId(1),
+            &peer_long_term,
+            60,
+            &options,
+        ))
+        .unwrap();
 
         let sent = mac.take_unicasts();
         assert_eq!(sent.len(), 1);
@@ -490,42 +395,58 @@ mod tests {
             duration_minutes: 60,
         });
 
-        let response_payload = encode_mac_payload(umsh_app::MacCommand::PfsSessionResponse {
-            ephemeral_key: peer_ephemeral,
-            duration_minutes: 60,
-        });
-        let deferred = match endpoint.handle_event(MacEventRef::Unicast {
-            from: peer_long_term,
-            payload: &response_payload,
-            ack_requested: false,
-        }) {
-            EventAction::NeedsAsync(deferred) => deferred,
-            other => panic!("unexpected event action: {other:?}"),
-        };
-        let event = block_on_ready(endpoint.handle_deferred(deferred));
-        assert_eq!(event, Some(EndpointEvent::PfsSessionEstablished { peer: peer_long_term }));
-
-        endpoint.send_text(&peer_long_term, "secret").unwrap();
-        let sent = mac.take_unicasts();
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].from, LocalIdentityId(10));
-        assert_eq!(sent[0].to, peer_ephemeral);
-
-        assert!(endpoint.end_pfs_session(&peer_long_term).unwrap());
+        assert!(block_on_ready(pfs.end_session(
+            &mac,
+            LocalIdentityId(1),
+            &peer_long_term,
+            true,
+            &options,
+        ))
+        .unwrap());
         let sent = mac.take_unicasts();
         assert_eq!(sent.len(), 1);
         assert_eq!(parse_owned_mac_command(&sent[0].payload), OwnedMacCommand::EndPfsSession);
-        assert_eq!(mac.take_removed_ephemerals(), vec![LocalIdentityId(10)]);
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
-    fn endpoint_end_pfs_session_errors_when_missing() {
-        let mac = FakeMac::new(Vec::new());
-        let mut endpoint = Endpoint::new(LocalIdentityId(1), mac, EndpointConfig::default());
+    fn pfs_end_session_errors_when_missing() {
+        use crate::pfs::PfsSessionManager;
 
-        let error = endpoint.end_pfs_session(&PublicKey([0x77; 32])).unwrap_err();
-        assert!(matches!(error, crate::EndpointError::PfsSessionMissing));
+        let mac = FakeMac::new(Vec::new());
+        let options = SendOptions::default();
+        let mut pfs = PfsSessionManager::new();
+
+        let error = block_on_ready(pfs.end_session(
+            &mac,
+            LocalIdentityId(1),
+            &PublicKey([0x77; 32]),
+            true,
+            &options,
+        ))
+        .unwrap_err();
+        assert!(matches!(error, crate::NodeError::PfsSessionMissing));
+    }
+
+    #[cfg(feature = "unsafe-advanced")]
+    fn encode_text_payload(text: &str) -> Vec<u8> {
+        let message = OwnedTextMessage {
+            message_type: umsh_app::MessageType::Basic,
+            sender_handle: None,
+            sequence: None,
+            sequence_reset: false,
+            regarding: None,
+            editing: None,
+            bg_color: None,
+            text_color: None,
+            body: String::from(text),
+        };
+        let mut body = [0u8; 512];
+        let len = umsh_app::text_message::encode(&message.as_borrowed(), &mut body).unwrap();
+        let mut payload = Vec::with_capacity(len + 1);
+        payload.push(umsh_app::PayloadType::TextMessage as u8);
+        payload.extend_from_slice(&body[..len]);
+        payload
     }
 
     fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
@@ -746,13 +667,13 @@ mod tests {
         type KeyValueStore = DummyKeyValueStore;
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[derive(Clone, Default)]
     struct FakeMac {
         state: Rc<RefCell<FakeMacState>>,
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[derive(Default)]
     struct FakeMacState {
         random_blocks: VecDeque<[u8; 32]>,
@@ -765,7 +686,7 @@ mod tests {
         installed: Vec<(LocalIdentityId, PeerId, PairwiseKeys)>,
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct SentUnicast {
         from: LocalIdentityId,
@@ -774,7 +695,7 @@ mod tests {
         options: SendOptions,
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     impl FakeMac {
         fn new(random_blocks: Vec<[u8; 32]>) -> Self {
             Self {
@@ -792,17 +713,14 @@ mod tests {
             core::mem::take(&mut self.state.borrow_mut().unicasts)
         }
 
-        fn take_removed_ephemerals(&self) -> Vec<LocalIdentityId> {
-            core::mem::take(&mut self.state.borrow_mut().removed_ephemerals)
-        }
     }
 
-    #[cfg(feature = "software-crypto")]
-    impl NodeMac for FakeMac {
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    impl MacBackend for FakeMac {
         type SendError = SendError;
         type CapacityError = CapacityError;
 
-        fn add_peer(&self, key: PublicKey) -> Result<PeerId, NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
             let mut state = self.state.borrow_mut();
             if let Some((_, existing)) = state.peers.iter().find(|(existing_key, _)| *existing_key == key) {
                 return Ok(*existing);
@@ -813,50 +731,40 @@ mod tests {
             Ok(peer_id)
         }
 
-        fn add_private_channel(&self, _key: umsh_core::ChannelKey) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn add_private_channel(&self, _key: umsh_core::ChannelKey) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(())
         }
 
-        fn add_named_channel(&self, _name: &str) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn add_named_channel(&self, _name: &str) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(())
         }
 
-        fn install_pairwise_keys(
-            &self,
-            identity_id: LocalIdentityId,
-            peer_id: PeerId,
-            pairwise_keys: PairwiseKeys,
-        ) -> Result<Option<PeerCryptoState>, NodeMacError<Self::SendError, Self::CapacityError>> {
-            self.state.borrow_mut().installed.push((identity_id, peer_id, pairwise_keys));
-            Ok(None)
-        }
-
-        fn send_broadcast(
+        async fn send_broadcast(
             &self,
             _from: LocalIdentityId,
             _payload: &[u8],
             _options: &SendOptions,
-        ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
-            Ok(())
+        ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
+            Ok(SendReceipt(99))
         }
 
-        fn send_multicast(
+        async fn send_multicast(
             &self,
             _from: LocalIdentityId,
             _channel: &ChannelId,
             _payload: &[u8],
             _options: &SendOptions,
-        ) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
-            Ok(())
+        ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
+            Ok(SendReceipt(99))
         }
 
-        fn send_unicast(
+        async fn send_unicast(
             &self,
             from: LocalIdentityId,
             dst: &PublicKey,
             payload: &[u8],
             options: &SendOptions,
-        ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>> {
+        ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
             self.state.borrow_mut().unicasts.push(SentUnicast {
                 from,
                 to: *dst,
@@ -866,25 +774,25 @@ mod tests {
             Ok(Some(SendReceipt(42)))
         }
 
-        fn send_blind_unicast(
+        async fn send_blind_unicast(
             &self,
             from: LocalIdentityId,
             dst: &PublicKey,
             _channel: &ChannelId,
             payload: &[u8],
             options: &SendOptions,
-        ) -> Result<Option<SendReceipt>, NodeMacError<Self::SendError, Self::CapacityError>> {
-            self.send_unicast(from, dst, payload, options)
+        ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
+            self.send_unicast(from, dst, payload, options).await
         }
 
-        fn fill_random(&self, dest: &mut [u8]) -> Result<(), NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn fill_random(&self, dest: &mut [u8]) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
             let mut state = self.state.borrow_mut();
             let next = state.random_blocks.pop_front().expect("test rng exhausted");
             dest.copy_from_slice(&next[..dest.len()]);
             Ok(())
         }
 
-        fn now_ms(&self) -> Result<u64, NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(self.state.borrow().now_ms)
         }
 
@@ -892,30 +800,37 @@ mod tests {
             &self,
             _parent: LocalIdentityId,
             _identity: SoftwareIdentity,
-        ) -> Result<LocalIdentityId, NodeMacError<Self::SendError, Self::CapacityError>> {
+        ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>> {
             let mut state = self.state.borrow_mut();
             let id = LocalIdentityId(state.next_ephemeral_id);
             state.next_ephemeral_id = state.next_ephemeral_id.wrapping_add(1);
             Ok(id)
         }
 
-        fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, NodeMacError<Self::SendError, Self::CapacityError>> {
+        fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
             self.state.borrow_mut().removed_ephemerals.push(id);
             Ok(true)
         }
     }
 
-    #[cfg(feature = "software-crypto")]
-    fn encode_mac_payload(command: umsh_app::MacCommand<'_>) -> Vec<u8> {
-        let mut body = [0u8; 80];
-        let len = umsh_app::mac_command::encode(&command, &mut body).unwrap();
-        let mut payload = Vec::with_capacity(len + 1);
-        payload.push(umsh_app::PayloadType::MacCommand as u8);
-        payload.extend_from_slice(&body[..len]);
-        payload
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    impl MacBackendInternal for FakeMac {
+        fn install_pairwise_keys(
+            &self,
+            identity_id: LocalIdentityId,
+            peer_id: PeerId,
+            pairwise_keys: PairwiseKeys,
+        ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>> {
+            self.state.borrow_mut().installed.push((identity_id, peer_id, pairwise_keys));
+            Ok(None)
+        }
+
+        fn cancel_pending_ack(&self, _identity_id: LocalIdentityId, _receipt: SendReceipt) -> bool {
+            false
+        }
     }
 
-    #[cfg(feature = "software-crypto")]
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn parse_owned_mac_command(payload: &[u8]) -> OwnedMacCommand {
         match umsh_app::parse_payload(umsh_core::PacketType::Unicast, payload).unwrap() {
             umsh_app::PayloadRef::MacCommand(command) => OwnedMacCommand::from(command),
@@ -923,6 +838,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "unsafe-advanced")]
     fn block_on_ready<F: Future>(future: F) -> F::Output {
         fn raw_waker() -> RawWaker {
             fn clone(_: *const ()) -> RawWaker { raw_waker() }

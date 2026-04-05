@@ -2,7 +2,7 @@ use heapless::{LinearMap, Vec};
 use umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint};
 use umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
 
-use crate::{cache::ReplayWindow, CapacityError};
+use crate::{CapacityError, cache::ReplayWindow};
 
 /// Opaque identifier for one remote peer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -259,5 +259,4 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
             .push(ChannelState::new(key, derived))
             .map_err(|_| CapacityError)
     }
-
 }
