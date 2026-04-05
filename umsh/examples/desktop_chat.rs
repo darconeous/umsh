@@ -104,6 +104,9 @@ async fn run_udp_chat(
     port: u16,
     peer_key: PublicKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // This is the intended node-layer application shape: Host drives the shared MAC loop,
+    // LocalNode provides the per-identity send surface, and a payload wrapper adds text-chat
+    // convenience without moving text semantics into the node core.
     let local_identity = load_or_create_identity(&identity_path)?;
     let local_key = *local_identity.public_key();
 
@@ -132,6 +135,9 @@ async fn run_udp_chat(
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
 
     loop {
+        // `pump_once()` already waits on real MAC wake conditions. We use it here only because
+        // the example also needs to await stdin; a background UMSH task would just call
+        // `host.run().await`.
         tokio::select! {
             line = stdin.next_line() => {
                 match line {
@@ -157,6 +163,7 @@ async fn run_udp_chat(
 }
 
 async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error::Error>> {
+    // Simulated mode keeps the same layering as the real app. Only the radio backend changes.
     let local_identity = load_or_create_identity(&config.identity_path)?;
     let remote_identity = SoftwareIdentity::from_secret_bytes(&[0x55; 32]);
     let local_key = *local_identity.public_key();
@@ -211,6 +218,7 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
 
     loop {
+        // Each host is wake-driven; we select across both hosts and stdin instead of spinning.
         tokio::select! {
             line = stdin.next_line() => {
                 match line {
@@ -252,6 +260,8 @@ async fn run_serial_chat(
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "serial-radio")]
     {
+        // The serial draft path follows the same API story as UDP mode. Only the concrete
+        // radio transport differs.
         let local_identity = load_or_create_identity(&identity_path)?;
         let local_key = *local_identity.public_key();
         let session_root = unique_session_root("desktop-chat-serial");
@@ -281,6 +291,8 @@ async fn run_serial_chat(
         );
 
         loop {
+            // As above, `pump_once()` is the right primitive when UMSH is being multiplexed
+            // with another async source.
             tokio::select! {
                 line = stdin.next_line() => {
                     match line {

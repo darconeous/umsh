@@ -38,6 +38,9 @@ type RepeaterHost<'a> =
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    // This example is intentionally a simulation/demo, not the minimal repeater surface.
+    // It shows an end-to-end forwarding topology with Alice -> repeater -> Bob while still
+    // using the current Host/LocalNode/text-wrapper layering at the application edge.
     let network = SimulatedNetwork::new();
     let alice_radio = network.add_radio();
     let repeater_radio = network.add_radio();
@@ -101,6 +104,8 @@ async fn main(_spawner: Spawner) {
         .expect("alice send should queue successfully");
 
     for _ in 0..64 {
+        // Wait for whichever participant actually has work ready next rather than polling
+        // each MAC/Host on a fixed interval.
         match wait_for_any_activity(
             alice_host.pump_once(),
             repeater_handle.next_event(|_, _| {}),
@@ -161,6 +166,8 @@ where
     B: Future,
     C: Future,
 {
+    // Embassy does not offer a standard-library-style select helper here, so we build the
+    // smallest possible "wake on whichever future becomes ready first" adapter.
     let mut alice = core::pin::pin!(alice);
     let mut repeater = core::pin::pin!(repeater);
     let mut bob = core::pin::pin!(bob);
