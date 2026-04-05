@@ -1,9 +1,5 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
-#[cfg(feature = "unsafe-advanced")]
-use umsh_crypto::PairwiseKeys;
 use umsh_mac::{CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerId, Platform, SendError, SendOptions, SendReceipt};
-#[cfg(feature = "unsafe-advanced")]
-use umsh_mac::PeerCryptoState;
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
 ///
@@ -67,28 +63,6 @@ pub trait MacBackend: Clone {
 
     #[cfg(feature = "software-crypto")]
     fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>>;
-}
-
-/// Extension trait for operations that can corrupt protocol state if misused.
-///
-/// Separated from [`MacBackend`] so that these dangerous operations require
-/// explicit opt-in via the `unsafe-advanced` cargo feature. The public
-/// `MacBackend` trait exposes only safe send/query operations.
-///
-/// **Stability:** This trait is `pub(crate)` and not part of the stable
-/// public API.
-#[cfg(feature = "unsafe-advanced")]
-pub trait MacBackendInternal: MacBackend {
-    /// Install pairwise transport keys for a peer.
-    fn install_pairwise_keys(
-        &self,
-        identity_id: LocalIdentityId,
-        peer_id: PeerId,
-        pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>>;
-
-    /// Cancel a pending ACK-requested send, stopping retransmissions.
-    fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool;
 }
 
 /// Normalized wrapper around MAC-handle failures.
@@ -221,34 +195,5 @@ impl<
     #[cfg(feature = "software-crypto")]
     fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.remove_ephemeral(id).map_err(MacBackendError::from_infallible_error)
-    }
-}
-
-#[cfg(feature = "unsafe-advanced")]
-impl<
-        'a,
-        P: Platform,
-        const IDENTITIES: usize,
-        const PEERS: usize,
-        const CHANNELS: usize,
-        const ACKS: usize,
-        const TX: usize,
-        const FRAME: usize,
-        const DUP: usize,
-    > MacBackendInternal
-    for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
-{
-    fn install_pairwise_keys(
-        &self,
-        identity_id: LocalIdentityId,
-        peer_id: PeerId,
-        pairwise_keys: PairwiseKeys,
-    ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.install_pairwise_keys_advanced(identity_id, peer_id, pairwise_keys)
-            .map_err(MacBackendError::from_send_error)
-    }
-
-    fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool {
-        MacHandle::cancel_pending_ack(self, identity_id, receipt)
     }
 }

@@ -636,17 +636,12 @@ fn receive_one_delivers_broadcast_to_all_identities() {
 
     let mut seen = heapless::Vec::<(LocalIdentityId, PublicKey, heapless::Vec<u8, 8>), 4>::new();
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Broadcast {
-            from_hint: _,
-            from_key,
-            payload,
-        } = event
-        {
+        if let Some(packet) = received_of_type(&event, PacketType::Broadcast) {
             let mut body = heapless::Vec::new();
-            for byte in payload {
+            for byte in packet.payload() {
                 body.push(*byte).unwrap();
             }
-            seen.push((identity, from_key.unwrap(), body)).unwrap();
+            seen.push((identity, packet.from_key().unwrap(), body)).unwrap();
         }
     }))
     .unwrap();
@@ -670,7 +665,7 @@ fn receive_one_drops_broadcast_with_incompatible_payload_type() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if let MacEventRef::Broadcast { .. } = event {
+        if is_received_type(&event, PacketType::Broadcast) {
             seen = true;
         }
     }))
@@ -698,7 +693,7 @@ fn receive_one_drops_multicast_with_incompatible_payload_type() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if let MacEventRef::Multicast { .. } = event {
+        if is_received_type(&event, PacketType::Multicast) {
             seen = true;
         }
     }))
@@ -1363,13 +1358,13 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1403,13 +1398,13 @@ fn receive_one_auto_derives_registered_unicast_peer_state() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1449,8 +1444,8 @@ fn receive_one_delivers_unicast_without_ack_when_not_requested() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if let MacEventRef::Unicast { ack_requested, .. } = event {
-            seen = !ack_requested;
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = !packet.ack_requested();
         }
     }))
     .unwrap();
@@ -1488,7 +1483,7 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
     let mut deliveries = 0;
     assert!(
         block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::Unicast { .. }) {
+            if is_received_type(&event, PacketType::Unicast) {
                 deliveries += 1;
             }
         }))
@@ -1497,7 +1492,7 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
 
     assert!(
         !block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::Unicast { .. }) {
+            if is_received_type(&event, PacketType::Unicast) {
                 deliveries += 1;
             }
         }))
@@ -1547,13 +1542,13 @@ fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1585,7 +1580,7 @@ fn receive_one_full_key_unicast_does_not_auto_register_when_disabled() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if matches!(event, MacEventRef::Unicast { .. }) {
+        if is_received_type(&event, PacketType::Unicast) {
             seen = true;
         }
     }))
@@ -1616,13 +1611,13 @@ fn receive_one_full_key_unicast_auto_registers_when_enabled() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1663,7 +1658,7 @@ fn receive_one_hint_only_unicast_never_auto_registers_unknown_peer() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if matches!(event, MacEventRef::Unicast { .. }) {
+        if is_received_type(&event, PacketType::Unicast) {
             seen = true;
         }
     }))
@@ -1709,15 +1704,14 @@ fn receive_one_delivers_blind_unicast_and_queues_immediate_ack() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1764,15 +1758,14 @@ fn receive_one_auto_derives_registered_blind_unicast_peer_state() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1820,15 +1813,14 @@ fn receive_one_full_key_blind_unicast_auto_registers_when_enabled() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1876,7 +1868,7 @@ fn receive_one_hint_only_blind_unicast_never_auto_registers_unknown_peer() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if matches!(event, MacEventRef::BlindUnicast { .. }) {
+        if is_received_type(&event, PacketType::BlindUnicast) {
             seen = true;
         }
     }))
@@ -1922,15 +1914,14 @@ fn receive_one_delivers_unencrypted_blind_unicast() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -1977,13 +1968,13 @@ fn receive_one_delivers_source_routed_unicast_without_immediate_ack() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -2037,15 +2028,14 @@ fn receive_one_delivers_source_routed_blind_unicast_without_immediate_ack() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -2101,7 +2091,7 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
     let mut deliveries = 0;
     assert!(
         block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::BlindUnicast { .. }) {
+            if is_received_type(&event, PacketType::BlindUnicast) {
                 deliveries += 1;
             }
         }))
@@ -2110,7 +2100,7 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
 
     assert!(
         !block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::BlindUnicast { .. }) {
+            if is_received_type(&event, PacketType::BlindUnicast) {
                 deliveries += 1;
             }
         }))
@@ -2165,15 +2155,14 @@ fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
 
     let mut seen = None;
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::BlindUnicast {
-            from,
-            channel_id,
-            payload,
-            ack_requested,
-            ..
-        } = event
-        {
-            seen = Some((identity, from, channel_id, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::BlindUnicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -2266,15 +2255,14 @@ fn receive_one_delivers_multicast_for_known_channel() {
     let mut seen =
         heapless::Vec::<(LocalIdentityId, PublicKey, ChannelId, std::vec::Vec<u8>), 4>::new();
     let handled = block_on(mac.receive_one(|identity, event| {
-        if let MacEventRef::Multicast {
-            from,
-            channel_id,
-            payload,
-            ..
-        } = event
-        {
-            seen.push((identity, from, channel_id, payload.to_vec()))
-                .unwrap();
+        if let Some(packet) = received_of_type(&event, PacketType::Multicast) {
+            seen.push((
+                identity,
+                packet.from_key().unwrap(),
+                packet.channel().unwrap().id,
+                packet.payload().to_vec(),
+            ))
+            .unwrap();
         }
     }))
     .unwrap();
@@ -2313,7 +2301,7 @@ fn receive_one_drops_replayed_multicast_after_first_delivery() {
     let mut deliveries = 0;
     assert!(
         block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::Multicast { .. }) {
+            if is_received_type(&event, PacketType::Multicast) {
                 deliveries += 1;
             }
         }))
@@ -2322,7 +2310,7 @@ fn receive_one_drops_replayed_multicast_after_first_delivery() {
 
     assert!(
         !block_on(mac.receive_one(|_, event| {
-            if matches!(event, MacEventRef::Multicast { .. }) {
+            if is_received_type(&event, PacketType::Multicast) {
                 deliveries += 1;
             }
         }))
@@ -2350,7 +2338,7 @@ fn receive_one_ignores_multicast_for_unknown_channel() {
 
     let mut seen = false;
     let handled = block_on(mac.receive_one(|_, event| {
-        if matches!(event, MacEventRef::Multicast { .. }) {
+        if is_received_type(&event, PacketType::Multicast) {
             seen = true;
         }
     }))
@@ -2736,13 +2724,13 @@ fn poll_cycle_drains_tx_receives_unicast_and_sends_immediate_ack() {
 
     let mut seen = None;
     block_on(mac.poll_cycle(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();
@@ -3198,6 +3186,34 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
             .pending_ack(&receipt)
             .is_none()
     );
+}
+
+fn received_of_type<'a>(
+    event: &'a MacEventRef<'a>,
+    packet_type: PacketType,
+) -> Option<&'a crate::ReceivedPacketRef<'a>> {
+    match event {
+        MacEventRef::Received(packet) if packet_matches(packet.packet_type(), packet_type) => {
+            Some(packet)
+        }
+        _ => None,
+    }
+}
+
+fn is_received_type(event: &MacEventRef<'_>, packet_type: PacketType) -> bool {
+    received_of_type(event, packet_type).is_some()
+}
+
+fn packet_matches(actual: PacketType, expected: PacketType) -> bool {
+    match expected {
+        PacketType::Unicast => {
+            matches!(actual, PacketType::Unicast | PacketType::UnicastAckReq)
+        }
+        PacketType::BlindUnicast => {
+            matches!(actual, PacketType::BlindUnicast | PacketType::BlindUnicastAckReq)
+        }
+        _ => actual == expected,
+    }
 }
 
 fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {

@@ -32,13 +32,14 @@ pub mod prelude {
         SendReceipt,
     };
     pub use umsh_node::{
-        EventSink, LocalNode, MacBackend, MacBackendError, NodeError, NodeEvent, NodeRuntime,
-        PeerConnection, SendProgressTicket, SendToken, Transport,
+        ChannelInfoRef, Host, HostError, LocalNode, MacBackend, MacBackendError, NodeError,
+        PeerConnection, ReceivedPacketRef, SendProgressTicket, SendToken, Transport,
+        UnicastTextChatWrapper,
     };
 
     #[cfg(feature = "software-crypto")]
     pub use umsh_node::{BoundChannel, Channel};
 
     #[cfg(feature = "software-crypto")]
-    pub use umsh_node::{PfsSession, PfsSessionManager, PfsState};
+    pub use umsh_node::{PfsSession, PfsSessionManager, PfsState, PfsStatus};
 }

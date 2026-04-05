@@ -15,35 +15,43 @@
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────┐
-//! │  Application                                                  │
-//! │  TextSession · PeerConnection · BoundChannel                  │
-//! └──────────────────────┬───────────────────────────────────────┘
-//!                        │  Transport trait
+//! │  Application                                                 │
+//! │  Host · LocalNode · PeerConnection · BoundChannel            │
 //! ┌──────────────────────┴───────────────────────────────────────┐
-//! │  LocalNode<M>                                                 │
-//! │    ├── sends down through MacBackend                          │
-//! │    └── reads events from EventDispatcher                      │
-//! │                                                               │
-//! │  NodeRuntime (owns dispatcher, drives MAC event dispatch)     │
+//! │  Host                                                        │
+//! │    ├── drives the shared MAC/runtime event loop              │
+//! │    └── owns multiple LocalNode handles                       │
+//! └──────────────────────┬───────────────────────────────────────┘
+//!                        │
+//! ┌──────────────────────┴───────────────────────────────────────┐
+//! │  LocalNode<M>                                                │
+//! │    ├── sends down through MacBackend                         │
+//! │    ├── owns per-identity PFS state                           │
+//! │    └── dispatches node/peer callback subscriptions           │
 //! └──────────────────────┬───────────────────────────────────────┘
 //!                        │  MacBackend trait
 //! ┌──────────────────────┴───────────────────────────────────────┐
-//! │  MacHandle → Mac<P>  (no_std, heapless)                       │
+//! │  MacHandle → Mac<P>  (no_std, heapless)                      │
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Key types
 //!
-//! - [`NodeRuntime`] — owns the event dispatcher and creates [`LocalNode`] handles.
+//! - [`Host`] — preferred multi-identity driver. Owns the shared MAC event loop and routes
+//!   inbound traffic to the right [`LocalNode`].
 //! - [`LocalNode`] — per-identity application handle. Implements [`Transport`] (unicast /
-//!   broadcast). Manages channel membership via `join`/`leave`/`bound_channel`.
+//!   broadcast), owns PFS state, and exposes node-wide callback subscriptions.
 //! - [`BoundChannel`] — a channel bound to a `LocalNode`. Implements [`Transport`]
 //!   (blind unicast / multicast). Available with the `software-crypto` feature.
-//! - [`PeerConnection`] — relationship with one remote peer, generic over transport context.
+//! - [`PeerConnection`] — relationship with one remote peer, generic over transport context,
+//!   with peer-scoped callback subscriptions.
+//! - [`UnicastTextChatWrapper`] — payload-level convenience adapter for basic unicast text chat.
 //! - [`Transport`] — shared send interface (`send` / `send_all`).
 //! - [`SendProgressTicket`] — lightweight polling handle for observing in-flight send
 //!   progress (`was_transmitted`, `was_acked`, `is_finished`).
-//! - [`NodeEvent`] — typed event enum delivered to registered [`EventSink`] instances.
+//! - [`SubscriptionHandle`] — opaque token used to remove a previously-registered callback.
+//! - [`ReceivedPacketRef`] — borrowed receive view passed into low-level `on_receive(...)`
+//!   handlers and wrappers.
 //! - [`MacBackend`] — pluggable MAC backend trait for testability.
 //!
 //! # Owned payload types
@@ -55,10 +63,8 @@
 //! # MAC abstraction
 //!
 //! [`MacBackend`] exposes the public send/configure surface of the MAC coordinator.
-//! [`MacBackendInternal`] (crate-private, requires `unsafe-advanced`) extends it with operations
-//! that can corrupt protocol state if misused (`install_pairwise_keys`,
-//! `cancel_pending_ack`). Safe PFS session management is available with
-//! `software-crypto` and builds on the public `MacBackend` surface.
+//! Safe PFS session management is available with `software-crypto` and builds on
+//! that public surface directly.
 //!
 //! [`MacHandle`](umsh_mac::MacHandle) implements `MacBackend`, and test code can provide
 //! a fake implementation to drive the node layer deterministically.
@@ -66,19 +72,23 @@
 //! # Typical usage
 //!
 //! ```rust,ignore
-//! let runtime = NodeRuntime::new(mac_handle.clone());
-//! let node = runtime.create_node(identity_id, Box::new(my_sink));
+//! let mut host = Host::new(mac_handle);
+//! let node = host.add_node(identity_id);
+//! let peer = node.peer(peer_key)?;
+//! let chat = UnicastTextChatWrapper::from_peer(&peer);
 //!
-//! // Send a raw payload via the Transport trait:
-//! let ticket = node.send(&peer_key, &payload, &SendOptions::default()).await?;
+//! chat.on_text(|body| {
+//!     println!("peer says: {body}");
+//! });
 //!
-//! // Dispatch MAC events from the event loop:
-//! mac.poll_cycle(|identity_id, event| {
-//!     runtime.dispatch(identity_id, &event);
-//! }).await?;
+//! let ticket = chat.send_text("hello", &SendOptions::default()).await?;
 //!
-//! // Poll ticket progress:
-//! if ticket.was_acked() { /* ... */ }
+//! loop {
+//!     host.pump_once().await?;
+//!     if ticket.was_acked() {
+//!         break;
+//!     }
+//! }
 //! ```
 
 #[cfg(not(feature = "alloc"))]
@@ -89,29 +99,32 @@ extern crate alloc;
 #[cfg(feature = "software-crypto")]
 mod channel;
 mod dispatch;
-mod events;
+mod host;
 mod mac;
 mod node;
 mod owned;
 mod peer;
 #[cfg(feature = "software-crypto")]
 mod pfs;
-mod runtime;
 mod ticket;
+mod text_chat;
 mod transport;
+mod receive;
 
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
-pub use dispatch::EventSink;
-pub use events::NodeEvent;
+pub use host::{Host, HostError};
 pub use mac::{MacBackend, MacBackendError};
 #[cfg(feature = "software-crypto")]
 pub use node::BoundChannel;
-pub use node::{LocalNode, NodeError};
+pub use node::{LocalNode, NodeError, SubscriptionHandle};
+#[cfg(feature = "software-crypto")]
+pub use node::PfsStatus;
 pub use owned::{OwnedMacCommand, OwnedNodeIdentityPayload, OwnedTextMessage};
 pub use peer::PeerConnection;
-pub use runtime::NodeRuntime;
+pub use receive::{ChannelInfoRef, ReceivedPacketRef};
 pub use ticket::{SendToken, SendProgressTicket};
+pub use text_chat::UnicastTextChatWrapper;
 pub use transport::Transport;
 #[cfg(feature = "software-crypto")]
 pub use pfs::{PfsSession, PfsSessionManager, PfsState};
@@ -119,252 +132,240 @@ pub use pfs::{PfsSession, PfsSessionManager, PfsState};
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::{Cell, RefCell},
+        cell::RefCell,
         collections::VecDeque,
-        rc::Rc,
-        task::{Context, Poll},
-    };
-    #[cfg(feature = "unsafe-advanced")]
-    use std::{
         future::Future,
         pin::pin,
-        task::{RawWaker, RawWakerVTable, Waker},
+        rc::Rc,
+        task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     };
-    use core::convert::Infallible;
-
-    use rand::{Rng, TryCryptoRng, TryRng};
-    use umsh_core::PublicKey;
+    use umsh_core::{NodeHint, PublicKey};
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     use umsh_crypto::software::SoftwareIdentity;
-    use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret};
-    use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
-    use umsh_mac::{Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    use umsh_crypto::NodeIdentity;
+    use umsh_mac::MacEventRef;
     #[cfg(feature = "unsafe-advanced")]
-    use umsh_mac::{CapacityError, LocalIdentityId, PeerCryptoState, PeerId, SendError, SendOptions, SendReceipt};
-    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
-    use umsh_mac::test_support::{make_test_mac, DummyClock as SimClock, DummyDelay as SimDelay, DummyIdentity as SimIdentity, SimulatedNetwork};
-    #[cfg(all(feature = "std", not(feature = "unsafe-advanced")))]
-    use umsh_mac::test_support::DummyDelay as SimDelay;
+    use umsh_mac::{CapacityError, LocalIdentityId, PeerId, SendError, SendOptions, SendReceipt};
 
-    use crate::{NodeEvent, NodeRuntime};
-    use crate::dispatch::EventSink;
+    use crate::ReceivedPacketRef;
     #[cfg(feature = "unsafe-advanced")]
-    use crate::{MacBackend, MacBackendError, OwnedMacCommand, OwnedTextMessage};
+    use crate::UnicastTextChatWrapper;
     #[cfg(feature = "unsafe-advanced")]
-    use crate::mac::MacBackendInternal;
-    #[cfg(feature = "unsafe-advanced")]
-    use umsh_crypto::PairwiseKeys;
+    use crate::{MacBackend, MacBackendError, OwnedMacCommand, OwnedTextMessage, SendToken};
     #[cfg(feature = "unsafe-advanced")]
     use umsh_core::ChannelId;
-
-    /// Simple EventSink that collects events into a shared Vec.
-    struct VecEventSink {
-        events: Rc<RefCell<Vec<NodeEvent>>>,
-    }
-
-    impl VecEventSink {
-        fn new() -> (Self, Rc<RefCell<Vec<NodeEvent>>>) {
-            let events = Rc::new(RefCell::new(Vec::new()));
-            (Self { events: events.clone() }, events)
-        }
-    }
-
-    impl EventSink for VecEventSink {
-        fn send_event(&mut self, event: NodeEvent) {
-            self.events.borrow_mut().push(event);
-        }
-    }
-
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
-    fn dispatch_delivers_text_event_to_node_sink() {
-        let mac = RefCell::new(make_mac());
-        let handle = MacHandle::new(&mac);
-        let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    fn unicast_text_chat_wrapper_sends_and_receives_text_from_raw_packets() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
 
-        let runtime = NodeRuntime::new(handle);
-        let (sink, events) = VecEventSink::new();
-        let _node = runtime.create_node(local_id, Box::new(sink));
+        let mac = FakeMac::new(Vec::new());
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(LocalIdentityId(1), mac.clone(), dispatcher, membership, state);
 
-        let payload = [umsh_app::PayloadType::TextMessage as u8, 0xFF, b'h', b'i'];
-        runtime.dispatch(local_id, &MacEventRef::Unicast {
-            from: PublicKey([0x22; 32]),
-            payload: &payload,
-            ack_requested: false,
-        });
+        let alice_key = PublicKey([0x61; 32]);
+        let bob_key = PublicKey([0x72; 32]);
+        let alice = node.peer(alice_key).unwrap();
+        let _bob = node.peer(bob_key).unwrap();
+        let chat = UnicastTextChatWrapper::from_peer(&alice);
 
-        let received = events.borrow();
-        assert_eq!(received.len(), 1);
-        match &received[0] {
-            NodeEvent::TextReceived { from, body } => {
-                assert_eq!(*from, PublicKey([0x22; 32]));
-                assert_eq!(body, "hi");
+        let received = Rc::new(RefCell::new(Vec::new()));
+        {
+            let received = received.clone();
+            chat.on_text(move |body| {
+                received.borrow_mut().push(body.to_string());
+            });
+        }
+
+        block_on_ready(chat.send_text(
+            "hello over wrapper",
+            &SendOptions::default().with_ack_requested(true),
+        ))
+        .unwrap();
+        let sent = mac.take_unicasts().pop().expect("wrapper send");
+        match umsh_app::parse_payload(umsh_core::PacketType::Unicast, &sent.payload).unwrap() {
+            umsh_app::PayloadRef::TextMessage(message) => {
+                assert_eq!(message.body, "hello over wrapper");
             }
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn dispatch_delivers_beacon_event() {
-        let mac = RefCell::new(make_mac());
-        let handle = MacHandle::new(&mac);
-        let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-
-        let runtime = NodeRuntime::new(handle);
-        let (sink, events) = VecEventSink::new();
-        let _node = runtime.create_node(local_id, Box::new(sink));
-
-        let from_hint = umsh_core::NodeHint([0xAA, 0xBB, 0xCC]);
-        runtime.dispatch(local_id, &MacEventRef::Broadcast {
-            from_hint,
-            from_key: None,
-            payload: &[],
-        });
-
-        let received = events.borrow();
-        assert_eq!(received.len(), 1);
-        assert!(matches!(&received[0], NodeEvent::BeaconReceived { from_key: None, .. }));
-    }
-
-    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
-    #[test]
-    fn nodes_exchange_text_over_simulated_network() {
-        use crate::Transport;
-
-        let network = SimulatedNetwork::new();
-        let alice_radio = network.add_radio();
-        let bob_radio = network.add_radio();
-        network.connect_bidirectional(alice_radio.id(), bob_radio.id());
-
-        let alice_clock = SimClock::new(1_000);
-        let bob_clock = SimClock::new(1_000);
-        let alice_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(alice_radio, alice_clock));
-        let bob_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(bob_radio, bob_clock));
-        let alice_handle = MacHandle::new(&alice_mac);
-        let bob_handle = MacHandle::new(&bob_mac);
-
-        let alice_key = PublicKey([0x11; 32]);
-        let bob_key = PublicKey([0x22; 32]);
-        let alice_id = alice_handle.add_identity(SimIdentity::new(alice_key.0)).unwrap();
-        let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
-        let _bob_peer = alice_handle.add_peer(bob_key).unwrap();
-        let _alice_peer = bob_handle.add_peer(alice_key).unwrap();
-
-        let alice_runtime = NodeRuntime::new(alice_handle);
-        let bob_runtime = NodeRuntime::new(bob_handle);
-        let (alice_sink, alice_events) = VecEventSink::new();
-        let (bob_sink, bob_events) = VecEventSink::new();
-        let alice_node = alice_runtime.create_node(alice_id, Box::new(alice_sink));
-        let _bob_node = bob_runtime.create_node(bob_id, Box::new(bob_sink));
-
-        // Encode and send a text payload via the Transport trait.
-        let payload = encode_text_payload("hello bob");
-        let options = SendOptions::default()
-            .with_ack_requested(true)
-            .with_flood_hops(5);
-        let ticket = block_on_ready(alice_node.send(&bob_key, &payload, &options)).unwrap();
-        assert!(!ticket.was_transmitted());
-
-        // Alice transmits.
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, event| {
-            alice_runtime.dispatch(id, &event);
-        })).unwrap();
-
-        // Bob receives.
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, event| {
-            bob_runtime.dispatch(id, &event);
-        })).unwrap();
-
-        let received = bob_events.borrow();
-        assert_eq!(received.len(), 1);
-        match &received[0] {
-            NodeEvent::TextReceived { from, body } => {
-                assert_eq!(*from, alice_key);
-                assert_eq!(body, "hello bob");
-            }
-            other => panic!("unexpected event: {other:?}"),
+            other => panic!("unexpected wrapper payload: {other:?}"),
         }
 
-        // Alice receives the ACK.
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, event| {
-            alice_runtime.dispatch(id, &event);
-        })).unwrap();
+        let incoming = encode_text_payload("hello from callbacks");
+        let consumed = node.dispatch_received_packet(&test_unicast_packet(alice_key, &incoming));
+        assert!(consumed);
+        assert_eq!(received.borrow().as_slice(), ["hello from callbacks"]);
 
-        let alice_received = alice_events.borrow();
-        assert!(alice_received.iter().any(|e| matches!(e, NodeEvent::AckReceived { peer, .. } if *peer == bob_key)));
+        let ignored = encode_text_payload("ignored");
+        let consumed = node.dispatch_received_packet(&test_unicast_packet(bob_key, &ignored));
+        assert!(!consumed);
+        assert_eq!(received.borrow().as_slice(), ["hello from callbacks"]);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn peer_receive_handlers_precede_node_receive_handlers() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(Vec::new());
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let peer = PublicKey([0x41; 32]);
+        let peer_connection = node.peer(peer).unwrap();
+
+        let call_order = Rc::new(RefCell::new(Vec::new()));
+        {
+            let call_order = call_order.clone();
+            peer_connection.on_receive(move |_| {
+                call_order.borrow_mut().push("peer");
+                true
+            });
+        }
+        {
+            let call_order = call_order.clone();
+            node.on_receive(move |_| {
+                call_order.borrow_mut().push("node");
+                true
+            });
+        }
+
+        assert!(node.dispatch_received_packet(&test_unicast_packet(peer, &[0x01, 0x02])));
+        assert_eq!(call_order.borrow().as_slice(), ["peer"]);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn callbacks_observe_control_side_events_and_peer_ack_state() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(Vec::new());
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+
+        let peer = PublicKey([0x42; 32]);
+        let peer_connection = node.peer(peer).unwrap();
+        let node_discovery = Rc::new(RefCell::new(Vec::new()));
+        let beacons = Rc::new(RefCell::new(Vec::new()));
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let peer_acks = Rc::new(RefCell::new(Vec::new()));
+        let peer_timeouts = Rc::new(RefCell::new(Vec::new()));
+
+        {
+            let node_discovery = node_discovery.clone();
+            node.on_node_discovered(move |key, name| {
+                node_discovery
+                    .borrow_mut()
+                    .push((key, name.map(str::to_string)));
+            });
+        }
+        {
+            let beacons = beacons.clone();
+            node.on_beacon(move |from_hint, from_key| {
+                beacons.borrow_mut().push((from_hint, from_key));
+            });
+        }
+        {
+            let commands = commands.clone();
+            node.on_mac_command(move |from, command| {
+                commands.borrow_mut().push((from, command.clone()));
+            });
+        }
+        {
+            let peer_acks = peer_acks.clone();
+            peer_connection.on_ack_received(move |token| {
+                peer_acks.borrow_mut().push(token);
+            });
+        }
+        {
+            let peer_timeouts = peer_timeouts.clone();
+            peer_connection.on_ack_timeout(move |token| {
+                peer_timeouts.borrow_mut().push(token);
+            });
+        }
+
+        let token = SendToken::new(LocalIdentityId(1), SendReceipt(12));
+        let timeout_token = SendToken::new(LocalIdentityId(1), SendReceipt(13));
+        let hint = NodeHint([1, 2, 3]);
+        let command = OwnedMacCommand::EchoRequest { data: vec![9, 8, 7] };
+
+        node.dispatch_node_discovered(peer, Some("alice"));
+        node.dispatch_beacon(hint, Some(peer));
+        node.dispatch_mac_command(peer, &command);
+        node.dispatch_ack_received(peer, token);
+        node.dispatch_ack_timeout(peer, timeout_token);
+
+        assert_eq!(
+            node_discovery.borrow().as_slice(),
+            &[(peer, Some(String::from("alice")))]
+        );
+        assert_eq!(beacons.borrow().as_slice(), &[(hint, Some(peer))]);
+        assert_eq!(commands.borrow().as_slice(), &[(peer, command)]);
+        assert_eq!(peer_acks.borrow().as_slice(), &[token]);
+        assert_eq!(peer_timeouts.borrow().as_slice(), &[timeout_token]);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn pfs_routed_send_tracks_ack_against_ephemeral_identity() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac.clone(),
+            dispatcher.clone(),
+            membership,
+            state,
+        );
+
+        let peer = PublicKey([0x55; 32]);
+        let peer_connection = node.peer(peer).unwrap();
+        let options = SendOptions::default().with_ack_requested(true);
+
+        block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
+        let request = mac.take_unicasts().pop().expect("request send");
+        let request_command = parse_owned_mac_command(&request.payload);
+        let request_ephemeral = match request_command {
+            OwnedMacCommand::PfsSessionRequest { ephemeral_key, .. } => ephemeral_key,
+            other => panic!("unexpected request payload: {other:?}"),
+        };
+
+        block_on_ready(node.handle_pfs_command(
+            &peer,
+            &OwnedMacCommand::PfsSessionResponse {
+                ephemeral_key: PublicKey([0x44; 32]),
+                duration_minutes: 60,
+            },
+            &options,
+        ))
+        .unwrap();
+
+        let payload = encode_text_payload("hello over pfs");
+        let ticket = block_on_ready(peer_connection.send(&payload, &options)).unwrap();
+        let sent = mac.take_unicasts().pop().expect("pfs-routed send");
+        assert_eq!(sent.from, LocalIdentityId(10));
+        assert_eq!(sent.to, PublicKey([0x44; 32]));
+
+        let pairwise_from_pfs = PublicKey([0x44; 32]);
+        let _ = request_ephemeral; // Keeps the request path explicit in the test setup.
+        dispatcher.borrow_mut().dispatch_ticket_state(
+            sent.from,
+            &MacEventRef::AckReceived {
+                peer: pairwise_from_pfs,
+                receipt: SendReceipt(42),
+            },
+        );
         assert!(ticket.was_acked());
         assert!(ticket.is_finished());
-    }
-
-    #[cfg(all(feature = "std", feature = "unsafe-advanced"))]
-    #[test]
-    fn nodes_exchange_text_through_simulated_repeater() {
-        use crate::Transport;
-
-        let network = SimulatedNetwork::new();
-        let alice_radio = network.add_radio();
-        let repeater_radio = network.add_radio();
-        let bob_radio = network.add_radio();
-        network.connect_bidirectional(alice_radio.id(), repeater_radio.id());
-        network.connect_bidirectional(repeater_radio.id(), bob_radio.id());
-
-        let alice_clock = SimClock::new(1_000);
-        let repeater_clock = SimClock::new(1_000);
-        let bob_clock = SimClock::new(1_000);
-        let alice_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(alice_radio, alice_clock));
-        let repeater_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(repeater_radio, repeater_clock.clone()));
-        let bob_mac = RefCell::new(make_test_mac::<4, 16, 8, 16, 16, 256, 64>(bob_radio, bob_clock));
-        repeater_mac.borrow_mut().repeater_config_mut().enabled = true;
-
-        let alice_handle = MacHandle::new(&alice_mac);
-        let repeater_handle = MacHandle::new(&repeater_mac);
-        let bob_handle = MacHandle::new(&bob_mac);
-
-        let alice_key = PublicKey([0x31; 32]);
-        let repeater_key = PublicKey([0x42; 32]);
-        let bob_key = PublicKey([0x53; 32]);
-        let alice_id = alice_handle.add_identity(SimIdentity::new(alice_key.0)).unwrap();
-        let _repeater_id = repeater_handle.add_identity(SimIdentity::new(repeater_key.0)).unwrap();
-        let bob_id = bob_handle.add_identity(SimIdentity::new(bob_key.0)).unwrap();
-
-        let _bob_peer = alice_handle.add_peer(bob_key).unwrap();
-        let _alice_peer = bob_handle.add_peer(alice_key).unwrap();
-
-        let alice_runtime = NodeRuntime::new(alice_handle);
-        let bob_runtime = NodeRuntime::new(bob_handle);
-        let (bob_sink, bob_events) = VecEventSink::new();
-        let alice_node = alice_runtime.create_node_without_sink(alice_id);
-        let _bob_node = bob_runtime.create_node(bob_id, Box::new(bob_sink));
-
-        let payload = encode_text_payload("via repeater");
-        let options = SendOptions::default()
-            .with_ack_requested(true)
-            .with_flood_hops(5);
-        block_on_ready(alice_node.send(&bob_key, &payload, &options)).unwrap();
-
-        // Alice transmits.
-        block_on_ready(alice_mac.borrow_mut().poll_cycle(|id, ev| alice_runtime.dispatch(id, &ev))).unwrap();
-
-        // Bob doesn't see it yet (not directly connected).
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, ev| bob_runtime.dispatch(id, &ev))).unwrap();
-        assert!(bob_events.borrow().is_empty());
-
-        // Repeater forwards.
-        block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
-        repeater_clock.advance_ms(1_000);
-        block_on_ready(repeater_mac.borrow_mut().poll_cycle(|_, _| {})).unwrap();
-
-        // Bob receives the forwarded frame.
-        block_on_ready(bob_mac.borrow_mut().poll_cycle(|id, ev| bob_runtime.dispatch(id, &ev))).unwrap();
-
-        let received = bob_events.borrow();
-        assert_eq!(received.len(), 1);
-        match &received[0] {
-            NodeEvent::TextReceived { from, body } => {
-                assert_eq!(*from, alice_key);
-                assert_eq!(body, "via repeater");
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -449,222 +450,31 @@ mod tests {
         payload
     }
 
-    fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
-        Mac::new(
-            DummyRadio::default(),
-            CryptoEngine::new(DummyAes, DummySha),
-            DummyClock::default(),
-            DummyRng::default(),
-            DummyCounterStore,
-            RepeaterConfig::default(),
-            OperatingPolicy::default(),
+    fn test_unicast_packet<'a>(from: PublicKey, payload: &'a [u8]) -> ReceivedPacketRef<'a> {
+        let wire = Box::leak(payload.to_vec().into_boxed_slice());
+        let header = umsh_core::PacketHeader {
+            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Unicast, false, false, false),
+            options_range: 0..0,
+            flood_hops: None,
+            dst: None,
+            channel: None,
+            ack_dst: None,
+            source: umsh_core::SourceAddrRef::Hint(from.hint()),
+            sec_info: None,
+            body_range: 0..wire.len(),
+            mic_range: wire.len()..wire.len(),
+            total_len: wire.len(),
+        };
+        ReceivedPacketRef::new(
+            wire,
+            wire,
+            header,
+            umsh_core::ParsedOptions::default(),
+            Some(from),
+            Some(from.hint()),
+            true,
+            None,
         )
-    }
-
-    struct DummyIdentity {
-        public_key: PublicKey,
-    }
-
-    impl DummyIdentity {
-        fn new(bytes: [u8; 32]) -> Self {
-            Self { public_key: PublicKey(bytes) }
-        }
-    }
-
-    impl NodeIdentity for DummyIdentity {
-        type Error = ();
-
-        fn public_key(&self) -> &PublicKey {
-            &self.public_key
-        }
-
-        async fn sign(&self, _message: &[u8]) -> Result<[u8; 64], Self::Error> {
-            Ok([0u8; 64])
-        }
-
-        async fn agree(&self, peer: &PublicKey) -> Result<SharedSecret, Self::Error> {
-            let mut out = [0u8; 32];
-            for (index, byte) in out.iter_mut().enumerate() {
-                *byte = self.public_key.0[index] ^ peer.0[index];
-            }
-            Ok(SharedSecret(out))
-        }
-    }
-
-    struct DummyCipher {
-        key: [u8; 16],
-    }
-
-    impl AesCipher for DummyCipher {
-        fn encrypt_block(&self, block: &mut [u8; 16]) {
-            for (byte, key) in block.iter_mut().zip(self.key.iter()) {
-                *byte ^= *key;
-            }
-        }
-
-        fn decrypt_block(&self, block: &mut [u8; 16]) {
-            self.encrypt_block(block);
-        }
-    }
-
-    struct DummyAes;
-
-    impl AesProvider for DummyAes {
-        type Cipher = DummyCipher;
-
-        fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher {
-            DummyCipher { key: *key }
-        }
-    }
-
-    struct DummySha;
-
-    impl Sha256Provider for DummySha {
-        fn hash(&self, data: &[&[u8]]) -> [u8; 32] {
-            let mut out = [0u8; 32];
-            for chunk in data {
-                for (index, byte) in chunk.iter().enumerate() {
-                    out[index % 32] ^= *byte;
-                }
-            }
-            out
-        }
-
-        fn hmac(&self, key: &[u8], data: &[&[u8]]) -> [u8; 32] {
-            let mut out = [0u8; 32];
-            for (index, byte) in key.iter().enumerate() {
-                out[index % 32] ^= *byte;
-            }
-            for chunk in data {
-                for (index, byte) in chunk.iter().enumerate() {
-                    out[index % 32] ^= *byte;
-                }
-            }
-            out
-        }
-    }
-
-    #[derive(Default)]
-    struct DummyRadio {
-        transmitted: Vec<Vec<u8>>,
-        received: VecDeque<Vec<u8>>,
-    }
-
-    impl Radio for DummyRadio {
-        type Error = ();
-
-        async fn transmit(&mut self, data: &[u8], _options: TxOptions) -> Result<(), TxError<Self::Error>> {
-            self.transmitted.push(data.to_vec());
-            Ok(())
-        }
-
-        fn poll_receive(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>> {
-            if let Some(frame) = self.received.pop_front() {
-                let len = frame.len();
-                buf[..len].copy_from_slice(&frame);
-                Poll::Ready(Ok(RxInfo { len, rssi: -40, snr: 10 }))
-            } else {
-                Poll::Pending
-            }
-        }
-
-        fn max_frame_size(&self) -> usize {
-            256
-        }
-
-        fn t_frame_ms(&self) -> u32 {
-            10
-        }
-    }
-
-    #[derive(Default)]
-    struct DummyClock {
-        now_ms: Cell<u64>,
-    }
-
-    impl Clock for DummyClock {
-        fn now_ms(&self) -> u64 {
-            self.now_ms.get()
-        }
-    }
-
-    #[derive(Default)]
-    struct DummyRng(u8);
-
-    impl TryRng for DummyRng {
-        type Error = Infallible;
-
-        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-            let mut bytes = [0u8; 4];
-            self.fill_bytes(&mut bytes);
-            Ok(u32::from_le_bytes(bytes))
-        }
-
-        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-            let mut bytes = [0u8; 8];
-            self.fill_bytes(&mut bytes);
-            Ok(u64::from_le_bytes(bytes))
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-            for byte in dest.iter_mut() {
-                *byte = self.0;
-                self.0 = self.0.wrapping_add(1);
-            }
-            Ok(())
-        }
-    }
-
-    impl TryCryptoRng for DummyRng {}
-
-    struct DummyCounterStore;
-
-    impl CounterStore for DummyCounterStore {
-        type Error = ();
-
-        async fn load(&self, _context: &[u8]) -> Result<u32, Self::Error> {
-            Ok(0)
-        }
-
-        async fn store(&self, _context: &[u8], _value: u32) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        async fn flush(&self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
-    struct DummyKeyValueStore;
-
-    impl KeyValueStore for DummyKeyValueStore {
-        type Error = ();
-
-        async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-            Ok(None)
-        }
-
-        async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
-    struct DummyPlatform;
-
-    impl Platform for DummyPlatform {
-        type Identity = DummyIdentity;
-        type Aes = DummyAes;
-        type Sha = DummySha;
-        type Radio = DummyRadio;
-        type Delay = SimDelay;
-        type Clock = DummyClock;
-        type Rng = DummyRng;
-        type CounterStore = DummyCounterStore;
-        type KeyValueStore = DummyKeyValueStore;
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -683,7 +493,6 @@ mod tests {
         unicasts: Vec<SentUnicast>,
         removed_ephemerals: Vec<LocalIdentityId>,
         peers: Vec<(PublicKey, PeerId)>,
-        installed: Vec<(LocalIdentityId, PeerId, PairwiseKeys)>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -810,23 +619,6 @@ mod tests {
         fn remove_ephemeral(&self, id: LocalIdentityId) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
             self.state.borrow_mut().removed_ephemerals.push(id);
             Ok(true)
-        }
-    }
-
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
-    impl MacBackendInternal for FakeMac {
-        fn install_pairwise_keys(
-            &self,
-            identity_id: LocalIdentityId,
-            peer_id: PeerId,
-            pairwise_keys: PairwiseKeys,
-        ) -> Result<Option<PeerCryptoState>, MacBackendError<Self::SendError, Self::CapacityError>> {
-            self.state.borrow_mut().installed.push((identity_id, peer_id, pairwise_keys));
-            Ok(None)
-        }
-
-        fn cancel_pending_ack(&self, _identity_id: LocalIdentityId, _receipt: SendReceipt) -> bool {
-            false
         }
     }
 

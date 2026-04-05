@@ -1750,11 +1750,17 @@ impl<
             delivered = true;
             on_event(
                 LocalIdentityId(index as u8),
-                crate::MacEventRef::Broadcast {
-                    from_hint,
+                crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
+                    &buf[..frame_len],
+                    &buf[header.body_range.clone()],
+                    header.clone(),
+                    ParsedOptions::extract(&buf[..frame_len], header.options_range.clone())
+                        .unwrap_or_default(),
                     from_key,
-                    payload: &buf[header.body_range.clone()],
-                },
+                    Some(from_hint),
+                    false,
+                    None,
+                )),
             );
         }
         delivered
@@ -1842,11 +1848,17 @@ impl<
 
                 on_event(
                     local_id,
-                    crate::MacEventRef::Unicast {
-                        from: peer_key,
-                        payload: &buf[body_range],
-                        ack_requested: header.ack_requested(),
-                    },
+                    crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
+                        &original[..frame_len],
+                        &buf[body_range],
+                        header.clone(),
+                        ParsedOptions::extract(&original[..frame_len], header.options_range.clone())
+                            .unwrap_or_default(),
+                        Some(peer_key),
+                        Some(peer_key.hint()),
+                        true,
+                        None,
+                    )),
                 );
                 handled = true;
                 break;
@@ -1906,12 +1918,25 @@ impl<
                                 delivered = true;
                                 on_event(
                                     LocalIdentityId(index as u8),
-                                    crate::MacEventRef::Multicast {
-                                        from,
-                                        channel_id,
-                                        channel_key: channel_key.clone(),
-                                        payload: &buf[body_range.clone()],
-                                    },
+                                    crate::MacEventRef::Received(
+                                        crate::ReceivedPacketRef::new(
+                                            &original[..frame_len],
+                                            &buf[body_range.clone()],
+                                            header.clone(),
+                                            ParsedOptions::extract(
+                                                &original[..frame_len],
+                                                header.options_range.clone(),
+                                            )
+                                            .unwrap_or_default(),
+                                            Some(from),
+                                            Some(from.hint()),
+                                            true,
+                                            Some(crate::ChannelInfoRef {
+                                                id: channel_id,
+                                                key: &channel_key,
+                                            }),
+                                        ),
+                                    ),
                                 );
                             }
                             delivered
@@ -2007,13 +2032,23 @@ impl<
 
                         on_event(
                             local_id,
-                            crate::MacEventRef::BlindUnicast {
-                                from: peer_key,
-                                channel_id,
-                                channel_key: resolved_channel_key.clone(),
-                                payload: &buf[body_range],
-                                ack_requested: header.ack_requested(),
-                            },
+                            crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
+                                &original[..frame_len],
+                                &buf[body_range],
+                                header.clone(),
+                                ParsedOptions::extract(
+                                    &original[..frame_len],
+                                    header.options_range.clone(),
+                                )
+                                .unwrap_or_default(),
+                                Some(peer_key),
+                                Some(peer_key.hint()),
+                                true,
+                                Some(crate::ChannelInfoRef {
+                                    id: channel_id,
+                                    key: &resolved_channel_key,
+                                }),
+                            )),
                         );
                         handled = true;
                         break;

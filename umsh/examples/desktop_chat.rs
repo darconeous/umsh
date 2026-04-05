@@ -22,13 +22,10 @@ use umsh::{
     },
     hal::Radio,
     mac::{
-        LocalIdentityId, Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions,
+        Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions,
         test_support::SimulatedNetwork,
     },
-    node::{
-        EventSink, LocalNode, NodeEvent, NodeRuntime, OwnedMacCommand, PfsSessionManager,
-        Transport,
-    },
+    node::{Host, PeerConnection, UnicastTextChatWrapper},
     tokio_support::{
         StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio,
     },
@@ -52,137 +49,29 @@ type ChatMac<R> = Mac<ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FR
 type ChatHandle<'a, R> =
     MacHandle<'a, ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 
-/// Simple EventSink that stores events in a shared Vec.
-struct VecSink {
-    events: Rc<RefCell<Vec<NodeEvent>>>,
+type ChatHost<'a, R> = Host<'a, ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
+
+type ChatPeer<'a, R> = PeerConnection<umsh::node::LocalNode<ChatHandle<'a, R>>>;
+type ChatText<'a, R> = UnicastTextChatWrapper<umsh::node::LocalNode<ChatHandle<'a, R>>>;
+
+struct OutputQueue {
+    lines: Rc<RefCell<Vec<String>>>,
 }
 
-impl EventSink for VecSink {
-    fn send_event(&mut self, event: NodeEvent) {
-        self.events.borrow_mut().push(event);
-    }
-}
-
-struct ExamplePfs<'a, R: Radio> {
-    parent_id: LocalIdentityId,
-    manager: PfsSessionManager,
-    session_nodes: Vec<(LocalIdentityId, LocalNode<ChatHandle<'a, R>>)>,
-}
-
-impl<'a, R: Radio> ExamplePfs<'a, R> {
-    fn new(parent_id: LocalIdentityId) -> Self {
+impl OutputQueue {
+    fn new() -> Self {
         Self {
-            parent_id,
-            manager: PfsSessionManager::new(),
-            session_nodes: Vec::new(),
+            lines: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
-    fn active_route(
-        &self,
-        handle: &ChatHandle<'a, R>,
-        peer: &PublicKey,
-    ) -> Result<Option<(LocalIdentityId, PublicKey)>, Box<dyn std::error::Error>> {
-        let now_ms = handle
-            .now_ms()
-            .map_err(|_| std::io::Error::other("clock lookup failed"))?;
-        Ok(self.manager.active_route(peer, now_ms))
+    fn sink(&self) -> Rc<RefCell<Vec<String>>> {
+        self.lines.clone()
     }
 
-    fn sync_active_nodes(
-        &mut self,
-        runtime: &NodeRuntime<ChatHandle<'a, R>>,
-        events: &Rc<RefCell<Vec<NodeEvent>>>,
-    ) {
-        for session in self.manager.sessions() {
-            if session.state != umsh::node::PfsState::Active {
-                continue;
-            }
-            if self
-                .session_nodes
-                .iter()
-                .any(|(id, _)| *id == session.local_ephemeral_id)
-            {
-                continue;
-            }
-            let sink = VecSink {
-                events: events.clone(),
-            };
-            let node = runtime.create_node(session.local_ephemeral_id, Box::new(sink));
-            self.session_nodes.push((session.local_ephemeral_id, node));
-        }
-    }
-
-    async fn handle_command(
-        &mut self,
-        handle: &ChatHandle<'a, R>,
-        runtime: &NodeRuntime<ChatHandle<'a, R>>,
-        events: &Rc<RefCell<Vec<NodeEvent>>>,
-        from: PublicKey,
-        command: &OwnedMacCommand,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let options = default_chat_options();
-        match *command {
-            OwnedMacCommand::PfsSessionRequest {
-                ephemeral_key,
-                duration_minutes,
-            } => {
-                self.manager
-                    .accept_request(
-                        handle,
-                        self.parent_id,
-                        from,
-                        ephemeral_key,
-                        duration_minutes,
-                        &options,
-                    )
-                    .await
-                    .map_err(|error| {
-                        std::io::Error::other(format!("accept pfs request failed: {error:?}"))
-                    })?;
-                self.sync_active_nodes(runtime, events);
-                Ok(Some(format!(
-                    "accepted pfs request from {}",
-                    hex_encode(&from.0[..4])
-                )))
-            }
-            OwnedMacCommand::PfsSessionResponse {
-                ephemeral_key,
-                duration_minutes,
-            } => {
-                let activated = self
-                    .manager
-                    .accept_response(
-                        handle,
-                        self.parent_id,
-                        from,
-                        ephemeral_key,
-                        duration_minutes,
-                    )
-                    .map_err(|error| {
-                        std::io::Error::other(format!("accept pfs response failed: {error:?}"))
-                    })?;
-                if activated {
-                    self.sync_active_nodes(runtime, events);
-                    Ok(Some(format!(
-                        "pfs established with {}",
-                        hex_encode(&from.0[..4])
-                    )))
-                } else {
-                    Ok(None)
-                }
-            }
-            OwnedMacCommand::EndPfsSession => {
-                let _ = self
-                    .manager
-                    .end_session(handle, self.parent_id, &from, false, &options)
-                    .await
-                    .map_err(|error| {
-                        std::io::Error::other(format!("end pfs session failed: {error:?}"))
-                    })?;
-                Ok(Some(format!("pfs ended with {}", hex_encode(&from.0[..4]))))
-            }
-            _ => Ok(None),
+    fn flush(&self) {
+        for line in self.lines.borrow_mut().drain(..) {
+            println!("{line}");
         }
     }
 }
@@ -227,15 +116,14 @@ async fn run_udp_chat(
     let local_id = local_handle
         .add_identity(local_identity)
         .expect("local identity should fit");
-    let _peer_id = local_handle.add_peer(peer_key).expect("peer should fit");
-
-    let runtime = NodeRuntime::new(local_handle);
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let sink = VecSink {
-        events: events.clone(),
-    };
-    let node = runtime.create_node(local_id, Box::new(sink));
-    let mut pfs = ExamplePfs::new(local_id);
+    let mut host = ChatHost::new(local_handle);
+    let node = host.add_node(local_id);
+    let peer = node
+        .peer(peer_key)
+        .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
+    let chat = ChatText::from_peer(&peer);
+    let outputs = OutputQueue::new();
+    register_peer_callbacks(&chat, &peer, outputs.sink());
 
     print_banner("udp-multicast", local_key, Some(peer_key));
     println!("group: {group}:{port}");
@@ -248,16 +136,7 @@ async fn run_udp_chat(
             line = stdin.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        match handle_user_input(
-                            &local_handle,
-                            &runtime,
-                            &events,
-                            &node,
-                            &mut pfs,
-                            &peer_key,
-                            &line,
-                        )
-                        .await? {
+                        match handle_user_input(&chat, &peer, &line).await? {
                             UserInputOutcome::Continue(Some(message)) => println!("{message}"),
                             UserInputOutcome::Continue(None) => {}
                             UserInputOutcome::Quit => break,
@@ -267,14 +146,11 @@ async fn run_udp_chat(
                     Err(error) => return Err(Box::new(error)),
                 }
             }
-            result = run_mac_event(&local_mac, &runtime) => {
-                result?;
+            result = host.pump_once() => {
+                result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
             }
         }
-
-        for event in drain_events(&local_handle, &runtime, &events, &mut pfs).await? {
-            println!("{}", format_event(&event));
-        }
+        outputs.flush();
     }
 
     Ok(())
@@ -307,27 +183,27 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
         .add_identity(remote_identity)
         .expect("remote identity should fit");
 
-    let _remote_peer = local_handle
-        .add_peer(remote_key)
-        .expect("remote peer should fit");
-    let _local_peer = remote_handle
-        .add_peer(local_key)
-        .expect("local peer should fit for remote side");
-
-    let local_runtime = NodeRuntime::new(local_handle);
-    let remote_runtime = NodeRuntime::new(remote_handle);
-    let local_events = Rc::new(RefCell::new(Vec::new()));
-    let remote_events = Rc::new(RefCell::new(Vec::new()));
-    let local_sink = VecSink {
-        events: local_events.clone(),
-    };
-    let remote_sink = VecSink {
-        events: remote_events.clone(),
-    };
-    let local_node = local_runtime.create_node(local_id, Box::new(local_sink));
-    let remote_node = remote_runtime.create_node(remote_id, Box::new(remote_sink));
-    let mut local_pfs = ExamplePfs::new(local_id);
-    let mut remote_pfs = ExamplePfs::new(remote_id);
+    let mut local_host = ChatHost::new(local_handle);
+    let mut remote_host = ChatHost::new(remote_handle);
+    let local_node = local_host.add_node(local_id);
+    let remote_node = remote_host.add_node(remote_id);
+    let local_peer = local_node
+        .peer(remote_key)
+        .map_err(|error| std::io::Error::other(format!("local peer setup failed: {error:?}")))?;
+    let remote_peer = remote_node
+        .peer(local_key)
+        .map_err(|error| std::io::Error::other(format!("remote peer setup failed: {error:?}")))?;
+    let local_chat = ChatText::from_peer(&local_peer);
+    let remote_chat = ChatText::from_peer(&remote_peer);
+    let outputs = OutputQueue::new();
+    let remote_echoes = Rc::new(RefCell::new(Vec::<String>::new()));
+    register_peer_callbacks(&local_chat, &local_peer, outputs.sink());
+    {
+        let remote_echoes = remote_echoes.clone();
+        remote_chat.on_text(move |body| {
+            remote_echoes.borrow_mut().push(body.to_string());
+        });
+    }
 
     print_banner("simulated", local_key, Some(remote_key));
     let mut stdin = BufReader::new(io::stdin()).lines();
@@ -339,16 +215,7 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
             line = stdin.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        match handle_user_input(
-                            &local_handle,
-                            &local_runtime,
-                            &local_events,
-                            &local_node,
-                            &mut local_pfs,
-                            &remote_key,
-                            &line,
-                        )
-                        .await? {
+                        match handle_user_input(&local_chat, &local_peer, &line).await? {
                             UserInputOutcome::Continue(Some(message)) => println!("{message}"),
                             UserInputOutcome::Continue(None) => {}
                             UserInputOutcome::Quit => break,
@@ -358,33 +225,20 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
                     Err(error) => return Err(Box::new(error)),
                 }
             }
-            result = run_mac_event(&local_mac, &local_runtime) => {
-                result?;
+            result = local_host.pump_once() => {
+                result.map_err(|error| std::io::Error::other(format!("local host pump failed: {error:?}")))?;
             }
-            result = run_mac_event(&remote_mac, &remote_runtime) => {
-                result?;
+            result = remote_host.pump_once() => {
+                result.map_err(|error| std::io::Error::other(format!("remote host pump failed: {error:?}")))?;
             }
         }
 
-        // Echo received messages back from the remote side.
-        for event in drain_events(&remote_handle, &remote_runtime, &remote_events, &mut remote_pfs).await? {
-            if let NodeEvent::TextReceived { body, .. } = &event {
-                let echo_payload = encode_text_payload(&format!("echo: {body}"));
-                let _ = send_payload(
-                    &remote_handle,
-                    &remote_node,
-                    &remote_pfs,
-                    &local_key,
-                    &echo_payload,
-                    &default_chat_options(),
-                )
+        for body in remote_echoes.borrow_mut().drain(..) {
+            let _ = remote_chat
+                .send_text(&format!("echo: {body}"), &default_chat_options())
                 .await;
-            }
         }
-
-        for event in drain_events(&local_handle, &local_runtime, &local_events, &mut local_pfs).await? {
-            println!("{}", format_event(&event));
-        }
+        outputs.flush();
     }
 
     Ok(())
@@ -409,15 +263,14 @@ async fn run_serial_chat(
         let local_id = local_handle
             .add_identity(local_identity)
             .expect("local identity should fit");
-        let _peer_id = local_handle.add_peer(peer_key).expect("peer should fit");
-
-        let runtime = NodeRuntime::new(local_handle);
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let sink = VecSink {
-            events: events.clone(),
-        };
-        let node = runtime.create_node(local_id, Box::new(sink));
-        let mut pfs = ExamplePfs::new(local_id);
+        let mut host = ChatHost::new(local_handle);
+        let node = host.add_node(local_id);
+        let peer = node
+            .peer(peer_key)
+            .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
+        let chat = ChatText::from_peer(&peer);
+        let outputs = OutputQueue::new();
+        register_peer_callbacks(&chat, &peer, outputs.sink());
 
         print_banner("serial-draft", local_key, Some(peer_key));
         let mut stdin = BufReader::new(io::stdin()).lines();
@@ -432,16 +285,7 @@ async fn run_serial_chat(
                 line = stdin.next_line() => {
                     match line {
                         Ok(Some(line)) => {
-                            match handle_user_input(
-                                &local_handle,
-                                &runtime,
-                                &events,
-                                &node,
-                                &mut pfs,
-                                &peer_key,
-                                &line,
-                            )
-                            .await? {
+                            match handle_user_input(&chat, &peer, &line).await? {
                                 UserInputOutcome::Continue(Some(message)) => println!("{message}"),
                                 UserInputOutcome::Continue(None) => {}
                                 UserInputOutcome::Quit => break,
@@ -451,14 +295,11 @@ async fn run_serial_chat(
                         Err(error) => return Err(Box::new(error)),
                     }
                 }
-                result = run_mac_event(&local_mac, &runtime) => {
-                    result?;
+                result = host.pump_once() => {
+                    result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
                 }
             }
-
-            for event in drain_events(&local_handle, &runtime, &events, &mut pfs).await? {
-                println!("{}", format_event(&event));
-            }
+            outputs.flush();
         }
 
         return Ok(());
@@ -477,12 +318,8 @@ enum UserInputOutcome {
 }
 
 async fn handle_user_input<'a, R: Radio>(
-    handle: &ChatHandle<'a, R>,
-    runtime: &NodeRuntime<ChatHandle<'a, R>>,
-    events: &Rc<RefCell<Vec<NodeEvent>>>,
-    node: &LocalNode<ChatHandle<'a, R>>,
-    pfs: &mut ExamplePfs<'a, R>,
-    peer_key: &PublicKey,
+    chat: &ChatText<'a, R>,
+    peer: &ChatPeer<'a, R>,
     line: &str,
 ) -> Result<UserInputOutcome, Box<dyn std::error::Error>> {
     let trimmed = line.trim();
@@ -491,153 +328,76 @@ async fn handle_user_input<'a, R: Radio>(
     }
 
     if let Some(command) = trimmed.strip_prefix("/pfs") {
-        return handle_pfs_command(handle, runtime, events, pfs, peer_key, command.trim()).await;
+        return handle_pfs_command(peer, command.trim()).await;
     }
 
-    let payload = encode_text_payload(line);
-    send_payload(handle, node, pfs, peer_key, &payload, &default_chat_options()).await?;
+    chat.send_text(line, &default_chat_options())
+        .await
+        .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
     Ok(UserInputOutcome::Continue(None))
 }
 
 async fn handle_pfs_command<'a, R: Radio>(
-    handle: &ChatHandle<'a, R>,
-    runtime: &NodeRuntime<ChatHandle<'a, R>>,
-    events: &Rc<RefCell<Vec<NodeEvent>>>,
-    pfs: &mut ExamplePfs<'a, R>,
-    peer_key: &PublicKey,
+    peer: &ChatPeer<'a, R>,
     args: &str,
 ) -> Result<UserInputOutcome, Box<dyn std::error::Error>> {
     match args {
         "" => {
-            pfs.manager
-                .request_session(
-                    handle,
-                    pfs.parent_id,
-                    peer_key,
-                    60,
-                    &default_chat_options(),
-                )
+            let _ = peer
+                .request_pfs(60, &default_chat_options())
                 .await
                 .map_err(|error| {
                     std::io::Error::other(format!("pfs request failed: {error:?}"))
                 })?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for 60 minutes",
-                hex_encode(&peer_key.0[..4])
+                hex_encode(&peer.peer().0[..4])
             ))))
         }
         "end" => {
-            let _ = pfs
-                .manager
-                .end_session(
-                    handle,
-                    pfs.parent_id,
-                    peer_key,
-                    true,
-                    &default_chat_options(),
-                )
+            peer.end_pfs(&default_chat_options())
                 .await
                 .map_err(|error| {
-                    std::io::Error::other(format!("end pfs session failed: {error:?}"))
+                    std::io::Error::other(format!("end pfs failed: {error:?}"))
                 })?;
-            let _ = drain_events(handle, runtime, events, pfs).await?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "ended pfs with {}",
-                hex_encode(&peer_key.0[..4])
+                hex_encode(&peer.peer().0[..4])
             ))))
         }
         "status" => {
-            if let Some((local_id, peer_ephemeral)) = pfs.active_route(handle, peer_key)? {
-                Ok(UserInputOutcome::Continue(Some(format!(
+            let message = match peer
+                .pfs_status()
+                .map_err(|error| std::io::Error::other(format!("pfs status failed: {error:?}")))?
+            {
+                umsh::node::PfsStatus::Inactive => String::from("pfs inactive"),
+                umsh::node::PfsStatus::Requested => String::from("pfs requested"),
+                umsh::node::PfsStatus::Active {
+                    local_ephemeral_id,
+                    peer_ephemeral,
+                    ..
+                } => format!(
                     "pfs active: local slot {} -> {}",
-                    local_id.0,
+                    local_ephemeral_id.0,
                     hex_encode(&peer_ephemeral.0[..4])
-                ))))
-            } else {
-                Ok(UserInputOutcome::Continue(Some(String::from(
-                    "pfs inactive",
-                ))))
-            }
+                ),
+            };
+            Ok(UserInputOutcome::Continue(Some(message)))
         }
         minutes => {
             let duration_minutes: u16 = minutes.parse()?;
-            pfs.manager
-                .request_session(
-                    handle,
-                    pfs.parent_id,
-                    peer_key,
-                    duration_minutes,
-                    &default_chat_options(),
-                )
+            let _ = peer
+                .request_pfs(duration_minutes, &default_chat_options())
                 .await
                 .map_err(|error| {
                     std::io::Error::other(format!("pfs request failed: {error:?}"))
                 })?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for {duration_minutes} minutes",
-                hex_encode(&peer_key.0[..4])
+                hex_encode(&peer.peer().0[..4])
             ))))
         }
     }
-}
-
-async fn send_payload<'a, R: Radio>(
-    handle: &ChatHandle<'a, R>,
-    node: &LocalNode<ChatHandle<'a, R>>,
-    pfs: &ExamplePfs<'a, R>,
-    peer_key: &PublicKey,
-    payload: &[u8],
-    options: &SendOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some((local_id, peer_ephemeral)) = pfs.active_route(handle, peer_key)? {
-        handle
-            .send_unicast(local_id, &peer_ephemeral, payload, options)
-            .await
-            .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
-        return Ok(());
-    }
-
-    node.send(peer_key, payload, options)
-        .await
-        .map_err(|error| std::io::Error::other(format!("send failed: {error:?}")))?;
-    Ok(())
-}
-
-async fn drain_events<'a, R: Radio>(
-    handle: &ChatHandle<'a, R>,
-    runtime: &NodeRuntime<ChatHandle<'a, R>>,
-    events: &Rc<RefCell<Vec<NodeEvent>>>,
-    pfs: &mut ExamplePfs<'a, R>,
-) -> Result<Vec<NodeEvent>, Box<dyn std::error::Error>> {
-    let drained: Vec<NodeEvent> = events.borrow_mut().drain(..).collect();
-    let mut remaining = Vec::with_capacity(drained.len());
-    for event in drained {
-        match &event {
-            NodeEvent::MacCommandReceived { from, command } => {
-                if let Some(message) = pfs
-                    .handle_command(handle, runtime, events, *from, command)
-                    .await?
-                {
-                    println!("{message}");
-                } else {
-                    remaining.push(event);
-                }
-            }
-            _ => remaining.push(event),
-        }
-    }
-    let now_ms = handle
-        .now_ms()
-        .map_err(|_| std::io::Error::other("clock lookup failed"))?;
-    for peer in pfs
-        .manager
-        .expire_sessions(handle, now_ms)
-        .map_err(|error| std::io::Error::other(format!("expire pfs sessions failed: {error:?}")))?
-    {
-        println!("pfs expired with {}", hex_encode(&peer.0[..4]));
-    }
-    pfs.sync_active_nodes(runtime, events);
-    Ok(remaining)
 }
 
 fn default_chat_options() -> SendOptions {
@@ -646,44 +406,37 @@ fn default_chat_options() -> SendOptions {
         .with_flood_hops(5)
 }
 
-fn encode_text_payload(text: &str) -> Vec<u8> {
-    use umsh::app::{PayloadType, text_message};
-    use umsh::node::OwnedTextMessage;
+fn register_peer_callbacks<'a, R: Radio>(
+    chat: &ChatText<'a, R>,
+    peer: &ChatPeer<'a, R>,
+    lines: Rc<RefCell<Vec<String>>>,
+) {
+    let peer_key = *peer.peer();
+    let text_lines = lines.clone();
+    chat.on_text(move |body| {
+        text_lines.borrow_mut().push(format!(
+            "[{}] {}",
+            hex_encode(&peer_key.0[..4]),
+            body
+        ));
+    });
 
-    let message = OwnedTextMessage {
-        message_type: umsh::app::MessageType::Basic,
-        sender_handle: None,
-        sequence: None,
-        sequence_reset: false,
-        regarding: None,
-        editing: None,
-        bg_color: None,
-        text_color: None,
-        body: String::from(text),
-    };
-    let mut body = [0u8; 512];
-    let len = text_message::encode(&message.as_borrowed(), &mut body).unwrap();
-    let mut payload = Vec::with_capacity(len + 1);
-    payload.push(PayloadType::TextMessage as u8);
-    payload.extend_from_slice(&body[..len]);
-    payload
-}
+    let peer_key = *peer.peer();
+    let pfs_lines = lines.clone();
+    peer.on_pfs_established(move || {
+        pfs_lines.borrow_mut().push(format!(
+            "pfs established with {}",
+            hex_encode(&peer_key.0[..4])
+        ));
+    });
 
-async fn run_mac_event<R>(
-    mac: &RefCell<ChatMac<R>>,
-    runtime: &NodeRuntime<ChatHandle<'_, R>>,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    R: Radio,
-    R::Error: core::fmt::Debug,
-{
-    mac.borrow_mut()
-        .next_event(|identity_id, event| {
-            runtime.dispatch(identity_id, &event);
-        })
-        .await
-        .map_err(|error| format!("mac error: {error:?}"))?;
-    Ok(())
+    let peer_key = *peer.peer();
+    peer.on_pfs_ended(move || {
+        lines.borrow_mut().push(format!(
+            "pfs ended with {}",
+            hex_encode(&peer_key.0[..4])
+        ));
+    });
 }
 
 fn build_mac<R>(radio: R, counter_root: PathBuf) -> Result<ChatMac<R>, Box<dyn std::error::Error>>
@@ -719,50 +472,6 @@ fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity, Box<dyn std:
             Ok(SoftwareIdentity::from_secret_bytes(&secret))
         }
         Err(error) => Err(Box::new(error)),
-    }
-}
-
-fn format_event(event: &NodeEvent) -> String {
-    match event {
-        NodeEvent::TextReceived { from, body } => {
-            format!("[{}] {}", hex_encode(&from.0[..4]), body)
-        }
-        NodeEvent::ChannelTextReceived {
-            from,
-            channel_id,
-            body,
-            ..
-        } => format!(
-            "[{} @ {}] {}",
-            hex_encode(&from.0[..4]),
-            hex_encode(&channel_id.0),
-            body
-        ),
-        NodeEvent::AckReceived { peer, .. } => {
-            format!("ack received from {}", hex_encode(&peer.0[..4]))
-        }
-        NodeEvent::AckTimeout { peer, .. } => {
-            format!("ack timeout waiting for {}", hex_encode(&peer.0[..4]))
-        }
-        NodeEvent::BeaconReceived { from_hint, .. } => {
-            format!("beacon from {}", hex_encode(&from_hint.0))
-        }
-        NodeEvent::NodeDiscovered { key, .. } => {
-            format!("node discovered {}", hex_encode(&key.0[..4]))
-        }
-        NodeEvent::MacCommandReceived { from, command } => {
-            format!(
-                "mac command {:?} from {}",
-                command,
-                hex_encode(&from.0[..4])
-            )
-        }
-        NodeEvent::PfsSessionEstablished { peer } => {
-            format!("pfs established with {}", hex_encode(&peer.0[..4]))
-        }
-        NodeEvent::PfsSessionEnded { peer } => {
-            format!("pfs ended with {}", hex_encode(&peer.0[..4]))
-        }
     }
 }
 

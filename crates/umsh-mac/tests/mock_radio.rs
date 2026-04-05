@@ -76,13 +76,19 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
 
     let mut seen = None;
     block_on(mac.poll_cycle(|identity, event| {
-        if let MacEventRef::Unicast {
-            from,
-            payload,
-            ack_requested,
-        } = event
-        {
-            seen = Some((identity, from, payload.to_vec(), ack_requested));
+        if let MacEventRef::Received(packet) = event {
+            if !matches!(
+                packet.packet_type(),
+                umsh_core::PacketType::Unicast | umsh_core::PacketType::UnicastAckReq
+            ) {
+                return;
+            }
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload().to_vec(),
+                packet.ack_requested(),
+            ));
         }
     }))
     .unwrap();

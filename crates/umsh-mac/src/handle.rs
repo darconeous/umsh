@@ -7,7 +7,7 @@ use umsh_hal::{Clock, CounterStore};
 use crate::{
     CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES,
     DEFAULT_PEERS, DEFAULT_TX, Platform,
-    coordinator::{CounterPersistenceError, LocalIdentityId, Mac, SendError},
+    coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
     peers::PeerId,
     send::{SendOptions, SendReceipt},
 };
@@ -265,6 +265,18 @@ impl<
         mac.send_blind_unicast(from, dst, channel, payload, options)
             .await
             .map_err(MacHandleError::Inner)
+    }
+
+    /// Drive the shared MAC until one wake cycle completes and invoke `on_event` for emitted events.
+    pub async fn next_event(
+        &self,
+        on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+        let mut mac = self
+            .mac
+            .try_borrow_mut()
+            .map_err(|_| MacHandleError::Busy)?;
+        mac.next_event(on_event).await.map_err(MacHandleError::Inner)
     }
 
     /// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.

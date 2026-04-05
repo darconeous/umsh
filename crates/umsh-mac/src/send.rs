@@ -1,5 +1,8 @@
 use heapless::Vec;
-use umsh_core::{ChannelId, ChannelKey, MicSize, NodeHint, PublicKey, RouterHint};
+use umsh_core::{
+    ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType,
+    ParsedOptions, PublicKey, RouterHint, SecInfo,
+};
 
 use crate::{CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
 
@@ -591,34 +594,158 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
 
 /// Borrowing view of an inbound MAC event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MacEventRef<'a> {
-    /// Accepted unicast payload.
-    Unicast {
-        from: PublicKey,
+pub struct ChannelInfoRef<'a> {
+    pub id: ChannelId,
+    pub key: &'a ChannelKey,
+}
+
+/// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceivedPacketRef<'a> {
+    wire: &'a [u8],
+    payload: &'a [u8],
+    header: PacketHeader,
+    options: ParsedOptions,
+    from_key: Option<PublicKey>,
+    from_hint: Option<NodeHint>,
+    source_authenticated: bool,
+    channel: Option<ChannelInfoRef<'a>>,
+}
+
+impl<'a> ReceivedPacketRef<'a> {
+    pub fn new(
+        wire: &'a [u8],
         payload: &'a [u8],
-        ack_requested: bool,
-    },
-    /// Accepted multicast payload.
-    Multicast {
-        from: PublicKey,
-        channel_id: ChannelId,
-        channel_key: ChannelKey,
-        payload: &'a [u8],
-    },
-    /// Accepted blind-unicast payload.
-    BlindUnicast {
-        from: PublicKey,
-        channel_id: ChannelId,
-        channel_key: ChannelKey,
-        payload: &'a [u8],
-        ack_requested: bool,
-    },
-    /// Accepted broadcast payload or beacon.
-    Broadcast {
-        from_hint: NodeHint,
+        header: PacketHeader,
+        options: ParsedOptions,
         from_key: Option<PublicKey>,
-        payload: &'a [u8],
-    },
+        from_hint: Option<NodeHint>,
+        source_authenticated: bool,
+        channel: Option<ChannelInfoRef<'a>>,
+    ) -> Self {
+        Self {
+            wire,
+            payload,
+            header,
+            options,
+            from_key,
+            from_hint,
+            source_authenticated,
+            channel,
+        }
+    }
+
+    pub fn packet_type(&self) -> PacketType {
+        self.header.packet_type()
+    }
+
+    pub fn header(&self) -> &PacketHeader {
+        &self.header
+    }
+
+    pub fn options(&self) -> &ParsedOptions {
+        &self.options
+    }
+
+    pub fn wire_bytes(&self) -> &'a [u8] {
+        self.wire
+    }
+
+    pub fn payload(&self) -> &'a [u8] {
+        self.payload
+    }
+
+    pub fn wire_body(&self) -> &'a [u8] {
+        self.wire
+            .get(self.header.body_range.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn from_key(&self) -> Option<PublicKey> {
+        self.from_key
+    }
+
+    pub fn from_hint(&self) -> Option<NodeHint> {
+        self.from_hint
+    }
+
+    pub fn source_authenticated(&self) -> bool {
+        self.source_authenticated
+    }
+
+    pub fn channel(&self) -> Option<ChannelInfoRef<'a>> {
+        self.channel
+    }
+
+    pub fn ack_requested(&self) -> bool {
+        self.packet_type().ack_requested()
+    }
+
+    pub fn is_secure(&self) -> bool {
+        self.packet_type().is_secure()
+    }
+
+    pub fn sec_info(&self) -> Option<SecInfo> {
+        self.header.sec_info
+    }
+
+    pub fn encrypted(&self) -> bool {
+        self.sec_info()
+            .map(|sec| sec.scf.encrypted())
+            .unwrap_or(false)
+    }
+
+    pub fn frame_counter(&self) -> Option<u32> {
+        self.sec_info().map(|sec| sec.frame_counter)
+    }
+
+    pub fn salt(&self) -> Option<u16> {
+        self.sec_info().and_then(|sec| sec.salt)
+    }
+
+    pub fn mic_size(&self) -> Option<MicSize> {
+        self.sec_info()
+            .and_then(|sec| sec.scf.mic_size().ok())
+    }
+
+    pub fn mic(&self) -> &'a [u8] {
+        self.wire
+            .get(self.header.mic_range.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn flood_hops(&self) -> Option<FloodHops> {
+        self.header.flood_hops
+    }
+
+    pub fn source_route(&self) -> Option<&'a [u8]> {
+        self.options
+            .source_route
+            .as_ref()
+            .and_then(|range| self.wire.get(range.clone()))
+    }
+
+    pub fn trace_route(&self) -> Option<&'a [u8]> {
+        self.options
+            .trace_route
+            .as_ref()
+            .and_then(|range| self.wire.get(range.clone()))
+    }
+
+    pub fn source_route_hop_count(&self) -> usize {
+        self.source_route().map(|route| route.len() / 2).unwrap_or(0)
+    }
+
+    pub fn trace_route_hop_count(&self) -> usize {
+        self.trace_route().map(|route| route.len() / 2).unwrap_or(0)
+    }
+}
+
+/// Borrowing view of an inbound MAC event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MacEventRef<'a> {
+    /// Accepted inbound packet with parsed metadata and resolved sender/channel information.
+    Received(ReceivedPacketRef<'a>),
     /// Matching transport ACK received.
     AckReceived {
         peer: PublicKey,

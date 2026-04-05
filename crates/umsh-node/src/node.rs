@@ -1,24 +1,176 @@
 use alloc::rc::Rc;
+use alloc::boxed::Box;
 #[cfg(feature = "software-crypto")]
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use core::num::NonZeroU32;
 
 use umsh_core::PublicKey;
 use umsh_mac::{LocalIdentityId, SendOptions};
+use umsh_core::NodeHint;
 
 #[cfg(feature = "software-crypto")]
 use crate::channel::Channel;
 use crate::dispatch::EventDispatcher;
 use crate::mac::MacBackend;
+use crate::owned::OwnedMacCommand;
 use crate::peer::PeerConnection;
+use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
+#[cfg(feature = "software-crypto")]
+use crate::pfs::{PfsSessionManager, PfsState};
 
 /// Per-node shared membership state. All cloned `LocalNode` handles and
 /// their `BoundChannel`s share the same instance via `Rc<RefCell<...>>`.
 pub(crate) struct NodeMembership {
     #[cfg(feature = "software-crypto")]
     pub channels: Vec<ChannelMembershipEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SubscriptionHandle(NonZeroU32);
+
+pub(crate) struct HandlerTable<T> {
+    slots: Vec<Option<T>>,
+}
+
+impl<T> Default for HandlerTable<T> {
+    fn default() -> Self {
+        Self { slots: Vec::new() }
+    }
+}
+
+impl<T> HandlerTable<T> {
+    pub(crate) fn insert(&mut self, handler: T) -> SubscriptionHandle {
+        if let Some((index, slot)) = self
+            .slots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.is_none())
+        {
+            *slot = Some(handler);
+            return SubscriptionHandle(NonZeroU32::new((index + 1) as u32).unwrap());
+        }
+        self.slots.push(Some(handler));
+        SubscriptionHandle(NonZeroU32::new(self.slots.len() as u32).unwrap())
+    }
+
+    pub(crate) fn remove(&mut self, handle: SubscriptionHandle) -> bool {
+        let index = handle.0.get() as usize - 1;
+        let Some(slot) = self.slots.get_mut(index) else {
+            return false;
+        };
+        slot.take().is_some()
+    }
+
+    fn any_mut(&mut self, mut f: impl FnMut(&mut T) -> bool) -> bool {
+        for slot in &mut self.slots {
+            let Some(handler) = slot.as_mut() else {
+                continue;
+            };
+            if f(handler) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn for_each_mut(&mut self, mut f: impl FnMut(&mut T)) {
+        for slot in &mut self.slots {
+            let Some(handler) = slot.as_mut() else {
+                continue;
+            };
+            f(handler);
+        }
+    }
+
+}
+
+pub(crate) struct PeerSubscriptions {
+    peer: PublicKey,
+    pub(crate) receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
+    pub(crate) ack_received_handlers: HandlerTable<Box<dyn FnMut(SendToken)>>,
+    pub(crate) ack_timeout_handlers: HandlerTable<Box<dyn FnMut(SendToken)>>,
+    pub(crate) pfs_established_handlers: HandlerTable<Box<dyn FnMut()>>,
+    pub(crate) pfs_ended_handlers: HandlerTable<Box<dyn FnMut()>>,
+}
+
+impl PeerSubscriptions {
+    fn new(peer: PublicKey) -> Self {
+        Self {
+            peer,
+            receive_handlers: HandlerTable::default(),
+            ack_received_handlers: HandlerTable::default(),
+            ack_timeout_handlers: HandlerTable::default(),
+            pfs_established_handlers: HandlerTable::default(),
+            pfs_ended_handlers: HandlerTable::default(),
+        }
+    }
+}
+
+pub(crate) struct LocalNodeState {
+    receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
+    node_discovered_handlers: HandlerTable<Box<dyn FnMut(PublicKey, Option<&str>)>>,
+    beacon_handlers: HandlerTable<Box<dyn FnMut(NodeHint, Option<PublicKey>)>>,
+    mac_command_handlers: HandlerTable<Box<dyn FnMut(PublicKey, &OwnedMacCommand)>>,
+    ack_received_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
+    ack_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
+    pfs_established_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    pfs_ended_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    peer_subscriptions: Vec<PeerSubscriptions>,
+    #[cfg(feature = "software-crypto")]
+    pfs: PfsSessionManager,
+}
+
+impl LocalNodeState {
+    pub(crate) fn new() -> Self {
+        Self {
+            receive_handlers: HandlerTable::default(),
+            node_discovered_handlers: HandlerTable::default(),
+            beacon_handlers: HandlerTable::default(),
+            mac_command_handlers: HandlerTable::default(),
+            ack_received_handlers: HandlerTable::default(),
+            ack_timeout_handlers: HandlerTable::default(),
+            pfs_established_handlers: HandlerTable::default(),
+            pfs_ended_handlers: HandlerTable::default(),
+            peer_subscriptions: Vec::new(),
+            #[cfg(feature = "software-crypto")]
+            pfs: PfsSessionManager::new(),
+        }
+    }
+
+    pub(crate) fn peer_subscriptions_mut(&mut self, peer: PublicKey) -> &mut PeerSubscriptions {
+        if let Some(index) = self
+            .peer_subscriptions
+            .iter()
+            .position(|entry| entry.peer == peer)
+        {
+            return &mut self.peer_subscriptions[index];
+        }
+        self.peer_subscriptions.push(PeerSubscriptions::new(peer));
+        self.peer_subscriptions
+            .last_mut()
+            .expect("peer subscriptions just inserted")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(feature = "software-crypto")]
+pub enum PfsStatus {
+    Inactive,
+    Requested,
+    Active {
+        local_ephemeral_id: LocalIdentityId,
+        peer_ephemeral: PublicKey,
+        expires_ms: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PfsLifecycle {
+    Established(PublicKey),
+    Ended(PublicKey),
 }
 
 #[cfg(feature = "software-crypto")]
@@ -39,20 +191,6 @@ impl NodeMembership {
         }
     }
 
-    /// Check if this node is currently a member of a channel with the given key.
-    ///
-    /// Uses the full `ChannelKey` (not the 2-byte `ChannelId`) to avoid
-    /// false matches from ID collisions.
-    pub fn has_channel_key(&self, _key: &umsh_core::ChannelKey) -> bool {
-        #[cfg(feature = "software-crypto")]
-        {
-            self.channels.iter().any(|e| e.active && e.channel.key() == _key)
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            false
-        }
-    }
 }
 
 /// Errors produced by node-layer operations.
@@ -132,6 +270,7 @@ pub struct LocalNode<M: MacBackend> {
     dispatcher: Rc<RefCell<EventDispatcher>>,
     #[allow(dead_code)] // Used by channel methods (software-crypto feature)
     membership: Rc<RefCell<NodeMembership>>,
+    state: Rc<RefCell<LocalNodeState>>,
 }
 
 impl<M: MacBackend> LocalNode<M> {
@@ -141,12 +280,14 @@ impl<M: MacBackend> LocalNode<M> {
         mac: M,
         dispatcher: Rc<RefCell<EventDispatcher>>,
         membership: Rc<RefCell<NodeMembership>>,
+        state: Rc<RefCell<LocalNodeState>>,
     ) -> Self {
         Self {
             identity_id,
             mac,
             dispatcher,
             membership,
+            state,
         }
     }
 
@@ -159,6 +300,175 @@ impl<M: MacBackend> LocalNode<M> {
     pub fn peer(&self, key: PublicKey) -> Result<PeerConnection<Self>, NodeError<M>> {
         self.mac.add_peer(key)?;
         Ok(PeerConnection::new(self.clone(), key))
+    }
+
+    pub fn on_receive<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .receive_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_receive_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().receive_handlers.remove(handle)
+    }
+
+    pub fn on_node_discovered<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, Option<&str>) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .node_discovered_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_node_discovered_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().node_discovered_handlers.remove(handle)
+    }
+
+    pub fn on_beacon<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(NodeHint, Option<PublicKey>) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .beacon_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_beacon_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().beacon_handlers.remove(handle)
+    }
+
+    pub fn on_mac_command<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, &OwnedMacCommand) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .mac_command_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_mac_command_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().mac_command_handlers.remove(handle)
+    }
+
+    pub fn on_ack_received<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, SendToken) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .ack_received_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_ack_received_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().ack_received_handlers.remove(handle)
+    }
+
+    pub fn on_ack_timeout<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, SendToken) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .ack_timeout_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_ack_timeout_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().ack_timeout_handlers.remove(handle)
+    }
+
+    pub fn on_pfs_established<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .pfs_established_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_pfs_established_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().pfs_established_handlers.remove(handle)
+    }
+
+    pub fn on_pfs_ended<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .pfs_ended_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn remove_pfs_ended_handler(&self, handle: SubscriptionHandle) -> bool {
+        self.state.borrow_mut().pfs_ended_handlers.remove(handle)
+    }
+
+    #[cfg(feature = "software-crypto")]
+    pub async fn request_pfs(
+        &self,
+        peer: &PublicKey,
+        duration_minutes: u16,
+        options: &SendOptions,
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        let receipt = self
+            .state
+            .borrow_mut()
+            .pfs
+            .request_session(&self.mac, self.identity_id, peer, duration_minutes, options)
+            .await?;
+        Ok(self.register_ack_send(self.identity_id, receipt))
+    }
+
+    #[cfg(feature = "software-crypto")]
+    pub async fn end_pfs(
+        &self,
+        peer: &PublicKey,
+        options: &SendOptions,
+    ) -> Result<(), NodeError<M>> {
+        let _ = self
+            .state
+            .borrow_mut()
+            .pfs
+            .end_session(&self.mac, self.identity_id, peer, true, options)
+            .await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "software-crypto")]
+    pub fn pfs_status(&self, peer: &PublicKey) -> Result<PfsStatus, NodeError<M>> {
+        let now_ms = self.mac.now_ms()?;
+        let state = self.state.borrow();
+        if let Some(session) = state
+            .pfs
+            .sessions()
+            .iter()
+            .find(|session| session.peer_long_term == *peer)
+        {
+            return Ok(match session.state {
+                PfsState::Requested => PfsStatus::Requested,
+                PfsState::Active => PfsStatus::Active {
+                    local_ephemeral_id: session.local_ephemeral_id,
+                    peer_ephemeral: session.peer_ephemeral,
+                    expires_ms: session.expires_ms,
+                },
+            });
+        }
+        if state.pfs.active_route(peer, now_ms).is_some() {
+            // Defensive fallback for any future session bookkeeping changes.
+            return Ok(PfsStatus::Requested);
+        }
+        Ok(PfsStatus::Inactive)
     }
 
     /// Join a channel. Registers the channel key in the MAC if this is
@@ -257,11 +567,12 @@ impl<M: MacBackend> LocalNode<M> {
     /// Register an ACK-tracked send with the dispatcher and return a progress ticket.
     fn register_ack_send(
         &self,
+        send_identity_id: LocalIdentityId,
         receipt: Option<umsh_mac::SendReceipt>,
     ) -> SendProgressTicket {
         match receipt {
             Some(receipt) => {
-                let token = SendToken::new(self.identity_id, receipt);
+                let token = SendToken::new(send_identity_id, receipt);
                 let state = self.dispatcher.borrow_mut().register_ticket(token, false);
                 SendProgressTicket::new(token, state)
             }
@@ -276,12 +587,224 @@ impl<M: MacBackend> LocalNode<M> {
     /// finished when the MAC fires the `Transmitted` event with this receipt.
     fn register_non_ack_send(
         &self,
+        send_identity_id: LocalIdentityId,
         receipt: umsh_mac::SendReceipt,
     ) -> SendProgressTicket {
-        let token = SendToken::new(self.identity_id, receipt);
+        let token = SendToken::new(send_identity_id, receipt);
         let state = self.dispatcher.borrow_mut().register_ticket(token, true);
         SendProgressTicket::new(token, state)
     }
+
+    pub(crate) fn state(&self) -> &Rc<RefCell<LocalNodeState>> {
+        &self.state
+    }
+
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn owns_ephemeral_identity(&self, identity_id: LocalIdentityId) -> bool {
+        self.state
+            .borrow()
+            .pfs
+            .sessions()
+            .iter()
+            .any(|session| session.local_ephemeral_id == identity_id)
+    }
+
+    #[cfg(feature = "software-crypto")]
+    pub(crate) async fn handle_pfs_command(
+        &self,
+        from: &PublicKey,
+        command: &crate::owned::OwnedMacCommand,
+        options: &SendOptions,
+    ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
+        use crate::owned::OwnedMacCommand;
+
+        match *command {
+            OwnedMacCommand::PfsSessionRequest {
+                ephemeral_key,
+                duration_minutes,
+            } => {
+                self.state
+                    .borrow_mut()
+                    .pfs
+                    .accept_request(
+                        &self.mac,
+                        self.identity_id,
+                        *from,
+                        ephemeral_key,
+                        duration_minutes,
+                        options,
+                    )
+                    .await?;
+                Ok(Some(PfsLifecycle::Established(*from)))
+            }
+            OwnedMacCommand::PfsSessionResponse {
+                ephemeral_key,
+                duration_minutes,
+            } => {
+                if self
+                    .state
+                    .borrow_mut()
+                    .pfs
+                    .accept_response(
+                        &self.mac,
+                        self.identity_id,
+                        *from,
+                        ephemeral_key,
+                        duration_minutes,
+                    )?
+                {
+                    Ok(Some(PfsLifecycle::Established(*from)))
+                } else {
+                    Ok(None)
+                }
+            }
+            OwnedMacCommand::EndPfsSession => {
+                let _ = self
+                    .state
+                    .borrow_mut()
+                    .pfs
+                    .end_session(&self.mac, self.identity_id, from, false, options)
+                    .await?;
+                Ok(Some(PfsLifecycle::Ended(*from)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn dispatch_received_packet(&self, packet: &ReceivedPacketRef<'_>) -> bool {
+        let peer = packet.from_key();
+        let mut state = self.state.borrow_mut();
+
+        if let Some(peer) = peer.map(|peer| canonical_peer(&state, peer)) {
+            if let Some(entry) = state
+                .peer_subscriptions
+                .iter_mut()
+                .find(|entry| entry.peer == peer)
+            {
+                if entry.receive_handlers.any_mut(|handler| handler(packet)) {
+                    return true;
+                }
+            }
+        }
+
+        state.receive_handlers.any_mut(|handler| handler(packet))
+    }
+
+    pub(crate) fn dispatch_node_discovered(&self, key: PublicKey, name: Option<&str>) {
+        self.state
+            .borrow_mut()
+            .node_discovered_handlers
+            .for_each_mut(|handler| handler(key, name));
+    }
+
+    pub(crate) fn dispatch_beacon(&self, from_hint: NodeHint, from_key: Option<PublicKey>) {
+        self.state
+            .borrow_mut()
+            .beacon_handlers
+            .for_each_mut(|handler| handler(from_hint, from_key));
+    }
+
+    pub(crate) fn dispatch_mac_command(&self, from: PublicKey, command: &OwnedMacCommand) {
+        self.state
+            .borrow_mut()
+            .mac_command_handlers
+            .for_each_mut(|handler| handler(from, command));
+    }
+
+    pub(crate) fn dispatch_ack_received(&self, peer: PublicKey, token: SendToken) {
+        let mut state = self.state.borrow_mut();
+        let peer = canonical_peer(&state, peer);
+        if let Some(entry) = state
+            .peer_subscriptions
+            .iter_mut()
+            .find(|entry| entry.peer == peer)
+        {
+            entry
+                .ack_received_handlers
+                .for_each_mut(|handler| handler(token));
+        }
+        state
+            .ack_received_handlers
+            .for_each_mut(|handler| handler(peer, token));
+    }
+
+    pub(crate) fn dispatch_ack_timeout(&self, peer: PublicKey, token: SendToken) {
+        let mut state = self.state.borrow_mut();
+        let peer = canonical_peer(&state, peer);
+        if let Some(entry) = state
+            .peer_subscriptions
+            .iter_mut()
+            .find(|entry| entry.peer == peer)
+        {
+            entry
+                .ack_timeout_handlers
+                .for_each_mut(|handler| handler(token));
+        }
+        state
+            .ack_timeout_handlers
+            .for_each_mut(|handler| handler(peer, token));
+    }
+
+    pub(crate) fn dispatch_pfs_established(&self, peer: PublicKey) {
+        let mut state = self.state.borrow_mut();
+        let peer = canonical_peer(&state, peer);
+        if let Some(entry) = state
+            .peer_subscriptions
+            .iter_mut()
+            .find(|entry| entry.peer == peer)
+        {
+            entry.pfs_established_handlers.for_each_mut(|handler| handler());
+        }
+        state
+            .pfs_established_handlers
+            .for_each_mut(|handler| handler(peer));
+    }
+
+    pub(crate) fn dispatch_pfs_ended(&self, peer: PublicKey) {
+        let mut state = self.state.borrow_mut();
+        let peer = canonical_peer(&state, peer);
+        if let Some(entry) = state
+            .peer_subscriptions
+            .iter_mut()
+            .find(|entry| entry.peer == peer)
+        {
+            entry.pfs_ended_handlers.for_each_mut(|handler| handler());
+        }
+        state
+            .pfs_ended_handlers
+            .for_each_mut(|handler| handler(peer));
+    }
+
+    pub(crate) fn expire_pfs_sessions(&self) -> Result<Vec<PublicKey>, NodeError<M>> {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.mac.now_ms()?;
+            return self
+                .state
+                .borrow_mut()
+                .pfs
+                .expire_sessions(&self.mac, now_ms);
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        {
+            Ok(Vec::new())
+        }
+    }
+}
+
+fn canonical_peer(state: &LocalNodeState, peer: PublicKey) -> PublicKey {
+    #[cfg(feature = "software-crypto")]
+    {
+        if let Some(session) = state
+            .pfs
+            .sessions()
+            .iter()
+            .find(|session| session.state == PfsState::Active && session.peer_ephemeral == peer)
+        {
+            return session.peer_long_term;
+        }
+    }
+    peer
 }
 
 impl<M: MacBackend> Transport for LocalNode<M> {
@@ -293,11 +816,31 @@ impl<M: MacBackend> Transport for LocalNode<M> {
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendProgressTicket, Self::Error> {
-        let receipt = self
-            .mac
-            .send_unicast(self.identity_id, to, payload, options)
-            .await?;
-        Ok(self.register_ack_send(receipt))
+        #[cfg(feature = "software-crypto")]
+        let (send_identity_id, receipt) = {
+            let now_ms = self.mac.now_ms()?;
+            if let Some((local_id, peer_ephemeral)) =
+                self.state.borrow().pfs.active_route(to, now_ms)
+            {
+                let receipt = self.mac
+                    .send_unicast(local_id, &peer_ephemeral, payload, options)
+                    .await?;
+                (local_id, receipt)
+            } else {
+                let receipt = self.mac
+                    .send_unicast(self.identity_id, to, payload, options)
+                    .await?;
+                (self.identity_id, receipt)
+            }
+        };
+        #[cfg(not(feature = "software-crypto"))]
+        let (send_identity_id, receipt) = (
+            self.identity_id,
+            self.mac
+                .send_unicast(self.identity_id, to, payload, options)
+                .await?,
+        );
+        Ok(self.register_ack_send(send_identity_id, receipt))
     }
 
     async fn send_all(
@@ -308,7 +851,7 @@ impl<M: MacBackend> Transport for LocalNode<M> {
         let receipt = self.mac
             .send_broadcast(self.identity_id, payload, options)
             .await?;
-        Ok(self.register_non_ack_send(receipt))
+        Ok(self.register_non_ack_send(self.identity_id, receipt))
     }
 }
 
@@ -375,7 +918,7 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
             options,
         )
         .await?;
-        Ok(self.node.register_ack_send(receipt))
+        Ok(self.node.register_ack_send(self.node.identity_id, receipt))
     }
 
     async fn send_all(
@@ -391,6 +934,6 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
             options,
         )
         .await?;
-        Ok(self.node.register_non_ack_send(receipt))
+        Ok(self.node.register_non_ack_send(self.node.identity_id, receipt))
     }
 }
