@@ -77,22 +77,36 @@
 //!
 //! # Typical usage
 //!
+//! For most applications, register callbacks and then let [`Host::run`] own the shared
+//! MAC event loop:
+//!
 //! ```rust,ignore
 //! let mut host = Host::new(mac_handle);
 //! let node = host.add_node(identity_id);
 //! let peer = node.peer(peer_key)?;
 //! let chat = UnicastTextChatWrapper::from_peer(&peer);
 //!
-//! let _messages = chat.on_text(|_packet, text| {
-//!     println!("peer says: {}", text.body);
+//! let _messages = chat.on_text(|packet, text| {
+//!     println!(
+//!         "peer says: {} (hops={})",
+//!         text.body,
+//!         packet.flood_hops().map(|h| h.remaining()).unwrap_or(0),
+//!     );
 //! });
 //!
-//! let ticket = chat.send_text("hello", &SendOptions::default()).await?;
+//! let _ticket = chat.send_text("hello", &SendOptions::default()).await?;
+//! host.run().await?;
+//! ```
 //!
+//! If you need to multiplex UMSH progress with another async source such as user input, use
+//! [`Host::pump_once`] as a single wake-driven step. It already waits on radio activity and
+//! protocol deadlines; you should not add a manual poll/sleep loop around it.
+//!
+//! ```rust,ignore
 //! loop {
-//!     host.pump_once().await?;
-//!     if ticket.was_acked() {
-//!         break;
+//!     tokio::select! {
+//!         line = stdin.next_line() => { /* handle input */ }
+//!         result = host.pump_once() => result?,
 //!     }
 //! }
 //! ```

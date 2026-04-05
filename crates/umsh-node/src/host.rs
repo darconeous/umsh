@@ -10,6 +10,10 @@ use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 use crate::owned::OwnedMacCommand;
 use crate::receive::ReceivedPacketRef;
 
+/// Error returned when a [`Host`] cannot make progress.
+///
+/// `Busy` means some other caller already holds the underlying shared
+/// [`MacHandle`](umsh_mac::MacHandle) borrow. `Mac` wraps the underlying runtime failure.
 #[derive(Debug)]
 pub enum HostError<E> {
     Busy,
@@ -25,6 +29,19 @@ impl<E> From<MacHandleError<E>> for HostError<E> {
     }
 }
 
+/// Multi-identity orchestration layer for the node API.
+///
+/// `Host` owns the shared MAC run loop and routes inbound events to the correct
+/// [`LocalNode`], including ephemeral PFS identities that belong to a long-term node.
+/// Applications typically:
+///
+/// 1. construct a `Host` from a shared [`MacHandle`](umsh_mac::MacHandle)
+/// 2. register one or more [`LocalNode`]s with [`add_node`](Self::add_node)
+/// 3. attach callbacks to nodes / peers / wrappers
+/// 4. drive progress with [`run`](Self::run) or [`pump_once`](Self::pump_once)
+///
+/// `run()` is the preferred long-lived driver. `pump_once()` exists for callers that need to
+/// multiplex UMSH progress with other async work using `select!`.
 pub struct Host<
     'a,
     P: Platform,
@@ -54,6 +71,7 @@ impl<
         const DUP: usize,
     > Host<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
+    /// Create a host around a shared MAC handle.
     pub fn new(
         mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
     ) -> Self {
@@ -67,20 +85,27 @@ impl<
         }
     }
 
+    /// Return the underlying shared MAC handle.
     pub fn mac(
         &self,
     ) -> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP> {
         self.mac
     }
 
+    /// Borrow the send options used for node-managed PFS control messages.
     pub fn pfs_control_options(&self) -> &SendOptions {
         &self.pfs_control_options
     }
 
+    /// Replace the send options used for node-managed PFS control messages.
     pub fn set_pfs_control_options(&mut self, options: SendOptions) {
         self.pfs_control_options = options;
     }
 
+    /// Create and register a [`LocalNode`] for an already-registered local identity.
+    ///
+    /// The returned handle is cheap to clone and becomes the application-facing entry point
+    /// for sending traffic and attaching callbacks for that identity.
     pub fn add_node(
         &mut self,
         identity_id: LocalIdentityId,
@@ -98,6 +123,7 @@ impl<
         node
     }
 
+    /// Look up a previously added node by identity id.
     pub fn node(
         &self,
         identity_id: LocalIdentityId,
@@ -131,6 +157,14 @@ impl<
         }
     }
 
+    /// Drive the shared MAC until one wake cycle completes.
+    ///
+    /// This is a single wake-driven step, not a non-blocking poll. It waits until the MAC has
+    /// meaningful work to do (radio activity or a protocol deadline), dispatches any resulting
+    /// callbacks, services PFS command handling, and then returns.
+    ///
+    /// Use this when you need to multiplex UMSH progress with other async sources using
+    /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
     pub async fn pump_once(
         &mut self,
     ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
@@ -196,6 +230,11 @@ impl<
         Ok(())
     }
 
+    /// Run the shared MAC/Host loop forever.
+    ///
+    /// This is the preferred long-lived driver for node-based applications. It keeps the
+    /// runtime wake policy inside the MAC/Host stack rather than requiring callers to write
+    /// poll/sleep loops themselves.
     pub async fn run(
         &mut self,
     ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {

@@ -16,8 +16,11 @@ use crate::BoundChannel;
 
 /// Thin convenience wrapper for plain unicast text chat over a peer connection.
 ///
-/// This adapter keeps text-message encoding and filtering out of [`LocalNode`]
-/// while still making common app code pleasant to write.
+/// This adapter keeps text-message encoding and filtering out of [`LocalNode`] while still
+/// making common app code pleasant to write. It sits above the raw receive boundary:
+/// [`LocalNode`] and [`PeerConnection`] expose [`crate::receive::ReceivedPacketRef`], and this
+/// wrapper interprets only packets whose application payload type is
+/// [`PayloadType::TextMessage`].
 #[derive(Clone)]
 pub struct UnicastTextChatWrapper<T: Transport + Clone> {
     peer: PeerConnection<T>,
@@ -83,10 +86,11 @@ impl<T: Transport + Clone> UnicastTextChatWrapper<T> {
 
 impl<M: MacBackend> UnicastTextChatWrapper<LocalNode<M>> {
     /// Register a callback that fires only for text messages on this peer.
-    ///
+///
     /// The callback receives both the raw accepted packet view and the decoded
     /// text payload so callers can inspect hops, channel metadata, security
-    /// details, and the parsed text body together.
+    /// details, and the parsed text body together. Non-text packets are ignored
+    /// without attempting any text parsing.
     pub fn on_text<F>(&self, mut handler: F) -> Subscription
     where
         F: FnMut(&crate::receive::ReceivedPacketRef<'_>, TextMessage<'_>) + 'static,

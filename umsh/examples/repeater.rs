@@ -32,6 +32,8 @@ type RepeaterMac = Mac<RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, 
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    // This example intentionally stays at the MAC layer: a pure repeater does not need
+    // LocalNode/Host or any application payload wrappers.
     let network = SimulatedNetwork::new();
     let repeater_radio = network.add_radio();
     let repeater_identity = SoftwareIdentity::from_secret_bytes(&[0x22; 32]);
