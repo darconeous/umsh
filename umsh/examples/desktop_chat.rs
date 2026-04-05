@@ -83,10 +83,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mode::PrintPublicKey => print_public_key(config.identity_path)?,
         Mode::Simulated => run_simulated_chat(config).await?,
         Mode::Udp { group, port, peer } => {
-            run_udp_chat(config.identity_path, group, port, peer).await?
+            run_udp_chat(
+                config.identity_path,
+                config.skip_counter_load,
+                group,
+                port,
+                peer,
+            )
+            .await?
         }
         Mode::Serial { path, baud, peer } => {
-            run_serial_chat(config.identity_path, path, baud, peer).await?
+            run_serial_chat(
+                config.identity_path,
+                config.skip_counter_load,
+                path,
+                baud,
+                peer,
+            )
+            .await?
         }
     }
     Ok(())
@@ -100,6 +114,7 @@ fn print_public_key(identity_path: PathBuf) -> Result<(), Box<dyn std::error::Er
 
 async fn run_udp_chat(
     identity_path: PathBuf,
+    skip_counter_load: bool,
     group: Ipv4Addr,
     port: u16,
     peer_key: PublicKey,
@@ -110,15 +125,23 @@ async fn run_udp_chat(
     let local_identity = load_or_create_identity(&identity_path)?;
     let local_key = *local_identity.public_key();
 
-    let session_root = unique_session_root("desktop-chat-udp");
+    let counter_root = counter_store_root(&identity_path);
     let radio = UdpMulticastRadio::bind_v4(group, port)
         .await
         .map_err(|error| std::io::Error::other(format!("udp bind failed: {error:?}")))?;
-    let local_mac = RefCell::new(build_mac(radio, session_root.join("counters"))?);
+    let local_mac = RefCell::new(build_mac(radio, counter_root)?);
     let local_handle = MacHandle::new(&local_mac);
     let local_id = local_handle
         .add_identity(local_identity)
         .expect("local identity should fit");
+    if !skip_counter_load {
+        let _ = local_handle
+            .load_persisted_counter(local_id)
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("load persisted counter failed: {error:?}"))
+            })?;
+    }
     let mut host = ChatHost::new(local_handle);
     let node = host.add_node(local_id);
     let peer = node
@@ -130,6 +153,9 @@ async fn run_udp_chat(
 
     print_banner("udp-multicast", local_key, Some(peer_key));
     println!("group: {group}:{port}");
+    if skip_counter_load {
+        println!("counter load: skipped (--skip-counter-load)");
+    }
     let mut stdin = BufReader::new(io::stdin()).lines();
     println!("Type a message and press enter, or /quit to exit.");
     println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
@@ -156,6 +182,12 @@ async fn run_udp_chat(
                 result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
             }
         }
+        let _ = local_handle
+            .service_counter_persistence()
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("counter persistence failed: {error:?}"))
+            })?;
         outputs.flush();
     }
 
@@ -246,6 +278,18 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
                 .send_text(&format!("echo: {body}"), &default_chat_options())
                 .await;
         }
+        let _ = local_handle
+            .service_counter_persistence()
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("local counter persistence failed: {error:?}"))
+            })?;
+        let _ = remote_handle
+            .service_counter_persistence()
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("remote counter persistence failed: {error:?}"))
+            })?;
         outputs.flush();
     }
 
@@ -254,6 +298,7 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
 
 async fn run_serial_chat(
     identity_path: PathBuf,
+    skip_counter_load: bool,
     serial_path: String,
     baud_rate: u32,
     peer_key: PublicKey,
@@ -264,15 +309,23 @@ async fn run_serial_chat(
         // radio transport differs.
         let local_identity = load_or_create_identity(&identity_path)?;
         let local_key = *local_identity.public_key();
-        let session_root = unique_session_root("desktop-chat-serial");
+        let counter_root = counter_store_root(&identity_path);
         let radio = DraftSerialRadio::open_tokio(serial_path, baud_rate)
             .await
             .map_err(|error| std::io::Error::other(format!("serial open failed: {error:?}")))?;
-        let local_mac = RefCell::new(build_mac(radio, session_root.join("counters"))?);
+        let local_mac = RefCell::new(build_mac(radio, counter_root)?);
         let local_handle = MacHandle::new(&local_mac);
         let local_id = local_handle
             .add_identity(local_identity)
             .expect("local identity should fit");
+        if !skip_counter_load {
+            let _ = local_handle
+                .load_persisted_counter(local_id)
+                .await
+                .map_err(|error| {
+                    std::io::Error::other(format!("load persisted counter failed: {error:?}"))
+                })?;
+        }
         let mut host = ChatHost::new(local_handle);
         let node = host.add_node(local_id);
         let peer = node
@@ -283,6 +336,9 @@ async fn run_serial_chat(
         let _subscriptions = register_peer_callbacks(&chat, &peer, outputs.sink());
 
         print_banner("serial-draft", local_key, Some(peer_key));
+        if skip_counter_load {
+            println!("counter load: skipped (--skip-counter-load)");
+        }
         let mut stdin = BufReader::new(io::stdin()).lines();
         println!("Type a message and press enter, or /quit to exit.");
         println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
@@ -311,6 +367,12 @@ async fn run_serial_chat(
                     result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
                 }
             }
+            let _ = local_handle
+                .service_counter_persistence()
+                .await
+                .map_err(|error| {
+                    std::io::Error::other(format!("counter persistence failed: {error:?}"))
+                })?;
             outputs.flush();
         }
 
@@ -319,7 +381,7 @@ async fn run_serial_chat(
 
     #[cfg(not(feature = "serial-radio"))]
     {
-        let _ = (identity_path, serial_path, baud_rate, peer_key);
+        let _ = (identity_path, skip_counter_load, serial_path, baud_rate, peer_key);
         Err("serial-radio feature is required for the example-only serial draft mode".into())
     }
 }
@@ -506,6 +568,16 @@ fn unique_session_root(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("umsh-{prefix}-{unique}"))
 }
 
+fn counter_store_root(identity_path: &Path) -> PathBuf {
+    let mut root = identity_path.to_path_buf();
+    let file_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("identity");
+    root.set_file_name(format!("{file_name}.counters"));
+    root
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -541,6 +613,7 @@ fn decode_hex_nibble(byte: u8) -> Result<u8, Box<dyn std::error::Error>> {
 
 struct CliConfig {
     identity_path: PathBuf,
+    skip_counter_load: bool,
     mode: Mode,
 }
 
@@ -562,6 +635,7 @@ enum Mode {
 impl CliConfig {
     fn parse(args: Vec<String>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut identity_path = PathBuf::from(".umsh/desktop-chat.identity");
+        let mut skip_counter_load = false;
         let mut mode = Mode::Simulated;
         let mut peer = None;
         let mut baud = 115_200u32;
@@ -575,6 +649,9 @@ impl CliConfig {
                     index += 1;
                     identity_path =
                         PathBuf::from(args.get(index).ok_or("missing value for --identity")?);
+                }
+                "--skip-counter-load" => {
+                    skip_counter_load = true;
                 }
                 "--simulate" => {
                     mode = Mode::Simulated;
@@ -630,6 +707,7 @@ impl CliConfig {
 
         Ok(Self {
             identity_path,
+            skip_counter_load,
             mode,
         })
     }

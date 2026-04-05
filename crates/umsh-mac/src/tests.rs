@@ -12,7 +12,7 @@ use rand::{Rng, TryCryptoRng, TryRng};
 use std::collections::BTreeMap;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
-    PacketType, PublicKey, RouterHint, iter_options,
+    PacketType, PayloadType, PublicKey, RouterHint, iter_options,
 };
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -73,6 +73,38 @@ fn replay_window_rejects_replay_after_recent_mic_eviction() {
 
     assert_eq!(window.recent_mics.len(), crate::RECENT_MIC_CAPACITY);
     assert_eq!(window.check(10, &[10u8; 8], 20), ReplayVerdict::Replay);
+}
+
+#[test]
+fn receive_one_auto_replies_to_echo_request() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone()).unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, &request, false);
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(handled);
+    let response = mac.tx_queue_mut().pop_next().expect("echo response queued");
+    let payload = decrypt_unicast_payload(response.frame.as_slice(), &keys);
+    assert_eq!(
+        payload.as_slice(),
+        encode_echo_command_payload(5, &[9, 8, 7, 6]).as_slice()
+    );
 }
 
 #[test]
@@ -901,12 +933,6 @@ fn first_secure_send_schedules_counter_persist() {
 fn counter_persist_threshold_schedules_next_block() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    mac.identity_mut(local_id)
-        .unwrap()
-        .load_persisted_counter(128);
-    mac.identity_mut(local_id)
-        .unwrap()
-        .set_counter_persistence_state_for_test(true, None);
     let peer_key = PublicKey([0xAB; 32]);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
@@ -919,7 +945,17 @@ fn counter_persist_threshold_schedules_next_block() {
     )
     .unwrap();
 
-    for _ in 0..100 {
+    let initial_counter = mac.identity(local_id).unwrap().frame_counter();
+    mac.queue_unicast(
+        local_id,
+        &peer_key,
+        b"hello",
+        &SendOptions::default().no_flood(),
+    )
+    .unwrap();
+    let _ = block_on(mac.service_counter_persistence()).unwrap();
+
+    for _ in 0..99 {
         mac.queue_unicast(
             local_id,
             &peer_key,
@@ -930,10 +966,13 @@ fn counter_persist_threshold_schedules_next_block() {
         let _ = mac.tx_queue_mut().pop_next();
     }
 
-    assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 228);
+    assert_eq!(
+        mac.identity(local_id).unwrap().frame_counter(),
+        initial_counter.wrapping_add(100)
+    );
     assert_eq!(
         mac.identity(local_id).unwrap().pending_persist_target(),
-        Some(256)
+        Some((initial_counter.wrapping_add(100 + 128)) & !127)
     );
 }
 
@@ -975,6 +1014,45 @@ fn service_counter_persistence_writes_and_clears_pending_targets() {
     assert_eq!(mac.counter_store().stored.borrow().len(), 1);
     assert_eq!(mac.counter_store().stored.borrow()[0].1, expected_persisted);
     assert_eq!(mac.counter_store().flushes.get(), 1);
+}
+
+#[test]
+fn secure_send_continues_after_future_boundary_is_persisted() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+
+    mac.queue_unicast(
+        local_id,
+        &peer_key,
+        b"hello",
+        &SendOptions::default().no_flood(),
+    )
+    .unwrap();
+    let _ = block_on(mac.service_counter_persistence()).unwrap();
+    let persisted_boundary = mac.identity(local_id).unwrap().persisted_counter();
+
+    for _ in 0..3 {
+        mac.queue_unicast(
+            local_id,
+            &peer_key,
+            b"again",
+            &SendOptions::default().no_flood(),
+        )
+        .unwrap();
+    }
+
+    assert!(mac.identity(local_id).unwrap().frame_counter() < persisted_boundary);
 }
 
 #[test]
@@ -1504,6 +1582,98 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
 }
 
 #[test]
+fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.identity_mut(local_id)
+        .unwrap()
+        .peer_crypto_mut()
+        .get_mut(&peer_id)
+        .unwrap()
+        .replay_window
+        .reset(10_000, 1);
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello after reboot",
+        false,
+        7,
+    );
+
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let queued = mac
+        .tx_queue_mut()
+        .pop_next()
+        .expect("counter resync should queue an echo request");
+    let request_payload = decrypt_unicast_payload(queued.frame.as_slice(), &keys);
+    let nonce = match request_payload.as_slice() {
+        [payload_type, 4, a, b, c, d] if *payload_type == PayloadType::MacCommand as u8 => {
+            u32::from_be_bytes([*a, *b, *c, *d])
+        }
+        other => panic!("unexpected echo request payload: {other:?}"),
+    };
+
+    let response = encode_echo_command_payload(5, &nonce.to_be_bytes());
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        &response,
+        false,
+        8,
+    );
+
+    let mut delivered = std::vec::Vec::new();
+    assert!(block_on(mac.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            assert_eq!(identity, local_id);
+            delivered.push(packet.payload_bytes().to_vec());
+        }
+    }))
+    .unwrap());
+    assert_eq!(delivered.len(), 2);
+    assert_eq!(delivered[0].as_slice(), response.as_slice());
+    assert_eq!(delivered[1].as_slice(), b"hello after reboot");
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"works again",
+        false,
+        9,
+    );
+
+    let mut delivered_again = None;
+    assert!(block_on(mac.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            delivered_again = Some((identity, packet.payload_bytes().to_vec()));
+        }
+    }))
+    .unwrap());
+    assert_eq!(delivered_again, Some((local_id, b"works again".to_vec())));
+}
+
+#[test]
 fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -1631,6 +1801,77 @@ fn receive_one_full_key_unicast_auto_registers_when_enabled() {
         .peer_crypto()
         .get(&peer_id)
         .is_some());
+}
+
+#[test]
+fn auto_registered_unicast_peer_does_not_displace_pinned_peer_when_registry_is_full() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let pinned_key = PublicKey([0xCD; 32]);
+    let _pinned_id = mac.add_peer(pinned_key).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let keys = mac.crypto().derive_pairwise_keys(&SharedSecret([0u8; 32]));
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.set_auto_register_full_key_peers(true);
+
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", false);
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(!handled);
+    assert!(mac.peer_registry().lookup_by_key(&pinned_key).is_some());
+    assert!(mac.peer_registry().lookup_by_key(&peer_key).is_none());
+}
+
+#[test]
+fn auto_registered_unicast_peer_reuses_oldest_auto_slot_when_registry_is_full() {
+    let mut mac = make_small_peer_mac::<1>();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let first_remote = DummyIdentity::new([0xAB; 32]);
+    let first_key = *first_remote.public_key();
+    let second_remote = DummyIdentity::new([0xBC; 32]);
+    let second_key = *second_remote.public_key();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.set_auto_register_full_key_peers(true);
+
+    let first_keys = mac.crypto().derive_pairwise_keys(&SharedSecret([0u8; 32]));
+    mac.radio_mut()
+        .queue_received_unicast(&first_remote, &first_keys, &dst_hint, b"first", false);
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(mac.peer_registry().lookup_by_key(&first_key).is_some());
+
+    let second_keys = mac
+        .crypto()
+        .derive_pairwise_keys(&SharedSecret([1u8; 32]));
+    mac.radio_mut()
+        .queue_received_unicast(&second_remote, &second_keys, &dst_hint, b"second", false);
+
+    let mut seen = None;
+    assert!(block_on(mac.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((identity, packet.from_key(), packet.payload_bytes().to_vec()));
+        }
+    }))
+    .unwrap());
+
+    assert_eq!(
+        seen,
+        Some((local_id, Some(second_key), b"second".to_vec()))
+    );
+    assert!(mac.peer_registry().lookup_by_key(&first_key).is_none());
+    assert!(mac.peer_registry().lookup_by_key(&second_key).is_some());
 }
 
 #[test]
@@ -1961,6 +2202,7 @@ fn receive_one_delivers_source_routed_unicast_without_immediate_ack() {
         &dst_hint,
         b"hello",
         true,
+        7,
         None,
         None,
         Some(&route),
@@ -2349,7 +2591,7 @@ fn receive_one_ignores_multicast_for_unknown_channel() {
 }
 
 #[test]
-fn receive_one_multicast_with_full_registry_drops_unknown_sender_without_panicking() {
+fn receive_one_multicast_with_full_registry_still_delivers_unknown_sender() {
     let mut mac = make_small_peer_mac::<1>();
     let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let known_peer = PublicKey([0xCD; 32]);
@@ -2367,9 +2609,29 @@ fn receive_one_multicast_with_full_registry_drops_unknown_sender_without_panicki
     mac.radio_mut()
         .queue_received_multicast(&remote, channel_id, &keys, b"group");
 
-    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+    let mut seen = None;
+    let handled = block_on(mac.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Multicast) {
+            seen = Some((
+                identity,
+                packet.from_key(),
+                packet.from_hint(),
+                packet.payload_bytes().to_vec(),
+            ));
+        }
+    }))
+    .unwrap();
 
-    assert!(!handled);
+    assert!(handled);
+    assert_eq!(
+        seen,
+        Some((
+            LocalIdentityId(0),
+            Some(*remote.public_key()),
+            Some(remote.public_key().hint()),
+            b"group".to_vec(),
+        ))
+    );
     assert_eq!(
         mac.peer_registry().get(PeerId(0)).unwrap().public_key,
         known_peer
@@ -2403,6 +2665,7 @@ fn receive_one_learns_reversed_trace_route_for_unicast_sender() {
         &dst_hint,
         b"hello",
         false,
+        7,
         None,
         Some(&trace),
         None,
@@ -2529,6 +2792,7 @@ fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
         &dst,
         b"hello",
         false,
+        7,
         None,
         Some(&trace),
         Some(&source_route),
@@ -3356,6 +3620,25 @@ fn build_received_blind_unicast_frame(
     stored
 }
 
+fn encode_echo_command_payload(command_id: u8, data: &[u8]) -> heapless::Vec<u8, 32> {
+    let mut payload = heapless::Vec::new();
+    payload.push(PayloadType::MacCommand as u8).unwrap();
+    payload.push(command_id).unwrap();
+    payload.extend_from_slice(data).unwrap();
+    payload
+}
+
+fn decrypt_unicast_payload(frame: &[u8], keys: &PairwiseKeys) -> heapless::Vec<u8, 256> {
+    let engine = CryptoEngine::new(DummyAes, DummySha);
+    let mut buf = [0u8; 256];
+    buf[..frame.len()].copy_from_slice(frame);
+    let header = PacketHeader::parse(&buf[..frame.len()]).unwrap();
+    let body = engine.open_packet(&mut buf[..frame.len()], &header, keys).unwrap();
+    let mut payload = heapless::Vec::new();
+    payload.extend_from_slice(&buf[body]).unwrap();
+    payload
+}
+
 fn block_on<F: Future>(future: F) -> F::Output {
     fn noop_raw_waker() -> RawWaker {
         fn clone(_: *const ()) -> RawWaker {
@@ -3488,6 +3771,7 @@ impl DummyRadio {
             dst,
             payload,
             ack_requested,
+            7,
             None,
             None,
             None,
@@ -3527,6 +3811,7 @@ impl DummyRadio {
         dst: &umsh_core::NodeHint,
         payload: &[u8],
         ack_requested: bool,
+        frame_counter: u32,
         flood_hops: Option<(u8, u8)>,
         trace_route: Option<&[RouterHint]>,
         source_route: Option<&[RouterHint]>,
@@ -3535,7 +3820,7 @@ impl DummyRadio {
         let builder = PacketBuilder::new(&mut buf)
             .unicast(*dst)
             .source_full(source.public_key())
-            .frame_counter(7)
+            .frame_counter(frame_counter)
             .encrypted();
         let builder = if ack_requested {
             builder.ack_requested()
@@ -3577,6 +3862,28 @@ impl DummyRadio {
             stored.push(*byte).unwrap();
         }
         self.received.push_back(stored).unwrap();
+    }
+
+    fn queue_received_unicast_with_counter(
+        &mut self,
+        source: &DummyIdentity,
+        keys: &PairwiseKeys,
+        dst: &umsh_core::NodeHint,
+        payload: &[u8],
+        ack_requested: bool,
+        frame_counter: u32,
+    ) {
+        self.queue_received_unicast_with_route(
+            source,
+            keys,
+            dst,
+            payload,
+            ack_requested,
+            frame_counter,
+            None,
+            None,
+            None,
+        );
     }
 
     fn queue_received_frame(&mut self, frame: &[u8]) {

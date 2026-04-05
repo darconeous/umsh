@@ -27,6 +27,32 @@ use crate::{
 const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
 const COUNTER_PERSIST_BLOCK_MASK: u32 = COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
+const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
+const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
+const COUNTER_RESYNC_NONCE_LEN: usize = 4;
+const COUNTER_RESYNC_REQUEST_RETRY_MS: u64 = 5_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingCounterResync {
+    nonce: u32,
+    requested_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DeferredCounterResyncFrame<const FRAME: usize> {
+    local_id: LocalIdentityId,
+    peer_id: PeerId,
+    frame: Vec<u8, FRAME>,
+    rssi: i16,
+    snr: i8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ResolvedMulticastSource {
+    peer_id: Option<PeerId>,
+    public_key: Option<PublicKey>,
+    hint: Option<NodeHint>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PostTxListen {
@@ -160,6 +186,7 @@ pub struct IdentitySlot<
     pending_acks: LinearMap<SendReceipt, PendingAck<FRAME>, ACKS>,
     next_receipt: u32,
     pfs_parent: Option<LocalIdentityId>,
+    pending_counter_resync: LinearMap<PeerId, PendingCounterResync, PEERS>,
 }
 
 impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
@@ -183,6 +210,7 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
             pending_acks: LinearMap::new(),
             next_receipt: 0,
             pfs_parent,
+            pending_counter_resync: LinearMap::new(),
         }
     }
 
@@ -269,8 +297,20 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     }
 
     fn counter_window_exhausted(&self) -> bool {
-        self.counter_persistence_enabled
-            && self.frame_counter.wrapping_sub(self.persisted_counter) >= COUNTER_PERSIST_BLOCK_SIZE
+        if !self.counter_persistence_enabled {
+            return false;
+        }
+
+        let ahead = self.persisted_counter.wrapping_sub(self.frame_counter);
+        if ahead > 0 && ahead <= COUNTER_PERSIST_BLOCK_SIZE {
+            return false;
+        }
+
+        if ahead == 0 {
+            return self.save_scheduled_since_boot;
+        }
+
+        self.frame_counter.wrapping_sub(self.persisted_counter) >= COUNTER_PERSIST_BLOCK_SIZE
     }
 
     /// Allocate the next send receipt.
@@ -284,17 +324,6 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     #[cfg(test)]
     pub(crate) fn set_next_receipt_for_test(&mut self, value: u32) {
         self.next_receipt = value;
-    }
-
-    /// Overrides counter-persistence scheduling state in tests.
-    #[cfg(test)]
-    pub(crate) fn set_counter_persistence_state_for_test(
-        &mut self,
-        save_scheduled_since_boot: bool,
-        pending_persist_target: Option<u32>,
-    ) {
-        self.save_scheduled_since_boot = save_scheduled_since_boot;
-        self.pending_persist_target = pending_persist_target;
     }
 
     /// Insert or replace pending-ACK state for a send receipt.
@@ -326,6 +355,16 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     /// Return the parent long-term identity if this slot is ephemeral.
     pub fn pfs_parent(&self) -> Option<LocalIdentityId> {
         self.pfs_parent
+    }
+
+    /// Borrow the pending counter-resynchronization table.
+    fn pending_counter_resync(&self) -> &LinearMap<PeerId, PendingCounterResync, PEERS> {
+        &self.pending_counter_resync
+    }
+
+    /// Mutably borrow the pending counter-resynchronization table.
+    fn pending_counter_resync_mut(&mut self) -> &mut LinearMap<PeerId, PendingCounterResync, PEERS> {
+        &mut self.pending_counter_resync
     }
 }
 
@@ -708,11 +747,13 @@ pub struct Mac<
     peer_registry: PeerRegistry<PEERS>,
     channels: ChannelTable<CHANNELS>,
     dup_cache: DuplicateCache<DUP>,
+    multicast_unknown_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
     post_tx_listen: Option<PostTxListen>,
     repeater: RepeaterConfig,
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
+    deferred_counter_resync_frame: Option<DeferredCounterResyncFrame<FRAME>>,
 }
 
 impl<
@@ -746,11 +787,13 @@ impl<
             peer_registry: PeerRegistry::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
+            multicast_unknown_dup_cache: DuplicateCache::new(),
             tx_queue: TxQueue::new(),
             post_tx_listen: None,
             repeater,
             operating_policy,
             auto_register_full_key_peers: false,
+            deferred_counter_resync_frame: None,
         }
     }
 
@@ -1681,75 +1724,112 @@ impl<
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
-        _rx: &RxInfo,
+        rx: &RxInfo,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        let Ok(header) = PacketHeader::parse(&buf[..frame_len]) else {
-            return false;
+        let mut current_len = frame_len;
+        let mut current_rx = RxInfo {
+            len: frame_len,
+            rssi: rx.rssi,
+            snr: rx.snr,
         };
-        let forwarding_confirmed = if let Some((identity_id, receipt)) =
-            self.observe_forwarding_confirmation(&buf[..frame_len])
-        {
-            // Extract the router hint from the forwarding frame's source, if available.
-            let hint = match header.source {
-                SourceAddrRef::Hint(h) => Some(RouterHint([h.0[0], h.0[1]])),
-                SourceAddrRef::FullKeyAt { offset } => {
-                    let mut key_bytes = [0u8; 32];
-                    key_bytes.copy_from_slice(&buf[offset..offset + 32]);
-                    let h = PublicKey(key_bytes).hint();
-                    Some(RouterHint([h.0[0], h.0[1]]))
-                }
-                _ => None,
-            };
-            on_event(
-                identity_id,
-                crate::MacEventRef::Forwarded {
-                    identity_id,
-                    receipt,
-                    hint,
-                },
-            );
-            true
-        } else {
-            false
-        };
+        let mut handled_any = false;
 
-        match header.packet_type() {
-            PacketType::Broadcast => self.process_broadcast(buf, frame_len, &header, &mut on_event),
-            PacketType::MacAck => {
-                self.process_mac_ack(buf, frame_len, &header, forwarding_confirmed, &mut on_event)
-            }
-            PacketType::Unicast | PacketType::UnicastAckReq => {
-                self.process_unicast(
-                    buf,
-                    frame_len,
-                    &header,
-                    _rx,
-                    forwarding_confirmed,
-                    &mut on_event,
-                )
-                .await
-            }
-            PacketType::Multicast => self.process_multicast(
-                buf,
-                frame_len,
-                &header,
-                _rx,
-                forwarding_confirmed,
-                &mut on_event,
-            ),
-            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
-                self.process_blind_unicast(
-                    buf,
-                    frame_len,
-                    &header,
-                    _rx,
-                    forwarding_confirmed,
-                    &mut on_event,
-                )
-                .await
-            }
-            PacketType::Reserved5 => false,
+        loop {
+            let Ok(header) = PacketHeader::parse(&buf[..current_len]) else {
+                return handled_any;
+            };
+            let forwarding_confirmed = if let Some((identity_id, receipt)) =
+                self.observe_forwarding_confirmation(&buf[..current_len])
+            {
+                let hint = match header.source {
+                    SourceAddrRef::Hint(h) => Some(RouterHint([h.0[0], h.0[1]])),
+                    SourceAddrRef::FullKeyAt { offset } => {
+                        let mut key_bytes = [0u8; 32];
+                        key_bytes.copy_from_slice(&buf[offset..offset + 32]);
+                        let h = PublicKey(key_bytes).hint();
+                        Some(RouterHint([h.0[0], h.0[1]]))
+                    }
+                    _ => None,
+                };
+                on_event(
+                    identity_id,
+                    crate::MacEventRef::Forwarded {
+                        identity_id,
+                        receipt,
+                        hint,
+                    },
+                );
+                true
+            } else {
+                false
+            };
+
+            let (handled, replay_target) = match header.packet_type() {
+                PacketType::Broadcast => (
+                    self.process_broadcast(buf, current_len, &header, &mut on_event),
+                    None,
+                ),
+                PacketType::MacAck => (
+                    self.process_mac_ack(
+                        buf,
+                        current_len,
+                        &header,
+                        forwarding_confirmed,
+                        &mut on_event,
+                    ),
+                    None,
+                ),
+                PacketType::Unicast | PacketType::UnicastAckReq => {
+                    self.process_unicast(
+                        buf,
+                        current_len,
+                        &header,
+                        &current_rx,
+                        forwarding_confirmed,
+                        &mut on_event,
+                    )
+                    .await
+                }
+                PacketType::Multicast => (
+                    self.process_multicast(
+                        buf,
+                        current_len,
+                        &header,
+                        &current_rx,
+                        forwarding_confirmed,
+                        &mut on_event,
+                    ),
+                    None,
+                ),
+                PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                    self.process_blind_unicast(
+                        buf,
+                        current_len,
+                        &header,
+                        &current_rx,
+                        forwarding_confirmed,
+                        &mut on_event,
+                    )
+                    .await
+                }
+                PacketType::Reserved5 => (false, None),
+            };
+            handled_any |= handled;
+
+            let Some((local_id, peer_id)) = replay_target else {
+                return handled_any;
+            };
+            let Some(deferred) = self.take_deferred_counter_resync_frame(local_id, peer_id) else {
+                return handled_any;
+            };
+            current_len = deferred.frame.len();
+            buf[..current_len].copy_from_slice(deferred.frame.as_slice());
+            current_rx = RxInfo {
+                len: current_len,
+                rssi: deferred.rssi,
+                snr: deferred.snr,
+            };
         }
     }
 
@@ -1834,9 +1914,10 @@ impl<
         rx: &RxInfo,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> bool {
+    ) -> (bool, Option<(LocalIdentityId, PeerId)>) {
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let mut replay_target = None;
         let handled = if let Some(local_id) = self.find_local_identity_for_dst(header.dst) {
             let mut handled = false;
             for (peer_id, peer_key) in
@@ -1851,11 +1932,39 @@ impl<
                 else {
                     continue;
                 };
-                if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
+                let payload = &buf[body_range.clone()];
+                if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
                 }
-                if !self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len]) {
-                    continue;
+                match self
+                    .unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len])
+                {
+                    Some(ReplayVerdict::Accept) => {
+                        let _ =
+                            self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len]);
+                    }
+                    Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
+                        if self.try_accept_counter_resync_response(
+                            local_id,
+                            peer_id,
+                            header,
+                            &buf[..frame_len],
+                            payload,
+                        ) {
+                            replay_target = Some((local_id, peer_id));
+                        } else {
+                            self.store_deferred_counter_resync_frame(
+                                local_id,
+                                peer_id,
+                                &original[..frame_len],
+                                rx,
+                            );
+                            self.maybe_request_counter_resync(local_id, peer_id, peer_key)
+                                .await;
+                            continue;
+                        }
+                    }
+                    Some(ReplayVerdict::Replay) | None => continue,
                 }
                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
 
@@ -1869,6 +1978,14 @@ impl<
                         &keys,
                     );
                     self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                }
+
+                if let Some(data) = Self::echo_request_data(payload) {
+                    let response =
+                        Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
+                    let _ = self
+                        .send_unicast(local_id, &peer_key, response.as_slice(), &SendOptions::default())
+                        .await;
                 }
 
                 on_event(
@@ -1893,7 +2010,10 @@ impl<
             false
         };
         let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
-        handled || forwarding_confirmed || forwarded
+        (
+            handled || forwarding_confirmed || forwarded,
+            handled.then_some(()).and(replay_target),
+        )
     }
 
     fn process_multicast(
@@ -1925,16 +2045,20 @@ impl<
                 {
                     if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()]) {
                         false
-                    } else if let Some((peer_id, from)) =
+                    } else if let Some(source) =
                         self.resolve_multicast_source(&buf[..frame_len], header)
                     {
-                        if self.accept_multicast_replay(
-                            channel_id,
-                            peer_id,
-                            header,
-                            &buf[..frame_len],
-                        ) {
-                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                        let accepted = if let Some(peer_id) = source.peer_id {
+                            let accepted =
+                                self.accept_multicast_replay(channel_id, peer_id, header, &buf[..frame_len]);
+                            if accepted {
+                                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                            }
+                            accepted
+                        } else {
+                            self.accept_unknown_multicast_replay(header, &buf[..frame_len])
+                        };
+                        if accepted {
                             let mut delivered = false;
                             for (index, slot) in self.identities.iter().enumerate() {
                                 if slot.is_none() {
@@ -1953,8 +2077,10 @@ impl<
                                                 header.options_range.clone(),
                                             )
                                             .unwrap_or_default(),
-                                            Some(from),
-                                            Some(from.hint()),
+                                            source.public_key,
+                                            source
+                                                .hint
+                                                .or_else(|| source.public_key.map(|key| key.hint())),
                                             true,
                                             Some(crate::ChannelInfoRef {
                                                 id: channel_id,
@@ -1992,9 +2118,10 @@ impl<
         rx: &RxInfo,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> bool {
+    ) -> (bool, Option<(LocalIdentityId, PeerId)>) {
         let mut original = [0u8; FRAME];
         original[..frame_len].copy_from_slice(&buf[..frame_len]);
+        let mut replay_target = None;
         let handled = if let Some(channel_id) = header.channel {
             let channel_candidates: Vec<(ChannelKey, DerivedChannelKeys), CHANNELS> = self
                 .channels
@@ -2033,13 +2160,43 @@ impl<
                             Ok(range) => range,
                             Err(_) => continue,
                         };
-                        if !Self::payload_is_allowed(header.packet_type(), &buf[body_range.clone()])
-                        {
+                        let payload = &buf[body_range.clone()];
+                        if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
                         }
-                        if !self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len])
+                        match self
+                            .unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len])
                         {
-                            continue;
+                            Some(ReplayVerdict::Accept) => {
+                                let _ = self.accept_unicast_replay(
+                                    local_id,
+                                    peer_id,
+                                    header,
+                                    &buf[..frame_len],
+                                );
+                            }
+                            Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
+                                if self.try_accept_counter_resync_response(
+                                    local_id,
+                                    peer_id,
+                                    header,
+                                    &buf[..frame_len],
+                                    payload,
+                                ) {
+                                    replay_target = Some((local_id, peer_id));
+                                } else {
+                                    self.store_deferred_counter_resync_frame(
+                                        local_id,
+                                        peer_id,
+                                        &original[..frame_len],
+                                        rx,
+                                    );
+                                    self.maybe_request_counter_resync(local_id, peer_id, peer_key)
+                                        .await;
+                                    continue;
+                                }
+                            }
+                            Some(ReplayVerdict::Replay) | None => continue,
                         }
                         self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
 
@@ -2053,6 +2210,19 @@ impl<
                                 &blind_keys,
                             );
                             self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                        }
+
+                        if let Some(data) = Self::echo_request_data(payload) {
+                            let response =
+                                Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
+                            let _ = self
+                                .send_unicast(
+                                    local_id,
+                                    &peer_key,
+                                    response.as_slice(),
+                                    &SendOptions::default(),
+                                )
+                                .await;
                         }
 
                         on_event(
@@ -2088,7 +2258,10 @@ impl<
             false
         };
         let forwarded = self.maybe_forward_received(&original[..frame_len], header, rx, handled);
-        handled || forwarding_confirmed || forwarded
+        (
+            handled || forwarding_confirmed || forwarded,
+            handled.then_some(()).and(replay_target),
+        )
     }
 
     /// Non-blocking receive: polls the radio once and processes a frame if available.
@@ -2590,6 +2763,126 @@ impl<
         true
     }
 
+    fn unicast_replay_verdict(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+    ) -> Option<ReplayVerdict> {
+        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
+            return None;
+        };
+        let now_ms = self.clock.now_ms();
+        self.identity_mut(local_id)
+            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
+            .map(|state| state.replay_window.check(counter, mic, now_ms))
+    }
+
+    fn try_accept_counter_resync_response(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+        payload: &[u8],
+    ) -> bool {
+        let Some(nonce) = Self::echo_response_nonce(payload) else {
+            return false;
+        };
+        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
+            return false;
+        };
+        let now_ms = self.clock.now_ms();
+        let Some(slot) = self.identity_mut(local_id) else {
+            return false;
+        };
+        let Some(pending) = slot.pending_counter_resync().get(&peer_id).copied() else {
+            return false;
+        };
+        if pending.nonce != nonce {
+            return false;
+        }
+        let Some(state) = slot.peer_crypto_mut().get_mut(&peer_id) else {
+            return false;
+        };
+        state.replay_window.reset(counter, now_ms);
+        state.replay_window.accept(counter, mic, now_ms);
+        let _ = slot.pending_counter_resync_mut().remove(&peer_id);
+        true
+    }
+
+    async fn maybe_request_counter_resync(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        peer_key: PublicKey,
+    ) {
+        let now_ms = self.clock.now_ms();
+        let should_send = {
+            let Some(slot) = self.identity(local_id) else {
+                return;
+            };
+            match slot.pending_counter_resync().get(&peer_id).copied() {
+                Some(pending) => now_ms.saturating_sub(pending.requested_ms)
+                    >= COUNTER_RESYNC_REQUEST_RETRY_MS,
+                None => true,
+            }
+        };
+        if !should_send {
+            return;
+        }
+
+        let nonce = self.rng.next_u32();
+        let payload = Self::build_echo_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
+        let options = SendOptions::default();
+        if self.send_unicast(local_id, &peer_key, payload.as_slice(), &options).await.is_ok() {
+            if let Some(slot) = self.identity_mut(local_id) {
+                let _ = slot.pending_counter_resync_mut().insert(
+                    peer_id,
+                    PendingCounterResync {
+                        nonce,
+                        requested_ms: now_ms,
+                    },
+                );
+            }
+        }
+    }
+
+    fn store_deferred_counter_resync_frame(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        frame: &[u8],
+        rx: &RxInfo,
+    ) {
+        let mut stored = Vec::new();
+        stored
+            .extend_from_slice(frame)
+            .expect("received frame length must fit configured frame capacity");
+        self.deferred_counter_resync_frame = Some(DeferredCounterResyncFrame {
+            local_id,
+            peer_id,
+            frame: stored,
+            rssi: rx.rssi,
+            snr: rx.snr,
+        });
+    }
+
+    fn take_deferred_counter_resync_frame(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+    ) -> Option<DeferredCounterResyncFrame<FRAME>> {
+        match self.deferred_counter_resync_frame.as_ref() {
+            Some(deferred) if deferred.local_id == local_id && deferred.peer_id == peer_id => {
+                self.deferred_counter_resync_frame.take()
+            }
+            _ => None,
+        }
+    }
+
+
     fn accept_multicast_replay(
         &mut self,
         channel_id: ChannelId,
@@ -2618,10 +2911,60 @@ impl<
         channel.replay.insert(peer_id, window).is_ok()
     }
 
+    fn clear_peer_slot_state(&mut self, peer_id: PeerId) {
+        for slot in self.identities.iter_mut().filter_map(|slot| slot.as_mut()) {
+            let _ = slot.peer_crypto_mut().remove(&peer_id);
+            let _ = slot.pending_counter_resync_mut().remove(&peer_id);
+        }
+        for channel in self.channels.iter_mut() {
+            let _ = channel.replay.remove(&peer_id);
+        }
+    }
+
+    fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
+        let now_ms = self.clock.now_ms();
+        let outcome = self.peer_registry.try_insert_or_update_auto(key, now_ms)?;
+        if outcome.evicted_key.is_some() {
+            self.clear_peer_slot_state(outcome.peer_id);
+        }
+        Ok(outcome.peer_id)
+    }
+
     fn replay_metadata<'a>(header: &PacketHeader, frame: &'a [u8]) -> Option<(u32, &'a [u8])> {
         let counter = header.sec_info?.frame_counter;
         let mic = frame.get(header.mic_range.clone())?;
         Some((counter, mic))
+    }
+
+    fn build_echo_command_payload(command_id: u8, data: &[u8]) -> Vec<u8, FRAME> {
+        let mut payload = Vec::new();
+        let _ = payload.push(PayloadType::MacCommand as u8);
+        let _ = payload.push(command_id);
+        let _ = payload.extend_from_slice(data);
+        payload
+    }
+
+    fn echo_request_data(payload: &[u8]) -> Option<&[u8]> {
+        let (&payload_type, rest) = payload.split_first()?;
+        let (&command_id, data) = rest.split_first()?;
+        if PayloadType::from_byte(payload_type)? != PayloadType::MacCommand
+            || command_id != MAC_COMMAND_ECHO_REQUEST_ID
+        {
+            return None;
+        }
+        Some(data)
+    }
+
+    fn echo_response_nonce(payload: &[u8]) -> Option<u32> {
+        let (&payload_type, rest) = payload.split_first()?;
+        let (&command_id, data) = rest.split_first()?;
+        if PayloadType::from_byte(payload_type)? != PayloadType::MacCommand
+            || command_id != MAC_COMMAND_ECHO_RESPONSE_ID
+            || data.len() != COUNTER_RESYNC_NONCE_LEN
+        {
+            return None;
+        }
+        Some(u32::from_be_bytes(data.try_into().ok()?))
     }
 
     fn full_key_at(frame: &[u8], offset: usize) -> Option<PublicKey> {
@@ -2664,7 +3007,7 @@ impl<
                 }
 
                 if self.auto_register_full_key_peers {
-                    if let Ok(peer_id) = self.peer_registry.try_insert_or_update(peer_key) {
+                    if let Ok(peer_id) = self.try_auto_register_peer(peer_key) {
                         let mut out = Vec::new();
                         let _ = out.push((peer_id, peer_key));
                         return out;
@@ -2686,23 +3029,44 @@ impl<
         &mut self,
         frame: &[u8],
         header: &PacketHeader,
-    ) -> Option<(PeerId, PublicKey)> {
+    ) -> Option<ResolvedMulticastSource> {
         match header.source {
             SourceAddrRef::FullKeyAt { offset } => {
                 let mut key = [0u8; 32];
                 key.copy_from_slice(frame.get(offset..offset + 32)?);
                 let public_key = PublicKey(key);
-                let peer_id = self.peer_registry.try_insert_or_update(public_key).ok()?;
-                Some((peer_id, public_key))
+                let peer_id = self
+                    .peer_registry
+                    .lookup_by_key(&public_key)
+                    .map(|(peer_id, _)| peer_id);
+                Some(ResolvedMulticastSource {
+                    peer_id,
+                    public_key: Some(public_key),
+                    hint: Some(public_key.hint()),
+                })
             }
-            SourceAddrRef::Hint(hint) => self.resolve_unique_hint(hint),
+            SourceAddrRef::Hint(hint) => {
+                let resolved = self.resolve_unique_hint(hint);
+                Some(ResolvedMulticastSource {
+                    peer_id: resolved.map(|(peer_id, _)| peer_id),
+                    public_key: resolved.map(|(_, key)| key),
+                    hint: Some(hint),
+                })
+            }
             SourceAddrRef::Encrypted { offset, len } => match len {
                 32 => {
                     let mut key = [0u8; 32];
                     key.copy_from_slice(frame.get(offset..offset + 32)?);
                     let public_key = PublicKey(key);
-                    let peer_id = self.peer_registry.try_insert_or_update(public_key).ok()?;
-                    Some((peer_id, public_key))
+                    let peer_id = self
+                        .peer_registry
+                        .lookup_by_key(&public_key)
+                        .map(|(peer_id, _)| peer_id);
+                    Some(ResolvedMulticastSource {
+                        peer_id,
+                        public_key: Some(public_key),
+                        hint: Some(public_key.hint()),
+                    })
                 }
                 3 => {
                     let hint = umsh_core::NodeHint([
@@ -2710,12 +3074,29 @@ impl<
                         *frame.get(offset + 1)?,
                         *frame.get(offset + 2)?,
                     ]);
-                    self.resolve_unique_hint(hint)
+                    let resolved = self.resolve_unique_hint(hint);
+                    Some(ResolvedMulticastSource {
+                        peer_id: resolved.map(|(peer_id, _)| peer_id),
+                        public_key: resolved.map(|(_, key)| key),
+                        hint: Some(hint),
+                    })
                 }
                 _ => None,
             },
             SourceAddrRef::None => None,
         }
+    }
+
+    fn accept_unknown_multicast_replay(&mut self, header: &PacketHeader, frame: &[u8]) -> bool {
+        let Some(cache_key) = Self::forward_dup_key(header, frame) else {
+            return false;
+        };
+        if self.multicast_unknown_dup_cache.contains(&cache_key) {
+            return false;
+        }
+        self.multicast_unknown_dup_cache
+            .insert(cache_key, self.clock.now_ms());
+        true
     }
 
     fn resolve_blind_source_peer_candidates(
@@ -2736,7 +3117,7 @@ impl<
                 }
 
                 if self.auto_register_full_key_peers {
-                    if let Ok(peer_id) = self.peer_registry.try_insert_or_update(peer_key) {
+                    if let Ok(peer_id) = self.try_auto_register_peer(peer_key) {
                         let mut out = Vec::new();
                         let _ = out.push((peer_id, peer_key));
                         return out;

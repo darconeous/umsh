@@ -22,10 +22,21 @@ pub enum CachedRoute {
 pub struct PeerInfo {
     /// Full public key.
     pub public_key: PublicKey,
+    /// Whether this peer was explicitly configured by the local application.
+    pub pinned: bool,
     /// Most recent learned route, if any.
     pub route: Option<CachedRoute>,
     /// Most recent observation timestamp.
     pub last_seen_ms: u64,
+}
+
+/// Outcome of inserting or updating an auto-learned peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoPeerUpdate {
+    /// Slot assigned to the peer.
+    pub peer_id: PeerId,
+    /// Previous peer key displaced from this slot, if any.
+    pub evicted_key: Option<PublicKey>,
 }
 
 /// Fixed-capacity registry of remote peers.
@@ -74,7 +85,7 @@ impl<const N: usize> PeerRegistry<N> {
         self.peers.get_mut(id.0 as usize)
     }
 
-    /// Insert or refresh a peer entry.
+    /// Insert or refresh an explicitly configured peer entry.
     pub fn try_insert_or_update(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
         if let Some((id, peer)) = self
             .peers
@@ -83,17 +94,79 @@ impl<const N: usize> PeerRegistry<N> {
             .find(|(_, peer)| peer.public_key == key)
         {
             peer.public_key = key;
+            peer.pinned = true;
             return Ok(PeerId(id as u8));
         }
 
         self.peers
             .push(PeerInfo {
                 public_key: key,
+                pinned: true,
                 route: None,
                 last_seen_ms: 0,
             })
             .map_err(|_| CapacityError)?;
         Ok(PeerId((self.peers.len() - 1) as u8))
+    }
+
+    /// Insert or refresh an opportunistically learned peer entry.
+    ///
+    /// When the registry is full, this may recycle the oldest non-pinned entry in place
+    /// rather than failing. Explicitly configured (`pinned`) peers are never displaced.
+    pub fn try_insert_or_update_auto(
+        &mut self,
+        key: PublicKey,
+        now_ms: u64,
+    ) -> Result<AutoPeerUpdate, CapacityError> {
+        if let Some((id, peer)) = self
+            .peers
+            .iter_mut()
+            .enumerate()
+            .find(|(_, peer)| peer.public_key == key)
+        {
+            peer.last_seen_ms = now_ms;
+            return Ok(AutoPeerUpdate {
+                peer_id: PeerId(id as u8),
+                evicted_key: None,
+            });
+        }
+
+        if self.peers.len() < N {
+            self.peers
+                .push(PeerInfo {
+                    public_key: key,
+                    pinned: false,
+                    route: None,
+                    last_seen_ms: now_ms,
+                })
+                .map_err(|_| CapacityError)?;
+            return Ok(AutoPeerUpdate {
+                peer_id: PeerId((self.peers.len() - 1) as u8),
+                evicted_key: None,
+            });
+        }
+
+        let Some((index, oldest)) = self
+            .peers
+            .iter()
+            .enumerate()
+            .filter(|(_, peer)| !peer.pinned)
+            .min_by_key(|(_, peer)| peer.last_seen_ms)
+        else {
+            return Err(CapacityError);
+        };
+
+        let evicted_key = oldest.public_key;
+        self.peers[index] = PeerInfo {
+            public_key: key,
+            pinned: false,
+            route: None,
+            last_seen_ms: now_ms,
+        };
+        Ok(AutoPeerUpdate {
+            peer_id: PeerId(index as u8),
+            evicted_key: Some(evicted_key),
+        })
     }
 
     /// Update the cached route for `id`.
@@ -241,6 +314,11 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         self.channels
             .iter_mut()
             .find(|channel| channel.derived.channel_id == *id)
+    }
+
+    /// Mutably iterate over all channel states.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ChannelState<RN, HN>> {
+        self.channels.iter_mut()
     }
 
     /// Add or replace a channel entry.
