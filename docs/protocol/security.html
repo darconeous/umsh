@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-95281a52.js";
+            window.path_to_searchindex_js = "searchindex-cf1329a3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b09eb8a0.js"></script>
+        <script src="toc-0d631dd0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -407,7 +407,7 @@ K_mic = okm[16..31]
 <p>Where <code>number</code> is the option’s absolute option number (not a delta), encoded as a 2-byte big-endian unsigned integer, and <code>length</code> is the value length in bytes, also encoded as a 2-byte big-endian unsigned integer. Static options appear in the AAD in order of increasing option number. This avoids recomputing deltas after dynamic options have been removed.</p>
 <p>Using 2-byte fields for both <code>number</code> and <code>length</code> ensures that option numbers above 255 (which are valid in the CoAP-style encoding used on the wire) and long option values are represented without truncation or ambiguity.</p>
 <h3 id="ack-tag-construction"><a class="header" href="#ack-tag-construction">Ack Tag Construction</a></h3>
-<p>When a packet type requests an acknowledgement (UACK or BUAK), both the sender and receiver independently compute an <strong>ack tag</strong> — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.</p>
+<p>When a packet type requests an acknowledgement (UNAR or BUAR), both the sender and receiver independently compute an <strong>ack tag</strong> — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.</p>
 <p>The ack tag is computed as follows:</p>
 <ol>
 <li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code> (this is the same computation used to produce the packet MIC, before any truncation).</li>

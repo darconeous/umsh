@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-95281a52.js";
+            window.path_to_searchindex_js = "searchindex-cf1329a3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b09eb8a0.js"></script>
+        <script src="toc-0d631dd0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -224,7 +224,7 @@ delay = uniform_random(0, W)
 <p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
 <p>After computing the delay, the repeater waits. If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it MUST cancel its own pending transmission.</p>
 <h2 id="immediate-ack-transmission"><a class="header" href="#immediate-ack-transmission">Immediate ACK Transmission</a></h2>
-<p>When a node is the final destination of an ack-requested packet (UACK or BUAK) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.</p>
+<p>When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.</p>
 <p>If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.</p>
 
                     </main>
