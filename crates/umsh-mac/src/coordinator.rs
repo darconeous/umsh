@@ -5,8 +5,8 @@ use heapless::{LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
     BuildError, ChannelId, ChannelKey, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
-    PacketType, ParseError, ParsedOptions, PublicKey, RouterHint, SourceAddrRef, UnsealedPacket,
-    feed_aad, options::OptionEncoder,
+    PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint, SourceAddrRef,
+    UnsealedPacket, feed_aad, options::OptionEncoder,
 };
 use umsh_crypto::{
     CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -2785,23 +2785,9 @@ impl<
             return true;
         }
 
-        let payload_type = payload[0];
-        if payload_type & 0x80 != 0 {
-            return false;
-        }
-        if matches!(payload_type, 4 | 6) {
-            return false;
-        }
-
-        match packet_type {
-            PacketType::Broadcast => matches!(payload_type, 1),
-            PacketType::Multicast => !matches!(payload_type, 2 | 5),
-            PacketType::Unicast
-            | PacketType::UnicastAckReq
-            | PacketType::BlindUnicast
-            | PacketType::BlindUnicastAckReq => true,
-            PacketType::MacAck | PacketType::Reserved5 => false,
-        }
+        PayloadType::from_byte(payload[0])
+            .unwrap_or(PayloadType::Empty)
+            .allowed_for(packet_type)
     }
 
     fn reverse_trace_route(

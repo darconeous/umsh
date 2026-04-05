@@ -1,7 +1,7 @@
 use heapless::Vec;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType,
-    ParsedOptions, PublicKey, RouterHint, SecInfo,
+    ParsedOptions, PayloadType, PublicKey, RouterHint, SecInfo,
 };
 
 use crate::{CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
@@ -599,10 +599,81 @@ pub struct ChannelInfoRef<'a> {
     pub key: &'a ChannelKey,
 }
 
+impl<'a> ChannelInfoRef<'a> {
+    pub fn id(&self) -> ChannelId {
+        self.id
+    }
+
+    pub fn key(&self) -> &'a ChannelKey {
+        self.key
+    }
+}
+
+/// Coarser grouping of on-wire packet types.
+///
+/// This is useful for applications that care about "unicast-like" or
+/// "blind-unicast-like" traffic without matching both ACK and non-ACK packet
+/// variants individually.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketFamily {
+    Broadcast,
+    MacAck,
+    Unicast,
+    Multicast,
+    BlindUnicast,
+    Reserved,
+}
+
+impl PacketFamily {
+    pub fn includes(self, packet_type: PacketType) -> bool {
+        match self {
+            Self::Broadcast => packet_type == PacketType::Broadcast,
+            Self::MacAck => packet_type == PacketType::MacAck,
+            Self::Unicast => matches!(packet_type, PacketType::Unicast | PacketType::UnicastAckReq),
+            Self::Multicast => packet_type == PacketType::Multicast,
+            Self::BlindUnicast => {
+                matches!(packet_type, PacketType::BlindUnicast | PacketType::BlindUnicastAckReq)
+            }
+            Self::Reserved => packet_type == PacketType::Reserved5,
+        }
+    }
+}
+
+/// Iterator over packed two-byte route hops from a source-route or trace-route option.
+#[derive(Clone, Copy, Debug)]
+pub struct RouteHops<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> RouteHops<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, cursor: 0 }
+    }
+}
+
+impl Iterator for RouteHops<'_> {
+    type Item = RouterHint;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk = self.bytes.get(self.cursor..self.cursor + 2)?;
+        self.cursor += 2;
+        Some(RouterHint([chunk[0], chunk[1]]))
+    }
+}
+
 /// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
+///
+/// `ReceivedPacketRef` is meant to stay close to the original packet rather than eagerly
+/// translating it into application-level events. It includes the accepted wire bytes, the
+/// decrypted/usable payload slice, parsed header and option metadata, resolved sender and
+/// channel information, and security details such as frame counter, salt, MIC bytes, and
+/// authentication status.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceivedPacketRef<'a> {
     wire: &'a [u8],
+    payload_bytes: &'a [u8],
+    payload_type: PayloadType,
     payload: &'a [u8],
     header: PacketHeader,
     options: ParsedOptions,
@@ -615,7 +686,7 @@ pub struct ReceivedPacketRef<'a> {
 impl<'a> ReceivedPacketRef<'a> {
     pub fn new(
         wire: &'a [u8],
-        payload: &'a [u8],
+        payload_bytes: &'a [u8],
         header: PacketHeader,
         options: ParsedOptions,
         from_key: Option<PublicKey>,
@@ -623,8 +694,17 @@ impl<'a> ReceivedPacketRef<'a> {
         source_authenticated: bool,
         channel: Option<ChannelInfoRef<'a>>,
     ) -> Self {
+        let (payload_type, payload) = if payload_bytes.is_empty() {
+            (PayloadType::Empty, &[][..])
+        } else if let Some(payload_type) = PayloadType::from_byte(payload_bytes[0]) {
+            (payload_type, &payload_bytes[1..])
+        } else {
+            (PayloadType::Empty, payload_bytes)
+        };
         Self {
             wire,
+            payload_bytes,
+            payload_type,
             payload,
             header,
             options,
@@ -639,6 +719,20 @@ impl<'a> ReceivedPacketRef<'a> {
         self.header.packet_type()
     }
 
+    /// Return the coarse packet family for this frame.
+    pub fn packet_family(&self) -> PacketFamily {
+        match self.packet_type() {
+            PacketType::Broadcast => PacketFamily::Broadcast,
+            PacketType::MacAck => PacketFamily::MacAck,
+            PacketType::Unicast | PacketType::UnicastAckReq => PacketFamily::Unicast,
+            PacketType::Multicast => PacketFamily::Multicast,
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                PacketFamily::BlindUnicast
+            }
+            PacketType::Reserved5 => PacketFamily::Reserved,
+        }
+    }
+
     pub fn header(&self) -> &PacketHeader {
         &self.header
     }
@@ -651,14 +745,35 @@ impl<'a> ReceivedPacketRef<'a> {
         self.wire
     }
 
+    /// Return the payload bytes after any successful decryption/authentication work.
+    ///
+    /// This is the application payload body only; it does not include the leading
+    /// typed-payload byte. Use [`Self::payload_type`] or [`Self::payload_bytes`]
+    /// to inspect the application envelope.
     pub fn payload(&self) -> &'a [u8] {
         self.payload
     }
 
+    /// Return the application payload type carried by this frame.
+    pub fn payload_type(&self) -> PayloadType {
+        self.payload_type
+    }
+
+    /// Return the exact application payload bytes including the leading
+    /// typed-payload byte when present.
+    pub fn payload_bytes(&self) -> &'a [u8] {
+        self.payload_bytes
+    }
+
+    /// Return the exact on-wire body region before higher-layer payload parsing.
     pub fn wire_body(&self) -> &'a [u8] {
         self.wire
             .get(self.header.body_range.clone())
             .unwrap_or_default()
+    }
+
+    pub fn is_beacon(&self) -> bool {
+        self.header.is_beacon()
     }
 
     pub fn from_key(&self) -> Option<PublicKey> {
@@ -673,6 +788,12 @@ impl<'a> ReceivedPacketRef<'a> {
         self.source_authenticated
     }
 
+    /// True when the source address in the accepted frame used the full public key form.
+    pub fn has_full_source(&self) -> bool {
+        self.header.fcf.full_source()
+    }
+
+    /// Resolved channel metadata, when this packet was accepted via a known private channel.
     pub fn channel(&self) -> Option<ChannelInfoRef<'a>> {
         self.channel
     }
@@ -681,6 +802,7 @@ impl<'a> ReceivedPacketRef<'a> {
         self.packet_type().ack_requested()
     }
 
+    /// Whether the accepted frame carried a valid SECINFO block.
     pub fn is_secure(&self) -> bool {
         self.packet_type().is_secure()
     }
@@ -708,14 +830,35 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|sec| sec.scf.mic_size().ok())
     }
 
+    /// Return the authenticated MIC bytes from the original wire frame.
     pub fn mic(&self) -> &'a [u8] {
         self.wire
             .get(self.header.mic_range.clone())
             .unwrap_or_default()
     }
 
+    pub fn mic_len(&self) -> usize {
+        self.mic().len()
+    }
+
     pub fn flood_hops(&self) -> Option<FloodHops> {
         self.header.flood_hops
+    }
+
+    pub fn region_code(&self) -> Option<[u8; 2]> {
+        self.options.region_code
+    }
+
+    pub fn min_rssi(&self) -> Option<i16> {
+        self.options.min_rssi
+    }
+
+    pub fn min_snr(&self) -> Option<i8> {
+        self.options.min_snr
+    }
+
+    pub fn has_unknown_critical_options(&self) -> bool {
+        self.options.has_unknown_critical
     }
 
     pub fn source_route(&self) -> Option<&'a [u8]> {
@@ -725,11 +868,21 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
+    /// Iterate decoded source-route hops from the packed option bytes.
+    pub fn source_route_hops(&self) -> RouteHops<'a> {
+        RouteHops::new(self.source_route().unwrap_or(&[]))
+    }
+
     pub fn trace_route(&self) -> Option<&'a [u8]> {
         self.options
             .trace_route
             .as_ref()
             .and_then(|range| self.wire.get(range.clone()))
+    }
+
+    /// Iterate decoded trace-route hops from the packed option bytes.
+    pub fn trace_route_hops(&self) -> RouteHops<'a> {
+        RouteHops::new(self.trace_route().unwrap_or(&[]))
     }
 
     pub fn source_route_hop_count(&self) -> usize {

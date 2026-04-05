@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 use umsh_core::PublicKey;
 use umsh_mac::SendOptions;
 
-use crate::node::{LocalNode, NodeError, SubscriptionHandle};
+use crate::node::{LocalNode, NodeError, Subscription, SubscriptionHandle};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::SendProgressTicket;
 use crate::transport::Transport;
@@ -40,7 +40,7 @@ impl<T: Transport> PeerConnection<T> {
 }
 
 impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
-    pub fn on_receive<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
     {
@@ -52,16 +52,23 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_receive_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.transport
-            .state()
-            .borrow_mut()
-            .peer_subscriptions_mut(self.peer)
-            .receive_handlers
-            .remove(handle)
+    pub fn on_receive<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
+    {
+        let handle = self.add_receive_handler(handler);
+        let state = self.transport.state().clone();
+        let peer = self.peer;
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            let Some(entry) = state.find_peer_subscriptions_mut(peer) else {
+                return false;
+            };
+            entry.receive_handlers.remove(handle)
+        })
     }
 
-    pub fn on_ack_received<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_ack_received_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(crate::SendToken) + 'static,
     {
@@ -73,16 +80,23 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_ack_received_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.transport
-            .state()
-            .borrow_mut()
-            .peer_subscriptions_mut(self.peer)
-            .ack_received_handlers
-            .remove(handle)
+    pub fn on_ack_received<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(crate::SendToken) + 'static,
+    {
+        let handle = self.add_ack_received_handler(handler);
+        let state = self.transport.state().clone();
+        let peer = self.peer;
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            let Some(entry) = state.find_peer_subscriptions_mut(peer) else {
+                return false;
+            };
+            entry.ack_received_handlers.remove(handle)
+        })
     }
 
-    pub fn on_ack_timeout<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_ack_timeout_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(crate::SendToken) + 'static,
     {
@@ -94,55 +108,62 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_ack_timeout_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.transport
-            .state()
-            .borrow_mut()
-            .peer_subscriptions_mut(self.peer)
-            .ack_timeout_handlers
-            .remove(handle)
+    pub fn on_ack_timeout<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(crate::SendToken) + 'static,
+    {
+        let handle = self.add_ack_timeout_handler(handler);
+        let state = self.transport.state().clone();
+        let peer = self.peer;
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            let Some(entry) = state.find_peer_subscriptions_mut(peer) else {
+                return false;
+            };
+            entry.ack_timeout_handlers.remove(handle)
+        })
     }
 
-    pub fn on_pfs_established<F>(&self, handler: F) -> SubscriptionHandle
+    pub fn on_pfs_established<F>(&self, handler: F) -> Subscription
     where
         F: FnMut() + 'static,
     {
-        self.transport
+        let handle = self.transport
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_established_handlers
-            .insert(Box::new(handler))
+            .insert(Box::new(handler));
+        let state = self.transport.state().clone();
+        let peer = self.peer;
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            let Some(entry) = state.find_peer_subscriptions_mut(peer) else {
+                return false;
+            };
+            entry.pfs_established_handlers.remove(handle)
+        })
     }
 
-    pub fn remove_pfs_established_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.transport
-            .state()
-            .borrow_mut()
-            .peer_subscriptions_mut(self.peer)
-            .pfs_established_handlers
-            .remove(handle)
-    }
-
-    pub fn on_pfs_ended<F>(&self, handler: F) -> SubscriptionHandle
+    pub fn on_pfs_ended<F>(&self, handler: F) -> Subscription
     where
         F: FnMut() + 'static,
     {
-        self.transport
+        let handle = self.transport
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_ended_handlers
-            .insert(Box::new(handler))
-    }
-
-    pub fn remove_pfs_ended_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.transport
-            .state()
-            .borrow_mut()
-            .peer_subscriptions_mut(self.peer)
-            .pfs_ended_handlers
-            .remove(handle)
+            .insert(Box::new(handler));
+        let state = self.transport.state().clone();
+        let peer = self.peer;
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            let Some(entry) = state.find_peer_subscriptions_mut(peer) else {
+                return false;
+            };
+            entry.pfs_ended_handlers.remove(handle)
+        })
     }
 
     #[cfg(feature = "software-crypto")]

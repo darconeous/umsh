@@ -8,6 +8,11 @@
 //! queues, `umsh-node` provides composable abstractions for sending and receiving messages,
 //! tracking in-flight sends, and managing channel membership.
 //!
+//! The receive boundary is intentionally low-level: raw subscriptions get a
+//! [`ReceivedPacketRef`] that stays close to the accepted on-wire packet. Payload-specific
+//! helpers such as [`UnicastTextChatWrapper`] and [`MulticastTextChatWrapper`] live one layer
+//! up and are built on top of those raw packet callbacks.
+//!
 //! This crate requires `alloc` (heap allocation for `String`, `Vec`, etc.). It is
 //! otherwise `no_std` compatible.
 //!
@@ -40,16 +45,17 @@
 //! - [`Host`] — preferred multi-identity driver. Owns the shared MAC event loop and routes
 //!   inbound traffic to the right [`LocalNode`].
 //! - [`LocalNode`] — per-identity application handle. Implements [`Transport`] (unicast /
-//!   broadcast), owns PFS state, and exposes node-wide callback subscriptions.
+//!   broadcast), owns PFS state, and exposes raw packet plus control-side subscriptions.
 //! - [`BoundChannel`] — a channel bound to a `LocalNode`. Implements [`Transport`]
 //!   (blind unicast / multicast). Available with the `software-crypto` feature.
 //! - [`PeerConnection`] — relationship with one remote peer, generic over transport context,
 //!   with peer-scoped callback subscriptions.
 //! - [`UnicastTextChatWrapper`] — payload-level convenience adapter for basic unicast text chat.
+//! - [`MulticastTextChatWrapper`] — payload-level convenience adapter for channel text chat.
 //! - [`Transport`] — shared send interface (`send` / `send_all`).
 //! - [`SendProgressTicket`] — lightweight polling handle for observing in-flight send
 //!   progress (`was_transmitted`, `was_acked`, `is_finished`).
-//! - [`SubscriptionHandle`] — opaque token used to remove a previously-registered callback.
+//! - [`Subscription`] — owned callback registration that auto-unsubscribes on drop.
 //! - [`ReceivedPacketRef`] — borrowed receive view passed into low-level `on_receive(...)`
 //!   handlers and wrappers.
 //! - [`MacBackend`] — pluggable MAC backend trait for testability.
@@ -77,8 +83,8 @@
 //! let peer = node.peer(peer_key)?;
 //! let chat = UnicastTextChatWrapper::from_peer(&peer);
 //!
-//! chat.on_text(|body| {
-//!     println!("peer says: {body}");
+//! let _messages = chat.on_text(|_packet, text| {
+//!     println!("peer says: {}", text.body);
 //! });
 //!
 //! let ticket = chat.send_text("hello", &SendOptions::default()).await?;
@@ -89,6 +95,23 @@
 //!         break;
 //!     }
 //! }
+//! ```
+//!
+//! If you need protocol fidelity instead of a payload wrapper, subscribe directly on the node
+//! or peer and inspect the raw packet view:
+//!
+//! ```rust,ignore
+//! let _raw = peer.on_receive(|packet| {
+//!     if packet.packet_family() == umsh::mac::PacketFamily::Unicast {
+//!         println!(
+//!             "from={:?} encrypted={} mic_len={}",
+//!             packet.from_key(),
+//!             packet.encrypted(),
+//!             packet.mic_len(),
+//!         );
+//!     }
+//!     false
+//! });
 //! ```
 
 #[cfg(not(feature = "alloc"))]
@@ -117,13 +140,15 @@ pub use host::{Host, HostError};
 pub use mac::{MacBackend, MacBackendError};
 #[cfg(feature = "software-crypto")]
 pub use node::BoundChannel;
-pub use node::{LocalNode, NodeError, SubscriptionHandle};
+pub use node::{LocalNode, NodeError, Subscription};
 #[cfg(feature = "software-crypto")]
 pub use node::PfsStatus;
 pub use owned::{OwnedMacCommand, OwnedNodeIdentityPayload, OwnedTextMessage};
 pub use peer::PeerConnection;
-pub use receive::{ChannelInfoRef, ReceivedPacketRef};
+pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops};
 pub use ticket::{SendToken, SendProgressTicket};
+#[cfg(feature = "software-crypto")]
+pub use text_chat::MulticastTextChatWrapper;
 pub use text_chat::UnicastTextChatWrapper;
 pub use transport::Transport;
 #[cfg(feature = "software-crypto")]
@@ -151,6 +176,8 @@ mod tests {
     use crate::ReceivedPacketRef;
     #[cfg(feature = "unsafe-advanced")]
     use crate::UnicastTextChatWrapper;
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    use crate::{Channel, MulticastTextChatWrapper};
     #[cfg(feature = "unsafe-advanced")]
     use crate::{MacBackend, MacBackendError, OwnedMacCommand, OwnedTextMessage, SendToken};
     #[cfg(feature = "unsafe-advanced")]
@@ -173,12 +200,12 @@ mod tests {
         let chat = UnicastTextChatWrapper::from_peer(&alice);
 
         let received = Rc::new(RefCell::new(Vec::new()));
-        {
-            let received = received.clone();
-            chat.on_text(move |body| {
-                received.borrow_mut().push(body.to_string());
-            });
-        }
+        let received_for_callback = received.clone();
+        let _subscription = chat.on_text(move |_packet, text| {
+            received_for_callback
+                .borrow_mut()
+                .push(text.body.to_string());
+        });
 
         block_on_ready(chat.send_text(
             "hello over wrapper",
@@ -186,12 +213,9 @@ mod tests {
         ))
         .unwrap();
         let sent = mac.take_unicasts().pop().expect("wrapper send");
-        match umsh_app::parse_payload(umsh_core::PacketType::Unicast, &sent.payload).unwrap() {
-            umsh_app::PayloadRef::TextMessage(message) => {
-                assert_eq!(message.body, "hello over wrapper");
-            }
-            other => panic!("unexpected wrapper payload: {other:?}"),
-        }
+        let message = umsh_app::parse_text_payload(umsh_core::PacketType::Unicast, &sent.payload)
+            .unwrap();
+        assert_eq!(message.body, "hello over wrapper");
 
         let incoming = encode_text_payload("hello from callbacks");
         let consumed = node.dispatch_received_packet(&test_unicast_packet(alice_key, &incoming));
@@ -218,23 +242,46 @@ mod tests {
         let peer_connection = node.peer(peer).unwrap();
 
         let call_order = Rc::new(RefCell::new(Vec::new()));
-        {
-            let call_order = call_order.clone();
-            peer_connection.on_receive(move |_| {
-                call_order.borrow_mut().push("peer");
-                true
-            });
-        }
-        {
-            let call_order = call_order.clone();
-            node.on_receive(move |_| {
-                call_order.borrow_mut().push("node");
-                true
-            });
-        }
+        let peer_call_order = call_order.clone();
+        let _peer_subscription = peer_connection.on_receive(move |_| {
+            peer_call_order.borrow_mut().push("peer");
+            true
+        });
+        let node_call_order = call_order.clone();
+        let _node_subscription = node.on_receive(move |_| {
+            node_call_order.borrow_mut().push("node");
+            true
+        });
 
         assert!(node.dispatch_received_packet(&test_unicast_packet(peer, &[0x01, 0x02])));
         assert_eq!(call_order.borrow().as_slice(), ["peer"]);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn subscription_guard_unregisters_on_drop() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(Vec::new());
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
+        let peer = PublicKey([0x33; 32]);
+
+        let hits = Rc::new(RefCell::new(0u32));
+        {
+            let hits = hits.clone();
+            let _subscription = node.on_receive(move |_| {
+                *hits.borrow_mut() += 1;
+                true
+            });
+            assert!(node.dispatch_received_packet(&test_unicast_packet(peer, &[0x01, 0x02])));
+        }
+
+        assert_eq!(*hits.borrow(), 1);
+        assert!(!node.dispatch_received_packet(&test_unicast_packet(peer, &[0x01, 0x02])));
+        assert_eq!(*hits.borrow(), 1);
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -256,38 +303,28 @@ mod tests {
         let peer_acks = Rc::new(RefCell::new(Vec::new()));
         let peer_timeouts = Rc::new(RefCell::new(Vec::new()));
 
-        {
-            let node_discovery = node_discovery.clone();
-            node.on_node_discovered(move |key, name| {
-                node_discovery
-                    .borrow_mut()
-                    .push((key, name.map(str::to_string)));
-            });
-        }
-        {
-            let beacons = beacons.clone();
-            node.on_beacon(move |from_hint, from_key| {
-                beacons.borrow_mut().push((from_hint, from_key));
-            });
-        }
-        {
-            let commands = commands.clone();
-            node.on_mac_command(move |from, command| {
-                commands.borrow_mut().push((from, command.clone()));
-            });
-        }
-        {
-            let peer_acks = peer_acks.clone();
-            peer_connection.on_ack_received(move |token| {
-                peer_acks.borrow_mut().push(token);
-            });
-        }
-        {
-            let peer_timeouts = peer_timeouts.clone();
-            peer_connection.on_ack_timeout(move |token| {
-                peer_timeouts.borrow_mut().push(token);
-            });
-        }
+        let discovery_log = node_discovery.clone();
+        let _discovered_subscription = node.on_node_discovered(move |key, name| {
+            discovery_log
+                .borrow_mut()
+                .push((key, name.map(str::to_string)));
+        });
+        let beacon_log = beacons.clone();
+        let _beacon_subscription = node.on_beacon(move |from_hint, from_key| {
+            beacon_log.borrow_mut().push((from_hint, from_key));
+        });
+        let command_log = commands.clone();
+        let _command_subscription = node.on_mac_command(move |from, command| {
+            command_log.borrow_mut().push((from, command.clone()));
+        });
+        let peer_ack_log = peer_acks.clone();
+        let _ack_subscription = peer_connection.on_ack_received(move |token| {
+            peer_ack_log.borrow_mut().push(token);
+        });
+        let peer_timeout_log = peer_timeouts.clone();
+        let _timeout_subscription = peer_connection.on_ack_timeout(move |token| {
+            peer_timeout_log.borrow_mut().push(token);
+        });
 
         let token = SendToken::new(LocalIdentityId(1), SendReceipt(12));
         let timeout_token = SendToken::new(LocalIdentityId(1), SendReceipt(13));
@@ -308,6 +345,40 @@ mod tests {
         assert_eq!(commands.borrow().as_slice(), &[(peer, command)]);
         assert_eq!(peer_acks.borrow().as_slice(), &[token]);
         assert_eq!(peer_timeouts.borrow().as_slice(), &[timeout_token]);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn multicast_text_chat_wrapper_sends_and_receives_text_for_matching_channel() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        let mac = FakeMac::new(Vec::new());
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        let node = LocalNode::new(LocalIdentityId(1), mac.clone(), dispatcher, membership, state);
+        let channel = Channel::named("team");
+        let other_channel = Channel::named("other");
+        let bound = node.join(&channel).unwrap();
+        let chat = MulticastTextChatWrapper::from_channel(&bound);
+
+        let received = Rc::new(RefCell::new(Vec::new()));
+        {
+            let received = received.clone();
+            let expected_channel = channel.clone();
+            let _subscription = chat.on_text(move |packet, text| {
+                assert_eq!(packet.channel().unwrap().id(), *expected_channel.channel_id());
+                received.borrow_mut().push(text.body.to_string());
+            });
+            let payload = encode_text_payload("hello channel");
+            let matching = test_multicast_packet(channel.channel_id(), channel.key(), &payload);
+            assert!(node.dispatch_received_packet(&matching));
+            let nonmatching = test_multicast_packet(other_channel.channel_id(), other_channel.key(), &payload);
+            assert!(!node.dispatch_received_packet(&nonmatching));
+        }
+
+        block_on_ready(chat.send_text("channel outbound", &SendOptions::default())).unwrap();
+        assert_eq!(received.borrow().as_slice(), ["hello channel"]);
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -477,6 +548,40 @@ mod tests {
         )
     }
 
+    fn test_multicast_packet<'a>(
+        channel_id: &umsh_core::ChannelId,
+        channel_key: &'a umsh_core::ChannelKey,
+        payload: &'a [u8],
+    ) -> ReceivedPacketRef<'a> {
+        let wire = Box::leak(payload.to_vec().into_boxed_slice());
+        let header = umsh_core::PacketHeader {
+            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Multicast, false, false, false),
+            options_range: 0..0,
+            flood_hops: None,
+            dst: None,
+            channel: Some(*channel_id),
+            ack_dst: None,
+            source: umsh_core::SourceAddrRef::Hint(NodeHint([9, 9, 9])),
+            sec_info: None,
+            body_range: 0..wire.len(),
+            mic_range: wire.len()..wire.len(),
+            total_len: wire.len(),
+        };
+        ReceivedPacketRef::new(
+            wire,
+            wire,
+            header,
+            umsh_core::ParsedOptions::default(),
+            None,
+            Some(NodeHint([9, 9, 9])),
+            false,
+            Some(umsh_mac::ChannelInfoRef {
+                id: *channel_id,
+                key: channel_key,
+            }),
+        )
+    }
+
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[derive(Clone, Default)]
     struct FakeMac {
@@ -624,10 +729,9 @@ mod tests {
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn parse_owned_mac_command(payload: &[u8]) -> OwnedMacCommand {
-        match umsh_app::parse_payload(umsh_core::PacketType::Unicast, payload).unwrap() {
-            umsh_app::PayloadRef::MacCommand(command) => OwnedMacCommand::from(command),
-            other => panic!("unexpected payload: {other:?}"),
-        }
+        OwnedMacCommand::from(
+            umsh_app::parse_mac_command_payload(umsh_core::PacketType::Unicast, payload).unwrap(),
+        )
     }
 
     #[cfg(feature = "unsafe-advanced")]

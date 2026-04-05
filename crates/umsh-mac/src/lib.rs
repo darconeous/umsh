@@ -242,8 +242,8 @@ pub use peers::{
     PeerId, PeerInfo, PeerRegistry,
 };
 pub use send::{
-    AckState, ChannelInfoRef, MacEventRef, PendingAck, PendingAckError, QueuedTx,
-    ReceivedPacketRef, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue,
+    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
+    ReceivedPacketRef, ResendRecord, RouteHops, SendOptions, SendReceipt, TxPriority, TxQueue,
 };
 
 #[cfg(feature = "std")]

@@ -86,7 +86,7 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }

@@ -42,3 +42,7 @@ required-features = ["tokio-support"]
 [[example]]
 name = "repeater"
 required-features = ["embassy-support"]
+
+[[example]]
+name = "simulated_repeater_delivery"
+required-features = ["embassy-support"]

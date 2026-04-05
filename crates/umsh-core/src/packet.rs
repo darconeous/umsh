@@ -52,6 +52,80 @@ impl PacketType {
     }
 }
 
+/// Application payload type carried inside the MAC body.
+///
+/// `Empty` is a special out-of-band value used when the frame carries no
+/// application payload bytes at all, meaning there is no payload-type byte on
+/// the wire. All other variants correspond to the leading typed-payload byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PayloadType {
+    /// No application payload and no payload-type byte on the wire.
+    Empty = 0xFF,
+    /// Explicit application-agnostic payload type byte `0`.
+    Unspecified = 0,
+    /// Node-identity payload.
+    NodeIdentity = 1,
+    /// MAC command payload.
+    MacCommand = 2,
+    /// Text-message payload.
+    TextMessage = 3,
+    /// Chat-room management payload.
+    ChatRoomMessage = 5,
+    /// CoAP-over-UMSH payload.
+    CoapOverUmsh = 7,
+    /// Node-management payload.
+    NodeManagement = 8,
+}
+
+impl PayloadType {
+    /// Convert a raw payload-type byte into a known payload type.
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Unspecified),
+            1 => Some(Self::NodeIdentity),
+            2 => Some(Self::MacCommand),
+            3 => Some(Self::TextMessage),
+            5 => Some(Self::ChatRoomMessage),
+            7 => Some(Self::CoapOverUmsh),
+            8 => Some(Self::NodeManagement),
+            _ => None,
+        }
+    }
+
+    /// Return whether this payload type is valid for the given MAC packet type.
+    pub fn allowed_for(self, packet_type: PacketType) -> bool {
+        match self {
+            Self::Empty | Self::Unspecified | Self::NodeIdentity => {
+                !matches!(packet_type, PacketType::MacAck)
+            }
+            Self::MacCommand => matches!(
+                packet_type,
+                PacketType::Unicast
+                    | PacketType::UnicastAckReq
+                    | PacketType::BlindUnicast
+                    | PacketType::BlindUnicastAckReq
+                    | PacketType::Multicast
+            ),
+            Self::TextMessage | Self::CoapOverUmsh | Self::NodeManagement => matches!(
+                packet_type,
+                PacketType::Unicast
+                    | PacketType::UnicastAckReq
+                    | PacketType::BlindUnicast
+                    | PacketType::BlindUnicastAckReq
+                    | PacketType::Multicast
+            ),
+            Self::ChatRoomMessage => matches!(
+                packet_type,
+                PacketType::Unicast
+                    | PacketType::UnicastAckReq
+                    | PacketType::BlindUnicast
+                    | PacketType::BlindUnicastAckReq
+            ),
+        }
+    }
+}
+
 /// Frame-control field wrapper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fcf(pub u8);

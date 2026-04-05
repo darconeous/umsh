@@ -2,7 +2,7 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use umsh_app::{PayloadRef, parse_payload};
+use umsh_app::{PayloadType, identity_payload, mac_command};
 use umsh_mac::{LocalIdentityId, MacError, MacHandle, MacHandleError, Platform, SendOptions};
 
 use crate::dispatch::EventDispatcher;
@@ -267,17 +267,17 @@ fn dispatch_payload_callbacks<
     from: umsh_core::PublicKey,
     pending_pfs: &Rc<RefCell<Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>>>,
 ) {
-    let Ok(parsed) = parse_payload(packet.packet_type(), packet.payload()) else {
-        return;
-    };
-
-    match parsed {
-        PayloadRef::NodeIdentity(identity) => {
+    if packet.payload_type() == PayloadType::NodeIdentity {
+        if let Ok(identity) = identity_payload::parse(packet.payload()) {
             if let Ok(owned) = crate::OwnedNodeIdentityPayload::try_from(identity) {
                 node.dispatch_node_discovered(from, owned.name.as_deref());
             }
         }
-        PayloadRef::MacCommand(command) => {
+        return;
+    }
+
+    if packet.payload_type() == PayloadType::MacCommand {
+        if let Ok(command) = mac_command::parse(packet.payload()) {
             let owned = OwnedMacCommand::from(command);
             node.dispatch_mac_command(from, &owned);
             if matches!(
@@ -289,6 +289,5 @@ fn dispatch_payload_callbacks<
                 pending_pfs.borrow_mut().push((node.identity_id(), from, owned));
             }
         }
-        _ => {}
     }
 }

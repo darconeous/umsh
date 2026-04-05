@@ -638,7 +638,7 @@ fn receive_one_delivers_broadcast_to_all_identities() {
     let handled = block_on(mac.receive_one(|identity, event| {
         if let Some(packet) = received_of_type(&event, PacketType::Broadcast) {
             let mut body = heapless::Vec::new();
-            for byte in packet.payload() {
+            for byte in packet.payload_bytes() {
                 body.push(*byte).unwrap();
             }
             seen.push((identity, packet.from_key().unwrap(), body)).unwrap();
@@ -1362,7 +1362,7 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1402,7 +1402,7 @@ fn receive_one_auto_derives_registered_unicast_peer_state() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1546,7 +1546,7 @@ fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1615,7 +1615,7 @@ fn receive_one_full_key_unicast_auto_registers_when_enabled() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1709,7 +1709,7 @@ fn receive_one_delivers_blind_unicast_and_queues_immediate_ack() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1763,7 +1763,7 @@ fn receive_one_auto_derives_registered_blind_unicast_peer_state() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1818,7 +1818,7 @@ fn receive_one_full_key_blind_unicast_auto_registers_when_enabled() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1919,7 +1919,7 @@ fn receive_one_delivers_unencrypted_blind_unicast() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -1972,7 +1972,7 @@ fn receive_one_delivers_source_routed_unicast_without_immediate_ack() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -2033,7 +2033,7 @@ fn receive_one_delivers_source_routed_blind_unicast_without_immediate_ack() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -2160,7 +2160,7 @@ fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }
@@ -2260,7 +2260,7 @@ fn receive_one_delivers_multicast_for_known_channel() {
                 identity,
                 packet.from_key().unwrap(),
                 packet.channel().unwrap().id,
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
             ))
             .unwrap();
         }
@@ -2728,7 +2728,7 @@ fn poll_cycle_drains_tx_receives_unicast_and_sends_immediate_ack() {
             seen = Some((
                 identity,
                 packet.from_key().unwrap(),
-                packet.payload().to_vec(),
+                packet.payload_bytes().to_vec(),
                 packet.ack_requested(),
             ));
         }

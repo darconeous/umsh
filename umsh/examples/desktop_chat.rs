@@ -25,7 +25,7 @@ use umsh::{
         Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions,
         test_support::SimulatedNetwork,
     },
-    node::{Host, PeerConnection, UnicastTextChatWrapper},
+    node::{Host, PeerConnection, Subscription, UnicastTextChatWrapper},
     tokio_support::{
         StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio,
     },
@@ -123,7 +123,7 @@ async fn run_udp_chat(
         .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
     let chat = ChatText::from_peer(&peer);
     let outputs = OutputQueue::new();
-    register_peer_callbacks(&chat, &peer, outputs.sink());
+    let _subscriptions = register_peer_callbacks(&chat, &peer, outputs.sink());
 
     print_banner("udp-multicast", local_key, Some(peer_key));
     println!("group: {group}:{port}");
@@ -197,13 +197,13 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let remote_chat = ChatText::from_peer(&remote_peer);
     let outputs = OutputQueue::new();
     let remote_echoes = Rc::new(RefCell::new(Vec::<String>::new()));
-    register_peer_callbacks(&local_chat, &local_peer, outputs.sink());
-    {
+    let _subscriptions = register_peer_callbacks(&local_chat, &local_peer, outputs.sink());
+    let _remote_echo_subscription = {
         let remote_echoes = remote_echoes.clone();
-        remote_chat.on_text(move |body| {
-            remote_echoes.borrow_mut().push(body.to_string());
-        });
-    }
+        remote_chat.on_text(move |_packet, text| {
+            remote_echoes.borrow_mut().push(text.body.to_string());
+        })
+    };
 
     print_banner("simulated", local_key, Some(remote_key));
     let mut stdin = BufReader::new(io::stdin()).lines();
@@ -270,7 +270,7 @@ async fn run_serial_chat(
             .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
         let chat = ChatText::from_peer(&peer);
         let outputs = OutputQueue::new();
-        register_peer_callbacks(&chat, &peer, outputs.sink());
+        let _subscriptions = register_peer_callbacks(&chat, &peer, outputs.sink());
 
         print_banner("serial-draft", local_key, Some(peer_key));
         let mut stdin = BufReader::new(io::stdin()).lines();
@@ -410,33 +410,36 @@ fn register_peer_callbacks<'a, R: Radio>(
     chat: &ChatText<'a, R>,
     peer: &ChatPeer<'a, R>,
     lines: Rc<RefCell<Vec<String>>>,
-) {
+) -> Vec<Subscription> {
+    let mut subscriptions = Vec::new();
     let peer_key = *peer.peer();
     let text_lines = lines.clone();
-    chat.on_text(move |body| {
+    subscriptions.push(chat.on_text(move |packet, text| {
         text_lines.borrow_mut().push(format!(
-            "[{}] {}",
+            "[{} h={}] {}",
             hex_encode(&peer_key.0[..4]),
-            body
+            packet.flood_hops().map(|h| h.accumulated()).unwrap_or(0),
+            text.body
         ));
-    });
+    }));
 
     let peer_key = *peer.peer();
     let pfs_lines = lines.clone();
-    peer.on_pfs_established(move || {
+    subscriptions.push(peer.on_pfs_established(move || {
         pfs_lines.borrow_mut().push(format!(
             "pfs established with {}",
             hex_encode(&peer_key.0[..4])
         ));
-    });
+    }));
 
     let peer_key = *peer.peer();
-    peer.on_pfs_ended(move || {
+    subscriptions.push(peer.on_pfs_ended(move || {
         lines.borrow_mut().push(format!(
             "pfs ended with {}",
             hex_encode(&peer_key.0[..4])
         ));
-    });
+    }));
+    subscriptions
 }
 
 fn build_mac<R>(radio: R, counter_root: PathBuf) -> Result<ChatMac<R>, Box<dyn std::error::Error>>

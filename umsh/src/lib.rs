@@ -25,20 +25,20 @@ pub mod prelude {
 
     pub use crate::Platform;
 
-    pub use umsh_app::{MacCommand, NodeIdentityPayload, PayloadRef, PayloadType, TextMessage};
+    pub use umsh_app::{MacCommand, NodeIdentityPayload, PayloadType, TextMessage};
     pub use umsh_core::{ChannelId, ChannelKey, PublicKey};
     pub use umsh_mac::{
-        LocalIdentityId, Mac, MacEventRef, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions,
-        SendReceipt,
+        LocalIdentityId, Mac, MacEventRef, MacHandle, OperatingPolicy, PacketFamily,
+        RepeaterConfig, RouteHops, SendOptions, SendReceipt,
     };
     pub use umsh_node::{
         ChannelInfoRef, Host, HostError, LocalNode, MacBackend, MacBackendError, NodeError,
-        PeerConnection, ReceivedPacketRef, SendProgressTicket, SendToken, Transport,
-        UnicastTextChatWrapper,
+        PeerConnection, ReceivedPacketRef, SendProgressTicket, SendToken, Subscription,
+        Transport, UnicastTextChatWrapper,
     };
 
     #[cfg(feature = "software-crypto")]
-    pub use umsh_node::{BoundChannel, Channel};
+    pub use umsh_node::{BoundChannel, Channel, MulticastTextChatWrapper};
 
     #[cfg(feature = "software-crypto")]
     pub use umsh_node::{PfsSession, PfsSessionManager, PfsState, PfsStatus};

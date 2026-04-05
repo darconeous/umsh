@@ -49,8 +49,8 @@ pub use builder::{
 pub use error::{BuildError, EncodeError, ParseError};
 pub use packet::{
     feed_aad, iter_options, ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
-    PacketHeader, PacketType, ParsedOptions, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,
-    SourceAddrRef, UnsealedPacket, UMSH_VERSION,
+    PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo,
+    SourceAddr, SourceAddrRef, UnsealedPacket, UMSH_VERSION,
 };
 
 #[cfg(test)]

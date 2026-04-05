@@ -8,9 +8,10 @@
 //!
 //! Common entry points:
 //!
-//! - [`parse_payload`] to decode a typed application payload after MAC processing.
-//! - [`PayloadType`] to inspect or validate payload-type compatibility.
+//! - [`PayloadType`] and [`split_payload_type`] to inspect typed application payloads.
 //! - [`parse_text_message`] and [`encode_text_message`] for standalone text-message work.
+//! - [`parse_text_payload`], [`parse_mac_command_payload`], and
+//!   [`parse_node_identity_payload`] for typed payload parsing without a generic event enum.
 //! - [`parse_umsh_uri`] and the `format_*` helpers for provisioning URIs.
 //!
 //! # Examples
@@ -18,7 +19,7 @@
 //! Parsing a typed text-message payload:
 //!
 //! ```rust
-//! use umsh_app::{parse_payload, PayloadRef, PayloadType, TextMessage};
+//! use umsh_app::{parse_text_payload, PayloadType, TextMessage};
 //! use umsh_core::PacketType;
 //!
 //! let mut payload = [0u8; 16];
@@ -26,10 +27,8 @@
 //! payload[1] = 0xFF;
 //! payload[2..7].copy_from_slice(b"hello");
 //!
-//! match parse_payload(PacketType::Unicast, &payload[..7]).unwrap() {
-//!     PayloadRef::TextMessage(message) => assert_eq!(message.body, "hello"),
-//!     _ => panic!("unexpected payload kind"),
-//! }
+//! let message = parse_text_payload(PacketType::Unicast, &payload[..7]).unwrap();
+//! assert_eq!(message.body, "hello");
 //! ```
 
 mod error;
@@ -49,8 +48,12 @@ pub use error::{EncodeError, ParseError};
 pub use identity::{Capabilities, NodeIdentityPayload, NodeRole};
 /// MAC command identifiers and payload representation.
 pub use mac_cmd::{CommandId, MacCommand};
-/// Payload dispatch helpers and typed payload views.
-pub use payload::{parse_payload, split_payload_type, PayloadRef, PayloadType};
+/// Payload dispatch helpers and type-specific payload parsers.
+pub use payload::{
+    expect_payload_type, parse_mac_command_payload, parse_node_identity_payload, parse_text_payload,
+    split_payload_type,
+};
+pub use umsh_core::PayloadType;
 /// Text-message types and standalone codec helpers.
 pub use text::{encode as encode_text_message, parse as parse_text_message, Fragment, MessageSequence, MessageType, Regarding, TextMessage};
 /// UMSH URI parsing and formatting helpers.
@@ -88,9 +91,10 @@ mod tests {
     use umsh_core::{NodeHint, PacketType, PublicKey};
 
     use crate::{
-        identity_payload, mac_command, parse_payload, split_payload_type, text_message,
-        ChannelParams, CommandId, Fragment, MacCommand, MessageSequence, MessageType,
-        NodeIdentityPayload, NodeRole, PayloadRef, PayloadType, Regarding, TextMessage,
+        identity_payload, mac_command, parse_mac_command_payload, parse_text_payload,
+        split_payload_type, text_message, ChannelParams, CommandId, Fragment, MacCommand,
+        MessageSequence, MessageType, NodeIdentityPayload, NodeRole, PayloadType, Regarding,
+        TextMessage,
     };
 
     #[cfg(feature = "chat-rooms")]
@@ -272,9 +276,20 @@ mod tests {
         assert_eq!(kind, PayloadType::TextMessage);
         assert_eq!(body, &payload[1..1 + inner_len]);
 
-        match parse_payload(PacketType::Unicast, &payload[..1 + inner_len]).unwrap() {
-            PayloadRef::TextMessage(parsed) => assert_eq!(parsed.body, "hello"),
-            _ => panic!("expected text payload"),
-        }
+        let parsed = parse_text_payload(PacketType::Unicast, &payload[..1 + inner_len]).unwrap();
+        assert_eq!(parsed.body, "hello");
+    }
+
+    #[test]
+    fn payload_dispatch_parses_mac_commands() {
+        let command = MacCommand::EchoRequest { data: b"ping" };
+        let mut inner = [0u8; 64];
+        let inner_len = mac_command::encode(&command, &mut inner).unwrap();
+        let mut payload = [0u8; 65];
+        payload[0] = PayloadType::MacCommand as u8;
+        payload[1..1 + inner_len].copy_from_slice(&inner[..inner_len]);
+
+        let parsed = parse_mac_command_payload(PacketType::Unicast, &payload[..1 + inner_len]).unwrap();
+        assert_eq!(parsed, command);
     }
 }

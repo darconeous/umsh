@@ -29,7 +29,40 @@ pub(crate) struct NodeMembership {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SubscriptionHandle(NonZeroU32);
+pub(crate) struct SubscriptionHandle(NonZeroU32);
+
+/// Owned subscription guard.
+///
+/// Dropping the value automatically unregisters the callback.
+pub struct Subscription {
+    cancel: Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>,
+}
+
+impl Subscription {
+    pub(crate) fn new(cancel: impl FnMut() -> bool + 'static) -> Self {
+        Self {
+            cancel: Rc::new(RefCell::new(Some(Box::new(cancel)))),
+        }
+    }
+
+    /// Unregister immediately instead of waiting for drop.
+    pub fn unsubscribe(self) -> bool {
+        Self::run_cancel(&self.cancel)
+    }
+
+    fn run_cancel(cancel: &Rc<RefCell<Option<Box<dyn FnMut() -> bool>>>>) -> bool {
+        let Some(mut cancel) = cancel.borrow_mut().take() else {
+            return false;
+        };
+        cancel()
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        let _ = Self::run_cancel(&self.cancel);
+    }
+}
 
 pub(crate) struct HandlerTable<T> {
     slots: Vec<Option<T>>,
@@ -152,6 +185,15 @@ impl LocalNodeState {
         self.peer_subscriptions
             .last_mut()
             .expect("peer subscriptions just inserted")
+    }
+
+    pub(crate) fn find_peer_subscriptions_mut(
+        &mut self,
+        peer: PublicKey,
+    ) -> Option<&mut PeerSubscriptions> {
+        self.peer_subscriptions
+            .iter_mut()
+            .find(|entry| entry.peer == peer)
     }
 }
 
@@ -302,7 +344,7 @@ impl<M: MacBackend> LocalNode<M> {
         Ok(PeerConnection::new(self.clone(), key))
     }
 
-    pub fn on_receive<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
     {
@@ -312,11 +354,16 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_receive_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().receive_handlers.remove(handle)
+    pub fn on_receive<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
+    {
+        let handle = self.add_receive_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().receive_handlers.remove(handle))
     }
 
-    pub fn on_node_discovered<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_node_discovered_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, Option<&str>) + 'static,
     {
@@ -326,11 +373,18 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_node_discovered_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().node_discovered_handlers.remove(handle)
+    pub fn on_node_discovered<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, Option<&str>) + 'static,
+    {
+        let handle = self.add_node_discovered_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || {
+            state.borrow_mut().node_discovered_handlers.remove(handle)
+        })
     }
 
-    pub fn on_beacon<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_beacon_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(NodeHint, Option<PublicKey>) + 'static,
     {
@@ -340,11 +394,16 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_beacon_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().beacon_handlers.remove(handle)
+    pub fn on_beacon<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(NodeHint, Option<PublicKey>) + 'static,
+    {
+        let handle = self.add_beacon_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().beacon_handlers.remove(handle))
     }
 
-    pub fn on_mac_command<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_mac_command_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, &OwnedMacCommand) + 'static,
     {
@@ -354,11 +413,16 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_mac_command_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().mac_command_handlers.remove(handle)
+    pub fn on_mac_command<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, &OwnedMacCommand) + 'static,
+    {
+        let handle = self.add_mac_command_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().mac_command_handlers.remove(handle))
     }
 
-    pub fn on_ack_received<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_ack_received_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, SendToken) + 'static,
     {
@@ -368,11 +432,16 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_ack_received_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().ack_received_handlers.remove(handle)
+    pub fn on_ack_received<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, SendToken) + 'static,
+    {
+        let handle = self.add_ack_received_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().ack_received_handlers.remove(handle))
     }
 
-    pub fn on_ack_timeout<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_ack_timeout_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, SendToken) + 'static,
     {
@@ -382,11 +451,16 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_ack_timeout_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().ack_timeout_handlers.remove(handle)
+    pub fn on_ack_timeout<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, SendToken) + 'static,
+    {
+        let handle = self.add_ack_timeout_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().ack_timeout_handlers.remove(handle))
     }
 
-    pub fn on_pfs_established<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_pfs_established_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey) + 'static,
     {
@@ -396,11 +470,18 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_pfs_established_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().pfs_established_handlers.remove(handle)
+    pub fn on_pfs_established<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        let handle = self.add_pfs_established_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || {
+            state.borrow_mut().pfs_established_handlers.remove(handle)
+        })
     }
 
-    pub fn on_pfs_ended<F>(&self, handler: F) -> SubscriptionHandle
+    fn add_pfs_ended_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey) + 'static,
     {
@@ -410,8 +491,13 @@ impl<M: MacBackend> LocalNode<M> {
             .insert(Box::new(handler))
     }
 
-    pub fn remove_pfs_ended_handler(&self, handle: SubscriptionHandle) -> bool {
-        self.state.borrow_mut().pfs_ended_handlers.remove(handle)
+    pub fn on_pfs_ended<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        let handle = self.add_pfs_ended_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().pfs_ended_handlers.remove(handle))
     }
 
     #[cfg(feature = "software-crypto")]
@@ -896,6 +982,10 @@ impl<M: MacBackend> BoundChannel<M> {
         } else {
             Err(NodeError::ChannelLeft)
         }
+    }
+
+    pub(crate) fn node(&self) -> &LocalNode<M> {
+        &self.node
     }
 }
 
