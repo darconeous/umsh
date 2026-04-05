@@ -1,6 +1,169 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! Application-facing endpoint orchestration built on top of `umsh-mac`.
+//! Application-facing endpoint orchestration built on top of [`umsh-mac`](umsh_mac).
+//!
+//! `umsh-node` is the layer between the radio-facing MAC coordinator in `umsh-mac` and the
+//! application that the user actually interacts with. Where `umsh-mac` thinks in raw frames,
+//! keys, replay windows, and transmit queues, `umsh-node` thinks in text messages, node
+//! identities, beacons, and PFS sessions. The two crates are intentionally separated: an
+//! application that wants full control over the MAC surface can use `umsh-mac` directly;
+//! `umsh-node` is the batteries-included entry point for most use cases.
+//!
+//! This crate requires `alloc` (heap allocation for `String`, `Vec`, etc.). It is
+//! otherwise `no_std` compatible.
+//!
+//! # Architecture overview
+//!
+//! ```text
+//! ┌───────────────────────────────────────────────────────────────┐
+//! │  Application                                                  │
+//! │  endpoint.send_text() / endpoint.handle_event() / …          │
+//! └──────────────────────────┬────────────────────────────────────┘
+//!                            │  EndpointEvent · DeferredAction
+//!                            ▼
+//! ┌───────────────────────────────────────────────────────────────┐
+//! │  Endpoint<M>  (endpoint.rs)                                   │
+//! │                                                               │
+//! │  ┌────────────────────┐  ┌────────────────────────────────┐   │
+//! │  │ EndpointConfig     │  │ PfsSessionManager (pfs.rs)     │   │
+//! │  │  default_mic_size  │  │  PfsSession × N                │   │
+//! │  │  beacon_interval   │  │  ephemeral MAC identity mgmt   │   │
+//! │  │  UiAcceptancePolicy│  └────────────────────────────────┘   │
+//! │  └────────────────────┘                                        │
+//! └──────────────────────────┬────────────────────────────────────┘
+//!                            │  NodeMac trait (mac.rs)
+//!                            ▼
+//! ┌───────────────────────────────────────────────────────────────┐
+//! │  umsh_mac::MacHandle  →  umsh_mac::Mac<P>                     │
+//! │  (radio, crypto, tx queue, dup cache, replay windows, …)      │
+//! └───────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Modules and key types
+//!
+//! ## [`endpoint`] — the primary application interface
+//!
+//! [`Endpoint<M>`] is the top-level type most applications interact with. It wraps a
+//! [`LocalIdentityId`](umsh_mac::LocalIdentityId) and a [`NodeMac`] handle, and provides:
+//!
+//! - **High-level send helpers** — `send_text`, `send_channel_text`, `send_blind_text`,
+//!   `send_beacon`, `send_identity_beacon`, `request_path_discovery`. Each helper encodes
+//!   the appropriate `umsh-app` payload type and calls through to the underlying MAC handle.
+//! - **Event processing** — `handle_event` accepts a [`MacEventRef`](umsh_mac::MacEventRef)
+//!   (produced by the `umsh-mac` event loop), parses the payload, applies the
+//!   [`UiAcceptancePolicy`] filter, and returns an [`EventAction`] indicating whether the
+//!   event was handled inline or requires deferred async follow-up work.
+//! - **Scheduled beacons** — `send_scheduled_beacon` checks an internal timer and sends
+//!   a beacon when the configured `beacon_interval_ms` has elapsed.
+//! - **PFS session management** — when the `software-crypto` feature is enabled,
+//!   `request_pfs_session`, `end_pfs_session`, and the deferred handling of PFS MAC
+//!   commands are all routed through the endpoint. After a session is established,
+//!   subsequent `send_text` calls to that peer are automatically redirected through the
+//!   ephemeral identity and keyed to the peer's ephemeral public key.
+//!
+//! [`EndpointConfig`] holds the per-endpoint defaults (default MIC size, flood hops,
+//! encryption flag, beacon interval, and the [`UiAcceptancePolicy`] filter).
+//!
+//! [`UiAcceptancePolicy`] is a compact set of boolean flags that suppress specific event
+//! categories before they reach the application — for example, `allow_direct_text: false`
+//! silently drops all incoming direct unicast text messages at the endpoint layer. All
+//! flags default to `true`.
+//!
+//! ## [`owned`] — heap-allocated event and payload types
+//!
+//! The `umsh-app` crate uses zero-copy borrowed types (`TextMessage<'_>`,
+//! `NodeIdentityPayload<'_>`, `MacCommand<'_>`) that borrow from the underlying frame
+//! buffer. `umsh-node` provides owned heap-allocated equivalents that can be stored,
+//! cloned, and sent across async task boundaries without lifetime constraints:
+//!
+//! - [`OwnedTextMessage`] — owned parsed text message with all optional fields.
+//! - [`OwnedNodeIdentityPayload`] — owned node identity advertisement (role, caps, name,
+//!   signature).
+//! - [`OwnedMacCommand`] — owned MAC command variant, with `Vec<u8>` for variable-length
+//!   fields like echo data.
+//! - [`EndpointEvent`] — the top-level event enum emitted by `handle_event` and
+//!   `handle_deferred`. Variants cover text received, channel text, node discovery, beacon
+//!   received, ACK confirmation, ACK timeout, PFS session lifecycle, and surfaced MAC
+//!   commands.
+//! - [`EventAction`] — the return type of `handle_event`. Either `Handled(Option<EndpointEvent>)`
+//!   for events resolved synchronously, or `NeedsAsync(DeferredAction)` for events that
+//!   require async follow-up (e.g., PFS key derivation after receiving a session response).
+//! - [`DeferredAction`] — the work item passed back to `handle_deferred` when follow-up is
+//!   needed. Currently contains only MAC command handling, but is designed to accommodate
+//!   future async event types.
+//!
+//! ## [`mac`] — MAC abstraction trait for testability
+//!
+//! [`NodeMac`] is the trait that `Endpoint` depends on instead of being generic over
+//! `MacHandle` directly. It exposes the send/configure surface of the MAC coordinator:
+//! `add_peer`, `install_pairwise_keys`, `send_broadcast`, `send_unicast`,
+//! `send_multicast`, `send_blind_unicast`, `fill_random`, `now_ms`, and (with
+//! `software-crypto`) the ephemeral identity lifecycle methods.
+//!
+//! [`MacHandle`](umsh_mac::MacHandle) implements `NodeMac`, and test code can provide a
+//! fake implementation to drive `Endpoint` deterministically without a real radio or
+//! cryptographic state — the pattern used throughout the integration tests in this file.
+//!
+//! [`NodeMacError`] normalizes the two error dimensions of a MAC handle — `Busy` (the
+//! `RefCell` was already borrowed), `Send` (a `SendError`), and `Capacity` (a
+//! `CapacityError`) — into a single error type that `EndpointError` can wrap.
+//!
+//! ## [`pfs`] — Perfect Forward Secrecy session management
+//!
+//! Available when the `software-crypto` feature is enabled. Implements the two-message
+//! PFS handshake defined in the `umsh-app` MAC command layer:
+//!
+//! 1. The initiator generates a fresh [`SoftwareIdentity`](umsh_crypto::software::SoftwareIdentity)
+//!    and sends a `PfsSessionRequest` MAC command carrying the ephemeral public key and a
+//!    requested duration.
+//! 2. The responder generates its own ephemeral identity, replies with a
+//!    `PfsSessionResponse`, derives the shared pairwise keys from the two ephemeral keys
+//!    via ECDH, and installs them into the MAC coordinator.
+//! 3. The initiator receives the `PfsSessionResponse`, performs its own ECDH, installs the
+//!    keys, and registers the ephemeral MAC identity via `register_ephemeral`.
+//!
+//! [`PfsSessionManager`] tracks all active sessions (up to `DEFAULT_MAX_PFS_SESSIONS`).
+//! Each [`PfsSession`] records the peer's long-term key, both ephemeral keys, the mapped
+//! [`LocalIdentityId`](umsh_mac::LocalIdentityId), an expiry timestamp, and the
+//! [`PfsState`] (either `Requested` or `Active`). `Endpoint` consults the session manager
+//! on every outbound unicast to transparently redirect traffic through the ephemeral
+//! identity when a session exists.
+//!
+//! ## [`error`] — endpoint error type
+//!
+//! [`EndpointError`] is the single error type returned by all `Endpoint` methods. It wraps
+//! `umsh-app` parse/encode errors, [`NodeMacError`], missing-identity / PFS-not-found
+//! errors, and (with `software-crypto`) cryptographic failures. The variants mirror the
+//! layers the operation touches: application parsing, payload encoding, MAC send, and
+//! PFS crypto.
+//!
+//! # Typical usage
+//!
+//! ```rust,ignore
+//! // After setting up mac + handle as in umsh-mac docs:
+//! let endpoint = Endpoint::new(identity_id, mac_handle, EndpointConfig {
+//!     beacon_interval_ms: Some(60_000),
+//!     ..EndpointConfig::default()
+//! });
+//!
+//! // Send a text message:
+//! let receipt = endpoint.send_text(&peer_key, "hello")?;
+//!
+//! // In the mac event loop callback:
+//! match endpoint.handle_event(mac_event) {
+//!     EventAction::Handled(Some(EndpointEvent::TextReceived { from, message })) => {
+//!         println!("{}: {}", from, message.body);
+//!     }
+//!     EventAction::NeedsAsync(deferred) => {
+//!         let event = endpoint.handle_deferred(deferred).await;
+//!         // ...
+//!     }
+//!     _ => {}
+//! }
+//!
+//! // Periodically call from the event loop:
+//! endpoint.send_scheduled_beacon(now_ms)?;
+//! ```
 
 #[cfg(not(feature = "alloc"))]
 compile_error!("umsh-node currently requires the alloc feature");

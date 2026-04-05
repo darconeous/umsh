@@ -3,11 +3,60 @@ use umsh_core::{ChannelId, MicSize, NodeHint, PublicKey, RouterHint};
 
 use crate::{CapacityError, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
 
-/// Opaque receipt returned for ACK-requested transmissions.
+/// Opaque tracking token returned for ACK-requested transmissions.
+///
+/// When [`Mac::queue_unicast`](crate::Mac::queue_unicast) or
+/// [`Mac::queue_blind_unicast`](crate::Mac::queue_blind_unicast) is called with
+/// `options.ack_requested = true`, the coordinator allocates a `SendReceipt` from the
+/// identity slot's internal sequence counter and returns it wrapped in `Some(...)`.
+/// The application stores this token and watches for it to appear in a future MAC event
+/// callback — either confirming delivery (MAC ACK received and verified) or reporting
+/// failure (all retransmit attempts exhausted without a valid ACK).
+///
+/// Receipts are unique within the lifetime of an [`IdentitySlot`](crate::IdentitySlot)
+/// (wrapping after ~4 billion sends). They are not meaningful across reboots or after
+/// the identity slot is removed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SendReceipt(pub u32);
 
-/// High-level transmission options passed to MAC send helpers.
+/// High-level transmission options passed to [`Mac`](crate::Mac) send helpers.
+///
+/// `SendOptions` expresses *what* the application wants from a send — the coordinator
+/// translates these into packet-builder calls and enforces any
+/// [`OperatingPolicy`](crate::OperatingPolicy) constraints before building the frame.
+///
+/// The default configuration (`SendOptions::default()`) is a reasonable starting point:
+/// 16-byte MIC, encryption enabled, no ACK, 3-byte source hint, 5 flood hops, no trace
+/// route, no salt.
+///
+/// `SendOptions` exposes a fluent builder API so applications can override only what they
+/// care about:
+///
+/// ```rust
+/// # use umsh_mac::send::SendOptions;
+/// # use umsh_core::MicSize;
+/// let opts = SendOptions::default()
+///     .with_ack_requested(true)
+///     .with_mic_size(MicSize::Mic8)
+///     .no_flood()
+///     .with_trace_route();
+/// ```
+///
+/// ## Field notes
+///
+/// - **`mic_size`** — trading MIC length against frame overhead. 16-byte MIC is strongly
+///   preferred for unicast; 4-byte may be acceptable for low-bandwidth broadcast beacons.
+/// - **`flood_hops`** — `None` disables flood forwarding (point-to-point or source-routed
+///   only). `Some(n)` sets the initial `FHOPS_REM` budget; repeaters decrement it and drop
+///   at zero.
+/// - **`full_source`** — include the full 32-byte public key instead of the 3-byte hint,
+///   allowing the receiver to authenticate without a prior key exchange. Useful for first
+///   contact or identity announcements; costs 29 extra bytes per frame.
+/// - **`salt`** — append a random 2-byte salt to SECINFO, adding nonce diversity and
+///   preventing correlation of frames sharing the same counter value across sessions.
+/// - **`source_route`** — provide an explicit list of [`RouterHint`] values to route the
+///   frame along a known path rather than relying on flood forwarding. Setting a source route
+///   also constrains the flood-hop budget to the route length when `flood_hops` is unset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SendOptions {
     /// Requested MIC size.
@@ -115,7 +164,26 @@ impl SendOptions {
     }
 }
 
-/// State of a pending ACK-requested transmission.
+/// Tracks which phase of the two-stage ACK lifecycle a pending transmission is in.
+///
+/// UMSH ACK-requested sends go through up to two distinct waiting phases before the
+/// coordinator either confirms delivery or gives up:
+///
+/// 1. **`AwaitingForward`** — immediately after sending, the coordinator listens to see if
+///    the frame is re-broadcast by a repeater within `confirm_deadline_ms`. Because LoRa
+///    links are half-duplex, the sender may not be in direct range of the destination but
+///    *can* hear the repeater that retransmitted the frame, providing an early, cheap
+///    confirmation that the packet made it to the next hop. If no forwarding echo is heard
+///    before the deadline, the frame is retransmitted (up to [`MAX_FORWARD_RETRIES`]
+///    attempts). On success, the state advances to `AwaitingAck`.
+///
+/// 2. **`AwaitingAck`** — the coordinator waits for the destination to return a MAC ACK
+///    packet containing the correct ACK tag (a CMAC-derived value only the destination can
+///    compute after successfully decrypting the original frame). The absolute deadline is
+///    `PendingAck::ack_deadline_ms`; expiry means the send failed.
+///
+/// Nodes in direct radio range of the destination skip `AwaitingForward` entirely and are
+/// placed directly into `AwaitingAck` via [`PendingAck::direct`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AckState {
     /// Waiting to overhear forwarding confirmation from the next hop.
@@ -124,7 +192,18 @@ pub enum AckState {
     AwaitingAck,
 }
 
-/// Stored frame data used for retransmission.
+/// Sealed frame bytes and optional source route retained for retransmission.
+///
+/// When the coordinator sends an ACK-requested packet, it must keep a verbatim copy of the
+/// already-sealed frame for potential retransmission — not just the plaintext — because
+/// re-building and re-sealing would produce a different ciphertext and a different ACK tag,
+/// which the destination would not recognize.
+///
+/// `ResendRecord` stores up to `FRAME` bytes of the original sealed frame alongside any
+/// source route that may need to be re-injected into the frame header on retransmit. Records
+/// are created via [`ResendRecord::try_new`] and embedded inside [`PendingAck`]. The `FRAME`
+/// const generic must be at least as large as the largest unicast frame the application will
+/// send; oversized frames are rejected at queue time with [`crate::CapacityError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResendRecord<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Exact sealed frame bytes.
@@ -159,7 +238,30 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
     }
 }
 
-/// Tracking record for one ACK-requested transmission.
+/// Complete tracking state for one in-flight ACK-requested transmission.
+///
+/// The coordinator's [`IdentitySlot`](crate::IdentitySlot) maintains a `LinearMap` of
+/// `PendingAck` records keyed by [`SendReceipt`], one per active ACK-requested send. The
+/// record holds everything needed to detect completion, detect timeout, and retransmit:
+///
+/// - **`ack_tag`** — the 8-byte CMAC-derived value that will appear in the destination's
+///   MAC ACK packet. Only a node that received and successfully decrypted the original frame
+///   can produce the correct tag, so a matching `ack_tag` is cryptographic proof of delivery.
+/// - **`peer`** — the destination's full public key, used to look up the correct pending
+///   entry when matching an inbound MAC ACK against the pending table.
+/// - **`resend`** — a verbatim copy of the sealed frame for retransmission. See
+///   [`ResendRecord`].
+/// - **`sent_ms`** — the monotonic millisecond timestamp at which the frame was first
+///   transmitted; useful for latency measurement.
+/// - **`ack_deadline_ms`** — absolute deadline for the final ACK. Expiry means failure and
+///   the entry is removed.
+/// - **`retries`** — the number of retransmissions already attempted; capped at
+///   [`MAX_FORWARD_RETRIES`](crate::MAX_FORWARD_RETRIES).
+/// - **`state`** — current position in the [`AckState`] lifecycle (forwarding confirmation
+///   wait or final-ACK wait).
+///
+/// Use [`PendingAck::direct`] for sends to nodes in direct radio range, or
+/// [`PendingAck::forwarded`] when routing through a repeater.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Internal ACK tag used for inbound matching.
@@ -221,16 +323,40 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     }
 }
 
-/// Errors returned while recording pending-ACK state.
+/// Errors returned when recording pending-ACK state in an identity slot.
+///
+/// Returned by [`IdentitySlot::try_insert_pending_ack`](crate::IdentitySlot::try_insert_pending_ack)
+/// when the coordinator attempts to register a new in-flight ACK-requested send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingAckError {
-    /// The referenced local identity was missing.
+    /// The [`LocalIdentityId`](crate::LocalIdentityId) supplied does not correspond to an
+    /// occupied slot — the identity was removed while the send was being set up.
     IdentityMissing,
-    /// The pending-ACK table was full.
+    /// The pending-ACK `LinearMap` inside the identity slot has reached its `ACKS` capacity.
+    /// Wait for an in-flight send to complete or time out before issuing another ACK-requested
+    /// send on this identity.
     TableFull,
 }
 
-/// Priority class used by the transmit queue.
+/// Priority class assigned to entries in the [`TxQueue`].
+///
+/// The transmit queue services entries in priority order (lowest rank first) so that
+/// time-sensitive control traffic is never delayed by a backlog of application sends.
+/// Within the same priority class, entries are served in FIFO order by sequence number.
+///
+/// Priority levels from highest to lowest:
+///
+/// - **`ImmediateAck`** (rank 0) — MAC ACK frames generated in response to a received
+///   unicast or blind-unicast with ACK-requested. Must be sent as quickly as possible so
+///   the original sender's retransmit timer does not expire.
+/// - **`Forward`** (rank 1) — frames being forwarded by the repeater. Prompt forwarding
+///   feeds the sender's forwarding-confirmation window, so delays here can trigger
+///   unnecessary retransmissions at the source.
+/// - **`Retry`** (rank 2) — retransmissions of unacknowledged ACK-requested sends. These
+///   have already been delayed by a full forwarding-confirmation window and need to get out
+///   before the final ACK deadline expires.
+/// - **`Application`** (rank 3) — new application-originated frames (`queue_broadcast`,
+///   `queue_unicast`, `queue_multicast`, etc.). Lowest priority; yields to all control traffic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TxPriority {
     /// Immediate transport ACK.
@@ -254,7 +380,27 @@ impl TxPriority {
     }
 }
 
-/// One queued transmission entry.
+/// One entry in the [`TxQueue`] waiting to be transmitted by the [`Mac`](crate::Mac) coordinator.
+///
+/// Each `QueuedTx` holds a complete, already-sealed frame ready to hand directly to the
+/// radio driver. The coordinator does not re-seal on retransmit; the frame bytes are the
+/// authoritative on-the-wire representation.
+///
+/// - **`priority`** — determines service order within the queue. See [`TxPriority`].
+/// - **`frame`** — the sealed frame bytes, at most `FRAME` bytes. The coordinator calls
+///   `radio.transmit(&entry.frame, tx_options).await` when this entry reaches the head of
+///   the queue and its `not_before_ms` has elapsed.
+/// - **`receipt`** — for ACK-requested sends, the associated [`SendReceipt`] so the
+///   coordinator can update the [`PendingAck`] state after a successful transmit.
+/// - **`sequence`** — a monotonic counter assigned at enqueue time, used to preserve
+///   FIFO ordering among entries sharing the same priority.
+/// - **`not_before_ms`** — earliest acceptable transmit time in monotonic milliseconds.
+///   Entries with a future `not_before_ms` are skipped until the clock advances past it.
+///   Used to introduce per-node forwarding delay jitter that reduces collision probability.
+///   Zero means transmit immediately.
+/// - **`cad_attempts`** — number of channel-activity-detection retries already consumed
+///   on this entry; compared against [`MAX_CAD_ATTEMPTS`](crate::MAX_CAD_ATTEMPTS) to bound
+///   medium contention retries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Priority class.
@@ -307,7 +453,22 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
     }
 }
 
-/// Fixed-capacity transmission queue owned by the MAC coordinator.
+/// Fixed-capacity, priority-ordered transmit queue owned by the [`Mac`](crate::Mac) coordinator.
+///
+/// The `TxQueue` serializes all outgoing frames — MAC ACKs, forwarded frames, retransmissions,
+/// and application sends — into a single ordered sequence for delivery to the radio one at a
+/// time. Entries are serviced in [`TxPriority`] order, with FIFO ordering within each class.
+///
+/// The queue capacity `N` is a compile-time constant (default [`DEFAULT_TX`](crate::DEFAULT_TX)).
+/// Attempts to enqueue beyond capacity fail with [`crate::CapacityError`], propagated as
+/// [`SendError::QueueFull`](crate::SendError::QueueFull) or
+/// [`MacError::QueueFull`](crate::MacError::QueueFull). Choose `N` large enough to absorb
+/// the worst-case burst: a forwarded frame, its MAC ACK, plus any application sends already
+/// queued, plus the retransmit backlog.
+///
+/// Internally the queue is an unsorted `heapless::Vec<QueuedTx, N>`. The `dequeue` operation
+/// does a linear scan for the highest-priority, lowest-sequence entry whose `not_before_ms`
+/// has elapsed, which is O(N) — acceptable for the small N typical in embedded deployments.
 #[derive(Clone, Debug)]
 pub struct TxQueue<const N: usize = 16, const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     entries: Vec<QueuedTx<FRAME>, N>,

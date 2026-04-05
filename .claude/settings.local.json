@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Read(//Users/darco/Projects/arngll-rust/hamaddr/**)",
-      "Read(//Users/darco/Projects/arngll-rust/hamaddr/src/**)"
+      "Read(//Users/darco/Projects/arngll-rust/hamaddr/src/**)",
+      "Bash(otool -L /Users/darco/Projects/umsh/Wireshark.app/Contents/Frameworks/libwireshark.19.dylib)",
+      "Bash(nm -gU /Users/darco/Projects/umsh/Wireshark.app/Contents/Frameworks/libwireshark.19.dylib)",
+      "Bash(otool -L /Users/darco/Projects/umsh/Wireshark.app/Contents/Frameworks/libgcrypt.20.dylib)",
+      "Bash(nm -gU /Users/darco/Projects/umsh/Wireshark.app/Contents/Frameworks/libglib-2.0.0.dylib)",
+      "WebFetch(domain:www.wireshark.org)",
+      "WebFetch(domain:wiki.wireshark.org)",
+      "WebFetch(domain:mika-s.github.io)",
+      "Bash(wc -l /Users/darco/Projects/umsh/crates/umsh-*/src/*.rs)",
+      "WebFetch(domain:www.quantulum.co.uk)",
+      "Bash(lua tests/run_tests.lua)",
+      "WebFetch(domain:fossies.org)",
+      "Bash(lua dissectors/tests/run_tests.lua)",
+      "Bash(xxd -p /Users/darco/Projects/umsh/.umsh/alice.identity)",
+      "Bash(xxd -p /Users/darco/Projects/umsh/.umsh/bob.identity)"
     ]
   }
 }
