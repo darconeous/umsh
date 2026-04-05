@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 
 use embassy_executor::Spawner;
-use embedded_hal_async::delay::DelayNs;
 use rand::rngs::ThreadRng;
 use umsh::{
     crypto::{
@@ -9,7 +8,7 @@ use umsh::{
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
     embassy_support::{
-        EmbassyClock, EmbassyDelay, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
+        EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
     },
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
 };
@@ -56,15 +55,10 @@ async fn main(_spawner: Spawner) {
     );
     println!("forwarding loop active; attach traffic with a separate simulated harness");
 
-    let mut delay = EmbassyDelay;
-    loop {
-        repeater_mac
-            .borrow_mut()
-            .poll_cycle(|_, _| {})
-            .await
-            .expect("repeater poll should succeed");
-        delay.delay_ns(10_000_000).await;
-    }
+    repeater_handle
+        .run_quiet()
+        .await
+        .expect("repeater run loop should succeed");
 }
 
 fn build_mac(radio: umsh::mac::test_support::SimulatedRadio) -> RepeaterMac {

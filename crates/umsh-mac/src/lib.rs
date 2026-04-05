@@ -51,8 +51,10 @@
 //! ## [`coordinator`] — the top-level state machine
 //!
 //! [`Mac<P>`] is the single top-level type. Create one with [`Mac::new`], register
-//! identities and peers, then drive it with `mac.next_event(&mut callbacks).await` in a
-//! loop. Everything else in this crate exists to support `Mac`.
+//! identities and peers, then drive it with [`Mac::run`], [`Mac::run_quiet`], or
+//! [`Mac::next_event`] depending on whether you want a long-lived driver loop or manual
+//! multiplexing with other async work. Everything else in this crate exists to support
+//! `Mac`.
 //!
 //! Supporting types in this module:
 //!

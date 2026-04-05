@@ -279,6 +279,27 @@ impl<
         mac.next_event(on_event).await.map_err(MacHandleError::Inner)
     }
 
+    /// Drive the shared MAC forever, invoking `on_event` for delivered events.
+    ///
+    /// This is the preferred long-lived driver API for standalone MAC-backed tasks.
+    /// It keeps the wait policy inside the coordinator instead of requiring callers to
+    /// hand-roll `poll_cycle` loops with arbitrary sleeps.
+    pub async fn run(
+        &self,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+        loop {
+            self.next_event(&mut on_event).await?;
+        }
+    }
+
+    /// Drive the shared MAC forever while ignoring emitted events.
+    pub async fn run_quiet(
+        &self,
+    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+        self.run(|_, _| {}).await
+    }
+
     /// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
     pub fn fill_random(
         &self,

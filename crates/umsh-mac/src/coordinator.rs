@@ -664,9 +664,11 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 /// 3. **Register peers** via [`Mac::add_peer`]. Secure unicast and blind-unicast state is
 ///    derived lazily from the local private key and peer public key on first use.
 /// 4. **Register channels** via [`Mac::add_channel`] or [`Mac::add_named_channel`].
-/// 5. **Drive the event loop** by awaiting [`Mac::next_event`] in a loop. The coordinator
-///    handles incoming frames, outgoing transmits, forwarding, ACK matching, retransmission
-///    scheduling, and timer deadlines — no external polling required.
+/// 5. **Drive the event loop** via [`Mac::run`] / [`Mac::run_quiet`] for long-lived tasks,
+///    or by awaiting [`Mac::next_event`] when you need to multiplex MAC progress with other
+///    async work. The coordinator handles incoming frames, outgoing transmits, forwarding,
+///    ACK matching, retransmission scheduling, and timer deadlines — no external polling
+///    required.
 /// 6. **Send traffic** by calling `queue_broadcast`, `queue_unicast`, `queue_multicast`,
 ///    etc. from application code between (or concurrent with) event-loop iterations.
 /// 7. **Persist counters** by calling [`Mac::service_counter_persistence`] whenever
@@ -682,12 +684,10 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 /// let id = mac.add_identity(my_identity)?;
 /// mac.load_persisted_counter(id).await?;
 ///
-/// loop {
-///     let event = mac.next_event(&mut callbacks).await?;
-///     if event.needs_counter_persist {
-///         mac.service_counter_persistence().await?;
-///     }
-/// }
+/// mac.run(|id, event| {
+///     let _ = (id, event);
+///     // handle deliveries / ACKs here and schedule persistence work as needed
+/// }).await?;
 /// ```
 pub struct Mac<
     P: Platform,
@@ -1645,6 +1645,31 @@ impl<
 
             return Ok(());
         }
+    }
+
+    /// Drive the coordinator forever, invoking `on_event` for each delivered event.
+    ///
+    /// This is the preferred long-lived run loop for standalone MAC-driven tasks such as
+    /// repeaters or dedicated radio services. Unlike manually calling
+    /// [`poll_cycle`](Self::poll_cycle) in a loop, `run` keeps the wake/sleep policy inside
+    /// the coordinator by delegating to [`next_event`](Self::next_event), which already
+    /// waits for radio activity and protocol deadlines.
+    pub async fn run(
+        &mut self,
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        loop {
+            self.next_event(&mut on_event).await?;
+        }
+    }
+
+    /// Drive the coordinator forever while ignoring emitted events.
+    ///
+    /// Useful for standalone repeaters or bridge tasks that do not need to observe inbound
+    /// deliveries directly but still need the coordinator to service forwarding, ACKs, and
+    /// retransmissions without an app-owned polling loop.
+    pub async fn run_quiet(&mut self) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        self.run(|_, _| {}).await
     }
 
     /// Process a received frame, dispatching events through `on_event`.

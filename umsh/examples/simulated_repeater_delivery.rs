@@ -1,8 +1,9 @@
 use std::cell::RefCell;
+use std::future::{Future, poll_fn};
 use std::rc::Rc;
+use std::task::Poll;
 
 use embassy_executor::Spawner;
-use embedded_hal_async::delay::DelayNs;
 use rand::rngs::ThreadRng;
 use umsh::{
     crypto::{
@@ -10,7 +11,7 @@ use umsh::{
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
     embassy_support::{
-        EmbassyClock, EmbassyDelay, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
+        EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
     },
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
     node::{Host, UnicastTextChatWrapper},
@@ -99,21 +100,22 @@ async fn main(_spawner: Spawner) {
         .await
         .expect("alice send should queue successfully");
 
-    let mut delay = EmbassyDelay;
     for _ in 0..64 {
-        alice_host.pump_once().await.expect("alice pump should succeed");
-        repeater_mac
-            .borrow_mut()
-            .poll_cycle(|_, _| {})
-            .await
-            .expect("repeater poll should succeed");
-        bob_host.pump_once().await.expect("bob pump should succeed");
+        match wait_for_any_activity(
+            alice_host.pump_once(),
+            repeater_handle.next_event(|_, _| {}),
+            bob_host.pump_once(),
+        )
+        .await
+        {
+            WakeResult::Alice(result) => result.expect("alice pump should succeed"),
+            WakeResult::Repeater(result) => result.expect("repeater wake should succeed"),
+            WakeResult::Bob(result) => result.expect("bob pump should succeed"),
+        }
 
         if *delivered.borrow() {
             return;
         }
-
-        delay.delay_ns(10_000_000).await;
     }
 
     panic!("simulated repeater delivery timed out before arrival");
@@ -141,4 +143,39 @@ fn hex_encode(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+enum WakeResult<A, B, C> {
+    Alice(A),
+    Repeater(B),
+    Bob(C),
+}
+
+async fn wait_for_any_activity<A, B, C>(
+    alice: A,
+    repeater: B,
+    bob: C,
+) -> WakeResult<A::Output, B::Output, C::Output>
+where
+    A: Future,
+    B: Future,
+    C: Future,
+{
+    let mut alice = core::pin::pin!(alice);
+    let mut repeater = core::pin::pin!(repeater);
+    let mut bob = core::pin::pin!(bob);
+
+    poll_fn(|cx| {
+        if let Poll::Ready(output) = alice.as_mut().poll(cx) {
+            return Poll::Ready(WakeResult::Alice(output));
+        }
+        if let Poll::Ready(output) = repeater.as_mut().poll(cx) {
+            return Poll::Ready(WakeResult::Repeater(output));
+        }
+        if let Poll::Ready(output) = bob.as_mut().poll(cx) {
+            return Poll::Ready(WakeResult::Bob(output));
+        }
+        Poll::Pending
+    })
+    .await
 }
