@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-cf1329a3.js";
+            window.path_to_searchindex_js = "searchindex-93029c72.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -221,6 +221,7 @@
 <tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">4</td><td>Operator Callsign</td><td>Non-Critical, Static</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">5</td><td>Minimum RSSI</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">6</td><td>Route Retry</td><td>Non-Critical, Dynamic</td><td>0 bytes</td></tr>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 </tbody>
@@ -276,6 +277,11 @@
 <ul>
 <li>Only the repeater matching the first hint may forward the packet.</li>
 <li>That repeater removes its own hint before retransmission.</li>
+<li>If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
+<ul>
+<li>This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.</li>
+</ul>
+</li>
 <li>Repeaters that do not match the first hint must not forward the packet.</li>
 </ul>
 </li>
@@ -295,6 +301,23 @@
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
 <li>If present with no value (length 0), default is <code>-90 dBm</code></li>
 <li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
+</ul>
+<h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
+<ul>
+<li>Type: zero-length flag</li>
+<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.</li>
+<li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
+<li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
+<li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
+<li>A sender using this option for route recovery typically:
+<ul>
+<li>removes the stale source-route option</li>
+<li>adds or refreshes flood hops</li>
+<li>includes a trace-route option to learn a replacement route</li>
+<li>preserves the same frame counter and payload</li>
+</ul>
+</li>
+<li>This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.</li>
 </ul>
 <h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
 <ul>
@@ -331,7 +354,11 @@
 <li><code>RH[0]</code> is the next repeater that must forward the packet</li>
 <li>when that repeater forwards, it removes <code>RH[0]</code></li>
 </ul>
-<p>An empty source-route option indicates that all explicit routing hints have been consumed. It is not semantically distinct from the absence of a source-route option for forwarding purposes.</p>
+<p>An empty source-route option indicates that all explicit routing hints have been consumed.</p>
+<ul>
+<li>For forwarding purposes, an empty source-route option behaves the same as an absent source-route option: there is no remaining explicit next hop.</li>
+<li>However, it is still semantically useful and should be preserved when produced by forwarding, because it records that the packet did in fact traverse an explicit source-routed path before the hints were exhausted.</li>
+</ul>
 <h3 id="trace-route-option-value"><a class="header" href="#trace-route-option-value">Trace Route Option Value</a></h3>
 <p>A trace-route option also contains zero or more router hints:</p>
 <pre><code class="language-text">+----------+----------+----------+-----+

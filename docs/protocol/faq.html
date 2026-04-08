@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-cf1329a3.js";
+            window.path_to_searchindex_js = "searchindex-93029c72.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -181,6 +181,17 @@
 <p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_DST_SRC</code>, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="packet-types.html#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
 <p>No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see <a href="repeater-operation.html#duplicate-suppression">Duplicate Suppression</a>) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.</p>
+<h3 id="what-happens-when-a-cached-source-route-goes-stale"><a class="header" href="#what-happens-when-a-cached-source-route-goes-stale">What happens when a cached source route goes stale?</a></h3>
+<p>If an ack-requested packet sent on a cached source route exhausts its retry budget, the sender should treat that route as failed and return temporarily to route-discovery mode. The recommended recovery is:</p>
+<ul>
+<li>discard or demote the stale route</li>
+<li>re-attempt the <strong>same logical packet</strong></li>
+<li>remove the stale source route</li>
+<li>add or refresh flood hops</li>
+<li>include a trace-route option so a fresh path can be learned</li>
+<li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a></li>
+</ul>
+<p>The key point is that this is still the same logical packet, not a new application message. The destination therefore accepts it at most once according to the normal replay rules, while repeaters treat the Route Retry form as a distinct forwarding opportunity for duplicate-suppression purposes.</p>
 <h3 id="why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type"><a class="header" href="#why-doesnt-umsh-define-a-dedicated-path-discovery-packet-type">Why doesn’t UMSH define a dedicated path-discovery packet type?</a></h3>
 <p>The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See <a href="beacons.html#path-discovery">Path Discovery</a> for the full procedure.</p>
 <h3 id="how-does-umsh-handle-frame-counter-overflow"><a class="header" href="#how-does-umsh-handle-frame-counter-overflow">How does UMSH handle frame counter overflow?</a></h3>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-cf1329a3.js";
+            window.path_to_searchindex_js = "searchindex-93029c72.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -205,24 +205,35 @@
 <li>If the channel remains busy after all attempts, drop the packet silently.</li>
 </ol>
 <h2 id="flood-forwarding-contention-window"><a class="header" href="#flood-forwarding-contention-window">Flood Forwarding Contention Window</a></h2>
-<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and cancel their own pending forwarding.</p>
+<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>These calculations and constants have been written by an LLM and have not yet been fully verified for correctness.</p>
+<p>This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.</p>
 </blockquote>
-<p>Compute the contention delay as:</p>
-<pre><code class="language-text">W     = W_max × clamp(1 − (received_SNR − SNR_threshold) / SNR_range, 0, 1)
+<p>Although the contention parameters below are configurable in principle, nodes in the same mesh SHOULD use the same values so that forwarding behavior remains predictable. Unless a deployment intentionally overrides them, implementations SHOULD use the defaults in this section.</p>
+<p>For the first forwarding decision after reception, compute the contention window as:</p>
+<pre><code class="language-text">quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
+W       = W_min + (W_max − W_min) × (1 − quality)
 delay = uniform_random(0, W)
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>SNR_threshold</code> is the effective minimum SNR: the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. If neither is configured, <code>SNR_threshold = 0 dB</code>.</li>
-<li><code>SNR_range</code> is a configurable parameter; the suggested default is <strong>20 dB</strong>.</li>
-<li><code>W_max</code> is a configurable parameter; the suggested default is <strong>T_frame</strong>.</li>
+<li><code>SNR_low</code> and <code>SNR_high</code> define the clamp range used for the contention heuristic. The suggested defaults are <strong>−6 dB</strong> and <strong>+15 dB</strong>, respectively.</li>
+<li>The effective minimum SNR threshold is still the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT forward at all if the received SNR is below that effective threshold.</li>
+<li><code>W_min</code> is the minimum contention window for strong receptions. The suggested default is <strong>0.2 × T_frame</strong>.</li>
+<li><code>W_max</code> is the maximum intentional forwarding-delay window. The suggested default is <strong>2 × T_frame</strong>.</li>
 <li><code>received_SNR</code> is the SNR measured during reception of the packet being forwarded.</li>
 </ul>
 <p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
-<p>After computing the delay, the repeater waits. If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it MUST cancel its own pending transmission.</p>
+<p>After computing the delay, the repeater waits.</p>
+<p>If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit immediately. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
+<p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation</a>.</p>
+<p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
+<ul>
+<li>up to <code>W_max</code> of intentional forwarding delay</li>
+<li>up to <code>T_frame</code> for the forwarded transmission itself</li>
+<li>an additional guard margin of up to <code>T_frame</code></li>
+</ul>
 <h2 id="immediate-ack-transmission"><a class="header" href="#immediate-ack-transmission">Immediate ACK Transmission</a></h2>
 <p>When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.</p>
 <p>If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.</p>
