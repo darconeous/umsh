@@ -13,7 +13,9 @@ Parameters:
 
 The cache key is derived from the packet as follows:
 
-- **Authenticated packets** (unicast, multicast, blind unicast): the cache key is the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.
+- **Authenticated packets** (unicast, multicast, blind unicast): the cache key is normally the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.
+  - If the packet carries the [Route Retry option](packet-options.md#route-retry-option-6), the cache key must distinguish that retry attempt from the same packet without the option present. A simple and sufficient rule is to treat the cache key as `(MIC, route_retry_present)`.
+  - This gives a packet two bounded forwarding identities: the original forwarding attempt and one explicit reroute attempt.
 - **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
 
 Before forwarding a packet, the repeater checks the cache:
@@ -54,6 +56,9 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
    - If the packet contains a non-empty source-route option:
      - If this repeater does not match the next source-route hint, do not forward.
      - Otherwise, remove the repeater's own hint from the source-route option.
+   - If the repeater mutates a source-route option, it MUST preserve the option on the forwarded packet even when no hints remain.
+     - In that case, the forwarded packet carries a source-route option with zero remaining hops.
+     - This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.
 
 7. **Transition from source-routing to flooding**
    - If the source-route option is now empty:
@@ -77,9 +82,56 @@ This applies to:
 - **Flood originators**: The originating node listens for any node to retransmit.
 - **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
 
-After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. The listening window duration is sampled uniformly from [T_frame, 3 × T_frame], where T_frame is defined in [Channel Access](channel-access.md#frame-duration). If the packet is heard before the window expires, delivery is confirmed.
+After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
 
-If the listening window expires without a retransmission, the node SHOULD retransmit. A node MUST NOT retry more than 3 times. Each retry is preceded by normal CAD and backoff as described in [Channel Access](channel-access.md#backoff-procedure).
+```text
+confirm_timeout = 2 × T_frame + W_max
+```
+
+where `W_max` is the maximum intentional forwarding-delay window permitted for the path. With the suggested default `W_max = 2 × T_frame`, this yields `confirm_timeout = 4 × T_frame`.
+
+If the packet is heard before `confirm_timeout` expires, forwarding is confirmed.
+
+If `confirm_timeout` expires without a retransmission, the node SHOULD schedule a retry after a jittered exponential delay:
+
+```text
+retry_delay_n = uniform_random(0, min(2^(n−1) × T_frame, 4 × T_frame))
+```
+
+where `n` is the 1-based retry number. After this delay expires, the retry is transmitted using normal CAD and backoff as described in [Channel Access](channel-access.md#backoff-procedure).
+
+A node MUST NOT retry more than 3 times.
+
+### Source-Route Failure Recovery
+
+When a node uses a cached source route for an ack-requested unicast or blind-unicast packet and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.
+
+A practical recovery rule is:
+
+1. if the sender exhausts the retry budget for a packet sent using a cached source route, it SHOULD treat that cached route as failed
+2. the failed route SHOULD be discarded or marked unusable for immediate reuse
+3. if the sender wishes to re-attempt delivery of the **same logical packet**, it SHOULD:
+   - preserve the same frame counter, payload, and MIC
+   - remove the stale source-route option
+   - add or refresh flood hops
+   - include a trace-route option if route rediscovery is desired
+   - set the [Route Retry option](packet-options.md#route-retry-option-6)
+
+This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the rerouted attempt even if they already suppressed the original source-routed attempt as a duplicate.
+
+This preserves a useful separation of responsibilities:
+
+- **routing recovery** remains a MAC concern
+- **duplicate application delivery** remains prevented by the end-to-end replay rules
+- **repeaters** remain largely stateless and do not need to understand application semantics
+
+For flood-forwarding repeaters that have accepted a packet for forwarding but have not yet transmitted it, overhearing another forwarding of the same packet SHOULD normally cause a bounded deferral rather than an immediate transmission. A safe default is:
+
+1. resample a forwarding delay using the contention-window procedure in [Channel Access](channel-access.md#flood-forwarding-contention-window)
+2. restart the waiting period
+3. after 3 such deferrals, abandon the pending forward
+
+This behavior is still provisional and should be validated empirically. The intent is to reduce near-simultaneous forwarding while still allowing a second or third repeater to contribute if an earlier forward was not widely heard.
 
 ## Routing Implications
 

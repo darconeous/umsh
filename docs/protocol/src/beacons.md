@@ -38,3 +38,12 @@ When a node successfully processes an incoming packet, it SHOULD update its rout
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value as a distance estimate. When no source route is available, this value can be used as `FHOPS_REM` for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.
 
 This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
+
+In practice, "proven unreachable" usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:
+
+- discard or demote the cached source route
+- send the same logical packet again using flood hops instead of the stale source route
+- include a trace-route option so that a fresh source route can be learned from the peer's reply
+- set the [Route Retry option](packet-options.md#route-retry-option-6) so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet's MIC and frame counter are unchanged
+
+Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.

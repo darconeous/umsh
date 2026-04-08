@@ -43,6 +43,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 | 3 | Source Route | Critical, Dynamic | 0+ bytes |
 | 4 | Operator Callsign | Non-Critical, Static | ARNCE/HAM-64 |
 | 5 | Minimum RSSI | Critical, Static | 0–1 bytes |
+| 6 | Route Retry | Non-Critical, Dynamic | 0 bytes |
 | 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
 
@@ -87,6 +88,8 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 - Repeater behavior:
   - Only the repeater matching the first hint may forward the packet.
   - That repeater removes its own hint before retransmission.
+  - If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
+    - This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.
   - Repeaters that do not match the first hint must not forward the packet.
 - Value layout: see [Source Route Option Value](#source-route-option-value).
 
@@ -102,6 +105,19 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 - Example: value `130` means `-130 dBm`
 - If present with no value (length 0), default is `-90 dBm`
 - If a repeater has a locally configured minimum RSSI, it must use the higher of the packet's minimum RSSI threshold and the repeater's configured minimum RSSI threshold.
+
+### Route Retry (option 6)
+- Type: zero-length flag
+- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.
+- This option is intended for sender-originated route recovery, not for ordinary first transmission.
+- When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
+- The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
+- A sender using this option for route recovery typically:
+  - removes the stale source-route option
+  - adds or refreshes flood hops
+  - includes a trace-route option to learn a replacement route
+  - preserves the same frame counter and payload
+- This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.
 
 ### Station Callsign (option 7)
 - Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
@@ -139,7 +155,10 @@ Interpretation:
 - `RH[0]` is the next repeater that must forward the packet
 - when that repeater forwards, it removes `RH[0]`
 
-An empty source-route option indicates that all explicit routing hints have been consumed. It is not semantically distinct from the absence of a source-route option for forwarding purposes.
+An empty source-route option indicates that all explicit routing hints have been consumed.
+
+- For forwarding purposes, an empty source-route option behaves the same as an absent source-route option: there is no remaining explicit next hop.
+- However, it is still semantically useful and should be preserved when produced by forwarding, because it records that the packet did in fact traverse an explicit source-routed path before the hints were exhausted.
 
 ### Trace Route Option Value
 

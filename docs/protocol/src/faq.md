@@ -12,6 +12,19 @@ No. The `MIC` field is located at the end of the packet and can be read directly
 
 No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
 
+### What happens when a cached source route goes stale?
+
+If an ack-requested packet sent on a cached source route exhausts its retry budget, the sender should treat that route as failed and return temporarily to route-discovery mode. The recommended recovery is:
+
+- discard or demote the stale route
+- re-attempt the **same logical packet**
+- remove the stale source route
+- add or refresh flood hops
+- include a trace-route option so a fresh path can be learned
+- set the [Route Retry option](packet-options.md#route-retry-option-6)
+
+The key point is that this is still the same logical packet, not a new application message. The destination therefore accepts it at most once according to the normal replay rules, while repeaters treat the Route Retry form as a distinct forwarding opportunity for duplicate-suppression purposes.
+
 ### Why doesn't UMSH define a dedicated path-discovery packet type?
 
 The existing primitives are sufficient. A node can discover a path by sending a flooded packet (broadcast, unicast, or beacon) with the trace-route option present. Repeaters prepend their router hints as they forward. The recipient can use the accumulated trace directly as a candidate source route. This avoids adding protocol complexity for a function that composes naturally from existing features. See [Path Discovery](beacons.md#path-discovery) for the full procedure.
