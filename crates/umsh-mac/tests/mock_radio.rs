@@ -10,8 +10,10 @@ use std::{
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
 use umsh_core::{PacketBuilder, PublicKey};
-use umsh_crypto::{AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret};
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
+use umsh_crypto::{
+    AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret,
+};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 use umsh_mac::{
     Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions,
 };
@@ -26,14 +28,12 @@ fn mac_handle_send_unicast_queues_public_api_work() {
     let peer_key = PublicKey([0xAB; 32]);
     let _peer_id = handle_clone.add_peer(peer_key).unwrap();
 
-    let receipt = block_on(handle_clone
-        .send_unicast(
-            local_id,
-            &peer_key,
-            b"hello",
-            &SendOptions::default().with_ack_requested(true).no_flood(),
-        )
-    )
+    let receipt = block_on(handle_clone.send_unicast(
+        local_id,
+        &peer_key,
+        b"hello",
+        &SendOptions::default().with_ack_requested(true).no_flood(),
+    ))
     .unwrap()
     .unwrap();
 
@@ -280,7 +280,8 @@ impl Radio for DummyRadio {
             Poll::Ready(Ok(RxInfo {
                 len,
                 rssi: -40,
-                snr: 10,
+                snr: Snr::from_decibels(10),
+                lqi: None,
             }))
         } else {
             Poll::Pending

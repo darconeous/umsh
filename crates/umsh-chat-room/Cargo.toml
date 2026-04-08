@@ -1,0 +1,13 @@
+[package]
+name = "umsh-chat-room"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloc", "umsh-core/std"]
+alloc = []
+
+[dependencies]
+umsh-core = { path = "../umsh-core", default-features = false }

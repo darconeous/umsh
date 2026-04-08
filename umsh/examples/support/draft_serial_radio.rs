@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use umsh::hal::{Radio, RxInfo, TxError, TxOptions};
+use umsh::hal::{Radio, RxInfo, Snr, TxError, TxOptions};
 
 const CMD_TRANSMIT: u8 = 0x01;
 const CMD_RECEIVE: u8 = 0x02;
@@ -321,7 +321,12 @@ where
                                 ));
                             }
                             buf[..len].copy_from_slice(&self.receive_payload[..len]);
-                            return core::task::Poll::Ready(Ok(RxInfo { len, rssi, snr }));
+                            return core::task::Poll::Ready(Ok(RxInfo {
+                                len,
+                                rssi,
+                                snr: Snr::from_decibels(snr),
+                                lqi: None,
+                            }));
                         }
                         core::task::Poll::Ready(Err(error)) => {
                             return core::task::Poll::Ready(Err(error));

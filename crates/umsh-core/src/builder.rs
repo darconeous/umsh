@@ -1,8 +1,8 @@
 use core::{marker::PhantomData, ops::Range};
 
 use crate::{
-    options::OptionEncoder, BuildError, ChannelId, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
-    PacketType, PublicKey, Scf, SecInfo, UnsealedPacket,
+    BuildError, ChannelId, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketType, PublicKey,
+    Scf, SecInfo, UnsealedPacket, options::OptionEncoder,
 };
 
 /// Typestate markers used by [`PacketBuilder`] and its specialized builders.

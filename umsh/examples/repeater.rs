@@ -7,9 +7,7 @@ use umsh::{
         CryptoEngine,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
-    embassy_support::{
-        EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
-    },
+    embassy_support::{EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore},
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
 };
 

@@ -2,16 +2,16 @@
 use alloc::vec::Vec;
 
 #[cfg(feature = "software-crypto")]
-use umsh_app::{mac_command, MacCommand, PayloadType};
+use umsh_core::PayloadType;
 #[cfg(feature = "software-crypto")]
 use umsh_core::PublicKey;
 #[cfg(feature = "software-crypto")]
-use umsh_crypto::{software::SoftwareIdentity, NodeIdentity};
+use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 #[cfg(feature = "software-crypto")]
 use umsh_mac::{LocalIdentityId, SendOptions, SendReceipt};
 
 #[cfg(feature = "software-crypto")]
-use crate::{mac::MacBackend, node::NodeError};
+use crate::{MacCommand, mac::MacBackend, mac_command, node::NodeError};
 
 #[cfg(feature = "software-crypto")]
 const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
@@ -19,7 +19,7 @@ const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
 #[cfg(feature = "software-crypto")]
 /// Lifecycle state for a PFS session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PfsState {
+pub(crate) enum PfsState {
     /// Session requested but not fully activated.
     Requested,
     /// Session active and mapped to an ephemeral MAC identity.
@@ -28,7 +28,7 @@ pub enum PfsState {
 
 #[cfg(feature = "software-crypto")]
 /// One tracked PFS session.
-pub struct PfsSession {
+pub(crate) struct PfsSession {
     /// Peer long-term identity.
     pub peer_long_term: PublicKey,
     /// Local ephemeral MAC identity.
@@ -61,7 +61,7 @@ impl core::fmt::Debug for PfsSession {
 
 #[cfg(feature = "software-crypto")]
 /// Fixed-capacity manager for endpoint-level PFS sessions.
-pub struct PfsSessionManager {
+pub(crate) struct PfsSessionManager {
     sessions: Vec<PfsSession>,
     max_sessions: usize,
 }
@@ -76,7 +76,7 @@ impl Default for PfsSessionManager {
 #[cfg(feature = "software-crypto")]
 impl PfsSessionManager {
     /// Create an empty session manager.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             sessions: Vec::new(),
             max_sessions: DEFAULT_MAX_PFS_SESSIONS,
@@ -84,20 +84,28 @@ impl PfsSessionManager {
     }
 
     /// Borrow the tracked sessions.
-    pub fn sessions(&self) -> &[PfsSession] {
+    pub(crate) fn sessions(&self) -> &[PfsSession] {
         &self.sessions
     }
 
     /// Return the active ephemeral route for `peer`, if any.
-    pub fn active_route(&self, peer: &PublicKey, now_ms: u64) -> Option<(LocalIdentityId, PublicKey)> {
+    pub(crate) fn active_route(
+        &self,
+        peer: &PublicKey,
+        now_ms: u64,
+    ) -> Option<(LocalIdentityId, PublicKey)> {
         self.sessions
             .iter()
-            .find(|session| session.peer_long_term == *peer && session.state == PfsState::Active && session.expires_ms > now_ms)
+            .find(|session| {
+                session.peer_long_term == *peer
+                    && session.state == PfsState::Active
+                    && session.expires_ms > now_ms
+            })
             .map(|session| (session.local_ephemeral_id, session.peer_ephemeral))
     }
 
     /// Initiate a new PFS session request.
-    pub async fn request_session<M: MacBackend>(
+    pub(crate) async fn request_session<M: MacBackend>(
         &mut self,
         mac: &M,
         parent: LocalIdentityId,
@@ -134,7 +142,7 @@ impl PfsSessionManager {
     }
 
     /// Accept an inbound PFS request.
-    pub async fn accept_request<M: MacBackend>(
+    pub(crate) async fn accept_request<M: MacBackend>(
         &mut self,
         mac: &M,
         parent: LocalIdentityId,
@@ -148,7 +156,13 @@ impl PfsSessionManager {
         let mut secret = [0u8; 32];
         mac.fill_random(&mut secret)?;
         let local_ephemeral = SoftwareIdentity::from_secret_bytes(&secret);
-        let active = activate_identity(mac, parent, local_ephemeral, peer_ephemeral, duration_minutes)?;
+        let active = activate_identity(
+            mac,
+            parent,
+            local_ephemeral,
+            peer_ephemeral,
+            duration_minutes,
+        )?;
         send_pfs_command(
             mac,
             parent,
@@ -172,7 +186,7 @@ impl PfsSessionManager {
     }
 
     /// Accept an inbound PFS response for an existing request.
-    pub fn accept_response<M: MacBackend>(
+    pub(crate) fn accept_response<M: MacBackend>(
         &mut self,
         mac: &M,
         parent: LocalIdentityId,
@@ -180,7 +194,11 @@ impl PfsSessionManager {
         peer_ephemeral: PublicKey,
         duration_minutes: u16,
     ) -> Result<bool, NodeError<M>> {
-        let Some(index) = self.sessions.iter().position(|session| session.peer_long_term == peer_long_term) else {
+        let Some(index) = self
+            .sessions
+            .iter()
+            .position(|session| session.peer_long_term == peer_long_term)
+        else {
             return Err(NodeError::PfsSessionMissing);
         };
         let mut session = self.sessions.swap_remove(index);
@@ -188,7 +206,13 @@ impl PfsSessionManager {
             self.sessions.push(session);
             return Err(NodeError::PfsSessionMissing);
         };
-        let active = activate_identity(mac, parent, local_ephemeral, peer_ephemeral, duration_minutes)?;
+        let active = activate_identity(
+            mac,
+            parent,
+            local_ephemeral,
+            peer_ephemeral,
+            duration_minutes,
+        )?;
         session.local_ephemeral_id = active.local_ephemeral_id;
         session.peer_ephemeral = peer_ephemeral;
         session.expires_ms = active.expires_ms;
@@ -198,7 +222,7 @@ impl PfsSessionManager {
     }
 
     /// End one session and optionally notify the peer.
-    pub async fn end_session<M: MacBackend>(
+    pub(crate) async fn end_session<M: MacBackend>(
         &mut self,
         mac: &M,
         parent: LocalIdentityId,
@@ -206,7 +230,11 @@ impl PfsSessionManager {
         notify_peer: bool,
         options: &SendOptions,
     ) -> Result<bool, NodeError<M>> {
-        let Some(index) = self.sessions.iter().position(|session| session.peer_long_term == *peer) else {
+        let Some(index) = self
+            .sessions
+            .iter()
+            .position(|session| session.peer_long_term == *peer)
+        else {
             return Err(NodeError::PfsSessionMissing);
         };
         let session = self.sessions.swap_remove(index);
@@ -214,14 +242,13 @@ impl PfsSessionManager {
             let _ = mac.remove_ephemeral(session.local_ephemeral_id)?;
         }
         if notify_peer {
-            send_pfs_command(mac, parent, peer, &MacCommand::EndPfsSession, options)
-                .await?;
+            send_pfs_command(mac, parent, peer, &MacCommand::EndPfsSession, options).await?;
         }
         Ok(true)
     }
 
     /// Expire any sessions whose deadlines have passed.
-    pub fn expire_sessions<M: MacBackend>(
+    pub(crate) fn expire_sessions<M: MacBackend>(
         &mut self,
         mac: &M,
         now_ms: u64,
@@ -242,8 +269,16 @@ impl PfsSessionManager {
         Ok(expired)
     }
 
-    fn remove_existing<M: MacBackend>(&mut self, mac: &M, peer: &PublicKey) -> Result<(), NodeError<M>> {
-        if let Some(index) = self.sessions.iter().position(|session| session.peer_long_term == *peer) {
+    fn remove_existing<M: MacBackend>(
+        &mut self,
+        mac: &M,
+        peer: &PublicKey,
+    ) -> Result<(), NodeError<M>> {
+        if let Some(index) = self
+            .sessions
+            .iter()
+            .position(|session| session.peer_long_term == *peer)
+        {
             let session = self.sessions.swap_remove(index);
             if session.state == PfsState::Active {
                 let _ = mac.remove_ephemeral(session.local_ephemeral_id)?;

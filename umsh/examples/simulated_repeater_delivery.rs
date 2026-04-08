@@ -10,11 +10,10 @@ use umsh::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
-    embassy_support::{
-        EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore,
-    },
+    embassy_support::{EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore},
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
-    node::{Host, UnicastTextChatWrapper},
+    node::Host,
+    text::UnicastTextChatWrapper,
 };
 
 const IDENTITIES: usize = 4;

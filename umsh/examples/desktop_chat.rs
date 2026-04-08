@@ -25,7 +25,8 @@ use umsh::{
         Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions,
         test_support::SimulatedNetwork,
     },
-    node::{Host, PeerConnection, Subscription, UnicastTextChatWrapper},
+    node::{Host, PeerConnection, Subscription},
+    text::UnicastTextChatWrapper,
     tokio_support::{
         StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio,
     },
@@ -381,7 +382,13 @@ async fn run_serial_chat(
 
     #[cfg(not(feature = "serial-radio"))]
     {
-        let _ = (identity_path, skip_counter_load, serial_path, baud_rate, peer_key);
+        let _ = (
+            identity_path,
+            skip_counter_load,
+            serial_path,
+            baud_rate,
+            peer_key,
+        );
         Err("serial-radio feature is required for the example-only serial draft mode".into())
     }
 }
@@ -420,9 +427,7 @@ async fn handle_pfs_command<'a, R: Radio>(
             let _ = peer
                 .request_pfs(60, &default_chat_options())
                 .await
-                .map_err(|error| {
-                    std::io::Error::other(format!("pfs request failed: {error:?}"))
-                })?;
+                .map_err(|error| std::io::Error::other(format!("pfs request failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for 60 minutes",
                 hex_encode(&peer.peer().0[..4])
@@ -431,9 +436,7 @@ async fn handle_pfs_command<'a, R: Radio>(
         "end" => {
             peer.end_pfs(&default_chat_options())
                 .await
-                .map_err(|error| {
-                    std::io::Error::other(format!("end pfs failed: {error:?}"))
-                })?;
+                .map_err(|error| std::io::Error::other(format!("end pfs failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "ended pfs with {}",
                 hex_encode(&peer.peer().0[..4])
@@ -463,9 +466,7 @@ async fn handle_pfs_command<'a, R: Radio>(
             let _ = peer
                 .request_pfs(duration_minutes, &default_chat_options())
                 .await
-                .map_err(|error| {
-                    std::io::Error::other(format!("pfs request failed: {error:?}"))
-                })?;
+                .map_err(|error| std::io::Error::other(format!("pfs request failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for {duration_minutes} minutes",
                 hex_encode(&peer.peer().0[..4])
@@ -508,10 +509,9 @@ fn register_peer_callbacks<'a, R: Radio>(
 
     let peer_key = *peer.peer();
     subscriptions.push(peer.on_pfs_ended(move || {
-        lines.borrow_mut().push(format!(
-            "pfs ended with {}",
-            hex_encode(&peer_key.0[..4])
-        ));
+        lines
+            .borrow_mut()
+            .push(format!("pfs ended with {}", hex_encode(&peer_key.0[..4])));
     }));
     subscriptions
 }

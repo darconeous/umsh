@@ -9,7 +9,9 @@ umsh/                              # Cargo workspace
     umsh-crypto/                   # Crypto traits, UMSH operations, software backend
     umsh-hal/                      # Platform abstraction traits (radio, storage, timer, RNG)
     umsh-mac/                      # MAC layer: processing, repeater, routing, acks
-    umsh-app/                      # Application protocols: text, chat rooms, identity, MAC cmds
+    umsh-uri/                      # UMSH URI parsing and formatting
+    umsh-chat-room/                # Chat-room management payloads
+    umsh-text/                     # Text payloads and text-chat wrappers
     umsh-node/                     # High-level node: peer DB, sessions, beacons, route mgmt
   umsh/                            # Umbrella crate (re-exports)
   examples/
@@ -24,8 +26,10 @@ umsh-hal                           (no workspace deps — pure hardware abstract
 umsh-core                          (no workspace deps)
 umsh-crypto     -> umsh-core
 umsh-mac        -> umsh-core, umsh-crypto, umsh-hal
-umsh-app        -> umsh-core, umsh-crypto (optional, for signatures)
-umsh-node       -> umsh-core, umsh-crypto, umsh-hal, umsh-mac, umsh-app
+umsh-uri        -> umsh-core
+umsh-chat-room  -> umsh-core
+umsh-text       -> umsh-core, umsh-mac, umsh-node
+umsh-node       -> umsh-core, umsh-crypto, umsh-hal, umsh-mac
 umsh            -> all of the above + defines Platform trait
 ```
 
@@ -1656,7 +1660,15 @@ code pretends to implement them.
 
 ---
 
-### `umsh-app` --- Application Layer Protocols
+### Application-Layer Protocols
+
+This plan originally grouped these under a single `umsh-app` crate. The codebase
+now uses smaller focused crates instead:
+
+- `umsh-text` for text payloads and wrappers
+- `umsh-chat-room` for chat-room management payloads
+- `umsh-uri` for `umsh:` URI parsing/formatting
+- `umsh-node` for node-identity and MAC-command payloads
 
 Encode/decode UMSH application payloads. Purely structural --- no I/O, no crypto
 (except optional EdDSA signature support gated behind `umsh-crypto`). All parsers
@@ -1990,7 +2002,7 @@ pub struct DeferredAction { /* owned MacEvent + context */ }
 
 Display-level rules that belong above the MAC layer. These require parsing
 the application payload (which MAC does not do) or verifying EdDSA signatures
-(which requires `umsh-crypto` + `umsh-app`, not available at the MAC level):
+(which requires `umsh-crypto` plus the relevant payload crate, not available at the MAC level):
 
 - Public-channel chat messages without `S=1` must not be displayed.
 - Emergency-channel chat messages must include an EdDSA signature in the payload;
@@ -1998,7 +2010,8 @@ the application payload (which MAC does not do) or verifying EdDSA signatures
 - Node identity payloads with invalid signatures should be flagged.
 
 These are enforced inside `Endpoint::handle_event` — it parses the payload via
-`umsh-app`, inspects the channel context, verifies signatures when required, and
+the relevant higher-level payload crate, inspects the channel context, verifies
+signatures when required, and
 returns `Handled(None)` for events that fail UI acceptance. The MAC layer does
 not enforce these; it delivers wire-valid packets regardless.
 
@@ -2461,12 +2474,12 @@ forward, and acknowledge packets.
 **Goal:** Encode/decode all defined application payloads. Parse and
 format UMSH URIs.
 
-- [x] `umsh-app`: Payload type dispatch and validation
-- [x] `umsh-app`: Text message encode/decode (all options)
-- [x] `umsh-app`: Node identity encode/decode
-- [x] `umsh-app`: MAC command encode/decode (all 9 commands)
-- [x] `umsh-app`: Chat room actions (encode/decode, behind `chat-rooms` feature)
-- [x] `umsh-app`: URI parsing and formatting (`umsh:n:`, `umsh:cs:`, `umsh:ck:`)
+- [x] Payload type dispatch and validation
+- [x] `umsh-text`: Text message encode/decode (all options)
+- [x] `umsh-node`: Node identity encode/decode
+- [x] `umsh-node`: MAC command encode/decode (all 9 commands)
+- [x] `umsh-chat-room`: Chat room actions (encode/decode)
+- [x] `umsh-uri`: URI parsing and formatting (`umsh:n:`, `umsh:cs:`, `umsh:ck:`)
 - [x] Round-trip tests for all payload types
 
 ### Phase 4: Endpoint Orchestration

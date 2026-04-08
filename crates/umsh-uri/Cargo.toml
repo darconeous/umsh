@@ -1,17 +1,15 @@
 [package]
-name = "umsh-app"
+name = "umsh-uri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["std", "chat-rooms"]
+default = ["std"]
 std = ["alloc", "bs58/std", "lwuri/std", "umsh-core/std"]
 alloc = ["bs58/alloc", "lwuri/alloc", "umsh-core/alloc"]
-chat-rooms = []
 
 [dependencies]
-bitflags.workspace = true
 bs58.workspace = true
 lwuri.workspace = true
 umsh-core = { path = "../umsh-core", default-features = false }

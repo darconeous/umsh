@@ -1,25 +1,25 @@
-use alloc::rc::Rc;
 use alloc::boxed::Box;
+use alloc::rc::Rc;
 #[cfg(feature = "software-crypto")]
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
+use umsh_core::NodeHint;
 use umsh_core::PublicKey;
 use umsh_mac::{LocalIdentityId, SendOptions};
-use umsh_core::NodeHint;
 
 #[cfg(feature = "software-crypto")]
 use crate::channel::Channel;
 use crate::dispatch::EventDispatcher;
 use crate::mac::MacBackend;
-use crate::owned::OwnedMacCommand;
 use crate::peer::PeerConnection;
+#[cfg(feature = "software-crypto")]
+use crate::pfs::{PfsSessionManager, PfsState};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
-#[cfg(feature = "software-crypto")]
-use crate::pfs::{PfsSessionManager, PfsState};
+use crate::{AppEncodeError, OwnedMacCommand};
 
 /// Per-node shared membership state. All cloned `LocalNode` handles and
 /// their `BoundChannel`s share the same instance via `Rc<RefCell<...>>`.
@@ -117,7 +117,6 @@ impl<T> HandlerTable<T> {
             f(handler);
         }
     }
-
 }
 
 pub(crate) struct PeerSubscriptions {
@@ -232,7 +231,6 @@ impl NodeMembership {
             channels: Vec::new(),
         }
     }
-
 }
 
 /// Errors produced by node-layer operations.
@@ -244,8 +242,8 @@ pub enum NodeError<M: MacBackend> {
     ChannelLeft,
     /// The peer is not registered.
     PeerMissing,
-    /// Application payload encode failure.
-    AppEncode(umsh_app::EncodeError),
+    /// Control-payload encode failure.
+    AppEncode(AppEncodeError),
     /// The referenced PFS session was missing.
     #[cfg(feature = "software-crypto")]
     PfsSessionMissing,
@@ -287,8 +285,8 @@ impl<M: MacBackend> From<crate::mac::MacBackendError<M::SendError, M::CapacityEr
     }
 }
 
-impl<M: MacBackend> From<umsh_app::EncodeError> for NodeError<M> {
-    fn from(e: umsh_app::EncodeError) -> Self {
+impl<M: MacBackend> From<AppEncodeError> for NodeError<M> {
+    fn from(e: AppEncodeError) -> Self {
         Self::AppEncode(e)
     }
 }
@@ -379,9 +377,7 @@ impl<M: MacBackend> LocalNode<M> {
     {
         let handle = self.add_node_discovered_handler(handler);
         let state = self.state.clone();
-        Subscription::new(move || {
-            state.borrow_mut().node_discovered_handlers.remove(handle)
-        })
+        Subscription::new(move || state.borrow_mut().node_discovered_handlers.remove(handle))
     }
 
     fn add_beacon_handler<F>(&self, handler: F) -> SubscriptionHandle
@@ -476,9 +472,7 @@ impl<M: MacBackend> LocalNode<M> {
     {
         let handle = self.add_pfs_established_handler(handler);
         let state = self.state.clone();
-        Subscription::new(move || {
-            state.borrow_mut().pfs_established_handlers.remove(handle)
-        })
+        Subscription::new(move || state.borrow_mut().pfs_established_handlers.remove(handle))
     }
 
     fn add_pfs_ended_handler<F>(&self, handler: F) -> SubscriptionHandle
@@ -699,11 +693,9 @@ impl<M: MacBackend> LocalNode<M> {
     pub(crate) async fn handle_pfs_command(
         &self,
         from: &PublicKey,
-        command: &crate::owned::OwnedMacCommand,
+        command: &OwnedMacCommand,
         options: &SendOptions,
     ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
-        use crate::owned::OwnedMacCommand;
-
         match *command {
             OwnedMacCommand::PfsSessionRequest {
                 ephemeral_key,
@@ -727,18 +719,13 @@ impl<M: MacBackend> LocalNode<M> {
                 ephemeral_key,
                 duration_minutes,
             } => {
-                if self
-                    .state
-                    .borrow_mut()
-                    .pfs
-                    .accept_response(
-                        &self.mac,
-                        self.identity_id,
-                        *from,
-                        ephemeral_key,
-                        duration_minutes,
-                    )?
-                {
+                if self.state.borrow_mut().pfs.accept_response(
+                    &self.mac,
+                    self.identity_id,
+                    *from,
+                    ephemeral_key,
+                    duration_minutes,
+                )? {
                     Ok(Some(PfsLifecycle::Established(*from)))
                 } else {
                     Ok(None)
@@ -839,7 +826,9 @@ impl<M: MacBackend> LocalNode<M> {
             .iter_mut()
             .find(|entry| entry.peer == peer)
         {
-            entry.pfs_established_handlers.for_each_mut(|handler| handler());
+            entry
+                .pfs_established_handlers
+                .for_each_mut(|handler| handler());
         }
         state
             .pfs_established_handlers
@@ -908,12 +897,14 @@ impl<M: MacBackend> Transport for LocalNode<M> {
             if let Some((local_id, peer_ephemeral)) =
                 self.state.borrow().pfs.active_route(to, now_ms)
             {
-                let receipt = self.mac
+                let receipt = self
+                    .mac
                     .send_unicast(local_id, &peer_ephemeral, payload, options)
                     .await?;
                 (local_id, receipt)
             } else {
-                let receipt = self.mac
+                let receipt = self
+                    .mac
                     .send_unicast(self.identity_id, to, payload, options)
                     .await?;
                 (self.identity_id, receipt)
@@ -934,7 +925,8 @@ impl<M: MacBackend> Transport for LocalNode<M> {
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendProgressTicket, Self::Error> {
-        let receipt = self.mac
+        let receipt = self
+            .mac
             .send_broadcast(self.identity_id, payload, options)
             .await?;
         Ok(self.register_non_ack_send(self.identity_id, receipt))
@@ -984,7 +976,8 @@ impl<M: MacBackend> BoundChannel<M> {
         }
     }
 
-    pub(crate) fn node(&self) -> &LocalNode<M> {
+    /// Return the owning local node for this bound channel.
+    pub fn node(&self) -> &LocalNode<M> {
         &self.node
     }
 }
@@ -1000,14 +993,17 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
         options: &SendOptions,
     ) -> Result<SendProgressTicket, Self::Error> {
         self.check_active()?;
-        let receipt = self.node.mac.send_blind_unicast(
-            self.node.identity_id,
-            to,
-            self.channel.channel_id(),
-            payload,
-            options,
-        )
-        .await?;
+        let receipt = self
+            .node
+            .mac
+            .send_blind_unicast(
+                self.node.identity_id,
+                to,
+                self.channel.channel_id(),
+                payload,
+                options,
+            )
+            .await?;
         Ok(self.node.register_ack_send(self.node.identity_id, receipt))
     }
 
@@ -1017,13 +1013,18 @@ impl<M: MacBackend> Transport for BoundChannel<M> {
         options: &SendOptions,
     ) -> Result<SendProgressTicket, Self::Error> {
         self.check_active()?;
-        let receipt = self.node.mac.send_multicast(
-            self.node.identity_id,
-            self.channel.channel_id(),
-            payload,
-            options,
-        )
-        .await?;
-        Ok(self.node.register_non_ack_send(self.node.identity_id, receipt))
+        let receipt = self
+            .node
+            .mac
+            .send_multicast(
+                self.node.identity_id,
+                self.channel.channel_id(),
+                payload,
+                options,
+            )
+            .await?;
+        Ok(self
+            .node
+            .register_non_ack_send(self.node.identity_id, receipt))
     }
 }

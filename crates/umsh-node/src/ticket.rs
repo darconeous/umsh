@@ -60,7 +60,10 @@ pub struct SendProgressTicket {
 impl SendProgressTicket {
     /// Create a new ticket registered with the dispatcher for ACK-tracked sends.
     pub(crate) fn new(token: SendToken, state: Rc<RefCell<TicketState>>) -> Self {
-        Self { token: Some(token), state }
+        Self {
+            token: Some(token),
+            state,
+        }
     }
 
     /// Create a ticket for a send that has no receipt (e.g. non-ACK unicast).

@@ -2,13 +2,13 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use umsh_app::{PayloadType, identity_payload, mac_command};
 use umsh_mac::{LocalIdentityId, MacError, MacHandle, MacHandleError, Platform, SendOptions};
 
 use crate::dispatch::EventDispatcher;
 use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
-use crate::owned::OwnedMacCommand;
 use crate::receive::ReceivedPacketRef;
+use crate::{OwnedMacCommand, OwnedNodeIdentityPayload, identity_payload, mac_command};
+use umsh_core::PayloadType;
 
 /// Error returned when a [`Host`] cannot make progress.
 ///
@@ -55,26 +55,27 @@ pub struct Host<
 > {
     mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
     dispatcher: Rc<RefCell<EventDispatcher>>,
-    nodes: Vec<(LocalIdentityId, LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>)>,
+    nodes: Vec<(
+        LocalIdentityId,
+        LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+    )>,
     pfs_control_options: SendOptions,
 }
 
 impl<
-        'a,
-        P: Platform,
-        const IDENTITIES: usize,
-        const PEERS: usize,
-        const CHANNELS: usize,
-        const ACKS: usize,
-        const TX: usize,
-        const FRAME: usize,
-        const DUP: usize,
-    > Host<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    'a,
+    P: Platform,
+    const IDENTITIES: usize,
+    const PEERS: usize,
+    const CHANNELS: usize,
+    const ACKS: usize,
+    const TX: usize,
+    const FRAME: usize,
+    const DUP: usize,
+> Host<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
 {
     /// Create a host around a shared MAC handle.
-    pub fn new(
-        mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
-    ) -> Self {
+    pub fn new(mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Self {
         Self {
             mac,
             dispatcher: Rc::new(RefCell::new(EventDispatcher::new())),
@@ -86,9 +87,7 @@ impl<
     }
 
     /// Return the underlying shared MAC handle.
-    pub fn mac(
-        &self,
-    ) -> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP> {
+    pub fn mac(&self) -> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP> {
         self.mac
     }
 
@@ -127,7 +126,8 @@ impl<
     pub fn node(
         &self,
         identity_id: LocalIdentityId,
-    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>> {
+    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>>
+    {
         self.nodes
             .iter()
             .find(|(id, _)| *id == identity_id)
@@ -137,7 +137,8 @@ impl<
     fn route_node(
         &self,
         identity_id: LocalIdentityId,
-    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>> {
+    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>>
+    {
         if let Some(node) = self.node(identity_id) {
             return Some(node);
         }
@@ -168,8 +169,11 @@ impl<
     pub async fn pump_once(
         &mut self,
     ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
-        let pending_pfs =
-            Rc::new(RefCell::new(Vec::<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>::new()));
+        let pending_pfs = Rc::new(RefCell::new(Vec::<(
+            LocalIdentityId,
+            umsh_core::PublicKey,
+            OwnedMacCommand,
+        )>::new()));
         let pending_pfs_ref = pending_pfs.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();
@@ -276,7 +280,10 @@ fn route_node<
     const FRAME: usize,
     const DUP: usize,
 >(
-    nodes: &[(LocalIdentityId, LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>)],
+    nodes: &[(
+        LocalIdentityId,
+        LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+    )],
     identity_id: LocalIdentityId,
 ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>> {
     nodes
@@ -284,7 +291,8 @@ fn route_node<
         .find(|(id, _)| *id == identity_id)
         .map(|(_, node)| node.clone())
         .or_else(|| {
-            nodes.iter()
+            nodes
+                .iter()
                 .find(|(_, node)| node.owns_ephemeral_identity(identity_id))
                 .map(|(_, node)| node.clone())
         })
@@ -308,9 +316,8 @@ fn dispatch_payload_callbacks<
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = identity_payload::parse(packet.payload()) {
-            if let Ok(owned) = crate::OwnedNodeIdentityPayload::try_from(identity) {
-                node.dispatch_node_discovered(from, owned.name.as_deref());
-            }
+            let owned = OwnedNodeIdentityPayload::from(identity);
+            node.dispatch_node_discovered(from, owned.name.as_deref());
         }
         return;
     }
@@ -325,7 +332,9 @@ fn dispatch_payload_callbacks<
                     | OwnedMacCommand::PfsSessionResponse { .. }
                     | OwnedMacCommand::EndPfsSession
             ) {
-                pending_pfs.borrow_mut().push((node.identity_id(), from, owned));
+                pending_pfs
+                    .borrow_mut()
+                    .push((node.identity_id(), from, owned));
             }
         }
     }

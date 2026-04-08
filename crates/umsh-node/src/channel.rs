@@ -1,7 +1,10 @@
 use alloc::string::String;
 
 use umsh_core::{ChannelId, ChannelKey};
-use umsh_crypto::{CryptoEngine, software::{SoftwareAes, SoftwareSha256}};
+use umsh_crypto::{
+    CryptoEngine,
+    software::{SoftwareAes, SoftwareSha256},
+};
 
 /// A channel descriptor — holds the key, derived ID, and display name.
 ///

@@ -20,7 +20,7 @@ use umsh_core::PublicKey;
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
     DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS,
@@ -28,7 +28,7 @@ use crate::{
 };
 
 const DEFAULT_RSSI: i16 = -40;
-const DEFAULT_SNR: i8 = 10;
+const DEFAULT_SNR: Snr = Snr::from_decibels(10);
 
 /// Convenience alias for a `Mac` instantiated with the simulated test components.
 pub type TestMac<
@@ -94,14 +94,14 @@ struct NetworkState {
 struct QueuedFrame {
     data: Vec<u8>,
     rssi: i16,
-    snr: i8,
+    snr: Snr,
 }
 
 #[derive(Clone, Copy)]
 struct LinkProfile {
     connected: bool,
     rssi: i16,
-    snr: i8,
+    snr: Snr,
 }
 
 impl Default for LinkProfile {
@@ -170,7 +170,7 @@ impl SimulatedNetwork {
     }
 
     /// Configure one directed link with explicit signal values.
-    pub fn set_link(&self, from: usize, to: usize, connected: bool, rssi: i16, snr: i8) {
+    pub fn set_link(&self, from: usize, to: usize, connected: bool, rssi: i16, snr: Snr) {
         let mut state = self.inner.borrow_mut();
         let Some(row) = state.links.get_mut(from) else {
             panic!("unknown simulated radio id {from}");
@@ -191,7 +191,7 @@ impl SimulatedNetwork {
     }
 
     /// Inject a frame directly into one radio's receive queue with explicit metadata.
-    pub fn inject_frame_with_info(&self, to: usize, frame: &[u8], rssi: i16, snr: i8) {
+    pub fn inject_frame_with_info(&self, to: usize, frame: &[u8], rssi: i16, snr: Snr) {
         let mut state = self.inner.borrow_mut();
         let Some(queue) = state.inboxes.get_mut(to) else {
             panic!("unknown simulated radio id {to}");
@@ -208,7 +208,7 @@ impl SimulatedNetwork {
         let Some(row) = state.links.get(from) else {
             panic!("unknown simulated radio id {from}");
         };
-        let deliveries: Vec<(usize, i16, i8)> = row
+        let deliveries: Vec<(usize, i16, Snr)> = row
             .iter()
             .enumerate()
             .filter_map(|(to, link)| link.connected.then_some((to, link.rssi, link.snr)))
@@ -231,7 +231,8 @@ impl SimulatedNetwork {
             return RxInfo {
                 len: 0,
                 rssi: 0,
-                snr: 0,
+                snr: Snr::from_decibels(0),
+                lqi: None,
             };
         };
         let len = frame.data.len().min(buf.len());
@@ -240,6 +241,7 @@ impl SimulatedNetwork {
             len,
             rssi: frame.rssi,
             snr: frame.snr,
+            lqi: None,
         }
     }
 }

@@ -1,3 +1,4 @@
+use core::num::NonZeroU8;
 use core::{future::poll_fn, task::Poll};
 
 use hamaddr::HamAddr;
@@ -11,7 +12,7 @@ use umsh_core::{
 use umsh_crypto::{
     CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
 };
-use umsh_hal::{Clock, CounterStore, Radio, RxInfo, TxError, TxOptions};
+use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
     CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS,
@@ -44,7 +45,9 @@ struct DeferredCounterResyncFrame<const FRAME: usize> {
     peer_id: PeerId,
     frame: Vec<u8, FRAME>,
     rssi: i16,
-    snr: i8,
+    snr: Snr,
+    lqi: Option<NonZeroU8>,
+    received_at_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,7 +366,9 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     }
 
     /// Mutably borrow the pending counter-resynchronization table.
-    fn pending_counter_resync_mut(&mut self) -> &mut LinearMap<PeerId, PendingCounterResync, PEERS> {
+    fn pending_counter_resync_mut(
+        &mut self,
+    ) -> &mut LinearMap<PeerId, PendingCounterResync, PEERS> {
         &mut self.pending_counter_resync
     }
 }
@@ -1727,12 +1732,15 @@ impl<
         rx: &RxInfo,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
+        let received_at_ms = self.clock.now_ms();
         let mut current_len = frame_len;
         let mut current_rx = RxInfo {
             len: frame_len,
             rssi: rx.rssi,
             snr: rx.snr,
+            lqi: rx.lqi,
         };
+        let mut current_received_at_ms = received_at_ms;
         let mut handled_any = false;
 
         loop {
@@ -1767,7 +1775,14 @@ impl<
 
             let (handled, replay_target) = match header.packet_type() {
                 PacketType::Broadcast => (
-                    self.process_broadcast(buf, current_len, &header, &mut on_event),
+                    self.process_broadcast(
+                        buf,
+                        current_len,
+                        &header,
+                        &current_rx,
+                        current_received_at_ms,
+                        &mut on_event,
+                    ),
                     None,
                 ),
                 PacketType::MacAck => (
@@ -1786,6 +1801,7 @@ impl<
                         current_len,
                         &header,
                         &current_rx,
+                        current_received_at_ms,
                         forwarding_confirmed,
                         &mut on_event,
                     )
@@ -1797,6 +1813,7 @@ impl<
                         current_len,
                         &header,
                         &current_rx,
+                        current_received_at_ms,
                         forwarding_confirmed,
                         &mut on_event,
                     ),
@@ -1808,6 +1825,7 @@ impl<
                         current_len,
                         &header,
                         &current_rx,
+                        current_received_at_ms,
                         forwarding_confirmed,
                         &mut on_event,
                     )
@@ -1829,7 +1847,9 @@ impl<
                 len: current_len,
                 rssi: deferred.rssi,
                 snr: deferred.snr,
+                lqi: deferred.lqi,
             };
+            current_received_at_ms = deferred.received_at_ms;
         }
     }
 
@@ -1838,6 +1858,8 @@ impl<
         buf: &[u8; FRAME],
         frame_len: usize,
         header: &PacketHeader,
+        rx: &RxInfo,
+        received_at_ms: u64,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         let Some((from_hint, from_key)) = Self::resolve_broadcast_source(&buf[..frame_len], header)
@@ -1865,6 +1887,12 @@ impl<
                     Some(from_hint),
                     false,
                     None,
+                    crate::send::RxMetadata::new(
+                        Some(rx.rssi),
+                        Some(rx.snr),
+                        rx.lqi,
+                        Some(received_at_ms),
+                    ),
                 )),
             );
         }
@@ -1912,6 +1940,7 @@ impl<
         frame_len: usize,
         header: &PacketHeader,
         rx: &RxInfo,
+        received_at_ms: u64,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> (bool, Option<(LocalIdentityId, PeerId)>) {
@@ -1936,12 +1965,14 @@ impl<
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
                 }
-                match self
-                    .unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len])
-                {
+                match self.unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len]) {
                     Some(ReplayVerdict::Accept) => {
-                        let _ =
-                            self.accept_unicast_replay(local_id, peer_id, header, &buf[..frame_len]);
+                        let _ = self.accept_unicast_replay(
+                            local_id,
+                            peer_id,
+                            header,
+                            &buf[..frame_len],
+                        );
                     }
                     Some(ReplayVerdict::OutOfWindow | ReplayVerdict::Stale) => {
                         if self.try_accept_counter_resync_response(
@@ -1958,6 +1989,7 @@ impl<
                                 peer_id,
                                 &original[..frame_len],
                                 rx,
+                                received_at_ms,
                             );
                             self.maybe_request_counter_resync(local_id, peer_id, peer_key)
                                 .await;
@@ -1984,7 +2016,12 @@ impl<
                     let response =
                         Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
                     let _ = self
-                        .send_unicast(local_id, &peer_key, response.as_slice(), &SendOptions::default())
+                        .send_unicast(
+                            local_id,
+                            &peer_key,
+                            response.as_slice(),
+                            &SendOptions::default(),
+                        )
                         .await;
                 }
 
@@ -1994,12 +2031,21 @@ impl<
                         &original[..frame_len],
                         &buf[body_range],
                         header.clone(),
-                        ParsedOptions::extract(&original[..frame_len], header.options_range.clone())
-                            .unwrap_or_default(),
+                        ParsedOptions::extract(
+                            &original[..frame_len],
+                            header.options_range.clone(),
+                        )
+                        .unwrap_or_default(),
                         Some(peer_key),
                         Some(peer_key.hint()),
                         true,
                         None,
+                        crate::send::RxMetadata::new(
+                            Some(rx.rssi),
+                            Some(rx.snr),
+                            rx.lqi,
+                            Some(received_at_ms),
+                        ),
                     )),
                 );
                 handled = true;
@@ -2022,6 +2068,7 @@ impl<
         frame_len: usize,
         header: &PacketHeader,
         rx: &RxInfo,
+        received_at_ms: u64,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
@@ -2049,8 +2096,12 @@ impl<
                         self.resolve_multicast_source(&buf[..frame_len], header)
                     {
                         let accepted = if let Some(peer_id) = source.peer_id {
-                            let accepted =
-                                self.accept_multicast_replay(channel_id, peer_id, header, &buf[..frame_len]);
+                            let accepted = self.accept_multicast_replay(
+                                channel_id,
+                                peer_id,
+                                header,
+                                &buf[..frame_len],
+                            );
                             if accepted {
                                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
                             }
@@ -2067,27 +2118,31 @@ impl<
                                 delivered = true;
                                 on_event(
                                     LocalIdentityId(index as u8),
-                                    crate::MacEventRef::Received(
-                                        crate::ReceivedPacketRef::new(
+                                    crate::MacEventRef::Received(crate::ReceivedPacketRef::new(
+                                        &original[..frame_len],
+                                        &buf[body_range.clone()],
+                                        header.clone(),
+                                        ParsedOptions::extract(
                                             &original[..frame_len],
-                                            &buf[body_range.clone()],
-                                            header.clone(),
-                                            ParsedOptions::extract(
-                                                &original[..frame_len],
-                                                header.options_range.clone(),
-                                            )
-                                            .unwrap_or_default(),
-                                            source.public_key,
-                                            source
-                                                .hint
-                                                .or_else(|| source.public_key.map(|key| key.hint())),
-                                            true,
-                                            Some(crate::ChannelInfoRef {
-                                                id: channel_id,
-                                                key: &channel_key,
-                                            }),
+                                            header.options_range.clone(),
+                                        )
+                                        .unwrap_or_default(),
+                                        source.public_key,
+                                        source
+                                            .hint
+                                            .or_else(|| source.public_key.map(|key| key.hint())),
+                                        true,
+                                        Some(crate::ChannelInfoRef {
+                                            id: channel_id,
+                                            key: &channel_key,
+                                        }),
+                                        crate::send::RxMetadata::new(
+                                            Some(rx.rssi),
+                                            Some(rx.snr),
+                                            rx.lqi,
+                                            Some(received_at_ms),
                                         ),
-                                    ),
+                                    )),
                                 );
                             }
                             delivered
@@ -2116,6 +2171,7 @@ impl<
         frame_len: usize,
         header: &PacketHeader,
         rx: &RxInfo,
+        received_at_ms: u64,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> (bool, Option<(LocalIdentityId, PeerId)>) {
@@ -2147,7 +2203,8 @@ impl<
                     for (peer_id, peer_key) in
                         self.resolve_blind_source_peer_candidates(&buf[..frame_len], source_addr)
                     {
-                        let Ok(pairwise_keys) = self.ensure_peer_crypto(local_id, peer_id).await else {
+                        let Ok(pairwise_keys) = self.ensure_peer_crypto(local_id, peer_id).await
+                        else {
                             continue;
                         };
                         let blind_keys =
@@ -2164,9 +2221,12 @@ impl<
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
                         }
-                        match self
-                            .unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len])
-                        {
+                        match self.unicast_replay_verdict(
+                            local_id,
+                            peer_id,
+                            header,
+                            &buf[..frame_len],
+                        ) {
                             Some(ReplayVerdict::Accept) => {
                                 let _ = self.accept_unicast_replay(
                                     local_id,
@@ -2190,6 +2250,7 @@ impl<
                                         peer_id,
                                         &original[..frame_len],
                                         rx,
+                                        received_at_ms,
                                     );
                                     self.maybe_request_counter_resync(local_id, peer_id, peer_key)
                                         .await;
@@ -2213,8 +2274,10 @@ impl<
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
-                            let response =
-                                Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
+                            let response = Self::build_echo_command_payload(
+                                MAC_COMMAND_ECHO_RESPONSE_ID,
+                                data,
+                            );
                             let _ = self
                                 .send_unicast(
                                     local_id,
@@ -2243,6 +2306,12 @@ impl<
                                     id: channel_id,
                                     key: &resolved_channel_key,
                                 }),
+                                crate::send::RxMetadata::new(
+                                    Some(rx.rssi),
+                                    Some(rx.snr),
+                                    rx.lqi,
+                                    Some(received_at_ms),
+                                ),
                             )),
                         );
                         handled = true;
@@ -2638,7 +2707,9 @@ impl<
         peer_id: PeerId,
         pairwise_keys: PairwiseKeys,
     ) -> Result<(), SendError> {
-        let slot = self.identity_mut(local_id).ok_or(SendError::IdentityMissing)?;
+        let slot = self
+            .identity_mut(local_id)
+            .ok_or(SendError::IdentityMissing)?;
         if slot.peer_crypto().get(&peer_id).is_some() {
             return Ok(());
         }
@@ -2824,8 +2895,9 @@ impl<
                 return;
             };
             match slot.pending_counter_resync().get(&peer_id).copied() {
-                Some(pending) => now_ms.saturating_sub(pending.requested_ms)
-                    >= COUNTER_RESYNC_REQUEST_RETRY_MS,
+                Some(pending) => {
+                    now_ms.saturating_sub(pending.requested_ms) >= COUNTER_RESYNC_REQUEST_RETRY_MS
+                }
                 None => true,
             }
         };
@@ -2834,9 +2906,14 @@ impl<
         }
 
         let nonce = self.rng.next_u32();
-        let payload = Self::build_echo_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
+        let payload =
+            Self::build_echo_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
         let options = SendOptions::default();
-        if self.send_unicast(local_id, &peer_key, payload.as_slice(), &options).await.is_ok() {
+        if self
+            .send_unicast(local_id, &peer_key, payload.as_slice(), &options)
+            .await
+            .is_ok()
+        {
             if let Some(slot) = self.identity_mut(local_id) {
                 let _ = slot.pending_counter_resync_mut().insert(
                     peer_id,
@@ -2855,6 +2932,7 @@ impl<
         peer_id: PeerId,
         frame: &[u8],
         rx: &RxInfo,
+        received_at_ms: u64,
     ) {
         let mut stored = Vec::new();
         stored
@@ -2866,6 +2944,8 @@ impl<
             frame: stored,
             rssi: rx.rssi,
             snr: rx.snr,
+            lqi: rx.lqi,
+            received_at_ms,
         });
     }
 
@@ -2881,7 +2961,6 @@ impl<
             _ => None,
         }
     }
-
 
     fn accept_multicast_replay(
         &mut self,
@@ -3304,7 +3383,7 @@ impl<
             }
         }
         if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
-            if rx.snr < min_snr {
+            if rx.snr < Snr::from_decibels(min_snr) {
                 return None;
             }
         }
@@ -3580,8 +3659,11 @@ impl<
     }
 
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
-        let threshold = i32::from(Self::effective_min_snr(options, &self.repeater).unwrap_or(0));
-        let received = i32::from(rx.snr);
+        let threshold = i32::from(
+            Snr::from_decibels(Self::effective_min_snr(options, &self.repeater).unwrap_or(0))
+                .as_centibels(),
+        );
+        let received = i32::from(rx.snr.as_centibels());
         let normalized = (20 - (received - threshold).clamp(0, 20)) as u32;
         let window_ms = self.radio.t_frame_ms().saturating_mul(normalized) / 20;
         if window_ms == 0 {

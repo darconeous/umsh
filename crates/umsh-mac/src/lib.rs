@@ -245,8 +245,10 @@ pub use peers::{
 };
 pub use send::{
     AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
-    ReceivedPacketRef, ResendRecord, RouteHops, SendOptions, SendReceipt, TxPriority, TxQueue,
+    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
+    TxQueue,
 };
+pub use umsh_hal::Snr;
 
 #[cfg(feature = "std")]
 pub mod test_support;

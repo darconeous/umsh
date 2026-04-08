@@ -1,5 +1,4 @@
 #![allow(async_fn_in_trait)]
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! Cryptographic traits and UMSH-specific key/packet operations.
@@ -28,8 +27,8 @@
 use core::ops::Range;
 
 use umsh_core::{
-    feed_aad, ChannelId, ChannelKey, PacketHeader, PacketType, PublicKey, SourceAddrRef,
-    UnsealedPacket,
+    ChannelId, ChannelKey, PacketHeader, PacketType, PublicKey, SourceAddrRef, UnsealedPacket,
+    feed_aad,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -201,7 +200,12 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     /// Derive stable pairwise encryption and MIC keys from a shared secret.
     pub fn derive_pairwise_keys(&self, shared_secret: &SharedSecret) -> PairwiseKeys {
         let mut okm = [0u8; 32];
-        self.hkdf(&shared_secret.0, b"UMSH-PAIRWISE-SALT", b"UMSH-UNICAST-V1", &mut okm);
+        self.hkdf(
+            &shared_secret.0,
+            b"UMSH-PAIRWISE-SALT",
+            b"UMSH-UNICAST-V1",
+            &mut okm,
+        );
         let mut keys = PairwiseKeys {
             k_enc: [0u8; 16],
             k_mic: [0u8; 16],
@@ -239,7 +243,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Combine pairwise and channel keys for blind-unicast payload protection.
-    pub fn derive_blind_keys(&self, pairwise: &PairwiseKeys, channel: &DerivedChannelKeys) -> PairwiseKeys {
+    pub fn derive_blind_keys(
+        &self,
+        pairwise: &PairwiseKeys,
+        channel: &DerivedChannelKeys,
+    ) -> PairwiseKeys {
         let mut keys = PairwiseKeys {
             k_enc: [0u8; 16],
             k_mic: [0u8; 16],
@@ -267,7 +275,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Seal a unicast or multicast packet in place.
-    pub fn seal_packet(&self, packet: &mut UnsealedPacket<'_>, keys: &PairwiseKeys) -> Result<usize, CryptoError> {
+    pub fn seal_packet(
+        &self,
+        packet: &mut UnsealedPacket<'_>,
+        keys: &PairwiseKeys,
+    ) -> Result<usize, CryptoError> {
         let header = packet.header().map_err(|_| CryptoError::InvalidPacket)?;
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
@@ -278,11 +290,18 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             cmac.finalize()
         };
 
-        let mic_len = sec_info.scf.mic_size().map_err(|_| CryptoError::InvalidPacket)?.byte_len();
+        let mic_len = sec_info
+            .scf
+            .mic_size()
+            .map_err(|_| CryptoError::InvalidPacket)?
+            .byte_len();
         packet.mic_slot()[..mic_len].copy_from_slice(&full_mac[..mic_len]);
 
         if sec_info.scf.encrypted() {
-            let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[packet.sec_info_range()]);
+            let iv = self.build_ctr_iv(
+                &full_mac[..mic_len],
+                &packet.as_bytes()[packet.sec_info_range()],
+            );
             self.aes_ctr(&keys.k_enc, &iv, packet.body_mut());
         }
 
@@ -303,7 +322,9 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         }
 
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
-        let blind_addr_range = packet.blind_addr_range().ok_or(CryptoError::InvalidPacket)?;
+        let blind_addr_range = packet
+            .blind_addr_range()
+            .ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
             let bytes = packet.as_bytes();
             let mut cmac = self.cmac_state(&blind_keys.k_mic);
@@ -312,24 +333,41 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             cmac.finalize()
         };
 
-        let mic_len = sec_info.scf.mic_size().map_err(|_| CryptoError::InvalidPacket)?.byte_len();
-        let iv = self.build_ctr_iv(&full_mac[..mic_len], &packet.as_bytes()[packet.sec_info_range()]);
+        let mic_len = sec_info
+            .scf
+            .mic_size()
+            .map_err(|_| CryptoError::InvalidPacket)?
+            .byte_len();
+        let iv = self.build_ctr_iv(
+            &full_mac[..mic_len],
+            &packet.as_bytes()[packet.sec_info_range()],
+        );
         packet.mic_slot()[..mic_len].copy_from_slice(&full_mac[..mic_len]);
         if sec_info.scf.encrypted() {
             self.aes_ctr(&blind_keys.k_enc, &iv, packet.body_mut());
-            self.aes_ctr(&channel_keys.k_enc, &iv, &mut packet.as_bytes_mut()[blind_addr_range]);
+            self.aes_ctr(
+                &channel_keys.k_enc,
+                &iv,
+                &mut packet.as_bytes_mut()[blind_addr_range],
+            );
         }
         Ok(mic_len)
     }
 
     /// Verify and, if needed, decrypt a received secure packet in place.
-    pub fn open_packet(&self, buf: &mut [u8], header: &PacketHeader, keys: &PairwiseKeys) -> Result<Range<usize>, CryptoError> {
+    pub fn open_packet(
+        &self,
+        buf: &mut [u8],
+        header: &PacketHeader,
+        keys: &PairwiseKeys,
+    ) -> Result<Range<usize>, CryptoError> {
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let mut mic = [0u8; 16];
         let mic_len = header.mic_range.end - header.mic_range.start;
         mic[..mic_len].copy_from_slice(&buf[header.mic_range.clone()]);
         if sec_info.scf.encrypted() {
-            let sec_info_range = header.body_range.start - sec_info.wire_len()..header.body_range.start;
+            let sec_info_range =
+                header.body_range.start - sec_info.wire_len()..header.body_range.start;
             let iv = self.build_ctr_iv(&mic[..mic_len], &buf[sec_info_range]);
             self.aes_ctr(&keys.k_enc, &iv, &mut buf[header.body_range.clone()]);
         }
@@ -365,10 +403,15 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
                 let addr_start = offset.checked_sub(3).ok_or(CryptoError::InvalidPacket)?;
                 let addr_end = addr_start + 3 + len;
                 let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
-                let sec_info_range = header.body_range.start - sec_info.wire_len()..header.body_range.start;
+                let sec_info_range =
+                    header.body_range.start - sec_info.wire_len()..header.body_range.start;
                 let iv = self.build_ctr_iv(&buf[header.mic_range.clone()], &buf[sec_info_range]);
                 self.aes_ctr(&channel_keys.k_enc, &iv, &mut buf[addr_start..addr_end]);
-                let dst = umsh_core::NodeHint([buf[addr_start], buf[addr_start + 1], buf[addr_start + 2]]);
+                let dst = umsh_core::NodeHint([
+                    buf[addr_start],
+                    buf[addr_start + 1],
+                    buf[addr_start + 2],
+                ]);
                 let source = if len == 3 {
                     SourceAddrRef::Hint(umsh_core::NodeHint([
                         buf[addr_start + 3],
@@ -390,7 +433,9 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             }
             SourceAddrRef::FullKeyAt { offset } => {
                 let dst = header.dst.ok_or(CryptoError::InvalidPacket)?;
-                let _ = buf.get(offset..offset + 32).ok_or(CryptoError::InvalidPacket)?;
+                let _ = buf
+                    .get(offset..offset + 32)
+                    .ok_or(CryptoError::InvalidPacket)?;
                 Ok((dst, SourceAddrRef::FullKeyAt { offset }))
             }
             SourceAddrRef::None => Err(CryptoError::InvalidPacket),
@@ -454,7 +499,9 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         let mut written = 0usize;
         let mut counter = 1u8;
         while written < okm.len() {
-            let next = self.sha.hmac(&prk, &[&previous[..previous_len], info, &[counter]]);
+            let next = self
+                .sha
+                .hmac(&prk, &[&previous[..previous_len], info, &[counter]]);
             let take = (okm.len() - written).min(next.len());
             okm[written..written + take].copy_from_slice(&next[..take]);
             previous = next;
@@ -507,7 +554,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[cfg(feature = "software-crypto")]
 pub mod software {
-    use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit, generic_array::GenericArray};
     use curve25519_dalek::{edwards::CompressedEdwardsY, montgomery::MontgomeryPoint};
     use ed25519_dalek::{Signer, SigningKey};
     use rand_core::CryptoRngCore;
@@ -638,7 +685,9 @@ pub mod software {
 
     fn public_key_to_x25519(public: &PublicKey) -> Result<x25519_dalek::PublicKey, CryptoError> {
         let compressed = CompressedEdwardsY(public.0);
-        let edwards = compressed.decompress().ok_or(CryptoError::InvalidPublicKey)?;
+        let edwards = compressed
+            .decompress()
+            .ok_or(CryptoError::InvalidPublicKey)?;
         let mont: MontgomeryPoint = edwards.to_montgomery();
         Ok(x25519_dalek::PublicKey::from(mont.to_bytes()))
     }
@@ -807,7 +856,12 @@ mod tests {
         let info = hex_vec("f0f1f2f3f4f5f6f7f8f9");
         let mut okm = [0u8; 42];
         engine.hkdf(&ikm, &salt, &info, &mut okm);
-        assert_eq!(okm.to_vec(), hex_vec("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"));
+        assert_eq!(
+            okm.to_vec(),
+            hex_vec(
+                "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+            )
+        );
     }
 
     #[test]
@@ -913,8 +967,13 @@ mod tests {
         engine.seal_packet(&mut packet, &multicast_keys).unwrap();
         let header = PacketHeader::parse(packet.as_bytes()).unwrap();
         let mut wire = packet.as_bytes().to_vec();
-        let range = engine.open_packet(&mut wire, &header, &multicast_keys).unwrap();
-        assert_eq!(&wire[header.body_range.start..header.body_range.start + 3], &src.hint().0);
+        let range = engine
+            .open_packet(&mut wire, &header, &multicast_keys)
+            .unwrap();
+        assert_eq!(
+            &wire[header.body_range.start..header.body_range.start + 3],
+            &src.hint().0
+        );
         assert_eq!(&wire[range], b"hello");
     }
 
@@ -928,10 +987,9 @@ mod tests {
         let channel = engine.derive_channel_keys(&channel_key);
         let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
         let src = PublicKey([
-            0xA1, 0xB2, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+            0xA1, 0xB2, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+            0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+            0x1D, 0x1E, 0x1F, 0x20,
         ]);
         let dst = NodeHint([0xC3, 0xD4, 0x25]);
         let mut buf = [0u8; 160];
@@ -944,15 +1002,27 @@ mod tests {
             .build()
             .unwrap();
 
-        engine.seal_blind_packet(&mut packet, &blind_keys, &channel).unwrap();
+        engine
+            .seal_blind_packet(&mut packet, &blind_keys, &channel)
+            .unwrap();
         let header = PacketHeader::parse(packet.as_bytes()).unwrap();
         let mut wire = packet.as_bytes().to_vec();
-        let (decoded_dst, decoded_src) = engine.decrypt_blind_addr(&mut wire, &header, &channel).unwrap();
+        let (decoded_dst, decoded_src) = engine
+            .decrypt_blind_addr(&mut wire, &header, &channel)
+            .unwrap();
         let range = engine.open_packet(&mut wire, &header, &blind_keys).unwrap();
 
         assert_eq!(decoded_dst, dst);
-        assert_eq!(decoded_src, SourceAddrRef::FullKeyAt { offset: header.body_range.start - 32 });
-        assert_eq!(&wire[header.body_range.start - 32..header.body_range.start], &src.0);
+        assert_eq!(
+            decoded_src,
+            SourceAddrRef::FullKeyAt {
+                offset: header.body_range.start - 32
+            }
+        );
+        assert_eq!(
+            &wire[header.body_range.start - 32..header.body_range.start],
+            &src.0
+        );
         assert_eq!(&wire[range], b"hello");
     }
 
@@ -960,16 +1030,14 @@ mod tests {
     #[test]
     fn software_identity_agreement_is_symmetric() {
         let alice = SoftwareIdentity::from_secret_bytes(&[
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
-            0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-            0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
+            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+            0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C,
+            0x2D, 0x2E, 0x2F, 0x30,
         ]);
         let bob = SoftwareIdentity::from_secret_bytes(&[
-            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
-            0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
-            0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
-            0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
+            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E,
+            0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C,
+            0x4D, 0x4E, 0x4F, 0x50,
         ]);
 
         let ab = alice.shared_secret_with(bob.public_key()).unwrap();
@@ -1010,5 +1078,4 @@ mod tests {
             _ => panic!("invalid hex"),
         }
     }
-
 }

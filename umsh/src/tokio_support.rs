@@ -19,7 +19,7 @@ use embedded_hal_async::delay::DelayNs;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, TxError, TxOptions};
+use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 #[cfg(feature = "software-crypto")]
 use crate::{
@@ -284,7 +284,8 @@ impl Radio for UdpMulticastRadio {
             return core::task::Poll::Ready(Ok(RxInfo {
                 len: copy_len,
                 rssi: self.rssi,
-                snr: self.snr,
+                snr: Snr::from_decibels(self.snr),
+                lqi: None,
             }));
         }
     }

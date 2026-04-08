@@ -1,0 +1,16 @@
+[package]
+name = "umsh-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["std", "software-crypto"]
+std = ["alloc", "umsh-core/std", "umsh-mac/std", "umsh-node/std"]
+alloc = []
+software-crypto = ["umsh-node/software-crypto"]
+
+[dependencies]
+umsh-core = { path = "../umsh-core", default-features = false }
+umsh-mac = { path = "../umsh-mac", default-features = false }
+umsh-node = { path = "../umsh-node", default-features = false }

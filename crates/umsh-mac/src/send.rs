@@ -1,8 +1,10 @@
+use core::num::NonZeroU8;
 use heapless::Vec;
 use umsh_core::{
-    ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType,
-    ParsedOptions, PayloadType, PublicKey, RouterHint, SecInfo,
+    ChannelId, ChannelKey, FloodHops, MicSize, NodeHint, PacketHeader, PacketType, ParsedOptions,
+    PayloadType, PublicKey, RouterHint, SecInfo,
 };
+use umsh_hal::Snr;
 
 use crate::{CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
 
@@ -632,7 +634,10 @@ impl PacketFamily {
             Self::Unicast => matches!(packet_type, PacketType::Unicast | PacketType::UnicastAckReq),
             Self::Multicast => packet_type == PacketType::Multicast,
             Self::BlindUnicast => {
-                matches!(packet_type, PacketType::BlindUnicast | PacketType::BlindUnicastAckReq)
+                matches!(
+                    packet_type,
+                    PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
+                )
             }
             Self::Reserved => packet_type == PacketType::Reserved5,
         }
@@ -644,6 +649,52 @@ impl PacketFamily {
 pub struct RouteHops<'a> {
     bytes: &'a [u8],
     cursor: usize,
+}
+
+/// Local physical-layer observations captured when a frame was received.
+///
+/// SNR is represented in centibels (0.1 dB units). This is finer than whole
+/// decibels, but still compact and integer-friendly. Some common LoRa radios
+/// report packet SNR in quarter-dB steps; converting those readings into
+/// centibels may therefore introduce a small rounding error.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RxMetadata {
+    rssi: Option<i16>,
+    snr: Option<Snr>,
+    lqi: Option<NonZeroU8>,
+    received_at_ms: Option<u64>,
+}
+
+impl RxMetadata {
+    pub fn new(
+        rssi: Option<i16>,
+        snr: Option<Snr>,
+        lqi: Option<NonZeroU8>,
+        received_at_ms: Option<u64>,
+    ) -> Self {
+        Self {
+            rssi,
+            snr,
+            lqi,
+            received_at_ms,
+        }
+    }
+
+    pub fn rssi(&self) -> Option<i16> {
+        self.rssi
+    }
+
+    pub fn snr(&self) -> Option<Snr> {
+        self.snr
+    }
+
+    pub fn lqi(&self) -> Option<NonZeroU8> {
+        self.lqi
+    }
+
+    pub fn received_at_ms(&self) -> Option<u64> {
+        self.received_at_ms
+    }
 }
 
 impl<'a> RouteHops<'a> {
@@ -681,6 +732,7 @@ pub struct ReceivedPacketRef<'a> {
     from_hint: Option<NodeHint>,
     source_authenticated: bool,
     channel: Option<ChannelInfoRef<'a>>,
+    rx: RxMetadata,
 }
 
 impl<'a> ReceivedPacketRef<'a> {
@@ -693,6 +745,7 @@ impl<'a> ReceivedPacketRef<'a> {
         from_hint: Option<NodeHint>,
         source_authenticated: bool,
         channel: Option<ChannelInfoRef<'a>>,
+        rx: RxMetadata,
     ) -> Self {
         let (payload_type, payload) = if payload_bytes.is_empty() {
             (PayloadType::Empty, &[][..])
@@ -712,6 +765,7 @@ impl<'a> ReceivedPacketRef<'a> {
             from_hint,
             source_authenticated,
             channel,
+            rx,
         }
     }
 
@@ -726,9 +780,7 @@ impl<'a> ReceivedPacketRef<'a> {
             PacketType::MacAck => PacketFamily::MacAck,
             PacketType::Unicast | PacketType::UnicastAckReq => PacketFamily::Unicast,
             PacketType::Multicast => PacketFamily::Multicast,
-            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
-                PacketFamily::BlindUnicast
-            }
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => PacketFamily::BlindUnicast,
             PacketType::Reserved5 => PacketFamily::Reserved,
         }
     }
@@ -788,6 +840,27 @@ impl<'a> ReceivedPacketRef<'a> {
         self.source_authenticated
     }
 
+    /// Local radio observations captured when this frame was received.
+    pub fn rx(&self) -> &RxMetadata {
+        &self.rx
+    }
+
+    pub fn rssi(&self) -> Option<i16> {
+        self.rx.rssi()
+    }
+
+    pub fn snr(&self) -> Option<Snr> {
+        self.rx.snr()
+    }
+
+    pub fn lqi(&self) -> Option<NonZeroU8> {
+        self.rx.lqi()
+    }
+
+    pub fn received_at_ms(&self) -> Option<u64> {
+        self.rx.received_at_ms()
+    }
+
     /// True when the source address in the accepted frame used the full public key form.
     pub fn has_full_source(&self) -> bool {
         self.header.fcf.full_source()
@@ -826,8 +899,7 @@ impl<'a> ReceivedPacketRef<'a> {
     }
 
     pub fn mic_size(&self) -> Option<MicSize> {
-        self.sec_info()
-            .and_then(|sec| sec.scf.mic_size().ok())
+        self.sec_info().and_then(|sec| sec.scf.mic_size().ok())
     }
 
     /// Return the authenticated MIC bytes from the original wire frame.
@@ -886,7 +958,9 @@ impl<'a> ReceivedPacketRef<'a> {
     }
 
     pub fn source_route_hop_count(&self) -> usize {
-        self.source_route().map(|route| route.len() / 2).unwrap_or(0)
+        self.source_route()
+            .map(|route| route.len() / 2)
+            .unwrap_or(0)
     }
 
     pub fn trace_route_hop_count(&self) -> usize {

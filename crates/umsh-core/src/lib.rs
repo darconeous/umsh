@@ -43,23 +43,22 @@ pub mod options;
 mod packet;
 
 pub use builder::{
-    state, BlindUnicastBuilder, BroadcastBuilder, MacAckBuilder, MulticastBuilder, PacketBuilder,
-    UnicastBuilder,
+    BlindUnicastBuilder, BroadcastBuilder, MacAckBuilder, MulticastBuilder, PacketBuilder,
+    UnicastBuilder, state,
 };
 pub use error::{BuildError, EncodeError, ParseError};
 pub use packet::{
-    feed_aad, iter_options, ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber,
-    PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo,
-    SourceAddr, SourceAddrRef, UnsealedPacket, UMSH_VERSION,
+    ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
+    PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,
+    SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, iter_options,
 };
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        feed_aad,
-        options::{OptionDecoder, OptionEncoder},
         Fcf, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType, PublicKey,
-        Scf, SecInfo, SourceAddrRef,
+        Scf, SecInfo, SourceAddrRef, feed_aad,
+        options::{OptionDecoder, OptionEncoder},
     };
 
     #[test]

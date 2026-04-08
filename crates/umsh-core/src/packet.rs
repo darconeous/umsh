@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{options::OptionDecoder, EncodeError, ParseError};
+use crate::{EncodeError, ParseError, options::OptionDecoder};
 
 /// Current UMSH packet version encoded in the FCF high bits.
 pub const UMSH_VERSION: u8 = 0b11;
@@ -359,11 +359,7 @@ pub struct SecInfo {
 impl SecInfo {
     /// Return the SECINFO on-wire length.
     pub fn wire_len(&self) -> usize {
-        if self.salt.is_some() {
-            7
-        } else {
-            5
-        }
+        if self.salt.is_some() { 7 } else { 5 }
     }
 
     /// Encode SECINFO into `buf` and return the number of bytes written.
@@ -845,11 +841,7 @@ fn scan_options_field(data: &[u8]) -> Result<usize, ParseError> {
 }
 
 pub(crate) fn source_len(full_source: bool) -> usize {
-    if full_source {
-        32
-    } else {
-        3
-    }
+    if full_source { 32 } else { 3 }
 }
 
 #[derive(Debug, PartialEq, Eq)]

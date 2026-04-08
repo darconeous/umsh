@@ -7,7 +7,46 @@
 //! platform-specific radio or storage backends can depend on it without pulling
 //! in the full protocol stack.
 
+use core::num::NonZeroU8;
 use core::task::{Context, Poll};
+
+/// Signal-to-noise ratio represented in centibels (0.1 dB units).
+///
+/// This uses a slightly finer unit than whole decibels while still staying
+/// compact and integer-friendly. Some common LoRa radios report SNR in
+/// quarter-dB steps. Converting those readings into centibels requires
+/// rounding, introducing at most 0.5 cB (0.05 dB) of error.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Snr(i16);
+
+impl Snr {
+    /// Construct an SNR value directly from centibels.
+    pub const fn from_centibels(centibels: i16) -> Self {
+        Self(centibels)
+    }
+
+    /// Construct an SNR value from whole decibels.
+    pub const fn from_decibels(db: i8) -> Self {
+        Self((db as i16) * 10)
+    }
+
+    /// Construct an SNR value from quarter-dB steps, rounding to the nearest
+    /// centibel.
+    pub const fn from_quarter_db_steps(steps: i16) -> Self {
+        let scaled = steps * 25;
+        let rounded = if scaled >= 0 {
+            (scaled + 5) / 10
+        } else {
+            (scaled - 5) / 10
+        };
+        Self(rounded)
+    }
+
+    /// Return the stored value in centibels.
+    pub const fn as_centibels(self) -> i16 {
+        self.0
+    }
+}
 
 /// Metadata returned with a received frame.
 pub struct RxInfo {
@@ -15,8 +54,10 @@ pub struct RxInfo {
     pub len: usize,
     /// Received signal strength in dBm.
     pub rssi: i16,
-    /// Signal-to-noise ratio in dB.
-    pub snr: i8,
+    /// Signal-to-noise ratio in centibels.
+    pub snr: Snr,
+    /// Optional link-quality indicator in a radio-specific normalized scale.
+    pub lqi: Option<NonZeroU8>,
 }
 
 /// Options controlling how a frame is transmitted.
@@ -45,14 +86,22 @@ pub trait Radio {
     type Error;
 
     /// Transmit a complete raw UMSH frame.
-    async fn transmit(&mut self, data: &[u8], options: TxOptions) -> Result<(), TxError<Self::Error>>;
+    async fn transmit(
+        &mut self,
+        data: &[u8],
+        options: TxOptions,
+    ) -> Result<(), TxError<Self::Error>>;
 
     /// Poll reception of one frame into `buf`.
     ///
     /// `Poll::Pending` means no frame is currently available right now. The
     /// call does not reserve any receive state; a later poll after transmit
     /// completion can resume probing immediately.
-    fn poll_receive(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<RxInfo, Self::Error>>;
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<RxInfo, Self::Error>>;
 
     /// Return the largest supported raw frame size.
     fn max_frame_size(&self) -> usize;

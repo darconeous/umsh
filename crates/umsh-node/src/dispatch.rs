@@ -18,11 +18,7 @@ impl EventDispatcher {
         }
     }
 
-    pub fn register_ticket(
-        &mut self,
-        token: SendToken,
-        non_ack: bool,
-    ) -> Rc<RefCell<TicketState>> {
+    pub fn register_ticket(&mut self, token: SendToken, non_ack: bool) -> Rc<RefCell<TicketState>> {
         let state = Rc::new(RefCell::new(TicketState {
             non_ack,
             ..TicketState::default()
@@ -31,11 +27,7 @@ impl EventDispatcher {
         state
     }
 
-    pub fn dispatch_ticket_state(
-        &mut self,
-        identity_id: LocalIdentityId,
-        event: &MacEventRef<'_>,
-    ) {
+    pub fn dispatch_ticket_state(&mut self, identity_id: LocalIdentityId, event: &MacEventRef<'_>) {
         match *event {
             MacEventRef::Transmitted {
                 identity_id: tx_id,
@@ -89,6 +81,7 @@ impl EventDispatcher {
             }
         }
 
-        self.ticket_states.retain(|(_, weak)| weak.strong_count() > 0);
+        self.ticket_states
+            .retain(|(_, weak)| weak.strong_count() > 0);
     }
 }

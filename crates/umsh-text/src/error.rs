@@ -1,38 +1,25 @@
 use core::fmt;
 
-use umsh_core::{EncodeError as CoreEncodeError, ParseError as CoreParseError, PacketType};
+use umsh_core::{EncodeError as CoreEncodeError, PacketType, ParseError as CoreParseError};
 
-/// Error returned when parsing application-layer payloads or UMSH URIs.
-///
-/// This type wraps lower-level `umsh-core` parse failures and adds validation
-/// errors for application-specific fields such as message kinds, command IDs,
-/// UTF-8 bodies, and URI/base58 content.
+/// Error returned when parsing or validating text payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParseError {
     /// Propagated `umsh-core` parse error.
     Core(CoreParseError),
     /// A field that must be valid UTF-8 was not valid UTF-8.
     InvalidUtf8,
-    /// The leading payload-type byte is not assigned by the current protocol.
+    /// The leading payload-type byte did not identify a text payload.
     InvalidPayloadType(u8),
     /// The payload type is known, but it is invalid for the given packet type.
-    PayloadTypeNotAllowed { payload_type: u8, packet_type: PacketType },
+    PayloadTypeNotAllowed {
+        payload_type: u8,
+        packet_type: PacketType,
+    },
     /// The text-message type byte is not one of the registered values.
     InvalidMessageType(u8),
-    /// The node-role byte is reserved or otherwise invalid.
-    InvalidRole(u8),
-    /// The MAC-command byte is not one of the registered values.
-    InvalidCommandId(u8),
-    /// The chat-room action byte is not one of the registered values.
-    InvalidChatAction(u8),
     /// An option payload or fixed-width field had an invalid encoding.
     InvalidOptionValue,
-    /// The supplied URI is not a valid `umsh:` URI for this crate.
-    InvalidUri,
-    /// Base58 decoding failed.
-    InvalidBase58,
-    /// A field had the wrong byte length.
-    InvalidLength { expected: usize, actual: usize },
 }
 
 impl From<CoreParseError> for ParseError {
@@ -47,10 +34,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-/// Error returned when encoding application-layer payloads or UMSH URIs.
-///
-/// Most failures are either buffer-capacity problems or invalid field
-/// combinations that cannot be represented on the wire.
+/// Error returned when encoding text payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
     /// Propagated `umsh-core` encoding error.
@@ -73,8 +57,35 @@ impl fmt::Display for EncodeError {
     }
 }
 
+/// Error returned when sending a text payload through a transport wrapper.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextSendError<E> {
+    /// Text-payload encoding failed before the transport was called.
+    Encode(EncodeError),
+    /// The underlying transport send failed.
+    Transport(E),
+}
+
+impl<E> From<EncodeError> for TextSendError<E> {
+    fn from(value: EncodeError) -> Self {
+        Self::Encode(value)
+    }
+}
+
+impl<E> fmt::Display for TextSendError<E>
+where
+    E: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 #[cfg(feature = "std")]
 impl std::error::Error for ParseError {}
 
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}
+
+#[cfg(feature = "std")]
+impl<E> std::error::Error for TextSendError<E> where E: fmt::Debug + fmt::Display + 'static {}

@@ -276,7 +276,9 @@ impl<
             .mac
             .try_borrow_mut()
             .map_err(|_| MacHandleError::Busy)?;
-        mac.next_event(on_event).await.map_err(MacHandleError::Inner)
+        mac.next_event(on_event)
+            .await
+            .map_err(MacHandleError::Inner)
     }
 
     /// Drive the shared MAC forever, invoking `on_event` for delivered events.

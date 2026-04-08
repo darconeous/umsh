@@ -128,7 +128,8 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     where
         F: FnMut() + 'static,
     {
-        let handle = self.transport
+        let handle = self
+            .transport
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
@@ -149,7 +150,8 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     where
         F: FnMut() + 'static,
     {
-        let handle = self.transport
+        let handle = self
+            .transport
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)

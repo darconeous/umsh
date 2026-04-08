@@ -1066,21 +1066,20 @@ dependencies = [
  "socket2",
  "tokio",
  "tokio-serial",
- "umsh-app",
+ "umsh-chat-room",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
+ "umsh-text",
+ "umsh-uri",
 ]
 
 [[package]]
-name = "umsh-app"
+name = "umsh-chat-room"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.11.0",
- "bs58",
- "lwuri",
  "umsh-core",
 ]
 
@@ -1126,13 +1125,32 @@ dependencies = [
 name = "umsh-node"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.11.0",
  "heapless",
  "rand",
- "umsh-app",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
  "umsh-mac",
+ "umsh-text",
+]
+
+[[package]]
+name = "umsh-text"
+version = "0.1.0"
+dependencies = [
+ "umsh-core",
+ "umsh-mac",
+ "umsh-node",
+]
+
+[[package]]
+name = "umsh-uri"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "lwuri",
+ "umsh-core",
 ]
 
 [[package]]
