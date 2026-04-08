@@ -5,7 +5,7 @@ use hamaddr::HamAddr;
 use heapless::{LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
-    BuildError, ChannelId, ChannelKey, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
+    BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
     PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint, SourceAddrRef,
     UnsealedPacket, feed_aad, options::OptionEncoder,
 };
@@ -16,9 +16,11 @@ use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
     CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS,
-    DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, Platform,
+    DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
+    MAX_SOURCE_ROUTE_HOPS, Platform,
     ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
+    peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
     send::{
         PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue,
@@ -518,6 +520,9 @@ impl Default for OperatingPolicy {
 /// - **`min_rssi` / `min_snr`** — signal-quality thresholds. Packets received below these
 ///   values are not forwarded; this prevents marginal receptions from being re-injected into
 ///   the network at full power, which would degrade SNR for nearby nodes rather than help.
+/// - **Flood contention tuning** — controls the SNR-to-delay mapping used when several
+///   eligible repeaters contend to flood-forward the same frame. These values should usually
+///   remain aligned across the mesh.
 /// - **`amateur_radio_mode`** — determines whether the repeater may forward encrypted or
 ///   blind-unicast frames, and whether it must inject a station callsign. See
 ///   [`AmateurRadioMode`].
@@ -536,6 +541,16 @@ pub struct RepeaterConfig {
     pub min_rssi: Option<i16>,
     /// Minimum SNR threshold for forwarding.
     pub min_snr: Option<i8>,
+    /// Lower clamp bound for SNR-based flood forwarding contention.
+    pub flood_contention_snr_low_db: i8,
+    /// Upper clamp bound for SNR-based flood forwarding contention.
+    pub flood_contention_snr_high_db: i8,
+    /// Minimum forwarding contention window as a percentage of `T_frame`.
+    pub flood_contention_min_window_percent: u8,
+    /// Maximum forwarding contention window as a multiple of `T_frame`.
+    pub flood_contention_max_window_frames: u8,
+    /// Maximum number of overheard-repeat deferrals before abandoning a pending forward.
+    pub flood_contention_max_deferrals: u8,
     /// Amateur-radio operating mode for forwarding.
     pub amateur_radio_mode: AmateurRadioMode,
     /// Optional station callsign injected on forwarded traffic.
@@ -549,6 +564,11 @@ impl Default for RepeaterConfig {
             regions: Vec::new(),
             min_rssi: None,
             min_snr: None,
+            flood_contention_snr_low_db: -6,
+            flood_contention_snr_high_db: 15,
+            flood_contention_min_window_percent: 20,
+            flood_contention_max_window_frames: 2,
+            flood_contention_max_deferrals: 3,
             amateur_radio_mode: AmateurRadioMode::Unlicensed,
             station_callsign: None,
         }
@@ -1249,6 +1269,7 @@ impl<
             .ok_or(SendError::PairwiseKeysMissing)?
             .pairwise_keys
             .clone();
+        let effective_source_route = self.effective_source_route(peer_id, options);
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
@@ -1279,7 +1300,7 @@ impl<
         if options.trace_route {
             builder = builder.trace_route();
         }
-        if let Some(route) = options.source_route.as_ref() {
+        if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
@@ -1299,7 +1320,7 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                options.source_route.as_ref().map(|route| route.as_slice()),
+                effective_source_route.as_ref().map(|route| route.as_slice()),
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -1359,6 +1380,7 @@ impl<
             .derived
             .clone();
         let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
+        let effective_source_route = self.effective_source_route(peer_id, options);
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
@@ -1389,7 +1411,7 @@ impl<
         if options.trace_route {
             builder = builder.trace_route();
         }
-        if let Some(route) = options.source_route.as_ref() {
+        if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
@@ -1411,7 +1433,7 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                options.source_route.as_ref().map(|route| route.as_slice()),
+                effective_source_route.as_ref().map(|route| route.as_slice()),
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -1501,6 +1523,7 @@ impl<
                         queued.identity_id,
                         now_ms.saturating_add(backoff_ms),
                         next_attempt,
+                        queued.forward_deferrals,
                     )
                     .map_err(|_| MacError::QueueFull)?;
                 return Ok(None);
@@ -1517,7 +1540,7 @@ impl<
             );
         }
         if let Some(receipt) = receipt {
-            self.arm_post_tx_listen(receipt, queued.frame.as_slice());
+            self.note_transmitted_ack_requested(receipt, queued.frame.as_slice());
         }
         Ok(receipt)
     }
@@ -1584,9 +1607,11 @@ impl<
 
         for slot in self.identities.iter().filter_map(|s| s.as_ref()) {
             for (_, pending) in slot.pending_acks.iter() {
-                earliest = Some(earliest.map_or(pending.ack_deadline_ms, |e: u64| {
-                    e.min(pending.ack_deadline_ms)
-                }));
+                if !matches!(pending.state, crate::AckState::Queued { .. }) {
+                    earliest = Some(earliest.map_or(pending.ack_deadline_ms, |e: u64| {
+                        e.min(pending.ack_deadline_ms)
+                    }));
+                }
                 if let crate::AckState::AwaitingForward {
                     confirm_deadline_ms,
                 } = pending.state
@@ -2407,6 +2432,13 @@ impl<
             Retry {
                 receipt: SendReceipt,
                 resend: ResendRecord<FRAME>,
+                not_before_ms: u64,
+            },
+            RouteRetry {
+                receipt: SendReceipt,
+                peer: PublicKey,
+                resend: ResendRecord<FRAME>,
+                not_before_ms: u64,
             },
             Timeout {
                 receipt: SendReceipt,
@@ -2415,61 +2447,138 @@ impl<
         }
 
         let now_ms = self.clock.now_ms();
-        let confirm_window_ms = self.radio.t_frame_ms() as u64 * 3;
+        let t_frame_ms = self.radio.t_frame_ms();
 
-        for (index, slot) in self.identities.iter_mut().enumerate() {
-            let Some(slot) = slot.as_mut() else {
-                continue;
-            };
-
-            let mut actions: Vec<Action<FRAME>, ACKS> = Vec::new();
-            for (receipt, pending) in slot.pending_acks.iter_mut() {
-                if now_ms >= pending.ack_deadline_ms {
-                    actions
-                        .push(Action::Timeout {
-                            receipt: *receipt,
-                            peer: pending.peer,
-                        })
-                        .map_err(|_| CapacityError)?;
+        for index in 0..self.identities.len() {
+            let identity_id = LocalIdentityId(index as u8);
+            let actions = {
+                let Some(slot) = self.identities[index].as_mut() else {
                     continue;
-                }
+                };
 
-                if let crate::AckState::AwaitingForward {
-                    confirm_deadline_ms,
-                } = pending.state
-                {
-                    if now_ms >= confirm_deadline_ms && pending.retries < MAX_FORWARD_RETRIES {
-                        pending.retries = pending.retries.saturating_add(1);
-                        pending.sent_ms = now_ms;
-                        pending.state = crate::AckState::AwaitingForward {
-                            confirm_deadline_ms: now_ms + confirm_window_ms,
-                        };
-                        actions
-                            .push(Action::Retry {
-                                receipt: *receipt,
-                                resend: pending.resend.clone(),
-                            })
-                            .map_err(|_| CapacityError)?;
+                let mut actions: Vec<Action<FRAME>, ACKS> = Vec::new();
+                for (receipt, pending) in slot.pending_acks.iter_mut() {
+                    if !matches!(pending.state, crate::AckState::Queued { .. })
+                        && now_ms >= pending.ack_deadline_ms
+                    {
+                        if Self::can_attempt_route_retry(pending) {
+                            let backoff_cap_ms =
+                                Self::forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms, 1);
+                            let backoff_ms = if backoff_cap_ms == 0 {
+                                0
+                            } else {
+                                u64::from(
+                                    self.rng.random_range(..backoff_cap_ms.saturating_add(1)),
+                                )
+                            };
+                            actions
+                                .push(Action::RouteRetry {
+                                    receipt: *receipt,
+                                    peer: pending.peer,
+                                    resend: pending.resend.clone(),
+                                    not_before_ms: now_ms.saturating_add(backoff_ms),
+                                })
+                                .map_err(|_| CapacityError)?;
+                        } else {
+                            actions
+                                .push(Action::Timeout {
+                                    receipt: *receipt,
+                                    peer: pending.peer,
+                                })
+                                .map_err(|_| CapacityError)?;
+                        }
+                        continue;
+                    }
+
+                    if let crate::AckState::AwaitingForward {
+                        confirm_deadline_ms,
+                    } = pending.state
+                    {
+                        if now_ms >= confirm_deadline_ms && pending.retries < MAX_FORWARD_RETRIES {
+                            pending.retries = pending.retries.saturating_add(1);
+                            let backoff_cap_ms =
+                                Self::forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms, pending.retries);
+                            let backoff_ms = if backoff_cap_ms == 0 {
+                                0
+                            } else {
+                                u64::from(
+                                    self.rng.random_range(..backoff_cap_ms.saturating_add(1)),
+                                )
+                            };
+                            let not_before_ms = now_ms.saturating_add(backoff_ms);
+                            pending.state = crate::AckState::RetryQueued;
+                            actions
+                                .push(Action::Retry {
+                                    receipt: *receipt,
+                                    resend: pending.resend.clone(),
+                                    not_before_ms,
+                                })
+                                .map_err(|_| CapacityError)?;
+                        }
                     }
                 }
-            }
+                actions
+            };
 
             for action in actions {
                 match action {
-                    Action::Retry { receipt, resend } => {
-                        self.tx_queue.enqueue(
+                    Action::Retry {
+                        receipt,
+                        resend,
+                        not_before_ms,
+                    } => {
+                        self.tx_queue.enqueue_with_state(
                             TxPriority::Retry,
                             resend.frame.as_slice(),
                             Some(receipt),
-                            Some(LocalIdentityId(index as u8)),
+                            Some(identity_id),
+                            not_before_ms,
+                            0,
+                            0,
                         )?;
                     }
+                    Action::RouteRetry {
+                        receipt,
+                        peer,
+                        resend,
+                        not_before_ms,
+                    } => {
+                        if let Some(rewritten) = self.synthesize_route_retry_resend(&peer, &resend)
+                        {
+                            if let Some(pending) = self
+                                .identity_mut(identity_id)
+                                .and_then(|slot| slot.pending_ack_mut(&receipt))
+                            {
+                                pending.resend = rewritten.clone();
+                                pending.retries = 0;
+                                pending.sent_ms = 0;
+                                pending.ack_deadline_ms = 0;
+                                pending.state = crate::AckState::RetryQueued;
+                            }
+                            self.tx_queue.enqueue_with_state(
+                                TxPriority::Retry,
+                                rewritten.frame.as_slice(),
+                                Some(receipt),
+                                Some(identity_id),
+                                not_before_ms,
+                                0,
+                                0,
+                            )?;
+                        } else {
+                            if let Some(slot) = self.identity_mut(identity_id) {
+                                slot.pending_acks.remove(&receipt);
+                            }
+                            on_event(
+                                identity_id,
+                                crate::MacEventRef::AckTimeout { peer, receipt },
+                            );
+                        }
+                    }
                     Action::Timeout { receipt, peer } => {
-                        slot.pending_acks.remove(&receipt);
-                        on_event(
-                            LocalIdentityId(index as u8),
-                            crate::MacEventRef::AckTimeout { peer, receipt },
-                        );
+                        if let Some(slot) = self.identity_mut(identity_id) {
+                            slot.pending_acks.remove(&receipt);
+                        }
+                        on_event(identity_id, crate::MacEventRef::AckTimeout { peer, receipt });
                     }
                 }
             }
@@ -2644,9 +2753,6 @@ impl<
         cmac.update(packet.body());
         let full_mac = cmac.finalize();
         let ack_tag = self.crypto.compute_ack_tag(&full_mac, &keys.k_enc);
-        let sent_ms = self.clock.now_ms();
-        let ack_deadline_ms = sent_ms + (self.radio.t_frame_ms() as u64 * 10);
-        let confirm_deadline_ms = sent_ms + (self.radio.t_frame_ms() as u64 * 3);
         let is_forwarded = options
             .source_route
             .as_ref()
@@ -2662,16 +2768,9 @@ impl<
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let receipt = slot.next_receipt();
         let pending = if is_forwarded {
-            PendingAck::forwarded(
-                ack_tag,
-                peer,
-                resend,
-                sent_ms,
-                ack_deadline_ms,
-                confirm_deadline_ms,
-            )
+            PendingAck::forwarded(ack_tag, peer, resend)
         } else {
-            PendingAck::direct(ack_tag, peer, resend, sent_ms, ack_deadline_ms)
+            PendingAck::direct(ack_tag, peer, resend)
         };
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
@@ -2699,6 +2798,24 @@ impl<
         };
 
         Ok(self.crypto.derive_pairwise_keys(&shared_secret))
+    }
+
+    fn effective_source_route(
+        &self,
+        peer_id: PeerId,
+        options: &SendOptions,
+    ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>> {
+        if let Some(route) = options.source_route.as_ref() {
+            return Some(route.clone());
+        }
+
+        let Some(peer) = self.peer_registry.get(peer_id) else {
+            return None;
+        };
+        match peer.route.as_ref() {
+            Some(CachedRoute::Source(route)) => Some(route.clone()),
+            _ => None,
+        }
     }
 
     fn cache_peer_crypto(
@@ -2804,6 +2921,7 @@ impl<
             queued.identity_id,
             queued.not_before_ms,
             queued.cad_attempts,
+            queued.forward_deferrals,
         )
     }
 
@@ -3330,7 +3448,7 @@ impl<
             return false;
         };
         if self.dup_cache.contains(&cache_key) {
-            self.cancel_pending_forward(&cache_key);
+            self.defer_pending_forward(&cache_key, rx, &options);
             return false;
         }
 
@@ -3357,6 +3475,7 @@ impl<
                 None,
                 None,
                 now_ms.saturating_add(plan.delay_ms),
+                0,
                 0,
             )
             .is_err()
@@ -3573,12 +3692,11 @@ impl<
                         if value.len() < 2 || value.len() % 2 != 0 {
                             return Err(CapacityError);
                         }
-                        if value.len() > 2 {
-                            encoder
-                                .put(number, &value[2..])
-                                .map_err(|_| CapacityError)?;
-                            wrote_any = true;
-                        }
+                        let remaining = if value.len() > 2 { &value[2..] } else { &[] };
+                        encoder
+                            .put(number, remaining)
+                            .map_err(|_| CapacityError)?;
+                        wrote_any = true;
                     }
                     OptionNumber::StationCallsign => {
                         saw_station = true;
@@ -3632,6 +3750,135 @@ impl<
         }
     }
 
+    fn synthesize_route_retry_resend(
+        &self,
+        peer: &PublicKey,
+        resend: &ResendRecord<FRAME>,
+    ) -> Option<ResendRecord<FRAME>> {
+        let header = PacketHeader::parse(resend.frame.as_slice()).ok()?;
+        let options = ParsedOptions::extract(resend.frame.as_slice(), header.options_range.clone()).ok()?;
+        if options.route_retry {
+            return None;
+        }
+        let source_route = resend.source_route.as_ref()?;
+        if source_route.is_empty() {
+            return None;
+        }
+
+        let flood_hops = self.route_retry_flood_hops(peer, &header, source_route)?;
+        let mut rewritten = [0u8; FRAME];
+        let options_len = self
+            .encode_route_retry_options(resend.frame.as_slice(), header.options_range.clone(), &options, &mut rewritten[1..])
+            .ok()?;
+        let mut cursor = 1 + options_len;
+        let has_options = options_len > 0;
+        let has_flood_hops = flood_hops > 0;
+        rewritten[0] = umsh_core::Fcf::new(
+            header.packet_type(),
+            header.fcf.full_source(),
+            has_options,
+            has_flood_hops,
+        )
+        .0;
+
+        if has_flood_hops {
+            *rewritten.get_mut(cursor)? = FloodHops::new(flood_hops, 0)?.0;
+            cursor += 1;
+        }
+
+        let fixed_start = header.options_range.end + usize::from(header.flood_hops.is_some());
+        let tail = resend.frame.get(fixed_start..)?;
+        let end = cursor + tail.len();
+        rewritten.get_mut(cursor..end)?.copy_from_slice(tail);
+
+        ResendRecord::try_new(&rewritten[..end], None).ok()
+    }
+
+    fn encode_route_retry_options(
+        &self,
+        src: &[u8],
+        options_range: core::ops::Range<usize>,
+        _options: &ParsedOptions,
+        dst: &mut [u8],
+    ) -> Result<usize, CapacityError> {
+        let mut encoder = OptionEncoder::new(dst);
+        let mut wrote_any = false;
+        let mut inserted_trace_route = false;
+        let mut inserted_route_retry = false;
+
+        if !options_range.is_empty() {
+            for entry in umsh_core::iter_options(src, options_range) {
+                let (number, value) = entry.map_err(|_| CapacityError)?;
+                if !inserted_trace_route && number > OptionNumber::TraceRoute.as_u16() {
+                    encoder
+                        .put(OptionNumber::TraceRoute.as_u16(), &[])
+                        .map_err(|_| CapacityError)?;
+                    wrote_any = true;
+                    inserted_trace_route = true;
+                }
+                if !inserted_route_retry && number > OptionNumber::RouteRetry.as_u16() {
+                    encoder
+                        .put(OptionNumber::RouteRetry.as_u16(), &[])
+                        .map_err(|_| CapacityError)?;
+                    wrote_any = true;
+                    inserted_route_retry = true;
+                }
+                match OptionNumber::from(number) {
+                    OptionNumber::SourceRoute => {}
+                    OptionNumber::TraceRoute => {
+                        encoder.put(number, value).map_err(|_| CapacityError)?;
+                        wrote_any = true;
+                        inserted_trace_route = true;
+                    }
+                    OptionNumber::RouteRetry => {}
+                    _ => {
+                        encoder.put(number, value).map_err(|_| CapacityError)?;
+                        wrote_any = true;
+                    }
+                }
+            }
+        }
+
+        if !inserted_trace_route {
+            encoder
+                .put(OptionNumber::TraceRoute.as_u16(), &[])
+                .map_err(|_| CapacityError)?;
+            wrote_any = true;
+        }
+        if !inserted_route_retry {
+            encoder
+                .put(OptionNumber::RouteRetry.as_u16(), &[])
+                .map_err(|_| CapacityError)?;
+            wrote_any = true;
+        }
+
+        if wrote_any {
+            encoder.end_marker().map_err(|_| CapacityError)?;
+            Ok(encoder.finish())
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn route_retry_flood_hops(
+        &self,
+        peer: &PublicKey,
+        header: &PacketHeader,
+        source_route: &heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>,
+    ) -> Option<u8> {
+        let existing = header.flood_hops.map(|hops| hops.remaining()).filter(|hops| *hops > 0);
+        let cached = self
+            .peer_registry
+            .lookup_by_key(peer)
+            .and_then(|(_, info)| match info.route.as_ref() {
+                Some(crate::CachedRoute::Flood { hops }) => Some((*hops).clamp(1, 15)),
+                _ => None,
+            });
+        let route_len = u8::try_from(source_route.len()).ok().map(|hops| hops.clamp(1, 15));
+
+        existing.or(cached).or(route_len).or(Some(5))
+    }
+
     fn repeater_router_hint(&self) -> Option<RouterHint> {
         self.identities
             .iter()
@@ -3659,17 +3906,39 @@ impl<
     }
 
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
-        let threshold = i32::from(
-            Snr::from_decibels(Self::effective_min_snr(options, &self.repeater).unwrap_or(0))
-                .as_centibels(),
-        );
+        let effective_threshold_db = Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
+        let low_db = self
+            .repeater
+            .flood_contention_snr_low_db
+            .max(effective_threshold_db);
+        let high_db = self
+            .repeater
+            .flood_contention_snr_high_db
+            .max(low_db.saturating_add(1));
+        let low = i32::from(Snr::from_decibels(low_db).as_centibels());
+        let high = i32::from(Snr::from_decibels(high_db).as_centibels());
         let received = i32::from(rx.snr.as_centibels());
-        let normalized = (20 - (received - threshold).clamp(0, 20)) as u32;
-        let window_ms = self.radio.t_frame_ms().saturating_mul(normalized) / 20;
+        let clamped = (received - low).clamp(0, high - low) as u32;
+        let range = (high - low) as u32;
+        let t_frame_ms = u64::from(self.radio.t_frame_ms());
+        let min_window_ms = t_frame_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_min_window_percent))
+            / 100;
+        let max_window_ms = t_frame_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_frames))
+            .max(min_window_ms);
+        let window_span_ms = max_window_ms.saturating_sub(min_window_ms);
+        let window_ms = if range == 0 {
+            max_window_ms
+        } else {
+            max_window_ms.saturating_sub(
+                window_span_ms.saturating_mul(u64::from(clamped)) / u64::from(range),
+            )
+        };
         if window_ms == 0 {
             0
         } else {
-            u64::from(self.rng.random_range(..window_ms.saturating_add(1)))
+            self.rng.random_range(..window_ms.saturating_add(1))
         }
     }
 
@@ -3677,6 +3946,7 @@ impl<
         if !header.packet_type().is_secure() {
             return None;
         }
+        let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
         let mic = frame.get(header.mic_range.clone())?;
         if mic.is_empty() || mic.len() > 16 {
             return None;
@@ -3686,16 +3956,35 @@ impl<
         Some(DupCacheKey::Mic {
             bytes,
             len: mic.len() as u8,
+            route_retry: options.route_retry,
         })
     }
 
-    fn cancel_pending_forward(&mut self, key: &DupCacheKey) {
-        let _ = self.tx_queue.remove_first_matching(|entry| {
+    fn defer_pending_forward(&mut self, key: &DupCacheKey, rx: &RxInfo, options: &ParsedOptions) {
+        let Some(queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
                 && Self::confirmation_key(entry.frame.as_slice())
                     .map(|entry_key| &entry_key == key)
                     .unwrap_or(false)
-        });
+        }) else {
+            return;
+        };
+
+        if queued.forward_deferrals >= self.repeater.flood_contention_max_deferrals {
+            return;
+        }
+
+        let now_ms = self.clock.now_ms();
+        let delay_ms = self.sample_flood_contention_delay_ms(rx, options);
+        let _ = self.tx_queue.enqueue_with_state(
+            queued.priority,
+            queued.frame.as_slice(),
+            queued.receipt,
+            queued.identity_id,
+            now_ms.saturating_add(delay_ms),
+            queued.cad_attempts,
+            queued.forward_deferrals.saturating_add(1),
+        );
     }
 
     async fn service_post_tx_listen(
@@ -3715,31 +4004,53 @@ impl<
         }
     }
 
-    fn arm_post_tx_listen(&mut self, receipt: SendReceipt, frame: &[u8]) {
-        let Some(confirm_key) = Self::confirmation_key(frame) else {
-            return;
-        };
+    fn note_transmitted_ack_requested(&mut self, receipt: SendReceipt, frame: &[u8]) {
         let sent_ms = self.clock.now_ms();
-        let duration_ms = self.sample_forward_confirm_window_ms();
-        let deadline_ms = sent_ms.saturating_add(duration_ms);
+        let direct_ack_deadline_ms = sent_ms.saturating_add(self.direct_ack_timeout_ms());
+        let forwarded_ack_deadline_ms = sent_ms.saturating_add(self.forwarded_ack_timeout_ms());
+        let confirm_timeout_ms = self.forward_confirm_timeout_ms();
+        let confirm_key = Self::confirmation_key(frame);
 
-        let Some((identity_id, pending)) = self.pending_ack_mut(receipt) else {
-            return;
-        };
-        if !matches!(pending.state, crate::AckState::AwaitingForward { .. }) {
-            return;
-        }
+        let post_tx_listen = {
+            let Some((identity_id, pending)) = self.pending_ack_mut(receipt) else {
+                return;
+            };
 
-        pending.sent_ms = sent_ms;
-        pending.state = crate::AckState::AwaitingForward {
-            confirm_deadline_ms: deadline_ms,
+            let needs_forward_confirmation = match pending.state {
+                crate::AckState::Queued {
+                    needs_forward_confirmation,
+                } => needs_forward_confirmation,
+                crate::AckState::RetryQueued => true,
+                _ => return,
+            };
+
+            pending.sent_ms = sent_ms;
+            if pending.ack_deadline_ms == 0 {
+                pending.ack_deadline_ms = if needs_forward_confirmation {
+                    forwarded_ack_deadline_ms
+                } else {
+                    direct_ack_deadline_ms
+                };
+            }
+
+            if needs_forward_confirmation {
+                let deadline_ms = sent_ms.saturating_add(confirm_timeout_ms);
+                pending.state = crate::AckState::AwaitingForward {
+                    confirm_deadline_ms: deadline_ms,
+                };
+                confirm_key.map(|confirm_key| PostTxListen {
+                    identity_id,
+                    receipt,
+                    confirm_key,
+                    deadline_ms,
+                })
+            } else {
+                pending.state = crate::AckState::AwaitingAck;
+                None
+            }
         };
-        self.post_tx_listen = Some(PostTxListen {
-            identity_id,
-            receipt,
-            confirm_key,
-            deadline_ms,
-        });
+
+        self.post_tx_listen = post_tx_listen;
     }
 
     fn expire_post_tx_listen_if_needed(&mut self) {
@@ -3753,11 +4064,59 @@ impl<
         }
     }
 
-    fn sample_forward_confirm_window_ms(&mut self) -> u64 {
-        let base = self.radio.t_frame_ms();
-        let span = base.saturating_mul(2).saturating_add(1);
-        let jitter = self.rng.random_range(..span);
-        u64::from(base.saturating_add(jitter))
+    fn forward_confirm_timeout_ms(&self) -> u64 {
+        let t_frame_ms = u64::from(self.radio.t_frame_ms());
+        t_frame_ms
+            .saturating_add(self.max_forward_contention_delay_ms())
+            .saturating_add(t_frame_ms)
+    }
+
+    fn max_forward_contention_delay_ms(&self) -> u64 {
+        u64::from(self.radio.t_frame_ms())
+            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_frames))
+    }
+
+    fn forward_retry_backoff_cap_ms(&self, retry_number: u8) -> u32 {
+        Self::forward_retry_backoff_cap_ms_for_t_frame(self.radio.t_frame_ms(), retry_number)
+    }
+
+    fn forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms: u32, retry_number: u8) -> u32 {
+        let exponent = retry_number.saturating_sub(1).min(2);
+        t_frame_ms
+            .saturating_mul(1u32 << exponent)
+            .min(t_frame_ms.saturating_mul(4))
+    }
+
+    fn can_attempt_route_retry(pending: &PendingAck<FRAME>) -> bool {
+        let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
+            return false;
+        };
+        let Ok(options) =
+            ParsedOptions::extract(pending.resend.frame.as_slice(), header.options_range.clone())
+        else {
+            return false;
+        };
+        !options.route_retry
+            && pending
+                .resend
+                .source_route
+                .as_ref()
+                .map(|route| !route.is_empty())
+                .unwrap_or(false)
+    }
+
+    fn direct_ack_timeout_ms(&self) -> u64 {
+        u64::from(self.radio.t_frame_ms()).saturating_mul(10)
+    }
+
+    fn forwarded_ack_timeout_ms(&self) -> u64 {
+        let mut total = self.forward_confirm_timeout_ms();
+        for retry_number in 1..=MAX_FORWARD_RETRIES {
+            total = total
+                .saturating_add(u64::from(self.forward_retry_backoff_cap_ms(retry_number)))
+                .saturating_add(self.forward_confirm_timeout_ms());
+        }
+        total.saturating_add(u64::from(self.radio.t_frame_ms()))
     }
 
     fn pending_ack_mut(
@@ -3777,6 +4136,7 @@ impl<
 
     fn confirmation_key(frame: &[u8]) -> Option<DupCacheKey> {
         let header = PacketHeader::parse(frame).ok()?;
+        let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
         let mic = frame.get(header.mic_range)?;
         if mic.is_empty() || mic.len() > 16 {
             return None;
@@ -3787,6 +4147,7 @@ impl<
         Some(DupCacheKey::Mic {
             bytes,
             len: mic.len() as u8,
+            route_retry: options.route_retry,
         })
     }
 

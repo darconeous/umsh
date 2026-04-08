@@ -29,6 +29,13 @@ pub use text::{
     encode as encode_text_message, parse as parse_text_message,
 };
 
+/// Reason a received packet did not become a text message callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextReceiveIssue {
+    WrongPayloadType(PayloadType),
+    Parse(ParseError),
+}
+
 /// Parse a typed text payload in the context of the enclosing packet type.
 pub fn parse_text_payload(
     packet_type: PacketType,
@@ -116,16 +123,29 @@ impl<T: Transport + Clone> UnicastTextChatWrapper<T> {
 }
 
 impl<M: umsh_node::MacBackend> UnicastTextChatWrapper<LocalNode<M>> {
-    pub fn on_text<F>(&self, mut handler: F) -> Subscription
+    pub fn on_text<F>(&self, handler: F) -> Subscription
     where
         F: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextMessage<'_>) + 'static,
     {
+        self.on_text_with_diagnostics(handler, |_, _| {})
+    }
+
+    pub fn on_text_with_diagnostics<F, D>(&self, mut handler: F, mut diagnostics: D) -> Subscription
+    where
+        F: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextMessage<'_>) + 'static,
+        D: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextReceiveIssue) + 'static,
+    {
         self.peer.on_receive(move |packet| {
             if packet.payload_type() != PayloadType::TextMessage {
+                diagnostics(packet, TextReceiveIssue::WrongPayloadType(packet.payload_type()));
                 return false;
             }
-            let Ok(message) = parse_text_message(packet.payload()) else {
-                return false;
+            let message = match parse_text_message(packet.payload()) {
+                Ok(message) => message,
+                Err(error) => {
+                    diagnostics(packet, TextReceiveIssue::Parse(error));
+                    return false;
+                }
             };
             handler(packet, message);
             true
@@ -197,9 +217,17 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
         self.send_message(&message, options).await
     }
 
-    pub fn on_text<F>(&self, mut handler: F) -> Subscription
+    pub fn on_text<F>(&self, handler: F) -> Subscription
     where
         F: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextMessage<'_>) + 'static,
+    {
+        self.on_text_with_diagnostics(handler, |_, _| {})
+    }
+
+    pub fn on_text_with_diagnostics<F, D>(&self, mut handler: F, mut diagnostics: D) -> Subscription
+    where
+        F: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextMessage<'_>) + 'static,
+        D: FnMut(&umsh_node::ReceivedPacketRef<'_>, TextReceiveIssue) + 'static,
     {
         let channel_id = *self.channel.channel().channel_id();
         self.channel
@@ -212,10 +240,15 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
                     return false;
                 }
                 if packet.payload_type() != PayloadType::TextMessage {
+                    diagnostics(packet, TextReceiveIssue::WrongPayloadType(packet.payload_type()));
                     return false;
                 }
-                let Ok(message) = parse_text_message(packet.payload()) else {
-                    return false;
+                let message = match parse_text_message(packet.payload()) {
+                    Ok(message) => message,
+                    Err(error) => {
+                        diagnostics(packet, TextReceiveIssue::Parse(error));
+                        return false;
+                    }
                 };
                 handler(packet, message);
                 true

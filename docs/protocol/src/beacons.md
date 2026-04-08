@@ -47,3 +47,26 @@ In practice, "proven unreachable" usually means that an ack-requested packet sen
 - set the [Route Retry option](packet-options.md#route-retry-option-6) so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet's MIC and frame counter are unchanged
 
 Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.
+
+## Potential Improvement: Proactive Route Refresh
+
+The recovery behavior above is reactive: a node continues using a cached source route until that route appears to have failed. In mobile scenarios, this may mean the sender does not attempt to discover a fresher route until after packets have already stopped flowing end-to-end.
+
+One possible future improvement would be to allow a sender to occasionally perform a low-rate exploratory route refresh even when there is no strong indication of failure. This behavior is **not part of the current specified protocol behavior** and has **not been validated with real-world measurements**. It is described here only as a possible future optimization.
+
+A conservative version of this idea would look like:
+
+- only perform exploratory refresh when the sender is believed to be mobile or moving
+- use a normal cached source route, but also include a trace-route option
+- allow only a small flood budget, capped at no more than `source_route_hops + 1`
+- perform this no more than occasionally, for example no more than once every `N` successful transmissions and no more than once every `T` minutes, whichever is longer
+
+The intent would be to probe for a slightly better or fresher route without incurring the cost of a full rediscovery flood. A small tail flood could help discover alternate final hops or nearby replacement repeaters when the old route is only partially stale.
+
+This approach has important limitations:
+
+- if the cached source route breaks early, a small tail flood will not help, because forwarding remains constrained by the explicit source route until that route is exhausted
+- excessive probing would waste airtime and increase contention, especially on busy meshes
+- a newly observed route is not necessarily better and may require local policy before replacing the old route
+
+If this idea is ever standardized, meshes should converge on the same probing policy and parameter values so that behavior remains predictable across implementations. Any such policy should be treated as provisional until it has been evaluated on real radios in mobile conditions.

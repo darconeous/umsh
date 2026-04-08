@@ -9,6 +9,7 @@ use umsh::{
     },
     embassy_support::{EmbassyClock, EmbassyPlatform, MemoryCounterStore, MemoryKeyValueStore},
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
+    uri::encode_public_key_base58,
 };
 
 const IDENTITIES: usize = 4;
@@ -51,7 +52,7 @@ async fn main(_spawner: Spawner) {
         .0;
     println!(
         "repeater running in simulated-radio mode as {}",
-        hex_encode(&repeater_key[..4])
+        encode_public_key_base58(&umsh::core::PublicKey(repeater_key))
     );
     println!("forwarding loop active; attach traffic with a separate simulated harness");
 
@@ -73,14 +74,4 @@ fn build_mac(radio: umsh::mac::test_support::SimulatedRadio) -> RepeaterMac {
         repeater_config,
         OperatingPolicy::default(),
     )
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }

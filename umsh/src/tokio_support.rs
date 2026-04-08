@@ -147,7 +147,9 @@ impl UdpMulticastRadioConfig {
             interface_addr: Ipv4Addr::LOCALHOST,
             port,
             max_frame_size: 256,
-            t_frame_ms: 10,
+            // Use a LoRa-like frame duration by default so MAC retry/backoff
+            // behavior on the desktop resembles real deployments.
+            t_frame_ms: 800,
             rssi: -40,
             snr: 10,
             loopback: true,

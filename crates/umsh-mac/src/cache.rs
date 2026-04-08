@@ -6,7 +6,11 @@ use crate::{RECENT_MIC_CAPACITY, REPLAY_BACKTRACK_SLOTS, REPLAY_STALE_MS};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DupCacheKey {
     /// Authenticated packet keyed by its MIC bytes.
-    Mic { bytes: [u8; 16], len: u8 },
+    Mic {
+        bytes: [u8; 16],
+        len: u8,
+        route_retry: bool,
+    },
     /// Unauthenticated packet keyed by a local hash.
     Hash32(u32),
 }

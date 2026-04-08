@@ -12,7 +12,7 @@ use rand::{Rng, TryCryptoRng, TryRng};
 use std::collections::BTreeMap;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
-    PacketType, PayloadType, PublicKey, RouterHint, iter_options,
+    PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, iter_options,
 };
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -30,6 +30,54 @@ fn duplicate_cache_evicts_oldest_entry() {
     assert!(!cache.contains(&DupCacheKey::Hash32(1)));
     assert!(cache.contains(&DupCacheKey::Hash32(2)));
     assert!(cache.contains(&DupCacheKey::Hash32(3)));
+}
+
+#[test]
+fn route_retry_changes_authenticated_duplicate_key_without_changing_mic() {
+    let source = DummyIdentity::new([0x11; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let dst = NodeHint([0xAA, 0xBB, 0xCC]);
+
+    let build = |route_retry: bool| {
+        let mut buf = [0u8; 256];
+        let builder = PacketBuilder::new(&mut buf)
+            .unicast(dst)
+            .source_full(source.public_key())
+            .frame_counter(7)
+            .encrypted()
+            .mic_size(umsh_core::MicSize::Mic16)
+            .option(OptionNumber::TraceRoute, &[]);
+        let builder = if route_retry {
+            builder.option(OptionNumber::RouteRetry, &[])
+        } else {
+            builder
+        };
+        let mut packet = builder.payload(b"hello").build().unwrap();
+        CryptoEngine::new(DummyAes, DummySha)
+            .seal_packet(&mut packet, &keys)
+            .unwrap();
+        let mut stored: heapless::Vec<u8, 256> = heapless::Vec::new();
+        stored.extend_from_slice(packet.as_bytes()).unwrap();
+        stored
+    };
+
+    let plain = build(false);
+    let retried = build(true);
+    let plain_header = PacketHeader::parse(plain.as_slice()).unwrap();
+    let retried_header = PacketHeader::parse(retried.as_slice()).unwrap();
+
+    assert_eq!(
+        &plain.as_slice()[plain_header.mic_range.clone()],
+        &retried.as_slice()[retried_header.mic_range.clone()]
+    );
+
+    let key_plain = duplicate_key_for_secure_frame(plain.as_slice());
+    let key_retried = duplicate_key_for_secure_frame(retried.as_slice());
+
+    assert_ne!(key_plain, key_retried);
 }
 
 #[test]
@@ -181,19 +229,24 @@ fn send_options_copy_source_route_and_reject_oversize_routes() {
 #[test]
 fn direct_ack_requested_starts_awaiting_ack() {
     let resend: ResendRecord = ResendRecord::try_new(b"hello", None).unwrap();
-    let pending = PendingAck::direct([0xAA; 8], PublicKey([0x11; 32]), resend, 10, 100);
-    assert_eq!(pending.state, AckState::AwaitingAck);
+    let pending = PendingAck::direct([0xAA; 8], PublicKey([0x11; 32]), resend);
+    assert_eq!(
+        pending.state,
+        AckState::Queued {
+            needs_forward_confirmation: false
+        }
+    );
 }
 
 #[test]
 fn forwarded_ack_requested_starts_awaiting_forward() {
     let resend: ResendRecord =
         ResendRecord::try_new(b"hello", Some(&[RouterHint([1, 2])])).unwrap();
-    let pending = PendingAck::forwarded([0xBB; 8], PublicKey([0x22; 32]), resend, 10, 100, 25);
+    let pending = PendingAck::forwarded([0xBB; 8], PublicKey([0x22; 32]), resend);
     assert_eq!(
         pending.state,
-        AckState::AwaitingForward {
-            confirm_deadline_ms: 25
+        AckState::Queued {
+            needs_forward_confirmation: true
         }
     );
 }
@@ -230,7 +283,7 @@ fn identity_slot_rejects_pending_ack_when_table_is_full() {
     let receipt = slot.next_receipt();
     slot.try_insert_pending_ack(
         receipt,
-        PendingAck::direct([0xAA; 8], PublicKey([1; 32]), resend.clone(), 1, 2),
+        PendingAck::direct([0xAA; 8], PublicKey([1; 32]), resend.clone()),
     )
     .unwrap();
     let second_receipt = slot.next_receipt();
@@ -238,7 +291,7 @@ fn identity_slot_rejects_pending_ack_when_table_is_full() {
     assert_eq!(
         slot.try_insert_pending_ack(
             second_receipt,
-            PendingAck::direct([0xBB; 8], PublicKey([2; 32]), resend, 1, 2)
+            PendingAck::direct([0xBB; 8], PublicKey([2; 32]), resend)
         ),
         Err(PendingAckError::TableFull)
     );
@@ -2691,6 +2744,59 @@ fn receive_one_learns_reversed_trace_route_for_unicast_sender() {
 }
 
 #[test]
+fn send_unicast_uses_cached_source_route_when_present() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
+
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        false,
+        7,
+        None,
+        Some(&trace),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let options = SendOptions::default();
+    let _ = block_on(mac.send_unicast(local_id, &peer_key, b"reply", &options)).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    let mut source_route = std::vec::Vec::<[u8; 2]>::new();
+    for entry in iter_options(queued.frame.as_slice(), header.options_range.clone()) {
+        let (number, value) = entry.unwrap();
+        if OptionNumber::from(number) != OptionNumber::SourceRoute {
+            continue;
+        }
+        for chunk in value.chunks_exact(2) {
+            source_route.push([chunk[0], chunk[1]]);
+        }
+    }
+
+    assert_eq!(source_route.as_slice(), &[[0x03, 0x04], [0x01, 0x02]]);
+}
+
+#[test]
 fn receive_one_learns_flood_hops_for_multicast_sender() {
     let mut mac = make_mac();
     let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -2832,6 +2938,97 @@ fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
 }
 
 #[test]
+fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = repeater
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let mut destination = make_mac();
+    let destination_identity = DummyIdentity::new([0x20; 32]);
+    let dst_hint = destination_identity.public_key().hint();
+    let destination_id = destination.add_identity(destination_identity).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = destination.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    destination
+        .install_pairwise_keys(destination_id, peer_id, keys.clone())
+        .unwrap();
+
+    let source_route = [repeater_hint];
+
+    repeater.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"pfs-request-like-payload",
+        true,
+        7,
+        Some((5, 0)),
+        None,
+        Some(&source_route),
+    );
+
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+    assert!(handled);
+
+    let forwarded = repeater.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let options = ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone())
+        .unwrap();
+    assert!(options.trace_route.is_none());
+    assert!(
+        options.source_route.is_some(),
+        "final forwarded frame should preserve an empty source-route option: {:?}",
+        options.source_route
+    );
+    let source_route_range = options.source_route.unwrap();
+    assert_eq!(
+        forwarded.frame[source_route_range].len(),
+        0,
+        "final forwarded frame should preserve source-route provenance with zero remaining hops"
+    );
+
+    destination
+        .radio_mut()
+        .queue_received_frame(forwarded.frame.as_slice());
+
+    let mut seen = None;
+    let delivered = block_on(destination.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((
+                identity,
+                packet.from_key().unwrap(),
+                packet.payload_bytes().to_vec(),
+                packet.ack_requested(),
+            ));
+        }
+    }))
+    .unwrap();
+
+    assert!(delivered);
+    assert_eq!(
+        seen,
+        Some((
+            destination_id,
+            peer_key,
+            b"pfs-request-like-payload".to_vec(),
+            true,
+        ))
+    );
+}
+
+#[test]
 fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;
@@ -2860,14 +3057,15 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
     let forwarded = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(forwarded.priority, TxPriority::Forward);
     assert!(forwarded.not_before_ms >= 123);
-    assert!(forwarded.not_before_ms <= 223);
+    assert!(forwarded.not_before_ms <= 323);
+    assert_eq!(forwarded.forward_deferrals, 0);
 
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
     assert_eq!(header.flood_hops.unwrap(), FloodHops::new(3, 3).unwrap());
 }
 
 #[test]
-fn receive_one_cancels_pending_forward_when_duplicate_is_overheard() {
+fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;
     let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -2901,6 +3099,54 @@ fn receive_one_cancels_pending_forward_when_duplicate_is_overheard() {
     mac.radio_mut().queue_received_frame(frame.as_slice());
     let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
 
+    assert!(!handled);
+    assert_eq!(mac.tx_queue().len(), 1);
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(forwarded.priority, TxPriority::Forward);
+    assert_eq!(forwarded.forward_deferrals, 1);
+}
+
+#[test]
+fn receive_one_drops_pending_forward_after_max_duplicate_deferrals() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = mac
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let frame = build_received_unicast_frame(
+        &remote,
+        &keys,
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"hello",
+        false,
+        Some((4, 0)),
+        None,
+        Some(&[repeater_hint]),
+    );
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    for _ in 0..mac.repeater_config().flood_contention_max_deferrals {
+        mac.radio_mut().queue_received_frame(frame.as_slice());
+        let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+        assert!(!handled);
+        assert_eq!(mac.tx_queue().len(), 1);
+    }
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
     assert!(!handled);
     assert!(mac.tx_queue().is_empty());
 }
@@ -2965,6 +3211,97 @@ fn drain_tx_queue_returns_when_cad_keeps_reporting_busy() {
     assert_eq!(mac.tx_queue().len(), 1);
     assert!(mac.radio().transmitted.is_empty());
     assert_eq!(mac.radio().cad_calls, 1);
+}
+
+#[test]
+fn modeled_network_delivers_after_airtime_and_link_delay() {
+    let clock = crate::test_support::DummyClock::new(0);
+    let network = crate::test_support::ModeledNetwork::with_clock(clock.clone());
+    let mut alice = network.add_radio_with_config(256, 100);
+    let mut bob = network.add_radio_with_config(256, 100);
+    network.set_link_profile(
+        alice.id(),
+        bob.id(),
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -72,
+            base_snr: Snr::from_decibels(6),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 25,
+            drop_per_thousand: 0,
+        },
+    );
+
+    block_on(alice.transmit(b"hello", TxOptions::default())).unwrap();
+
+    let mut buf = [0u8; 16];
+    assert!(matches!(poll_radio_once(&mut bob, &mut buf), Poll::Pending));
+
+    network.advance_ms(124);
+    assert!(matches!(poll_radio_once(&mut bob, &mut buf), Poll::Pending));
+
+    network.advance_ms(1);
+    let rx = match poll_radio_once(&mut bob, &mut buf) {
+        Poll::Ready(Ok(rx)) => rx,
+        Poll::Ready(Err(())) => panic!("expected successful delivery"),
+        Poll::Pending => panic!("expected ready delivery"),
+    };
+    assert_eq!(rx.len, 5);
+    assert_eq!(&buf[..rx.len], b"hello");
+    assert_eq!(rx.rssi, -72);
+    assert_eq!(rx.snr, Snr::from_decibels(6));
+}
+
+#[test]
+fn modeled_network_reports_cad_busy_during_active_transmission() {
+    let clock = crate::test_support::DummyClock::new(0);
+    let network = crate::test_support::ModeledNetwork::with_clock(clock);
+    let mut alice = network.add_radio_with_config(256, 100);
+    let mut bob = network.add_radio_with_config(256, 100);
+    network.connect_bidirectional(alice.id(), bob.id());
+
+    block_on(alice.transmit(b"hello", TxOptions::default())).unwrap();
+    let result = block_on(bob.transmit(
+        b"retry",
+        TxOptions {
+            cad_timeout_ms: Some(0),
+        },
+    ));
+    assert!(matches!(result, Err(TxError::CadTimeout)));
+}
+
+#[test]
+fn modeled_network_drops_colliding_frames_and_respects_packet_loss() {
+    let clock = crate::test_support::DummyClock::new(0);
+    let network = crate::test_support::ModeledNetwork::with_clock(clock.clone());
+    network.reseed(1);
+    let mut alice = network.add_radio_with_config(256, 100);
+    let mut bob = network.add_radio_with_config(256, 100);
+    let mut carol = network.add_radio_with_config(256, 100);
+    network.connect(alice.id(), carol.id());
+    network.connect(bob.id(), carol.id());
+
+    block_on(alice.transmit(b"from-alice", TxOptions::default())).unwrap();
+    block_on(bob.transmit(b"from-bob", TxOptions::default())).unwrap();
+
+    network.advance_ms(100);
+    let mut buf = [0u8; 32];
+    assert!(matches!(poll_radio_once(&mut carol, &mut buf), Poll::Pending));
+
+    let mut dave = network.add_radio_with_config(256, 100);
+    network.set_link_profile(
+        alice.id(),
+        dave.id(),
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            drop_per_thousand: 1000,
+            ..crate::test_support::ModeledLinkProfile::connected()
+        },
+    );
+    block_on(alice.transmit(b"lost", TxOptions::default())).unwrap();
+    network.advance_ms(100);
+    assert!(matches!(poll_radio_once(&mut dave, &mut buf), Poll::Pending));
 }
 
 #[test]
@@ -3040,11 +3377,13 @@ fn poll_cycle_emits_ack_timeout_after_receive_phase() {
         .unwrap()
         .unwrap();
     mac.tx_queue_mut().pop_next();
-    mac.identity_mut(local_id)
+    let pending = mac
+        .identity_mut(local_id)
         .unwrap()
         .pending_ack_mut(&receipt)
-        .unwrap()
-        .ack_deadline_ms = 0;
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
 
     let mut seen = None;
     block_on(mac.poll_cycle(|identity, event| {
@@ -3234,11 +3573,13 @@ fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
         .hint();
 
     let _ = mac.tx_queue_mut().pop_next();
-    mac.identity_mut(local_id)
+    let pending = mac
+        .identity_mut(local_id)
         .unwrap()
         .pending_ack_mut(&receipt)
-        .unwrap()
-        .ack_deadline_ms = 0;
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
     mac.radio_mut().queue_received_mac_ack(dst, ack_tag);
 
     let mut ack_seen = None;
@@ -3345,6 +3686,7 @@ fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
         .unwrap()
         .pending_ack_mut(&receipt)
         .unwrap();
+    pending.state = AckState::AwaitingAck;
     pending.ack_deadline_ms = 0;
 
     let mut seen = None;
@@ -3396,6 +3738,7 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
         .unwrap()
         .pending_ack_mut(&receipt)
         .unwrap();
+    pending.ack_deadline_ms = 999_999;
     pending.state = AckState::AwaitingForward {
         confirm_deadline_ms: 0,
     };
@@ -3405,6 +3748,7 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
     let retry = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(retry.priority, TxPriority::Retry);
     assert_eq!(retry.receipt, Some(receipt));
+    assert!(retry.not_before_ms >= mac.clock().now_ms());
 
     let pending = mac
         .identity(local_id)
@@ -3412,7 +3756,135 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
         .pending_ack(&receipt)
         .unwrap();
     assert_eq!(pending.retries, 1);
-    assert!(matches!(pending.state, AckState::AwaitingForward { .. }));
+    assert!(matches!(pending.state, AckState::RetryQueued));
+}
+
+#[test]
+fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+
+    let mut route = heapless::Vec::new();
+    route.push(RouterHint([1, 2])).unwrap();
+    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    options.source_route = Some(route.clone());
+
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+    let original_frame = original.frame.clone();
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+
+    let mut timeout_seen = None;
+    mac.service_pending_ack_timeouts(|identity, event| {
+        if let MacEventRef::AckTimeout { peer, receipt } = event {
+            timeout_seen = Some((identity, peer, receipt));
+        }
+    })
+    .unwrap();
+
+    assert!(timeout_seen.is_none());
+
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(retry.priority, TxPriority::Retry);
+    assert_eq!(retry.receipt, Some(receipt));
+
+    let retry_header = PacketHeader::parse(retry.frame.as_slice()).unwrap();
+    let retry_options = ParsedOptions::extract(retry.frame.as_slice(), retry_header.options_range.clone()).unwrap();
+    assert!(retry_options.route_retry);
+    assert!(retry_options.trace_route.is_some());
+    assert!(retry_options.source_route.is_none());
+    assert_eq!(retry_header.flood_hops.unwrap().remaining(), 1);
+
+    let original_header = PacketHeader::parse(original_frame.as_slice()).unwrap();
+    assert_eq!(
+        &retry.frame.as_slice()[retry_header.mic_range.clone()],
+        &original_frame.as_slice()[original_header.mic_range.clone()]
+    );
+
+    let pending = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap();
+    assert!(matches!(pending.state, AckState::RetryQueued));
+    assert_eq!(pending.retries, 0);
+    assert_eq!(pending.ack_deadline_ms, 0);
+    assert!(pending.resend.source_route.is_none());
+    let pending_header = PacketHeader::parse(pending.resend.frame.as_slice()).unwrap();
+    let pending_options = ParsedOptions::extract(
+        pending.resend.frame.as_slice(),
+        pending_header.options_range.clone(),
+    )
+    .unwrap();
+    assert!(pending_options.route_retry);
+}
+
+#[test]
+fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+
+    let route = [RouterHint([1, 2])];
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .try_with_source_route(&route)
+        .unwrap();
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    mac.tx_queue_mut().pop_next();
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.ack_deadline_ms = 999_999;
+    pending.state = AckState::AwaitingForward {
+        confirm_deadline_ms: 0,
+    };
+
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+
+    assert_eq!(mac.tx_queue().len(), 1);
+    assert!(matches!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .unwrap()
+            .state,
+        AckState::RetryQueued
+    ));
 }
 
 #[test]
@@ -3487,6 +3959,19 @@ fn packet_matches(actual: PacketType, expected: PacketType) -> bool {
             )
         }
         _ => actual == expected,
+    }
+}
+
+fn duplicate_key_for_secure_frame(frame: &[u8]) -> DupCacheKey {
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+    let mic = &frame[header.mic_range];
+    let mut bytes = [0u8; 16];
+    bytes[..mic.len()].copy_from_slice(mic);
+    DupCacheKey::Mic {
+        bytes,
+        len: mic.len() as u8,
+        route_retry: options.route_retry,
     }
 }
 
@@ -3652,6 +4137,18 @@ fn decrypt_unicast_payload(frame: &[u8], keys: &PairwiseKeys) -> heapless::Vec<u
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut future = pin!(future);
+    loop {
+        match Future::poll(future.as_mut(), &mut cx) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => core::hint::spin_loop(),
+        }
+    }
+}
+
+fn noop_waker() -> Waker {
     fn noop_raw_waker() -> RawWaker {
         fn clone(_: *const ()) -> RawWaker {
             noop_raw_waker()
@@ -3666,15 +4163,16 @@ fn block_on<F: Future>(future: F) -> F::Output {
         )
     }
 
-    let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
+    unsafe { Waker::from_raw(noop_raw_waker()) }
+}
+
+fn poll_radio_once<R: Radio<Error = ()>>(
+    radio: &mut R,
+    buf: &mut [u8],
+) -> Poll<Result<RxInfo, ()>> {
+    let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
-    let mut future = pin!(future);
-    loop {
-        match Future::poll(future.as_mut(), &mut cx) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => core::hint::spin_loop(),
-        }
-    }
+    radio.poll_receive(&mut cx, buf)
 }
 
 struct DummyIdentity {

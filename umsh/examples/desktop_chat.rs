@@ -26,10 +26,11 @@ use umsh::{
         test_support::SimulatedNetwork,
     },
     node::{Host, PeerConnection, Subscription},
-    text::UnicastTextChatWrapper,
+    text::{TextReceiveIssue, UnicastTextChatWrapper},
     tokio_support::{
         StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio,
     },
+    uri::{encode_public_key_base58, parse_public_key_base58},
 };
 
 #[cfg(feature = "serial-radio")]
@@ -52,6 +53,7 @@ type ChatHandle<'a, R> =
 
 type ChatHost<'a, R> = Host<'a, ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 
+type ChatNode<'a, R> = umsh::node::LocalNode<ChatHandle<'a, R>>;
 type ChatPeer<'a, R> = PeerConnection<umsh::node::LocalNode<ChatHandle<'a, R>>>;
 type ChatText<'a, R> = UnicastTextChatWrapper<umsh::node::LocalNode<ChatHandle<'a, R>>>;
 
@@ -109,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn print_public_key(identity_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let identity = load_or_create_identity(&identity_path)?;
-    println!("{}", hex_encode(&identity.public_key().0));
+    println!("{}", encode_public_key_base58(identity.public_key()));
     Ok(())
 }
 
@@ -150,10 +152,11 @@ async fn run_udp_chat(
         .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
     let chat = ChatText::from_peer(&peer);
     let outputs = OutputQueue::new();
-    let _subscriptions = register_peer_callbacks(&chat, &peer, outputs.sink());
+    let _subscriptions = register_peer_callbacks(&node, &chat, &peer, outputs.sink());
 
     print_banner("udp-multicast", local_key, Some(peer_key));
     println!("group: {group}:{port}");
+    println!("modeled frame time: {} ms", local_mac.borrow().radio().t_frame_ms());
     if skip_counter_load {
         println!("counter load: skipped (--skip-counter-load)");
     }
@@ -237,7 +240,12 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let remote_chat = ChatText::from_peer(&remote_peer);
     let outputs = OutputQueue::new();
     let remote_echoes = Rc::new(RefCell::new(Vec::<String>::new()));
-    let _subscriptions = register_peer_callbacks(&local_chat, &local_peer, outputs.sink());
+    let _subscriptions = register_peer_callbacks(
+        &local_node,
+        &local_chat,
+        &local_peer,
+        outputs.sink(),
+    );
     let _remote_echo_subscription = {
         let remote_echoes = remote_echoes.clone();
         remote_chat.on_text(move |_packet, text| {
@@ -334,7 +342,7 @@ async fn run_serial_chat(
             .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
         let chat = ChatText::from_peer(&peer);
         let outputs = OutputQueue::new();
-        let _subscriptions = register_peer_callbacks(&chat, &peer, outputs.sink());
+        let _subscriptions = register_peer_callbacks(&node, &chat, &peer, outputs.sink());
 
         print_banner("serial-draft", local_key, Some(peer_key));
         if skip_counter_load {
@@ -430,7 +438,7 @@ async fn handle_pfs_command<'a, R: Radio>(
                 .map_err(|error| std::io::Error::other(format!("pfs request failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for 60 minutes",
-                hex_encode(&peer.peer().0[..4])
+                full_key(peer.peer())
             ))))
         }
         "end" => {
@@ -439,7 +447,7 @@ async fn handle_pfs_command<'a, R: Radio>(
                 .map_err(|error| std::io::Error::other(format!("end pfs failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "ended pfs with {}",
-                hex_encode(&peer.peer().0[..4])
+                full_key(peer.peer())
             ))))
         }
         "status" => {
@@ -456,7 +464,7 @@ async fn handle_pfs_command<'a, R: Radio>(
                 } => format!(
                     "pfs active: local slot {} -> {}",
                     local_ephemeral_id.0,
-                    hex_encode(&peer_ephemeral.0[..4])
+                    full_key(&peer_ephemeral)
                 ),
             };
             Ok(UserInputOutcome::Continue(Some(message)))
@@ -469,7 +477,7 @@ async fn handle_pfs_command<'a, R: Radio>(
                 .map_err(|error| std::io::Error::other(format!("pfs request failed: {error:?}")))?;
             Ok(UserInputOutcome::Continue(Some(format!(
                 "requested pfs with {} for {duration_minutes} minutes",
-                hex_encode(&peer.peer().0[..4])
+                full_key(peer.peer())
             ))))
         }
     }
@@ -482,6 +490,7 @@ fn default_chat_options() -> SendOptions {
 }
 
 fn register_peer_callbacks<'a, R: Radio>(
+    node: &ChatNode<'a, R>,
     chat: &ChatText<'a, R>,
     peer: &ChatPeer<'a, R>,
     lines: Rc<RefCell<Vec<String>>>,
@@ -489,12 +498,77 @@ fn register_peer_callbacks<'a, R: Radio>(
     let mut subscriptions = Vec::new();
     let peer_key = *peer.peer();
     let text_lines = lines.clone();
-    subscriptions.push(chat.on_text(move |packet, text| {
-        text_lines.borrow_mut().push(format!(
-            "[{} h={}] {}",
-            hex_encode(&peer_key.0[..4]),
-            packet.flood_hops().map(|h| h.accumulated()).unwrap_or(0),
-            text.body
+    let reject_lines = lines.clone();
+    subscriptions.push(chat.on_text_with_diagnostics(
+        move |packet, text| {
+            text_lines.borrow_mut().push(format!(
+                "[{} h={}] {}",
+                full_key(&peer_key),
+                packet.flood_hops().map(|h| h.accumulated()).unwrap_or(0),
+                text.body
+            ));
+        },
+        move |packet, issue| {
+            let message = match issue {
+                TextReceiveIssue::WrongPayloadType(other) => format!(
+                    "received non-chat packet from {} [payload={other:?} ptype={:?} body_len={} secure={} auth={} fc={:?}]",
+                    full_key(&peer_key),
+                    packet.packet_type(),
+                    packet.payload().len(),
+                    packet.encrypted(),
+                    packet.source_authenticated(),
+                    packet.frame_counter(),
+                ),
+                TextReceiveIssue::Parse(error) => format!(
+                    "rejected text packet from {}: parse error {error:?} [ptype={:?} body_len={} secure={} auth={} fc={:?}]",
+                    full_key(&peer_key),
+                    packet.packet_type(),
+                    packet.payload().len(),
+                    packet.encrypted(),
+                    packet.source_authenticated(),
+                    packet.frame_counter(),
+                ),
+            };
+            reject_lines.borrow_mut().push(message);
+        },
+    ));
+
+    let node_lines = lines.clone();
+    subscriptions.push(node.on_node_discovered(move |key, name| {
+        let detail = name.unwrap_or("<unnamed>");
+        node_lines.borrow_mut().push(format!(
+            "node identity from {} name={detail}",
+            full_key(&key)
+        ));
+    }));
+
+    let command_lines = lines.clone();
+    subscriptions.push(node.on_mac_command(move |from, command| {
+        command_lines.borrow_mut().push(format!(
+            "mac command from {}: {}",
+            full_key(&from)
+            ,
+            format_mac_command(command)
+        ));
+    }));
+
+    let peer_key = *peer.peer();
+    let ack_lines = lines.clone();
+    subscriptions.push(peer.on_ack_received(move |token| {
+        ack_lines.borrow_mut().push(format!(
+            "ack received from {} token={:?}",
+            full_key(&peer_key),
+            token
+        ));
+    }));
+
+    let peer_key = *peer.peer();
+    let timeout_lines = lines.clone();
+    subscriptions.push(peer.on_ack_timeout(move |token| {
+        timeout_lines.borrow_mut().push(format!(
+            "ack timeout waiting for {} token={:?}",
+            full_key(&peer_key),
+            token
         ));
     }));
 
@@ -503,15 +577,16 @@ fn register_peer_callbacks<'a, R: Radio>(
     subscriptions.push(peer.on_pfs_established(move || {
         pfs_lines.borrow_mut().push(format!(
             "pfs established with {}",
-            hex_encode(&peer_key.0[..4])
+            full_key(&peer_key)
         ));
     }));
 
     let peer_key = *peer.peer();
+    let pfs_end_lines = lines.clone();
     subscriptions.push(peer.on_pfs_ended(move || {
-        lines
+        pfs_end_lines
             .borrow_mut()
-            .push(format!("pfs ended with {}", hex_encode(&peer_key.0[..4])));
+            .push(format!("pfs ended with {}", full_key(&peer_key)));
     }));
     subscriptions
 }
@@ -554,9 +629,9 @@ fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity, Box<dyn std:
 
 fn print_banner(mode: &str, local_key: PublicKey, peer_key: Option<PublicKey>) {
     println!("UMSH desktop chat ({mode} mode)");
-    println!("local: {}", hex_encode(&local_key.0));
+    println!("local: {}", encode_public_key_base58(&local_key));
     if let Some(peer_key) = peer_key {
-        println!("peer:  {}", hex_encode(&peer_key.0));
+        println!("peer:  {}", encode_public_key_base58(&peer_key));
     }
 }
 
@@ -578,28 +653,59 @@ fn counter_store_root(identity_path: &Path) -> PathBuf {
     root
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
+fn full_key(key: &PublicKey) -> String {
+    encode_public_key_base58(key)
+}
+
+fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
+    match command {
+        umsh::node::OwnedMacCommand::BeaconRequest { nonce } => match nonce {
+            Some(nonce) => format!("BeaconRequest nonce=0x{nonce:08x}"),
+            None => String::from("BeaconRequest"),
+        },
+        umsh::node::OwnedMacCommand::IdentityRequest => String::from("IdentityRequest"),
+        umsh::node::OwnedMacCommand::SignalReportRequest => String::from("SignalReportRequest"),
+        umsh::node::OwnedMacCommand::SignalReportResponse { rssi, snr } => {
+            format!("SignalReportResponse rssi={rssi} snr={snr}")
+        }
+        umsh::node::OwnedMacCommand::EchoRequest { data } => {
+            format!("EchoRequest {} bytes", data.len())
+        }
+        umsh::node::OwnedMacCommand::EchoResponse { data } => {
+            format!("EchoResponse {} bytes", data.len())
+        }
+        umsh::node::OwnedMacCommand::PfsSessionRequest {
+            ephemeral_key,
+            duration_minutes,
+        } => format!(
+            "PfsSessionRequest ephemeral_key={} duration_minutes={duration_minutes}",
+            full_key(ephemeral_key)
+        ),
+        umsh::node::OwnedMacCommand::PfsSessionResponse {
+            ephemeral_key,
+            duration_minutes,
+        } => format!(
+            "PfsSessionResponse ephemeral_key={} duration_minutes={duration_minutes}",
+            full_key(ephemeral_key)
+        ),
+        umsh::node::OwnedMacCommand::EndPfsSession => String::from("EndPfsSession"),
     }
-    out
 }
 
 fn decode_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>> {
     let input = input.trim();
-    if input.len() != 64 {
-        return Err("public key must be 64 hex characters".into());
+    if input.len() == 64 && input.as_bytes().iter().all(|byte| byte.is_ascii_hexdigit()) {
+        let mut bytes = [0u8; 32];
+        for (index, chunk) in input.as_bytes().chunks_exact(2).enumerate() {
+            let high = decode_hex_nibble(chunk[0])?;
+            let low = decode_hex_nibble(chunk[1])?;
+            bytes[index] = (high << 4) | low;
+        }
+        return Ok(PublicKey(bytes));
     }
-    let mut bytes = [0u8; 32];
-    for (index, chunk) in input.as_bytes().chunks_exact(2).enumerate() {
-        let high = decode_hex_nibble(chunk[0])?;
-        let low = decode_hex_nibble(chunk[1])?;
-        bytes[index] = (high << 4) | low;
-    }
-    Ok(PublicKey(bytes))
+    parse_public_key_base58(input).map_err(|_| {
+        "public key must be either 64 hex characters or a base58-encoded 32-byte key".into()
+    })
 }
 
 fn decode_hex_nibble(byte: u8) -> Result<u8, Box<dyn std::error::Error>> {

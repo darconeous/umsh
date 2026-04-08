@@ -170,28 +170,41 @@ impl SendOptions {
 
 /// Tracks which phase of the two-stage ACK lifecycle a pending transmission is in.
 ///
-/// UMSH ACK-requested sends go through up to two distinct waiting phases before the
+/// UMSH ACK-requested sends go through several waiting phases before the
 /// coordinator either confirms delivery or gives up:
 ///
-/// 1. **`AwaitingForward`** — immediately after sending, the coordinator listens to see if
-///    the frame is re-broadcast by a repeater within `confirm_deadline_ms`. Because LoRa
-///    links are half-duplex, the sender may not be in direct range of the destination but
-///    *can* hear the repeater that retransmitted the frame, providing an early, cheap
-///    confirmation that the packet made it to the next hop. If no forwarding echo is heard
-///    before the deadline, the frame is retransmitted (up to [`MAX_FORWARD_RETRIES`]
-///    attempts). On success, the state advances to `AwaitingAck`.
+/// 1. **`Queued`** — the send has been accepted by the coordinator but has not yet gone
+///    on-air. Deadlines do not begin running until the first successful transmit.
 ///
-/// 2. **`AwaitingAck`** — the coordinator waits for the destination to return a MAC ACK
+/// 2. **`AwaitingForward`** — after a forwarded send is transmitted, the coordinator
+///    listens to see if the frame is re-broadcast by a repeater within
+///    `confirm_deadline_ms`. Because LoRa links are half-duplex, the sender may not be in
+///    direct range of the destination but *can* hear the repeater that retransmitted the
+///    frame, providing an early, cheap confirmation that the packet made it to the next
+///    hop.
+///
+/// 3. **`RetryQueued`** — the forwarding-confirmation timer expired, so the coordinator
+///    scheduled a retransmission after jittered retry backoff. No forwarding-confirmation
+///    timer runs in this state; a new one is armed only after the retransmission actually
+///    goes on-air.
+///
+/// 4. **`AwaitingAck`** — the coordinator waits for the destination to return a MAC ACK
 ///    packet containing the correct ACK tag (a CMAC-derived value only the destination can
 ///    compute after successfully decrypting the original frame). The absolute deadline is
 ///    `PendingAck::ack_deadline_ms`; expiry means the send failed.
 ///
-/// Nodes in direct radio range of the destination skip `AwaitingForward` entirely and are
-/// placed directly into `AwaitingAck` via [`PendingAck::direct`].
+/// Nodes in direct radio range of the destination skip `AwaitingForward` entirely and move
+/// from `Queued` straight to `AwaitingAck` after the first successful transmit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AckState {
+    /// Accepted for transmission but not yet sent.
+    Queued {
+        needs_forward_confirmation: bool,
+    },
     /// Waiting to overhear forwarding confirmation from the next hop.
     AwaitingForward { confirm_deadline_ms: u64 },
+    /// Retransmission is queued with a retry backoff delay.
+    RetryQueued,
     /// Waiting for the final destination's transport ACK.
     AwaitingAck,
 }
@@ -293,17 +306,17 @@ impl<const FRAME: usize> PendingAck<FRAME> {
         ack_tag: [u8; 8],
         peer: PublicKey,
         resend: ResendRecord<FRAME>,
-        sent_ms: u64,
-        ack_deadline_ms: u64,
     ) -> Self {
         Self {
             ack_tag,
             peer,
             resend,
-            sent_ms,
-            ack_deadline_ms,
+            sent_ms: 0,
+            ack_deadline_ms: 0,
             retries: 0,
-            state: AckState::AwaitingAck,
+            state: AckState::Queued {
+                needs_forward_confirmation: false,
+            },
         }
     }
 
@@ -312,19 +325,16 @@ impl<const FRAME: usize> PendingAck<FRAME> {
         ack_tag: [u8; 8],
         peer: PublicKey,
         resend: ResendRecord<FRAME>,
-        sent_ms: u64,
-        ack_deadline_ms: u64,
-        confirm_deadline_ms: u64,
     ) -> Self {
         Self {
             ack_tag,
             peer,
             resend,
-            sent_ms,
-            ack_deadline_ms,
+            sent_ms: 0,
+            ack_deadline_ms: 0,
             retries: 0,
-            state: AckState::AwaitingForward {
-                confirm_deadline_ms,
+            state: AckState::Queued {
+                needs_forward_confirmation: true,
             },
         }
     }
@@ -408,6 +418,8 @@ impl TxPriority {
 /// - **`cad_attempts`** — number of channel-activity-detection retries already consumed
 ///   on this entry; compared against [`MAX_CAD_ATTEMPTS`](crate::MAX_CAD_ATTEMPTS) to bound
 ///   medium contention retries.
+/// - **`forward_deferrals`** — number of times a queued flood-forward has already been
+///   deferred after overhearing another copy of the same packet before it transmitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Priority class.
@@ -425,6 +437,8 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub not_before_ms: u64,
     /// Number of CAD attempts already consumed.
     pub cad_attempts: u8,
+    /// Number of overheard-repeat deferrals already consumed.
+    pub forward_deferrals: u8,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -436,7 +450,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
         identity_id: Option<LocalIdentityId>,
         sequence: u32,
     ) -> Result<Self, CapacityError> {
-        Self::try_new_with_state(priority, frame, receipt, identity_id, sequence, 0, 0)
+        Self::try_new_with_state(priority, frame, receipt, identity_id, sequence, 0, 0, 0)
     }
 
     /// Create a queue entry with explicit timer and CAD state.
@@ -448,6 +462,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
         sequence: u32,
         not_before_ms: u64,
         cad_attempts: u8,
+        forward_deferrals: u8,
     ) -> Result<Self, CapacityError> {
         let mut stored_frame = Vec::new();
         for byte in frame {
@@ -462,6 +477,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             sequence,
             not_before_ms,
             cad_attempts,
+            forward_deferrals,
         })
     }
 }
@@ -537,6 +553,7 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         identity_id: Option<LocalIdentityId>,
         not_before_ms: u64,
         cad_attempts: u8,
+        forward_deferrals: u8,
     ) -> Result<u32, CapacityError> {
         let sequence = self.next_sequence;
         let entry = QueuedTx::try_new_with_state(
@@ -547,6 +564,7 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
             sequence,
             not_before_ms,
             cad_attempts,
+            forward_deferrals,
         )?;
         self.entries.push(entry).map_err(|_| CapacityError)?;
         self.next_sequence = self.next_sequence.wrapping_add(1);

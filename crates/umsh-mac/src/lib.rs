@@ -83,8 +83,8 @@
 //!   not-before timestamp, and CAD retry count.
 //! - [`TxPriority`] — priority classes from highest (`ImmediateAck`) to lowest
 //!   (`Application`).
-//! - [`AckState`] — two-phase ACK lifecycle: `AwaitingForward` (listening for a repeater
-//!   echo) followed by `AwaitingAck` (waiting for the destination's MAC ACK).
+//! - [`AckState`] — ACK lifecycle state machine covering queued sends, forwarding
+//!   confirmation, retry scheduling, and final destination ACK waiting.
 //! - [`PendingAck`] — full tracking record for one in-flight ACK-requested send, stored
 //!   in the identity slot until delivery is confirmed or the deadline expires.
 //! - [`ResendRecord`] — verbatim sealed frame bytes retained for retransmission without

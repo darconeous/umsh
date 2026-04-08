@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use core::fmt;
 
 use lwuri::prelude::*;
@@ -149,6 +150,26 @@ fn decode_base58_32(input: &str) -> Result<[u8; 32], Error> {
     Ok(out)
 }
 
+/// Parse a base58-encoded public key.
+pub fn parse_public_key_base58(input: &str) -> Result<umsh_core::PublicKey, Error> {
+    Ok(umsh_core::PublicKey(decode_base58_32(input)?))
+}
+
+/// Parse a base58-encoded channel key.
+pub fn parse_channel_key_base58(input: &str) -> Result<umsh_core::ChannelKey, Error> {
+    Ok(umsh_core::ChannelKey(decode_base58_32(input)?))
+}
+
+/// Encode a public key as base58.
+pub fn encode_public_key_base58(key: &umsh_core::PublicKey) -> String {
+    bs58::encode(key.0).into_string()
+}
+
+/// Encode a channel key as base58.
+pub fn encode_channel_key_base58(key: &umsh_core::ChannelKey) -> String {
+    bs58::encode(key.0).into_string()
+}
+
 pub fn format_node_uri(key: &umsh_core::PublicKey, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
     copy_into(buf, &mut pos, b"umsh:n:")?;
@@ -284,5 +305,17 @@ mod tests {
             UmshUri::ChannelByKey(parsed) => assert_eq!(parsed.key.0, channel_key.0),
             _ => panic!("expected channel key uri"),
         }
+    }
+
+    #[test]
+    fn base58_key_helpers_round_trip() {
+        let public_key = umsh_core::PublicKey([0x33; 32]);
+        let channel_key = umsh_core::ChannelKey([0x77; 32]);
+
+        let public_text = encode_public_key_base58(&public_key);
+        let channel_text = encode_channel_key_base58(&channel_key);
+
+        assert_eq!(parse_public_key_base58(&public_text).unwrap(), public_key);
+        assert_eq!(parse_channel_key_base58(&channel_text).unwrap(), channel_key);
     }
 }

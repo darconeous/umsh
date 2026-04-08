@@ -258,10 +258,37 @@ pub fn encode(msg: &TextMessage<'_>, buf: &mut [u8]) -> Result<usize, EncodeErro
         encoder.put(7, &color)?;
     }
 
+    encoder.end_marker()?;
     let prefix_len = encoder.finish();
     if buf.len().saturating_sub(prefix_len) < msg.body.len() {
         return Err(EncodeError::BufferTooSmall);
     }
     buf[prefix_len..prefix_len + msg.body.len()].copy_from_slice(msg.body.as_bytes());
     Ok(prefix_len + msg.body.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic_text_message_round_trips() {
+        let message = TextMessage {
+            message_type: MessageType::Basic,
+            sender_handle: None,
+            sequence: None,
+            sequence_reset: false,
+            regarding: None,
+            editing: None,
+            bg_color: None,
+            text_color: None,
+            body: "hello",
+        };
+
+        let mut buf = [0u8; 64];
+        let len = encode(&message, &mut buf).expect("encode should succeed");
+        let parsed = parse(&buf[..len]).expect("parse should succeed");
+
+        assert_eq!(parsed, message);
+    }
 }

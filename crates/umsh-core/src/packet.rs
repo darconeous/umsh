@@ -409,6 +409,7 @@ pub enum OptionNumber {
     SourceRoute,
     OperatorCallsign,
     MinRssi,
+    RouteRetry,
     StationCallsign,
     MinSnr,
     Unknown(u16),
@@ -423,6 +424,7 @@ impl OptionNumber {
             Self::SourceRoute => 3,
             Self::OperatorCallsign => 4,
             Self::MinRssi => 5,
+            Self::RouteRetry => 6,
             Self::StationCallsign => 7,
             Self::MinSnr => 9,
             Self::Unknown(value) => value,
@@ -448,6 +450,7 @@ impl From<u16> for OptionNumber {
             3 => Self::SourceRoute,
             4 => Self::OperatorCallsign,
             5 => Self::MinRssi,
+            6 => Self::RouteRetry,
             7 => Self::StationCallsign,
             9 => Self::MinSnr,
             other => Self::Unknown(other),
@@ -749,6 +752,7 @@ pub struct ParsedOptions {
     pub trace_route: Option<Range<usize>>,
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
+    pub route_retry: bool,
     pub has_unknown_critical: bool,
 }
 
@@ -770,6 +774,7 @@ impl ParsedOptions {
                 }
                 OptionNumber::TraceRoute => parsed.trace_route = Some(value_range),
                 OptionNumber::SourceRoute => parsed.source_route = Some(value_range),
+                OptionNumber::RouteRetry if value.is_empty() => parsed.route_retry = true,
                 OptionNumber::MinRssi if value.len() == 2 => {
                     parsed.min_rssi = Some(i16::from_be_bytes([value[0], value[1]]));
                 }
