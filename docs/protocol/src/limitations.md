@@ -71,15 +71,15 @@ This timeout-based detection is slow and provides no diagnostic information: the
 
 Two independent gaps make this hard to address:
 
-- **Routing**: an intermediate node needs a return path to send anything back. The sender's 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops can be reversed.
+- **Routing**: an intermediate node needs a return path to send anything back. The sender's 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops already describe the return path from the receiver back toward the original sender.
 
 - **Authentication**: an intermediate node cannot send an authenticated reply without the sender's full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination — which has the full source key and performs ECDH — can send a fully authenticated reply.
 
 Without a trace route, there is no viable return path and no error feedback is possible.
 
-#### Possible Approach: Reversed Trace Route
+#### Possible Approach: Trace-Route Return Path
 
-If the original packet carries a trace route option, an intermediate node can reverse the accumulated hops to construct a source route back toward the original sender and emit an error packet along that path, addressed to the sender's 3-byte SRC hint.
+If the original packet carries a trace route option, an intermediate node can use the accumulated hops directly as a source route back toward the original sender and emit an error packet along that path, addressed to the sender's 3-byte SRC hint.
 
 This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.
 

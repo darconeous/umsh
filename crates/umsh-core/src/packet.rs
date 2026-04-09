@@ -50,6 +50,11 @@ impl PacketType {
     pub fn ack_requested(self) -> bool {
         matches!(self, Self::UnicastAckReq | Self::BlindUnicastAckReq)
     }
+
+    /// Return whether this packet type participates in mesh routing/forwarding.
+    pub fn is_routable(self) -> bool {
+        !matches!(self, Self::Reserved5)
+    }
 }
 
 /// Application payload type carried inside the MAC body.

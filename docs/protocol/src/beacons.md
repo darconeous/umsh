@@ -34,7 +34,7 @@ Because router hints are only two bytes, different repeaters may share the same 
 
 When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:
 
-- **Trace route**: if the packet contains a trace-route option, the node caches the reversed trace route as a source route for future packets to the sender. This is the primary mechanism for learning precise multi-hop paths.
+- **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value as a distance estimate. When no source route is available, this value can be used as `FHOPS_REM` for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.
 
 This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.

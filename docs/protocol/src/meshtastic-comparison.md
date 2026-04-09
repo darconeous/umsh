@@ -90,7 +90,7 @@ Both protocols use flood-based routing as their primary delivery mechanism. Mesh
 
 Meshtastic's 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH's 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).
 
-Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient caches the accumulated trace directly as a source route for all subsequent communication with the sender, because the trace is already built most-recent hop first (see [Route Learning](beacons.md#route-learning)).
 
 Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.
 

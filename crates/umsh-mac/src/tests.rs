@@ -81,6 +81,201 @@ fn route_retry_changes_authenticated_duplicate_key_without_changing_mic() {
 }
 
 #[test]
+fn mac_ack_duplicate_key_ignores_dynamic_forwarding_fields() {
+    let mut direct = [0u8; 256];
+    let direct = PacketBuilder::new(&mut direct)
+        .mac_ack(NodeHint([0x12, 0x34, 0x56]), [0xA5; 8])
+        .build()
+        .unwrap();
+    let mut routed = [0u8; 256];
+    let routed = PacketBuilder::new(&mut routed)
+        .mac_ack(NodeHint([0x12, 0x34, 0x56]), [0xA5; 8])
+        .option(OptionNumber::TraceRoute, &[0x09, 0x08])
+        .source_route(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])])
+        .flood_hops(2)
+        .build()
+        .unwrap();
+
+    let direct_header = PacketHeader::parse(direct).unwrap();
+    let routed_header = PacketHeader::parse(routed).unwrap();
+
+    assert_eq!(
+        super::Mac::<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>::forward_dup_key(
+            &direct_header,
+            direct
+        ),
+        super::Mac::<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>::forward_dup_key(
+            &routed_header,
+            routed
+        )
+    );
+}
+
+#[test]
+fn forward_duplicate_key_exists_for_every_routable_packet_class() {
+    let source = DummyIdentity::new([0x11; 32]);
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let crypto = CryptoEngine::new(DummyAes, DummySha);
+    let channel_keys = crypto.derive_channel_keys(&channel_key);
+    let dst = NodeHint([0xAA, 0xBB, 0xCC]);
+
+    let mut broadcast = [0u8; 256];
+    let broadcast = PacketBuilder::new(&mut broadcast)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(2)
+        .payload(b"hello")
+        .build()
+        .unwrap();
+
+    let mut mac_ack = [0u8; 256];
+    let mac_ack = PacketBuilder::new(&mut mac_ack)
+        .mac_ack(dst, [0xA5; 8])
+        .source_route(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])])
+        .build()
+        .unwrap();
+
+    let unicast = build_received_unicast_frame(
+        &source,
+        &pairwise,
+        &dst,
+        b"hello",
+        false,
+        Some((2, 0)),
+        Some(&[RouterHint([0x09, 0x08])]),
+        Some(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])]),
+    );
+
+    let blind_unicast = build_received_blind_unicast_frame(
+        &source,
+        &pairwise,
+        &channel_keys,
+        &dst,
+        b"hello",
+        false,
+        Some(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])]),
+    );
+
+    let mut multicast = [0u8; 256];
+    let mut multicast = PacketBuilder::new(&mut multicast)
+        .multicast(channel_keys.channel_id)
+        .source_full(source.public_key())
+        .frame_counter(11)
+        .encrypted()
+        .flood_hops(2)
+        .payload(b"group")
+        .build()
+        .unwrap();
+    {
+        let header = multicast.header().unwrap();
+        multicast.as_bytes_mut()[header.options_range.end] = FloodHops::new(2, 0).unwrap().0;
+    }
+    crypto.seal_packet(&mut multicast, &pairwise).unwrap();
+
+    for frame in [
+        broadcast,
+        mac_ack,
+        unicast.as_slice(),
+        blind_unicast.as_slice(),
+        multicast.as_bytes(),
+    ] {
+        let header = PacketHeader::parse(frame).unwrap();
+        assert!(
+            super::Mac::<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>::forward_dup_key(&header, frame)
+                .is_some(),
+            "routable packet {:?} should have a forwarding duplicate identity",
+            header.packet_type()
+        );
+    }
+}
+
+#[test]
+fn confirmation_identity_matches_forwarding_identity_for_every_routable_packet_class() {
+    let source = DummyIdentity::new([0x11; 32]);
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let crypto = CryptoEngine::new(DummyAes, DummySha);
+    let channel_keys = crypto.derive_channel_keys(&channel_key);
+    let dst = NodeHint([0xAA, 0xBB, 0xCC]);
+
+    let mut broadcast = [0u8; 256];
+    let broadcast = PacketBuilder::new(&mut broadcast)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(2)
+        .payload(b"hello")
+        .build()
+        .unwrap();
+
+    let mut mac_ack = [0u8; 256];
+    let mac_ack = PacketBuilder::new(&mut mac_ack)
+        .mac_ack(dst, [0xA5; 8])
+        .source_route(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])])
+        .build()
+        .unwrap();
+
+    let unicast = build_received_unicast_frame(
+        &source,
+        &pairwise,
+        &dst,
+        b"hello",
+        true,
+        Some((2, 0)),
+        Some(&[RouterHint([0x09, 0x08])]),
+        Some(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])]),
+    );
+
+    let blind_unicast = build_received_blind_unicast_frame(
+        &source,
+        &pairwise,
+        &channel_keys,
+        &dst,
+        b"hello",
+        true,
+        Some(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])]),
+    );
+
+    let mut multicast = [0u8; 256];
+    let mut multicast = PacketBuilder::new(&mut multicast)
+        .multicast(channel_keys.channel_id)
+        .source_full(source.public_key())
+        .frame_counter(11)
+        .encrypted()
+        .flood_hops(2)
+        .payload(b"group")
+        .build()
+        .unwrap();
+    {
+        let header = multicast.header().unwrap();
+        multicast.as_bytes_mut()[header.options_range.end] = FloodHops::new(2, 0).unwrap().0;
+    }
+    crypto.seal_packet(&mut multicast, &pairwise).unwrap();
+
+    for frame in [
+        broadcast,
+        mac_ack,
+        unicast.as_slice(),
+        blind_unicast.as_slice(),
+        multicast.as_bytes(),
+    ] {
+        let header = PacketHeader::parse(frame).unwrap();
+        assert_eq!(
+            super::Mac::<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>::forward_dup_key(&header, frame),
+            super::Mac::<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>::confirmation_key(frame),
+            "routable packet {:?} should use one shared forwarding/confirmation identity",
+            header.packet_type()
+        );
+    }
+}
+
+#[test]
 fn replay_window_detects_replay_and_window_expiry() {
     let mut window = ReplayWindow::new();
     let mic = [0x11u8; 8];
@@ -1278,6 +1473,30 @@ fn queue_mac_ack_builds_immediate_ack_frame() {
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
     assert_eq!(header.ack_dst, Some(dst));
     assert_eq!(&queued.frame.as_slice()[header.mic_range], &ack_tag);
+}
+
+#[test]
+fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
+    let mut mac = make_mac();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(
+            heapless::Vec::from_slice(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])])
+                .unwrap(),
+        ),
+    );
+
+    mac.queue_mac_ack_for_peer(peer_id, peer_key.hint(), [0xA5; 8])
+        .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+    let options = ParsedOptions::extract(queued.frame.as_slice(), header.options_range.clone()).unwrap();
+    let route = options.source_route.expect("mac ack should carry a source route");
+    assert_eq!(queued.frame[route].len(), 4);
 }
 
 #[test]
@@ -2699,7 +2918,7 @@ fn receive_one_multicast_with_full_registry_still_delivers_unknown_sender() {
 }
 
 #[test]
-fn receive_one_learns_reversed_trace_route_for_unicast_sender() {
+fn receive_one_learns_trace_route_as_return_source_route_for_unicast_sender() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -2737,7 +2956,7 @@ fn receive_one_learns_reversed_trace_route_for_unicast_sender() {
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(CachedRoute::Source(
-            heapless::Vec::from_slice(&[RouterHint([0x03, 0x04]), RouterHint([0x01, 0x02])])
+            heapless::Vec::from_slice(&[RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])])
                 .unwrap()
         ))
     );
@@ -2793,7 +3012,7 @@ fn send_unicast_uses_cached_source_route_when_present() {
         }
     }
 
-    assert_eq!(source_route.as_slice(), &[[0x03, 0x04], [0x01, 0x02]]);
+    assert_eq!(source_route.as_slice(), &[[0x01, 0x02], [0x03, 0x04]]);
 }
 
 #[test]
@@ -3026,6 +3245,42 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
             true,
         ))
     );
+}
+
+#[test]
+fn receive_one_repeater_forwards_source_routed_mac_ack() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = mac
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let mut buf = [0u8; 256];
+    let frame = PacketBuilder::new(&mut buf)
+        .mac_ack(NodeHint([0x77, 0x66, 0x55]), [0xA5; 8])
+        .option(OptionNumber::TraceRoute, &[0x33, 0x44])
+        .source_route(&[repeater_hint, RouterHint([0x21, 0x22])])
+        .build()
+        .unwrap();
+
+    mac.radio_mut().queue_received_frame(frame);
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(handled);
+
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    assert_eq!(header.packet_type(), PacketType::MacAck);
+    let options = ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone())
+        .unwrap();
+    let source_route = options
+        .source_route
+        .expect("forwarded MAC ACK should keep the remaining source route");
+    assert_eq!(forwarded.frame[source_route].len(), 2);
 }
 
 #[test]
@@ -3302,6 +3557,1263 @@ fn modeled_network_drops_colliding_frames_and_respects_packet_loss() {
     block_on(alice.transmit(b"lost", TxOptions::default())).unwrap();
     network.advance_ms(100);
     assert!(matches!(poll_radio_once(&mut dave, &mut buf), Poll::Pending));
+}
+
+#[test]
+fn modeled_seven_hop_line_learns_and_uses_source_routes_end_to_end() {
+    let mut scenario = build_modeled_line_scenario(8);
+    install_endpoint_pairwise_keys(&mut scenario);
+
+    let alice = 0usize;
+    let bob = scenario.keys.len() - 1;
+    let route_hops = u8::try_from(bob - alice).unwrap();
+    let first_receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"hello-7hop",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(route_hops)
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+
+    let bob_first_delivery = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        800,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"hello-7hop" {
+                bob_first_delivery.set(bob_first_delivery.get() + 1);
+            }
+        },
+        || {
+            bob_first_delivery.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&first_receipt)
+                    .is_none()
+        },
+        "bob should receive the initial flooded hello across seven hops",
+    );
+
+    let (alice_peer_id, _) = scenario.macs[bob]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&scenario.keys[alice])
+        .unwrap();
+    let learned_route_to_alice = scenario.macs[bob]
+        .borrow()
+        .peer_registry()
+        .get(alice_peer_id)
+        .unwrap()
+        .route
+        .clone();
+    assert!(matches!(
+        learned_route_to_alice,
+        Some(CachedRoute::Source(route)) if route.len() == 6
+    ));
+
+    let reply_receipt = {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        bob_mac
+            .queue_unicast(
+                scenario.identity_ids[bob],
+                &scenario.keys[alice],
+                b"reply-7hop",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .no_flood()
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let alice_reply_delivery = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        800,
+        |node_index, _, event| {
+            if node_index != alice {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"reply-7hop" {
+                alice_reply_delivery.set(alice_reply_delivery.get() + 1);
+            }
+        },
+        || {
+            alice_reply_delivery.get() == 1
+                && scenario.macs[bob]
+                    .borrow()
+                    .identity(scenario.identity_ids[bob])
+                    .unwrap()
+                    .pending_ack(&reply_receipt)
+                    .is_none()
+        },
+        "alice should receive bob's source-routed reply across seven hops",
+    );
+
+    let (bob_peer_id, _) = scenario.macs[alice]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&scenario.keys[bob])
+        .unwrap();
+    let learned_route_to_bob = scenario.macs[alice]
+        .borrow()
+        .peer_registry()
+        .get(bob_peer_id)
+        .unwrap()
+        .route
+        .clone();
+    assert!(matches!(
+        learned_route_to_bob,
+        Some(CachedRoute::Source(route)) if route.len() == 6
+    ));
+
+    let midpoint = 3usize;
+    let alice_broadcast_delivery = Cell::new(0usize);
+    let bob_broadcast_delivery = Cell::new(0usize);
+    {
+        let mut midpoint_mac = scenario.macs[midpoint].borrow_mut();
+        midpoint_mac
+            .queue_broadcast(
+                scenario.identity_ids[midpoint],
+                b"mid-broadcast",
+                &SendOptions::default().unencrypted().with_flood_hops(4),
+            )
+            .unwrap();
+    }
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        800,
+        |node_index, _, event| {
+            let Some(packet) = received_of_type(event, PacketType::Broadcast) else {
+                return;
+            };
+            if packet.payload_bytes() != b"mid-broadcast" {
+                return;
+            }
+            if node_index == alice {
+                alice_broadcast_delivery.set(alice_broadcast_delivery.get() + 1);
+            }
+            if node_index == bob {
+                bob_broadcast_delivery.set(bob_broadcast_delivery.get() + 1);
+            }
+        },
+        || alice_broadcast_delivery.get() == 1 && bob_broadcast_delivery.get() == 1,
+        "a midpoint broadcast should coexist with learned-route traffic across the line",
+    );
+
+    let follow_up_receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"follow-up-7hop",
+                &SendOptions::default().with_ack_requested(true).no_flood(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let bob_follow_up_delivery = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        800,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"follow-up-7hop" {
+                bob_follow_up_delivery.set(bob_follow_up_delivery.get() + 1);
+            }
+        },
+        || {
+            bob_follow_up_delivery.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&follow_up_receipt)
+                    .is_none()
+        },
+        "bob should receive alice's cached-route follow-up without flood routing",
+    );
+}
+
+#[test]
+fn modeled_route_retry_recovers_after_mid_route_break_via_alternate_repeaters() {
+    let mut scenario = build_modeled_line_scenario(10);
+    let alice = 0usize;
+    let bob = 7usize;
+    let alt_a = 8usize;
+    let alt_b = 9usize;
+    let direct_left = 3usize;
+    let direct_right = 4usize;
+    install_pairwise_keys_between(&mut scenario, alice, bob);
+
+    let bob_prime_delivery = Cell::new(0usize);
+    {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"prime-route",
+                &SendOptions::default()
+                    .with_flood_hops(8)
+                    .with_trace_route(),
+            )
+            .unwrap();
+    }
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        1000,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"prime-route" {
+                bob_prime_delivery.set(bob_prime_delivery.get() + 1);
+            }
+        },
+        || bob_prime_delivery.get() == 1,
+        "bob should receive the initial route-discovery packet",
+    );
+
+    let alice_prime_reply_delivery = Cell::new(0usize);
+    {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        bob_mac
+            .queue_unicast(
+                scenario.identity_ids[bob],
+                &scenario.keys[alice],
+                b"prime-reply",
+                &SendOptions::default().no_flood().with_trace_route(),
+            )
+            .unwrap();
+    }
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        1000,
+        |node_index, _, event| {
+            if node_index != alice {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"prime-reply" {
+                alice_prime_reply_delivery.set(alice_prime_reply_delivery.get() + 1);
+            }
+        },
+        || alice_prime_reply_delivery.get() == 1,
+        "alice should receive the priming reply over the learned source route",
+    );
+
+    disconnect_modeled_bidirectional(
+        &scenario.network,
+        scenario.radio_ids[direct_left],
+        scenario.radio_ids[direct_right],
+    );
+    connect_modeled_bidirectional(
+        &scenario.network,
+        scenario.radio_ids[direct_left],
+        scenario.radio_ids[alt_a],
+    );
+    connect_modeled_bidirectional(
+        &scenario.network,
+        scenario.radio_ids[alt_a],
+        scenario.radio_ids[alt_b],
+    );
+    connect_modeled_bidirectional(
+        &scenario.network,
+        scenario.radio_ids[alt_b],
+        scenario.radio_ids[direct_right],
+    );
+
+    let route_retry_seen = Cell::new(false);
+    let ack_timeout_seen = Cell::new(false);
+    let bob_recovered_delivery = Cell::new(0usize);
+    let receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"recover-via-route-retry",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(8),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        2400,
+        |node_index, identity_id, event| {
+            if node_index == bob {
+                if let Some(packet) = received_of_type(event, PacketType::Unicast) {
+                    if packet.payload_bytes() == b"recover-via-route-retry" {
+                        bob_recovered_delivery.set(bob_recovered_delivery.get() + 1);
+                        if packet.options().route_retry {
+                            route_retry_seen.set(true);
+                        }
+                    }
+                }
+            }
+            if node_index == alice {
+                if let MacEventRef::AckTimeout { receipt: timed_out, .. } = event {
+                    if identity_id == scenario.identity_ids[alice] && *timed_out == receipt {
+                        ack_timeout_seen.set(true);
+                    }
+                }
+            }
+        },
+        || {
+            bob_recovered_delivery.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&receipt)
+                    .is_none()
+        },
+        "route retry should recover delivery over the alternate repeater branch",
+    );
+
+    assert!(route_retry_seen.get());
+    assert!(!ack_timeout_seen.get());
+    assert_eq!(bob_recovered_delivery.get(), 1);
+}
+
+#[test]
+fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
+    // Diamond topology:
+    // Alice -> strong -> Bob
+    // Alice -> weak   -> Bob
+    //
+    // The initial flooded packet should still arrive either way, but the trace
+    // route Bob learns back to Alice should prefer the stronger branch.
+    let mut scenario = build_modeled_line_scenario(4);
+    let alice = 0usize;
+    let strong = 1usize;
+    let weak = 2usize;
+    let bob = 3usize;
+    install_pairwise_keys_between(&mut scenario, alice, bob);
+
+    disconnect_modeled_bidirectional(
+        &scenario.network,
+        scenario.radio_ids[strong],
+        scenario.radio_ids[weak],
+    );
+    connect_modeled_bidirectional_with_profile(
+        &scenario.network,
+        scenario.radio_ids[alice],
+        scenario.radio_ids[strong],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -60,
+            base_snr: Snr::from_decibels(14),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 2,
+            drop_per_thousand: 0,
+        },
+    );
+    connect_modeled_bidirectional_with_profile(
+        &scenario.network,
+        scenario.radio_ids[strong],
+        scenario.radio_ids[bob],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -61,
+            base_snr: Snr::from_decibels(12),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 2,
+            drop_per_thousand: 0,
+        },
+    );
+    connect_modeled_bidirectional_with_profile(
+        &scenario.network,
+        scenario.radio_ids[alice],
+        scenario.radio_ids[weak],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -84,
+            base_snr: Snr::from_decibels(1),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 6,
+            drop_per_thousand: 0,
+        },
+    );
+    connect_modeled_bidirectional_with_profile(
+        &scenario.network,
+        scenario.radio_ids[weak],
+        scenario.radio_ids[bob],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -84,
+            base_snr: Snr::from_decibels(1),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 6,
+            drop_per_thousand: 0,
+        },
+    );
+    connect_modeled_bidirectional_with_profile(
+        &scenario.network,
+        scenario.radio_ids[strong],
+        scenario.radio_ids[weak],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -58,
+            base_snr: Snr::from_decibels(16),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 1,
+            drop_per_thousand: 0,
+        },
+    );
+
+    let receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"parallel-paths",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(3)
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let delivered = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        600,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"parallel-paths" {
+                delivered.set(delivered.get() + 1);
+            }
+        },
+        || {
+            delivered.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&receipt)
+                    .is_none()
+        },
+        "bob should receive the initial packet across the stronger branch",
+    );
+
+    let (alice_peer_id, _) = scenario.macs[bob]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&scenario.keys[alice])
+        .unwrap();
+    let learned_route = scenario.macs[bob]
+        .borrow()
+        .peer_registry()
+        .get(alice_peer_id)
+        .unwrap()
+        .route
+        .clone();
+    let strong_hint = scenario.macs[strong]
+        .borrow()
+        .identity(scenario.identity_ids[strong])
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+    assert_eq!(
+        learned_route,
+        Some(CachedRoute::Source(heapless::Vec::from_slice(&[strong_hint]).unwrap()))
+    );
+}
+
+#[test]
+fn modeled_asymmetric_links_still_support_bidirectional_exchange() {
+    // Same four-node line, but each hop has noticeably different forward and
+    // reverse quality. This checks that the mesh does not silently assume
+    // symmetric link quality.
+    let mut scenario = build_modeled_line_scenario(4);
+    let alice = 0usize;
+    let bob = 3usize;
+    install_pairwise_keys_between(&mut scenario, alice, bob);
+
+    scenario.network.set_link_profile(
+        scenario.radio_ids[0],
+        scenario.radio_ids[1],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -62,
+            base_snr: Snr::from_decibels(12),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 2,
+            drop_per_thousand: 0,
+        },
+    );
+    scenario.network.set_link_profile(
+        scenario.radio_ids[1],
+        scenario.radio_ids[0],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -83,
+            base_snr: Snr::from_decibels(1),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 5,
+            drop_per_thousand: 0,
+        },
+    );
+    scenario.network.set_link_profile(
+        scenario.radio_ids[1],
+        scenario.radio_ids[2],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -66,
+            base_snr: Snr::from_decibels(8),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 3,
+            drop_per_thousand: 0,
+        },
+    );
+    scenario.network.set_link_profile(
+        scenario.radio_ids[2],
+        scenario.radio_ids[1],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -81,
+            base_snr: Snr::from_decibels(2),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 6,
+            drop_per_thousand: 0,
+        },
+    );
+    scenario.network.set_link_profile(
+        scenario.radio_ids[2],
+        scenario.radio_ids[3],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -64,
+            base_snr: Snr::from_decibels(10),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 2,
+            drop_per_thousand: 0,
+        },
+    );
+    scenario.network.set_link_profile(
+        scenario.radio_ids[3],
+        scenario.radio_ids[2],
+        crate::test_support::ModeledLinkProfile {
+            connected: true,
+            base_rssi: -85,
+            base_snr: Snr::from_decibels(0),
+            rssi_jitter_dbm: 0,
+            snr_jitter_centibels: 0,
+            propagation_delay_ms: 6,
+            drop_per_thousand: 0,
+        },
+    );
+
+    let first_receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"asymmetric-forward",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(4)
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let bob_first = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"asymmetric-forward" {
+                bob_first.set(bob_first.get() + 1);
+            }
+        },
+        || {
+            bob_first.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&first_receipt)
+                    .is_none()
+        },
+        "alice should still complete an acked exchange over asymmetric links",
+    );
+
+    let reply_receipt = {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        bob_mac
+            .queue_unicast(
+                scenario.identity_ids[bob],
+                &scenario.keys[alice],
+                b"asymmetric-reply",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .no_flood()
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let alice_reply = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != alice {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"asymmetric-reply" {
+                alice_reply.set(alice_reply.get() + 1);
+            }
+        },
+        || {
+            alice_reply.get() == 1
+                && scenario.macs[bob]
+                    .borrow()
+                    .identity(scenario.identity_ids[bob])
+                    .unwrap()
+                    .pending_ack(&reply_receipt)
+                    .is_none()
+        },
+        "bob should also complete the reverse acked exchange over the same asymmetric line",
+    );
+}
+
+#[test]
+fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
+    // Alice and Bob have four candidate relays between them. Two are strong and
+    // two are weak. Flood learning should settle on one of the stronger relays.
+    let clock = crate::test_support::DummyClock::new(0);
+    let network = crate::test_support::ModeledNetwork::with_clock(clock.clone());
+    let mut macs = Vec::new();
+    let mut identity_ids = Vec::new();
+    let mut keys = Vec::new();
+    let mut radio_ids = Vec::new();
+    for index in 0..6 {
+        let radio = network.add_radio_with_config(256, 50);
+        radio_ids.push(radio.id());
+        let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
+        mac.repeater_config_mut().enabled = (1..=4).contains(&index);
+        let id = mac
+            .add_identity(crate::test_support::DummyIdentity::new([
+                0x30u8.wrapping_add(index as u8);
+                32
+            ]))
+            .unwrap();
+        identity_ids.push(id);
+        keys.push(*mac.identity(id).unwrap().identity().public_key());
+        macs.push(RefCell::new(mac));
+    }
+
+    for repeater in 1..=4 {
+        let profile = if repeater <= 2 {
+            crate::test_support::ModeledLinkProfile {
+                connected: true,
+                base_rssi: -61,
+                base_snr: Snr::from_decibels(12),
+                rssi_jitter_dbm: 0,
+                snr_jitter_centibels: 0,
+                propagation_delay_ms: 2,
+                drop_per_thousand: 0,
+            }
+        } else {
+            crate::test_support::ModeledLinkProfile {
+                connected: true,
+                base_rssi: -82,
+                base_snr: Snr::from_decibels(1),
+                rssi_jitter_dbm: 0,
+                snr_jitter_centibels: 0,
+                propagation_delay_ms: 6,
+                drop_per_thousand: 0,
+            }
+        };
+        connect_modeled_bidirectional_with_profile(&network, radio_ids[0], radio_ids[repeater], profile);
+        connect_modeled_bidirectional_with_profile(&network, radio_ids[repeater], radio_ids[5], profile);
+    }
+    for left in 1..=4 {
+        for right in (left + 1)..=4 {
+            connect_modeled_bidirectional_with_profile(
+                &network,
+                radio_ids[left],
+                radio_ids[right],
+                crate::test_support::ModeledLinkProfile {
+                    connected: true,
+                    base_rssi: -57,
+                    base_snr: Snr::from_decibels(15),
+                    rssi_jitter_dbm: 0,
+                    snr_jitter_centibels: 0,
+                    propagation_delay_ms: 1,
+                    drop_per_thousand: 0,
+                },
+            );
+        }
+    }
+
+    let pairwise = PairwiseKeys {
+        k_enc: [0x21; 16],
+        k_mic: [0x42; 16],
+    };
+    {
+        let mut alice_mac = macs[0].borrow_mut();
+        let peer_id = alice_mac.add_peer(keys[5]).unwrap();
+        alice_mac.install_pairwise_keys(identity_ids[0], peer_id, pairwise.clone()).unwrap();
+    }
+    {
+        let mut bob_mac = macs[5].borrow_mut();
+        let peer_id = bob_mac.add_peer(keys[0]).unwrap();
+        bob_mac.install_pairwise_keys(identity_ids[5], peer_id, pairwise).unwrap();
+    }
+
+    let receipt = {
+        let mut alice_mac = macs[0].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                identity_ids[0],
+                &keys[5],
+                b"dense-neighborhood",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(3)
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let bob_delivery = Cell::new(0usize);
+    pump_modeled_until(
+        &network,
+        &macs,
+        25,
+        700,
+        |node_index, _, event| {
+            if node_index != 5 {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"dense-neighborhood" {
+                bob_delivery.set(bob_delivery.get() + 1);
+            }
+        },
+        || {
+            bob_delivery.get() == 1
+                && macs[0]
+                    .borrow()
+                    .identity(identity_ids[0])
+                    .unwrap()
+                    .pending_ack(&receipt)
+                    .is_none()
+        },
+        "one of the stronger candidate repeaters should carry the first route-learning packet",
+    );
+
+    let (alice_peer_id, _) = macs[5].borrow().peer_registry().lookup_by_key(&keys[0]).unwrap();
+    let learned_route = macs[5]
+        .borrow()
+        .peer_registry()
+        .get(alice_peer_id)
+        .unwrap()
+        .route
+        .clone();
+    let strong_hints = [
+        macs[1].borrow().identity(identity_ids[1]).unwrap().identity().public_key().router_hint(),
+        macs[2].borrow().identity(identity_ids[2]).unwrap().identity().public_key().router_hint(),
+    ];
+    assert!(matches!(
+        learned_route,
+        Some(CachedRoute::Source(route))
+            if route.len() == 1 && strong_hints.contains(&route[0])
+    ));
+}
+
+#[test]
+fn modeled_unknown_multicast_senders_deliver_unique_messages_without_peer_registry_entries() {
+    // Two senders share a channel with a receiver across repeaters, but the
+    // receiver never registers them as peers. Group delivery should still work.
+    let mut scenario = build_modeled_line_scenario(4);
+    let sender_a = 0usize;
+    let sender_b = 1usize;
+    let receiver = 3usize;
+    let channel_id = install_channel_on_all(&mut scenario, ChannelKey([0x7B; 32]));
+
+    {
+        let mut sender_mac = scenario.macs[sender_a].borrow_mut();
+        sender_mac
+            .queue_multicast(
+                scenario.identity_ids[sender_a],
+                &channel_id,
+                b"group-from-a",
+                &SendOptions::default(),
+            )
+            .unwrap();
+    }
+    {
+        let mut sender_mac = scenario.macs[sender_b].borrow_mut();
+        sender_mac
+            .queue_multicast(
+                scenario.identity_ids[sender_b],
+                &channel_id,
+                b"group-from-b",
+                &SendOptions::default(),
+            )
+            .unwrap();
+    }
+
+    let seen = RefCell::new(std::collections::BTreeSet::new());
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        700,
+        |node_index, _, event| {
+            if node_index != receiver {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Multicast) else {
+                return;
+            };
+            seen.borrow_mut().insert((
+                packet.from_hint().expect("multicast source hint should be present").0,
+                packet.payload_bytes().to_vec(),
+            ));
+        },
+        || seen.borrow().len() == 2,
+        "receiver should accept multicast from unknown senders without peer registration",
+    );
+    assert!(scenario.macs[receiver]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&scenario.keys[sender_a])
+        .is_none());
+    assert!(scenario.macs[receiver]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&scenario.keys[sender_b])
+        .is_none());
+}
+
+#[test]
+fn modeled_multihop_counter_resync_routes_echo_request_and_response() {
+    // Alice and Bob first learn routes in both directions. Alice then
+    // "restarts" by rewinding its local frame counter and sending another
+    // multi-hop packet. Bob should respond by issuing a routed Echo Request,
+    // and Alice should answer with a routed Echo Response. The direct
+    // deferred-packet replay behavior is covered in
+    // `receive_one_resynchronizes_peer_counter_after_out_of_window_restart`.
+    let mut scenario = build_modeled_line_scenario(6);
+    let alice = 0usize;
+    let bob = 5usize;
+    install_pairwise_keys_between(&mut scenario, alice, bob);
+
+    let prime_receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"prime-counter-route",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(6)
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let bob_prime = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"prime-counter-route" {
+                bob_prime.set(bob_prime.get() + 1);
+            }
+        },
+        || {
+            bob_prime.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&prime_receipt)
+                    .is_none()
+        },
+        "the priming packet should establish the route before the restart simulation",
+    );
+
+    let prime_reply_receipt = {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        bob_mac
+            .queue_unicast(
+                scenario.identity_ids[bob],
+                &scenario.keys[alice],
+                b"prime-counter-reply",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .no_flood()
+                    .with_trace_route(),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    let alice_prime_reply = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != alice {
+                return;
+            }
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            if packet.payload_bytes() == b"prime-counter-reply" {
+                alice_prime_reply.set(alice_prime_reply.get() + 1);
+            }
+        },
+        || {
+            alice_prime_reply.get() == 1
+                && scenario.macs[bob]
+                    .borrow()
+                    .identity(scenario.identity_ids[bob])
+                    .unwrap()
+                    .pending_ack(&prime_reply_receipt)
+                    .is_none()
+        },
+        "the reply should teach alice a cached route back to bob before the restart simulation",
+    );
+
+    scenario.macs[alice]
+        .borrow_mut()
+        .identity_mut(scenario.identity_ids[alice])
+        .unwrap()
+        .load_persisted_counter(0);
+    scenario.macs[alice]
+        .borrow_mut()
+        .identity_mut(scenario.identity_ids[alice])
+        .unwrap()
+        .set_frame_counter(1);
+
+    {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"after-restart",
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(6),
+            )
+            .unwrap();
+    };
+    let alice_echo_requests = Cell::new(0usize);
+    let bob_echo_responses = Cell::new(0usize);
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        1400,
+        |node_index, _, event| {
+            let Some(packet) = received_of_type(event, PacketType::Unicast) else {
+                return;
+            };
+            match packet.payload_bytes() {
+                [payload_type, 4, ..] if node_index == alice && *payload_type == PayloadType::MacCommand as u8 => {
+                    alice_echo_requests.set(alice_echo_requests.get() + 1);
+                }
+                [payload_type, 5, ..] if node_index == bob && *payload_type == PayloadType::MacCommand as u8 => {
+                    bob_echo_responses.set(bob_echo_responses.get() + 1);
+                }
+                _ => {}
+            }
+        },
+        || alice_echo_requests.get() >= 1 && bob_echo_responses.get() >= 1,
+        "the multi-hop resync exchange should carry both the Echo Request and the Echo Response",
+    );
+}
+
+#[test]
+fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
+    // Exercise several packet classes on the same four-node line without
+    // changing topology or installed state between phases. Staging the sends
+    // keeps the assertions easy to read while still proving that the classes
+    // can coexist in one mesh.
+    let mut scenario = build_modeled_line_scenario(4);
+    let alice = 0usize;
+    let bob = 3usize;
+    install_pairwise_keys_between(&mut scenario, alice, bob);
+    let channel_id = install_channel_on_all(&mut scenario, ChannelKey([0x66; 32]));
+
+    let bob_unicast = Cell::new(0usize);
+    let unicast_receipt = {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_unicast(
+                scenario.identity_ids[alice],
+                &scenario.keys[bob],
+                b"mixed-unicast",
+                &SendOptions::default().with_ack_requested(true).with_flood_hops(4),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            if let Some(packet) = received_of_type(event, PacketType::Unicast) {
+                if packet.payload_bytes() == b"mixed-unicast" {
+                    bob_unicast.set(bob_unicast.get() + 1);
+                }
+            }
+        },
+        || {
+            bob_unicast.get() == 1
+                && scenario.macs[alice]
+                    .borrow()
+                    .identity(scenario.identity_ids[alice])
+                    .unwrap()
+                    .pending_ack(&unicast_receipt)
+                    .is_none()
+        },
+        "the unicast phase should complete normally",
+    );
+
+    let bob_multicast = Cell::new(0usize);
+    {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        alice_mac
+            .queue_multicast(
+                scenario.identity_ids[alice],
+                &channel_id,
+                b"mixed-multicast",
+                &SendOptions::default(),
+            )
+            .unwrap();
+    }
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        700,
+        |node_index, _, event| {
+            if node_index != bob {
+                return;
+            }
+            if let Some(packet) = received_of_type(event, PacketType::Multicast) {
+                if packet.payload_bytes() == b"mixed-multicast" {
+                    bob_multicast.set(bob_multicast.get() + 1);
+                }
+            }
+        },
+        || bob_multicast.get() == 1,
+        "the multicast phase should still work on the same mesh",
+    );
+
+    let alice_blind = Cell::new(0usize);
+    let blind_receipt = {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        bob_mac
+            .queue_blind_unicast(
+                scenario.identity_ids[bob],
+                &scenario.keys[alice],
+                &channel_id,
+                b"mixed-blind",
+                &SendOptions::default().with_ack_requested(true).with_flood_hops(4),
+            )
+            .unwrap()
+            .unwrap()
+    };
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        900,
+        |node_index, _, event| {
+            if node_index != alice {
+                return;
+            }
+            if let Some(packet) = received_of_type(event, PacketType::BlindUnicast) {
+                if packet.payload_bytes() == b"mixed-blind" {
+                    alice_blind.set(alice_blind.get() + 1);
+                }
+            }
+        },
+        || {
+            alice_blind.get() == 1
+                && scenario.macs[bob]
+                    .borrow()
+                    .identity(scenario.identity_ids[bob])
+                    .unwrap()
+                    .pending_ack(&blind_receipt)
+                    .is_none()
+        },
+        "the blind-unicast phase should also complete on the same mesh",
+    );
+
+    let alice_broadcast = Cell::new(0usize);
+    let bob_broadcast = Cell::new(0usize);
+    {
+        let mut midpoint_mac = scenario.macs[1].borrow_mut();
+        midpoint_mac
+            .queue_broadcast(
+                scenario.identity_ids[1],
+                b"mixed-broadcast",
+                &SendOptions::default().unencrypted().with_flood_hops(4),
+            )
+            .unwrap();
+    }
+    pump_modeled_until(
+        &scenario.network,
+        &scenario.macs,
+        25,
+        700,
+        |node_index, _, event| {
+            let Some(packet) = received_of_type(event, PacketType::Broadcast) else {
+                return;
+            };
+            if packet.payload_bytes() != b"mixed-broadcast" {
+                return;
+            }
+            if node_index == alice {
+                alice_broadcast.set(alice_broadcast.get() + 1);
+            }
+            if node_index == bob {
+                bob_broadcast.set(bob_broadcast.get() + 1);
+            }
+        },
+        || alice_broadcast.get() == 1 && bob_broadcast.get() == 1,
+        "the broadcast phase should still flood across the same mesh",
+    );
+}
+
+#[test]
+fn receive_one_repeater_does_not_forward_reserved_packet_type_five() {
+    // Packet type 5 remains opaque and non-routable until the protocol assigns
+    // it explicit forwarding semantics.
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    let repeater_id = repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
+    let repeater_hint = repeater
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let frame = build_reserved5_frame(
+        Some((2, 2)),
+        Some(&[repeater_hint]),
+        Some(&[RouterHint([0x33, 0x44])]),
+        b"opaque-five",
+    );
+    repeater.radio_mut().queue_received_frame(frame.as_slice());
+
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+    assert!(!handled);
+    assert!(repeater.tx_queue_mut().pop_next().is_none());
 }
 
 #[test]
@@ -4173,6 +5685,218 @@ fn poll_radio_once<R: Radio<Error = ()>>(
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
     radio.poll_receive(&mut cx, buf)
+}
+
+type DeepModeledMac = crate::test_support::ModeledTestMac<4, 16, 8, 16, 16, 256, 64>;
+
+struct ModeledScenario {
+    network: crate::test_support::ModeledNetwork,
+    macs: Vec<RefCell<DeepModeledMac>>,
+    identity_ids: Vec<LocalIdentityId>,
+    keys: Vec<PublicKey>,
+    radio_ids: Vec<usize>,
+}
+
+fn build_modeled_line_scenario(node_count: usize) -> ModeledScenario {
+    let clock = crate::test_support::DummyClock::new(0);
+    let network = crate::test_support::ModeledNetwork::with_clock(clock.clone());
+    let mut macs = Vec::new();
+    let mut identity_ids = Vec::new();
+    let mut keys = Vec::new();
+    let mut radio_ids = Vec::new();
+
+    for index in 0..node_count {
+        let radio = network.add_radio_with_config(256, 50);
+        radio_ids.push(radio.id());
+        let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
+        mac.repeater_config_mut().enabled = index > 0 && index + 1 < node_count;
+        let id = mac
+            .add_identity(crate::test_support::DummyIdentity::new([
+                0x10u8.wrapping_add(index as u8);
+                32
+            ]))
+            .unwrap();
+        let key = *mac.identity(id).unwrap().identity().public_key();
+        identity_ids.push(id);
+        keys.push(key);
+        macs.push(RefCell::new(mac));
+    }
+
+    for index in 0..node_count.saturating_sub(1) {
+        connect_modeled_bidirectional(&network, radio_ids[index], radio_ids[index + 1]);
+    }
+
+    ModeledScenario {
+        network,
+        macs,
+        identity_ids,
+        keys,
+        radio_ids,
+    }
+}
+
+fn install_endpoint_pairwise_keys(scenario: &mut ModeledScenario) {
+    install_pairwise_keys_between(scenario, 0, scenario.keys.len() - 1);
+}
+
+fn install_pairwise_keys_between(scenario: &mut ModeledScenario, alice: usize, bob: usize) {
+    let pairwise = PairwiseKeys {
+        k_enc: [0x21; 16],
+        k_mic: [0x42; 16],
+    };
+
+    {
+        let mut alice_mac = scenario.macs[alice].borrow_mut();
+        let peer_id = alice_mac.add_peer(scenario.keys[bob]).unwrap();
+        alice_mac
+            .install_pairwise_keys(scenario.identity_ids[alice], peer_id, pairwise.clone())
+            .unwrap();
+    }
+    {
+        let mut bob_mac = scenario.macs[bob].borrow_mut();
+        let peer_id = bob_mac.add_peer(scenario.keys[alice]).unwrap();
+        bob_mac
+            .install_pairwise_keys(scenario.identity_ids[bob], peer_id, pairwise)
+            .unwrap();
+    }
+}
+
+fn connect_modeled_bidirectional(
+    network: &crate::test_support::ModeledNetwork,
+    a: usize,
+    b: usize,
+) {
+    let profile = crate::test_support::ModeledLinkProfile {
+        connected: true,
+        base_rssi: -67,
+        base_snr: Snr::from_decibels(9),
+        rssi_jitter_dbm: 1,
+        snr_jitter_centibels: 5,
+        propagation_delay_ms: 3,
+        drop_per_thousand: 0,
+    };
+    network.set_link_profile(a, b, profile);
+    network.set_link_profile(b, a, profile);
+}
+
+fn connect_modeled_bidirectional_with_profile(
+    network: &crate::test_support::ModeledNetwork,
+    a: usize,
+    b: usize,
+    profile: crate::test_support::ModeledLinkProfile,
+) {
+    network.set_link_profile(a, b, profile);
+    network.set_link_profile(b, a, profile);
+}
+
+fn disconnect_modeled_bidirectional(
+    network: &crate::test_support::ModeledNetwork,
+    a: usize,
+    b: usize,
+) {
+    network.disconnect(a, b);
+    network.disconnect(b, a);
+}
+
+fn pump_modeled_until(
+    network: &crate::test_support::ModeledNetwork,
+    macs: &[RefCell<DeepModeledMac>],
+    step_ms: u64,
+    max_steps: usize,
+    mut on_event: impl FnMut(usize, LocalIdentityId, &MacEventRef<'_>),
+    mut done: impl FnMut() -> bool,
+    waiting_for: &str,
+) {
+    for _ in 0..max_steps {
+        if done() {
+            return;
+        }
+        for (node_index, mac_cell) in macs.iter().enumerate() {
+            let mut mac = mac_cell.borrow_mut();
+            block_on(mac.poll_cycle(|identity, event| {
+                on_event(node_index, identity, &event);
+            }))
+            .unwrap();
+        }
+        if done() {
+            return;
+        }
+        network.advance_ms(step_ms);
+    }
+    panic!("timed out waiting for {waiting_for}");
+}
+
+fn install_channel_on_all(
+    scenario: &mut ModeledScenario,
+    channel_key: ChannelKey,
+) -> ChannelId {
+    let channel_id = scenario.macs[0]
+        .borrow()
+        .crypto()
+        .derive_channel_id(&channel_key);
+    for mac in &scenario.macs {
+        mac.borrow_mut().add_channel(channel_key.clone()).unwrap();
+    }
+    channel_id
+}
+
+fn build_reserved5_frame(
+    flood_hops: Option<(u8, u8)>,
+    source_route: Option<&[RouterHint]>,
+    trace_route: Option<&[RouterHint]>,
+    body: &[u8],
+) -> heapless::Vec<u8, 256> {
+    let mut frame = [0u8; 256];
+    let mut options_buf = [0u8; 128];
+    let mut encoder = umsh_core::options::OptionEncoder::new(&mut options_buf);
+
+    if let Some(route) = trace_route {
+        let mut encoded = [0u8; 30];
+        let mut used = 0usize;
+        for hop in route {
+            encoded[used..used + 2].copy_from_slice(&hop.0);
+            used += 2;
+        }
+        encoder
+            .put(OptionNumber::TraceRoute.as_u16(), &encoded[..used])
+            .unwrap();
+    }
+    if let Some(route) = source_route {
+        let mut encoded = [0u8; 30];
+        let mut used = 0usize;
+        for hop in route {
+            encoded[used..used + 2].copy_from_slice(&hop.0);
+            used += 2;
+        }
+        encoder
+            .put(OptionNumber::SourceRoute.as_u16(), &encoded[..used])
+            .unwrap();
+    }
+    let options_len = if source_route.is_some() || trace_route.is_some() {
+        encoder.end_marker().unwrap();
+        encoder.finish()
+    } else {
+        0
+    };
+
+    let has_options = options_len > 0;
+    let has_flood_hops = flood_hops.is_some();
+    frame[0] = umsh_core::Fcf::new(PacketType::Reserved5, false, has_options, has_flood_hops).0;
+    let mut cursor = 1usize;
+    if has_options {
+        frame[cursor..cursor + options_len].copy_from_slice(&options_buf[..options_len]);
+        cursor += options_len;
+    }
+    if let Some((remaining, accumulated)) = flood_hops {
+        frame[cursor] = FloodHops::new(remaining, accumulated).unwrap().0;
+        cursor += 1;
+    }
+    frame[cursor..cursor + body.len()].copy_from_slice(body);
+    cursor += body.len();
+
+    let mut stored = heapless::Vec::new();
+    stored.extend_from_slice(&frame[..cursor]).unwrap();
+    stored
 }
 
 struct DummyIdentity {

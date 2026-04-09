@@ -5,13 +5,14 @@ use crate::{RECENT_MIC_CAPACITY, REPLAY_BACKTRACK_SLOTS, REPLAY_STALE_MS};
 /// Duplicate-suppression key derived from an accepted packet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DupCacheKey {
-    /// Authenticated packet keyed by its MIC bytes.
+    /// Authenticated routable packet keyed by its MIC bytes.
     Mic {
         bytes: [u8; 16],
         len: u8,
         route_retry: bool,
     },
-    /// Unauthenticated packet keyed by a local hash.
+    /// MIC-less routable packet keyed by a stable local hash over non-dynamic
+    /// fields.
     Hash32(u32),
 }
 

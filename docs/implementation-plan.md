@@ -1222,8 +1222,10 @@ decisions — the receive path generates an ACK and needs a return route immedia
 not after application handling. The MAC coordinator updates the shared
 `PeerRegistry` route cache during packet processing:
 
-- If the packet carries a trace-route option, cache the reversed trace as a
-  source route for the sender.
+- If the packet carries a trace-route option, cache that trace directly as a
+  source route for the sender. The trace is accumulated most-recent hop first,
+  so it already describes the return path from the receiver back toward the
+  sender.
 - If the packet carries a flood hop count, cache `FHOPS_ACC` as a distance
   estimate for flood-scoped responses.
 - Route state is updated in the shared `PeerRegistry` and is immediately

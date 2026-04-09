@@ -1235,7 +1235,37 @@ impl<
         self.queue_multicast(from, channel_id, payload, options)
     }
 
-    /// Enqueues an immediate MAC ACK frame.
+    /// Enqueues a MAC ACK frame, using any cached route to `peer_id` when available.
+    pub fn queue_mac_ack_for_peer(
+        &mut self,
+        peer_id: PeerId,
+        dst: NodeHint,
+        ack_tag: [u8; 8],
+    ) -> Result<(), SendError> {
+        let mut buf = [0u8; FRAME];
+        let mut builder = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag);
+        if let Some(peer) = self.peer_registry.get(peer_id) {
+            match peer.route.as_ref() {
+                Some(CachedRoute::Source(route)) => {
+                    builder = builder.source_route(route.as_slice());
+                }
+                Some(CachedRoute::Flood { hops }) => {
+                    builder = builder.flood_hops((*hops).clamp(1, 15));
+                }
+                None => {}
+            }
+        }
+        let frame = builder.build()?;
+        if frame.len() > self.radio.max_frame_size() {
+            return Err(SendError::Build(BuildError::BufferTooSmall));
+        }
+        self.tx_queue
+            .enqueue(TxPriority::ImmediateAck, frame, None, None)
+            .map_err(|_| SendError::QueueFull)?;
+        Ok(())
+    }
+
+    /// Enqueues an immediate direct MAC ACK frame.
     pub fn queue_mac_ack(&mut self, dst: NodeHint, ack_tag: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
         let frame = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag).build()?;
@@ -1815,6 +1845,7 @@ impl<
                         buf,
                         current_len,
                         &header,
+                        &current_rx,
                         forwarding_confirmed,
                         &mut on_event,
                     ),
@@ -1921,42 +1952,46 @@ impl<
                 )),
             );
         }
-        delivered
+        // Broadcast delivery does not consume the packet. Broadcast remains a
+        // routable mesh packet and may still be forwarded by a repeater after
+        // local delivery.
+        let forwarded = self.maybe_forward_received(&buf[..frame_len], header, rx, false);
+        delivered || forwarded
     }
 
     fn process_mac_ack(
         &mut self,
         buf: &[u8; FRAME],
-        _frame_len: usize,
+        frame_len: usize,
         header: &PacketHeader,
+        rx: &RxInfo,
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         let Some(ack_dst) = header.ack_dst else {
             return false;
         };
-        let Some(target_peer) = self
+        let target_peer = self
             .identities
             .iter()
             .filter_map(|slot| slot.as_ref())
             .find(|slot| slot.identity().public_key().hint() == ack_dst)
-            .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]))
-        else {
-            return false;
-        };
-        let mut ack_tag = [0u8; 8];
-        ack_tag.copy_from_slice(&buf[header.mic_range.clone()]);
-        if let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_tag) {
-            on_event(
-                identity_id,
-                crate::MacEventRef::AckReceived {
-                    peer: target_peer,
-                    receipt,
-                },
-            );
-            return true;
+            .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]));
+        if let Some(target_peer) = target_peer {
+            let mut ack_tag = [0u8; 8];
+            ack_tag.copy_from_slice(&buf[header.mic_range.clone()]);
+            if let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_tag) {
+                on_event(
+                    identity_id,
+                    crate::MacEventRef::AckReceived {
+                        peer: target_peer,
+                        receipt,
+                    },
+                );
+                return true;
+            }
         }
-        forwarding_confirmed
+        forwarding_confirmed || self.maybe_forward_received(&buf[..frame_len], header, rx, false)
     }
 
     async fn process_unicast(
@@ -2034,7 +2069,8 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                    self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                        .ok();
                 }
 
                 if let Some(data) = Self::echo_request_data(payload) {
@@ -2295,7 +2331,8 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack(peer_key.hint(), ack_tag).ok();
+                            self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                                .ok();
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -3350,7 +3387,7 @@ impl<
         };
 
         if let Some(trace_range) = options.trace_route {
-            if let Some(route) = self.reverse_trace_route(frame.get(trace_range).unwrap_or(&[])) {
+            if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[])) {
                 self.peer_registry
                     .update_route(peer_id, crate::CachedRoute::Source(route));
                 return;
@@ -3393,7 +3430,7 @@ impl<
             .allowed_for(packet_type)
     }
 
-    fn reverse_trace_route(
+    fn source_route_from_trace(
         &self,
         trace_bytes: &[u8],
     ) -> Option<heapless::Vec<RouterHint, { crate::MAX_SOURCE_ROUTE_HOPS }>> {
@@ -3402,7 +3439,7 @@ impl<
         }
 
         let mut route = heapless::Vec::new();
-        for chunk in trace_bytes.chunks_exact(2).rev() {
+        for chunk in trace_bytes.chunks_exact(2) {
             route.push(RouterHint([chunk[0], chunk[1]])).ok()?;
         }
         Some(route)
@@ -3413,6 +3450,10 @@ impl<
             return false;
         };
 
+        // Destination ACKs are emitted only once a source route is fully
+        // consumed. An empty SourceRoute still matters for provenance, but it
+        // no longer constrains forwarding and therefore counts as "at the
+        // destination" for ACK purposes.
         options
             .source_route
             .map(|range| range.is_empty())
@@ -3426,9 +3467,15 @@ impl<
         rx: &RxInfo,
         locally_handled_unicast: bool,
     ) -> bool {
-        if !self.repeater.enabled || !header.packet_type().is_secure() {
+        if !self.repeater.enabled {
             return false;
         }
+        if !header.packet_type().is_routable() {
+            return false;
+        }
+        // Once a point-to-point packet is handled by its actual destination, it
+        // should not also be repeated by that same node. Other packet classes,
+        // including broadcast and MAC ACK, remain routable.
         if locally_handled_unicast
             && matches!(
                 header.packet_type(),
@@ -3529,7 +3576,7 @@ impl<
             }
             consume_source_route = true;
             if source_route_bytes.len() == 2 {
-                decrement_flood_hops = true;
+                decrement_flood_hops = header.flood_hops.is_some();
             }
         } else {
             decrement_flood_hops = true;
@@ -3942,9 +3989,25 @@ impl<
         }
     }
 
-    fn forward_dup_key(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
+    /// Routing identity used for duplicate suppression at repeaters.
+    ///
+    /// This is intentionally not the same thing as the destination's logical
+    /// delivery identity:
+    /// - delivery identity is governed by replay windows / frame counters at
+    ///   the destination
+    /// - routing identity must remain stable across repeater rewrites of
+    ///   dynamic routing metadata
+    /// - forwarding-confirmation identity intentionally matches routing
+    ///   identity so a node can recognize "the same packet, forwarded onward"
+    pub(crate) fn forward_dup_key(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
+        Self::routable_packet_identity(header, frame)
+    }
+
+    fn routable_packet_identity(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
         if !header.packet_type().is_secure() {
-            return None;
+            return Some(DupCacheKey::Hash32(Self::normalized_routable_hash32(
+                header, frame,
+            )));
         }
         let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
         let mic = frame.get(header.mic_range.clone())?;
@@ -4134,21 +4197,82 @@ impl<
         None
     }
 
-    fn confirmation_key(frame: &[u8]) -> Option<DupCacheKey> {
+    pub(crate) fn confirmation_key(frame: &[u8]) -> Option<DupCacheKey> {
         let header = PacketHeader::parse(frame).ok()?;
-        let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
-        let mic = frame.get(header.mic_range)?;
-        if mic.is_empty() || mic.len() > 16 {
-            return None;
+        Self::routable_packet_identity(&header, frame)
+    }
+
+    fn normalized_routable_hash32(header: &PacketHeader, frame: &[u8]) -> u32 {
+        let mut hash = 0x811C_9DC5u32;
+
+        Self::hash_u8(&mut hash, header.packet_type() as u8);
+        Self::hash_u8(&mut hash, header.fcf.full_source() as u8);
+
+        if !header.options_range.is_empty() {
+            for entry in umsh_core::iter_options(frame, header.options_range.clone()) {
+                let Ok((number, value)) = entry else {
+                    continue;
+                };
+                let option = OptionNumber::from(number);
+                if option.is_dynamic() {
+                    continue;
+                }
+                Self::hash_u16(&mut hash, number);
+                Self::hash_u16(&mut hash, value.len() as u16);
+                Self::hash_bytes(&mut hash, value);
+            }
         }
 
-        let mut bytes = [0u8; 16];
-        bytes[..mic.len()].copy_from_slice(mic);
-        Some(DupCacheKey::Mic {
-            bytes,
-            len: mic.len() as u8,
-            route_retry: options.route_retry,
-        })
+        match header.packet_type() {
+            PacketType::Broadcast => {
+                match header.source {
+                    umsh_core::SourceAddrRef::Hint(hint) => Self::hash_bytes(&mut hash, &hint.0),
+                    umsh_core::SourceAddrRef::FullKeyAt { offset } => {
+                        if let Some(key) = frame.get(offset..offset + 32) {
+                            Self::hash_bytes(&mut hash, key);
+                        }
+                    }
+                    umsh_core::SourceAddrRef::Encrypted { offset, len } => {
+                        if let Some(src) = frame.get(offset..offset + len) {
+                            Self::hash_bytes(&mut hash, src);
+                        }
+                    }
+                    umsh_core::SourceAddrRef::None => {}
+                }
+                if let Some(payload) = frame.get(header.body_range.clone()) {
+                    Self::hash_bytes(&mut hash, payload);
+                }
+            }
+            PacketType::MacAck => {
+                if let Some(dst) = header.ack_dst {
+                    Self::hash_bytes(&mut hash, &dst.0);
+                }
+                if let Some(tag) = frame.get(header.mic_range.clone()) {
+                    Self::hash_bytes(&mut hash, tag);
+                }
+            }
+            _ => {
+                if let Some(bytes) = frame.get(header.body_range.clone()) {
+                    Self::hash_bytes(&mut hash, bytes);
+                }
+            }
+        }
+        hash
+    }
+
+    fn hash_u8(hash: &mut u32, value: u8) {
+        *hash ^= u32::from(value);
+        *hash = hash.wrapping_mul(0x0100_0193);
+    }
+
+    fn hash_u16(hash: &mut u32, value: u16) {
+        Self::hash_bytes(hash, &value.to_be_bytes());
+    }
+
+    fn hash_bytes(hash: &mut u32, bytes: &[u8]) {
+        for byte in bytes {
+            Self::hash_u8(hash, *byte);
+        }
     }
 
     /// Check if a received frame confirms forwarding of a pending send.

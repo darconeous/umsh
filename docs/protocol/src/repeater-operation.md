@@ -2,6 +2,24 @@
 
 Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.
 
+## Routing Invariants
+
+The routing model is governed by a few simple rules:
+
+- Every currently defined routable on-mesh packet type is routable.
+  - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
+  - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.
+- Repeaters MUST mutate specific dynamic routing metadata while forwarding.
+  - A repeater MUST NOT simply repeat a packet without making specific changes.
+  - Typical examples are flood hop counts, trace routes, source routes.
+  - Repeaters themselves to not add the Route Retry flag, only the original sender does that.
+  - These mutations do **not** create a new logical packet.
+- A packet's logical delivery identity and its repeater forwarding identity are related but distinct.
+  - The final destination decides whether a packet is new by its normal replay and destination-processing rules.
+  - Repeaters suppress duplicates using a forwarding identity that remains stable across legal forwarding rewrites.
+- Forwarding confirmation uses the same identity as repeater duplicate suppression.
+  - This ensures a sender or repeater recognizes "the same packet, forwarded onward" even if the next hop mutates dynamic routing metadata.
+
 ## Duplicate Suppression
 
 Each repeater maintains a fixed-size cache of recently seen **cache keys** used to detect duplicate packets.
