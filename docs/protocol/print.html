@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-93029c72.js";
+            window.path_to_searchindex_js = "searchindex-4d3ff43a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -1359,6 +1359,35 @@ delay = uniform_random(0, W)
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
+<h2 id="routing-invariants"><a class="header" href="#routing-invariants">Routing Invariants</a></h2>
+<p>The routing model is governed by a few simple rules:</p>
+<ul>
+<li>Every currently defined routable on-mesh packet type is routable.
+<ul>
+<li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
+<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
+</ul>
+</li>
+<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding.
+<ul>
+<li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
+<li>Typical examples are flood hop counts, trace routes, source routes.</li>
+<li>Repeaters themselves to not add the Route Retry flag, only the original sender does that.</li>
+<li>These mutations do <strong>not</strong> create a new logical packet.</li>
+</ul>
+</li>
+<li>A packet’s logical delivery identity and its repeater forwarding identity are related but distinct.
+<ul>
+<li>The final destination decides whether a packet is new by its normal replay and destination-processing rules.</li>
+<li>Repeaters suppress duplicates using a forwarding identity that remains stable across legal forwarding rewrites.</li>
+</ul>
+</li>
+<li>Forwarding confirmation uses the same identity as repeater duplicate suppression.
+<ul>
+<li>This ensures a sender or repeater recognizes “the same packet, forwarded onward” even if the next hop mutates dynamic routing metadata.</li>
+</ul>
+</li>
+</ul>
 <h2 id="duplicate-suppression-1"><a class="header" href="#duplicate-suppression-1">Duplicate Suppression</a></h2>
 <p>Each repeater maintains a fixed-size cache of recently seen <strong>cache keys</strong> used to detect duplicate packets.</p>
 <p>Parameters:</p>
@@ -1552,7 +1581,7 @@ delay = uniform_random(0, W)
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
 <p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
 <ul>
-<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches the reversed trace route as a source route for future packets to the sender. This is the primary mechanism for learning precise multi-hop paths.</li>
+<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</li>
 <li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
 </ul>
 <p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
@@ -1564,6 +1593,24 @@ delay = uniform_random(0, W)
 <li>set the <a href="#route-retry-option-6">Route Retry option</a> so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet’s MIC and frame counter are unchanged</li>
 </ul>
 <p>Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.</p>
+<h2 id="potential-improvement-proactive-route-refresh"><a class="header" href="#potential-improvement-proactive-route-refresh">Potential Improvement: Proactive Route Refresh</a></h2>
+<p>The recovery behavior above is reactive: a node continues using a cached source route until that route appears to have failed. In mobile scenarios, this may mean the sender does not attempt to discover a fresher route until after packets have already stopped flowing end-to-end.</p>
+<p>One possible future improvement would be to allow a sender to occasionally perform a low-rate exploratory route refresh even when there is no strong indication of failure. This behavior is <strong>not part of the current specified protocol behavior</strong> and has <strong>not been validated with real-world measurements</strong>. It is described here only as a possible future optimization.</p>
+<p>A conservative version of this idea would look like:</p>
+<ul>
+<li>only perform exploratory refresh when the sender is believed to be mobile or moving</li>
+<li>use a normal cached source route, but also include a trace-route option</li>
+<li>allow only a small flood budget, capped at no more than <code>source_route_hops + 1</code></li>
+<li>perform this no more than occasionally, for example no more than once every <code>N</code> successful transmissions and no more than once every <code>T</code> minutes, whichever is longer</li>
+</ul>
+<p>The intent would be to probe for a slightly better or fresher route without incurring the cost of a full rediscovery flood. A small tail flood could help discover alternate final hops or nearby replacement repeaters when the old route is only partially stale.</p>
+<p>This approach has important limitations:</p>
+<ul>
+<li>if the cached source route breaks early, a small tail flood will not help, because forwarding remains constrained by the explicit source route until that route is exhausted</li>
+<li>excessive probing would waste airtime and increase contention, especially on busy meshes</li>
+<li>a newly observed route is not necessarily better and may require local policy before replacing the old route</li>
+</ul>
+<p>If this idea is ever standardized, meshes should converge on the same probing policy and parameter values so that behavior remains predictable across implementations. Any such policy should be treated as provisional until it has been evaluated on real radios in mobile conditions.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="payload-format"><a class="header" href="#payload-format">Payload Format</a></h1>
 <p>The UMSH payload carries higher-layer content — either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see <a href="#layer-separation">Layer Separation</a>).</p>
@@ -2799,15 +2846,15 @@ as amateur-radio traffic.</p>
 <p>Two independent gaps make this hard to address:</p>
 <ul>
 <li>
-<p><strong>Routing</strong>: an intermediate node needs a return path to send anything back. The sender’s 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops can be reversed.</p>
+<p><strong>Routing</strong>: an intermediate node needs a return path to send anything back. The sender’s 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops already describe the return path from the receiver back toward the original sender.</p>
 </li>
 <li>
 <p><strong>Authentication</strong>: an intermediate node cannot send an authenticated reply without the sender’s full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination — which has the full source key and performs ECDH — can send a fully authenticated reply.</p>
 </li>
 </ul>
 <p>Without a trace route, there is no viable return path and no error feedback is possible.</p>
-<h4 id="possible-approach-reversed-trace-route"><a class="header" href="#possible-approach-reversed-trace-route">Possible Approach: Reversed Trace Route</a></h4>
-<p>If the original packet carries a trace route option, an intermediate node can reverse the accumulated hops to construct a source route back toward the original sender and emit an error packet along that path, addressed to the sender’s 3-byte SRC hint.</p>
+<h4 id="possible-approach-trace-route-return-path"><a class="header" href="#possible-approach-trace-route-return-path">Possible Approach: Trace-Route Return Path</a></h4>
+<p>If the original packet carries a trace route option, an intermediate node can use the accumulated hops directly as a source route back toward the original sender and emit an error packet along that path, addressed to the sender’s 3-byte SRC hint.</p>
 <p>This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.</p>
 <p>The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above — a compact notification carrying a signal type and a MIC reference — differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.</p>
 <p>Any such error is unencrypted and unauthenticated. Senders MUST treat it as untrusted diagnostic information only — a forged error is equivalent in effect to a dropped packet, which is already in the threat model.</p>
@@ -3167,7 +3214,7 @@ as amateur-radio traffic.</p>
 </div>
 <p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
 <p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).</p>
-<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="#route-learning">Route Learning</a>).</p>
+<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient caches the accumulated trace directly as a source route for all subsequent communication with the sender, because the trace is already built most-recent hop first (see <a href="#route-learning">Route Learning</a>).</p>
 <p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
 <p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
 <h2 id="privacy-1"><a class="header" href="#privacy-1">Privacy</a></h2>

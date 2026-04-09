@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-93029c72.js";
+            window.path_to_searchindex_js = "searchindex-4d3ff43a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -176,6 +176,35 @@
                     <main>
                         <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
 <p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
+<h2 id="routing-invariants"><a class="header" href="#routing-invariants">Routing Invariants</a></h2>
+<p>The routing model is governed by a few simple rules:</p>
+<ul>
+<li>Every currently defined routable on-mesh packet type is routable.
+<ul>
+<li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
+<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
+</ul>
+</li>
+<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding.
+<ul>
+<li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
+<li>Typical examples are flood hop counts, trace routes, source routes.</li>
+<li>Repeaters themselves to not add the Route Retry flag, only the original sender does that.</li>
+<li>These mutations do <strong>not</strong> create a new logical packet.</li>
+</ul>
+</li>
+<li>A packet’s logical delivery identity and its repeater forwarding identity are related but distinct.
+<ul>
+<li>The final destination decides whether a packet is new by its normal replay and destination-processing rules.</li>
+<li>Repeaters suppress duplicates using a forwarding identity that remains stable across legal forwarding rewrites.</li>
+</ul>
+</li>
+<li>Forwarding confirmation uses the same identity as repeater duplicate suppression.
+<ul>
+<li>This ensures a sender or repeater recognizes “the same packet, forwarded onward” even if the next hop mutates dynamic routing metadata.</li>
+</ul>
+</li>
+</ul>
 <h2 id="duplicate-suppression"><a class="header" href="#duplicate-suppression">Duplicate Suppression</a></h2>
 <p>Each repeater maintains a fixed-size cache of recently seen <strong>cache keys</strong> used to detect duplicate packets.</p>
 <p>Parameters:</p>

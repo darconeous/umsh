@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-93029c72.js";
+            window.path_to_searchindex_js = "searchindex-4d3ff43a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -268,7 +268,7 @@
 </div>
 <p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
 <p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).</p>
-<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see <a href="beacons.html#route-learning">Route Learning</a>).</p>
+<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient caches the accumulated trace directly as a source route for all subsequent communication with the sender, because the trace is already built most-recent hop first (see <a href="beacons.html#route-learning">Route Learning</a>).</p>
 <p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
 <p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
 <h2 id="privacy"><a class="header" href="#privacy">Privacy</a></h2>

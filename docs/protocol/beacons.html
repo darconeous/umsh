@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-93029c72.js";
+            window.path_to_searchindex_js = "searchindex-4d3ff43a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -208,7 +208,7 @@
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
 <p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
 <ul>
-<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches the reversed trace route as a source route for future packets to the sender. This is the primary mechanism for learning precise multi-hop paths.</li>
+<li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</li>
 <li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
 </ul>
 <p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
@@ -220,6 +220,24 @@
 <li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a> so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet’s MIC and frame counter are unchanged</li>
 </ul>
 <p>Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.</p>
+<h2 id="potential-improvement-proactive-route-refresh"><a class="header" href="#potential-improvement-proactive-route-refresh">Potential Improvement: Proactive Route Refresh</a></h2>
+<p>The recovery behavior above is reactive: a node continues using a cached source route until that route appears to have failed. In mobile scenarios, this may mean the sender does not attempt to discover a fresher route until after packets have already stopped flowing end-to-end.</p>
+<p>One possible future improvement would be to allow a sender to occasionally perform a low-rate exploratory route refresh even when there is no strong indication of failure. This behavior is <strong>not part of the current specified protocol behavior</strong> and has <strong>not been validated with real-world measurements</strong>. It is described here only as a possible future optimization.</p>
+<p>A conservative version of this idea would look like:</p>
+<ul>
+<li>only perform exploratory refresh when the sender is believed to be mobile or moving</li>
+<li>use a normal cached source route, but also include a trace-route option</li>
+<li>allow only a small flood budget, capped at no more than <code>source_route_hops + 1</code></li>
+<li>perform this no more than occasionally, for example no more than once every <code>N</code> successful transmissions and no more than once every <code>T</code> minutes, whichever is longer</li>
+</ul>
+<p>The intent would be to probe for a slightly better or fresher route without incurring the cost of a full rediscovery flood. A small tail flood could help discover alternate final hops or nearby replacement repeaters when the old route is only partially stale.</p>
+<p>This approach has important limitations:</p>
+<ul>
+<li>if the cached source route breaks early, a small tail flood will not help, because forwarding remains constrained by the explicit source route until that route is exhausted</li>
+<li>excessive probing would waste airtime and increase contention, especially on busy meshes</li>
+<li>a newly observed route is not necessarily better and may require local policy before replacing the old route</li>
+</ul>
+<p>If this idea is ever standardized, meshes should converge on the same probing policy and parameter values so that behavior remains predictable across implementations. Any such policy should be treated as provisional until it has been evaluated on real radios in mobile conditions.</p>
 
                     </main>
 
