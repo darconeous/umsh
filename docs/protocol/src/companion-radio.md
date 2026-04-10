@@ -349,6 +349,388 @@ Given the low-speed, high-latency nature of the radio side of the system, a
 single orderly framed protocol is usually more valuable than splitting control
 and data into distinct lanes.
 
+### Spinel-Like Direction
+
+A good starting point is a protocol that largely mirrors the low-level framing
+discipline of Spinel while defining a completely UMSH-specific command and
+object namespace.
+
+The important ideas to preserve are:
+
+- lightweight binary framing
+- small transaction identifiers
+- support for multiple in-flight host commands
+- state changes communicated by publication of the new authoritative value
+- asynchronous indications using the same general message grammar as
+  synchronous replies
+
+The important idea **not** to cargo-cult is that everything must be forced into
+the property model. Properties are for simple state. Commands are verbs.
+Streams are for event-like or packet-like flows.
+
+This section intentionally defines only the byte-level frame shape and the
+general semantic categories. It does **not** attempt to fully specify the final
+command set.
+
+### Companion-Link Wire Frame
+
+Inside whatever outer transport framing is used (GATT write/notify payload,
+L2CAP payload, SLIP/COBS-encoded serial frame, etc.), each logical
+companion-link frame should have the following structure:
+
+```text
++--------+-------------+-------------------+
+| Header | Command/Key | Command arguments |
++--------+-------------+-------------------+
+  1 byte   packed uint     zero or more bytes
+```
+
+The first octet is the **link header**:
+
+```text
+  7 6   5 4 3   2 1 0
++-----+-------+-------+
+|  P  |  IID  |  TID  |
++-----+-------+-------+
+```
+
+Where:
+
+- `P` is a 2-bit protocol-pattern / version field
+  - the initial value should be fixed so receivers can quickly reject garbage
+    or incompatible major revisions
+- `IID` is a 3-bit interface identifier
+  - `0` should be the default companion-radio interface
+  - other values may later identify additional logical services or vendor
+    extensions
+- `TID` is a 3-bit transaction identifier
+  - `0` is reserved for unsolicited indications and stream traffic
+  - `1..7` are host-issued transactions
+
+This preserves the useful "up to seven in-flight host commands" property.
+
+### Packed Integer Encoding
+
+Command identifiers, object identifiers, lengths, and similar scalar values
+should use a compact packed-unsigned-integer encoding in the style of Spinel.
+This keeps common operations to one or two octets while allowing the namespace
+to grow later.
+
+The exact packed integer encoding can be finalized later, but the intent is:
+
+- small numeric IDs occupy one octet
+- larger IDs may spill into subsequent octets
+- receivers can parse the stream incrementally without ambiguity
+
+### Fundamental Semantic Categories
+
+The companion-link protocol should distinguish:
+
+- **commands**, which are verbs
+- **properties**, which are simple pieces of state
+- **streams**, which are event-like or packet-like flows
+
+Commands are not objects. They are operations applied to properties or streams.
+
+The namespace may still need to distinguish at least two kinds of named object:
+
+- property identifiers
+- stream identifiers
+
+These may share one numeric registry or be separated later, but they must
+remain semantically distinct.
+
+#### Property
+
+A **property** is simple state that is naturally described as "this interface
+currently has this value."
+
+Examples:
+
+- repeater enabled/disabled
+- current RF profile
+- configured wake policy
+- current battery status
+- statistics counters
+
+Properties are appropriate when:
+
+- the value is queryable
+- the value may change asynchronously
+- the authoritative confirmation of a change is publication of the new value
+
+Properties are **not** appropriate for queued actions, packet ingress/egress,
+or multi-phase workflows.
+
+#### Stream
+
+A **stream** is an event-like or packet-like flow that is not well modeled as
+stable state.
+
+Examples:
+
+- received UMSH frames
+- transmit status events
+- buffered frame delivery
+- diagnostic log records
+
+Streams are generally one-way publications. They may optionally support
+flow-control or acknowledgement commands, but they are not properties.
+
+### Fundamental Command Vocabulary
+
+The starting command vocabulary should be small and generic:
+
+- `Noop`
+- `Reset`
+- `Get`
+- `Set`
+- `Insert`
+- `Remove`
+- `Send`
+- `Received`
+- `ValueIs`
+- `LastStatus`
+
+The intended roles are:
+
+- `Get(key)`
+  - asks for the authoritative value of a property
+- `Set(key, value)`
+  - requests that a property be changed
+  - successful completion is normally reported by a matching `ValueIs(key,
+    value)` indication rather than by inventing a separate "set succeeded"
+    payload shape
+- `Insert(key, value)`
+  - adds one member to a list- or table-like property
+- `Remove(key, value-or-selector)`
+  - removes one member from a list- or table-like property
+- `Send(stream, value)`
+  - sends one item into a stream
+  - typical examples include host-to-radio frame submission or host
+    acknowledgement/consumption of buffered stream items
+- `Received(stream, value)`
+  - publishes one item received or emitted on a stream
+  - typical examples include radio-to-host UMSH frame delivery, transmit status
+    events, wake events, or log records
+- `ValueIs(key, value)`
+  - publishes the authoritative current value of a property
+  - used both for replies to `Get`/`Set`/`Insert`/`Remove` and for asynchronous
+    change notification
+- `LastStatus(code, ...)`
+  - reports completion status when there is no more specific authoritative
+    publication to send, or when a command fails
+
+If the protocol later needs additional verbs, they should be added explicitly
+rather than pretending a new class of action is really a property update.
+
+### Object Namespace
+
+Properties and streams may share one numeric namespace if desired, but the
+specification must make their semantic category explicit.
+
+In other words:
+
+- sharing one encoding space is acceptable
+- pretending every named thing in that space is a property is not
+
+Every standardized object identifier should therefore be documented with:
+
+- its semantic category: `property` or `stream`
+- which verbs are valid for it
+- whether it may emit unsolicited `ValueIs` or `Received` indications
+
+### Publication Model
+
+For properties, the authoritative rule should be:
+
+- the result of changing a property is publication of the new value
+
+For example:
+
+```text
+Host  -> Set(Prop::RepeaterEnabled, true)
+Radio -> ValueIs(Prop::RepeaterEnabled, true)
+```
+
+If the value later changes for some other reason, the same `ValueIs` form is
+used again:
+
+```text
+Radio -> ValueIs(Prop::RepeaterEnabled, false)
+```
+
+This makes state reconstruction from an observed packet trace straightforward.
+
+### Streams And Indications
+
+Stream traffic uses explicit stream verbs rather than property publication.
+
+For example:
+
+```text
+Host  -> Send(Stream::UmshFrames, tx-envelope)
+Radio -> Received(Stream::TransmitState, queued)
+Radio -> Received(Stream::TransmitState, transmitted)
+Radio -> Received(Stream::TransmitState, acked)
+```
+
+Or:
+
+```text
+Radio -> Received(Stream::UmshFrames, rx-envelope)
+```
+
+Unsolicited indications use `TID = 0`.
+
+Typical examples:
+
+- `Stream::UmshFrames`
+- `Stream::TransmitState`
+- `Stream::BufferedFrameReady`
+- `Stream::LogRecord`
+
+These are not property publications even if they use the same packed integer
+encoding and frame grammar.
+
+### Transactions And Ordering
+
+The host may have up to seven in-flight requests per interface because `TID`
+values `1..7` are available concurrently.
+
+The radio should:
+
+- preserve the `TID` on direct replies
+- use `TID = 0` for unsolicited indications
+- avoid requiring strict global serialization unless a specific command family
+  needs it
+
+This allows pipelining without abandoning observability.
+
+### Initial Object Families
+
+A first draft of the UMSH companion-link namespace would likely include at
+least the following families:
+
+- protocol identity and capabilities
+- radio configuration and current RF state
+- repeater policy and wake/filter policy
+- buffered inbound/outbound queue state
+- transmit and queue-control streams
+- received-frame and transmit-status streams
+- companion health, battery, and diagnostics
+
+The exact object numbers are intentionally left open for now.
+
+### Initial Candidate Properties And Streams
+
+Using the Spinel core specification in `/Users/darco/Projects/spinel-spec` as a
+model, the most useful first pass is probably to separate candidate objects
+into:
+
+- constant single-value properties
+- mutable single-value properties
+- multi-value or table-like properties
+- stream properties
+
+The table below is intentionally only a starting point. It is meant to make the
+object surface concrete enough to review, rename, split, or delete.
+
+| Candidate object | Kind | Likely verbs | Why it likely exists |
+|---|---|---|---|
+| `PROP_PROTOCOL_VERSION` | Property, constant | `Get`, `ValueIs` | Companion-link major/minor version so the host can reject incompatible radios early |
+| `PROP_RADIO_VERSION` | Property, constant | `Get`, `ValueIs` | Human-readable firmware/build identifier for the companion radio |
+| `PROP_INTERFACE_TYPE` | Property, constant | `Get`, `ValueIs` | Identifies this as a UMSH companion-radio interface rather than some other service |
+| `PROP_CAPS` | Property, multi-value constant | `Get`, `ValueIs` | Advertises supported capabilities, optional features, and available object families |
+| `PROP_INTERFACE_COUNT` | Property, constant | `Get`, `ValueIs` | Number of logical interfaces or services exposed by the companion |
+| `PROP_LAST_STATUS` | Property, read-only | `Get`, `ValueIs` | Last command status or reset reason; useful for failures and post-reset synchronization |
+| `PROP_POWER_STATE` | Property, mutable | `Get`, `Set`, `ValueIs` | Companion-radio power mode such as offline, standby, low-power, online |
+| `PROP_HOST_ATTACH_STATE` | Property, mutable or read-only | `Get`, `Set?`, `ValueIs` | Whether a host session is attached, suspended, draining, or detached |
+| `PROP_BATTERY_STATE` | Property, read-only | `Get`, `ValueIs` | Battery percentage, voltage, charging state, or external-power presence |
+| `PROP_DEVICE_HEALTH` | Property, read-only | `Get`, `ValueIs` | Compact overall health summary for quick status display |
+| `PROP_RF_PROFILE` | Property, mutable | `Get`, `Set`, `ValueIs` | Selected RF profile or channel plan name/ID |
+| `PROP_RF_REGION` | Property, mutable | `Get`, `Set`, `ValueIs` | Current regulatory region or UMSH region profile |
+| `PROP_RF_FREQUENCY` | Property, mutable | `Get`, `Set`, `ValueIs` | Actual center frequency when direct tuning is exposed |
+| `PROP_RF_BANDWIDTH` | Property, mutable | `Get`, `Set`, `ValueIs` | Radio bandwidth |
+| `PROP_RF_SPREADING_FACTOR` | Property, mutable | `Get`, `Set`, `ValueIs` | LoRa spreading factor |
+| `PROP_RF_CODING_RATE` | Property, mutable | `Get`, `Set`, `ValueIs` | LoRa coding rate |
+| `PROP_RF_TX_POWER` | Property, mutable | `Get`, `Set`, `ValueIs` | Radio TX power |
+| `PROP_RF_RSSI` | Property, read-only | `Get`, `ValueIs` | Latest RSSI snapshot if the host wants direct radio diagnostics |
+| `PROP_RF_SNR` | Property, read-only | `Get`, `ValueIs` | Latest SNR snapshot if the host wants direct radio diagnostics |
+| `PROP_REPEATER_ENABLED` | Property, mutable | `Get`, `Set`, `ValueIs` | Turns repeater forwarding behavior on or off |
+| `PROP_REPEATER_POLICY` | Property, mutable | `Get`, `Set`, `ValueIs` | Encodes repeater thresholds and policy such as min RSSI/SNR and region restrictions |
+| `PROP_STATION_CALLSIGN` | Property, mutable | `Get`, `Set`, `ValueIs` | Callsign used by the radio's own repeater behavior where required |
+| `PROP_WAKE_POLICY` | Property, mutable | `Get`, `Set`, `ValueIs` | High-level wake behavior while the host sleeps |
+| `PROP_WAKE_REASON` | Property, read-only async | `Get`, `ValueIs` | Most recent wake cause, with optional unsolicited publication |
+| `PROP_RECEIVE_FILTERS` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Filter table controlling what wakes the host or gets buffered |
+| `PROP_BUFFER_LIMITS` | Property, mutable | `Get`, `Set`, `ValueIs` | Queue capacities, thresholds, or retention policy |
+| `PROP_BUFFERED_RX_COUNT` | Property, read-only | `Get`, `ValueIs` | Number of buffered inbound items waiting for the host |
+| `PROP_BUFFERED_TX_COUNT` | Property, read-only | `Get`, `ValueIs` | Number of queued outbound items awaiting transmission |
+| `PROP_BUFFERED_RX_POLICY` | Property, mutable | `Get`, `Set`, `ValueIs` | Policy for retaining and aging buffered inbound items |
+| `PROP_INSTALLED_IDENTITIES` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Host-provided identity contexts the radio is allowed to assist |
+| `PROP_INSTALLED_CHANNEL_KEYS` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Shared channel keys provisioned to the companion |
+| `PROP_INSTALLED_PEER_KEYS` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Pairwise symmetric peer material provisioned for limited offline assistance |
+| `PROP_BEACON_JOBS` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Periodic beacon/advertisement jobs owned by the companion |
+| `PROP_STATS_COUNTERS` | Property, read-only | `Get`, `ValueIs` | Packet/queue/retry counters suitable for UI and diagnostics |
+| `PROP_UNSOL_UPDATE_FILTER` | Property, multi-value mutable | `Get`, `Set`, `Insert`, `Remove`, `ValueIs`, `Inserted`, `Removed` | Filters which properties are allowed to generate unsolicited `ValueIs` updates |
+| `PROP_UNSOL_UPDATE_LIST` | Property, multi-value constant | `Get`, `ValueIs` | Lists properties capable of unsolicited publication |
+| `STREAM_DEBUG_LOG` | Stream, output-only | `Received` | Human-readable debug/log output from the companion |
+| `STREAM_UMSH_FRAMES` | Stream, input/output | `Send`, `Received` | Carries raw UMSH frames across the host/radio boundary, with direction-specific envelopes for transmit and receive metadata |
+| `STREAM_TRANSMIT_STATUS` | Stream, output-only | `Received` | Reports queued, transmitted, forwarded, acked, timed-out, or dropped outcomes |
+| `STREAM_BUFFERED_RX` | Stream, output-only | `Received` | Delivers previously buffered inbound frames when the host drains them |
+| `STREAM_WAKE_EVENT` | Stream, output-only | `Received` | Wake-trigger events such as matching frame, timer, queue threshold, or button press |
+| `STREAM_DIAGNOSTIC_EVENT` | Stream, output-only | `Received` | Structured diagnostic/fault events that are not well modeled as properties |
+
+### UMSH Frame Stream
+
+The most important stream is the raw **UMSH frame stream** across the
+host/radio boundary.
+
+This stream is best modeled as a single bidirectional stream rather than as
+separate "transmit" and "receive" streams.
+
+The stream carries raw UMSH frames together with associated local metadata:
+
+- `Send(STREAM_UMSH_FRAMES, tx-envelope)`
+  - host to radio
+  - requests transmission of one raw UMSH frame
+- `Received(STREAM_UMSH_FRAMES, rx-envelope)`
+  - radio to host
+  - reports reception of one raw UMSH frame
+
+The envelope contents are direction-specific:
+
+- a **TX envelope** would normally contain:
+  - raw UMSH frame bytes
+  - any companion-link-local transmit metadata or policy hints
+- an **RX envelope** would normally contain:
+  - raw UMSH frame bytes
+  - receive metadata such as RSSI, SNR, timestamp, queue origin, or buffering
+    information
+
+This stream is fundamentally about moving raw UMSH traffic across the
+host/radio boundary. It is not a separate application protocol.
+
+One practical consequence is that the host can also communicate with the
+companion radio's own local UMSH node using ordinary UMSH frames sent over this
+stream, rather than requiring a separate bespoke message path for such traffic.
+
+### Additional Command Candidates
+
+The objects above imply a few likely verbs or verb families beyond the very
+basic ones already listed:
+
+| Candidate command | Why it may be needed |
+|---|---|
+| `Send` | Natural fit for input or bidirectional streams such as `STREAM_UMSH_FRAMES` |
+| `Received` | Natural fit for output or bidirectional streams such as `STREAM_UMSH_FRAMES` or `STREAM_TRANSMIT_STATUS` |
+| `Acknowledge` or `Advance` | Likely useful if buffered stream delivery needs explicit host acknowledgement without overloading `Send` |
+| `Clear` | May be clearer than `Set(empty)` for some queues, logs, or statistics |
+| `Describe` | May be useful if the host wants schema-like detail for complex properties or stream item formats |
+
+These are only candidates. A stricter design may decide that some of these are
+unnecessary and can be replaced by better property or stream definitions.
+
 ## BLE As A Local Bearer
 
 If BLE is used for more than tethering, it should be treated as a separate
@@ -468,68 +850,6 @@ local many-to-many participation. At the same time, adopting Bluetooth Mesh
 itself would mean adopting a substantial stack, not just borrowing the bearer
 idea.
 
-### Suggested Frame Structure
-
-A companion-link frame likely needs at least:
-
-- a version
-- a message type
-- flags
-- sequence number
-- payload length
-- payload bytes
-- integrity check suitable for the local transport framing
-
-The exact framing may differ slightly depending on transport, but the message
-contents should remain the same.
-
-For stream transports such as UART or USB serial, a framing layer also needs:
-
-- a start delimiter or length-prefix strategy
-- escaping or COBS/SLIP-style encoding if sentinel-based framing is used
-- a checksum or CRC for local corruption detection
-
-For packet transports, the outer framing may already be provided by the
-transport, in which case only the logical companion-link header needs to be
-retained.
-
-### Suggested Message Classes
-
-The message set should likely include at least:
-
-- `GetCapabilities`
-- `GetRadioConfig`
-- `SetRadioConfig`
-- `InstallIdentityContext`
-- `RemoveIdentityContext`
-- `InstallChannelKey`
-- `RemoveChannelKey`
-- `InstallPeerKeyMaterial`
-- `RemovePeerKeyMaterial`
-- `SetReceiveFilter`
-- `QueueBeacon`
-- `CancelBeacon`
-- `FetchBufferedFrames`
-- `AcknowledgeBufferedFrames`
-- `TransmitFrame`
-- `ReceivedFrame`
-- `GetStatus`
-
-These are logical message types of the companion-link protocol, not
-transport-specific commands.
-
-### Reliability Model
-
-A good default model is:
-
-- command requests carry sequence numbers
-- responses echo the request sequence number
-- asynchronous events have their own event sequence
-- buffered received-frame delivery remains queued until acknowledged by the host
-
-This makes reconnect and partial loss easier to reason about across all
-transports, not just BLE.
-
 ## BLE Adaptation Suggestion
 
 If BLE is used, BLE should carry the unified companion-link protocol rather
@@ -569,12 +889,6 @@ byte stream using an ordinary framing scheme such as:
 The important part is that the message protocol above remains unchanged. The
 serial transport should not require a second command language.
 
-### Message Encoding
-
-The message payloads should use a compact structured encoding such as CBOR or a
-small binary TLV. The encoding should be self-describing enough that the
-protocol can evolve without lock-step upgrades.
-
 ### Raw Frame Carriage
 
 Messages carrying raw UMSH frames should include:
@@ -587,17 +901,18 @@ Messages carrying raw UMSH frames should include:
 Large frames may need fragmentation at the companion-link transport layer. That
 fragmentation belongs to the companion-radio link, not to UMSH itself.
 
-### Suggested Reliability Model
+### Reliability Model
 
 For any transport, a good default is:
 
-- command messages are request/response and acknowledged at the companion-link
-  protocol layer
-- event and frame-delivery messages are sequence-numbered so the host can
-  detect gaps after reconnect
-- queued buffered frames remain on the radio until the host confirms receipt
+- host-originated requests use `TID = 1..7`
+- direct replies preserve the request `TID`
+- unsolicited indications and stream publications use `TID = 0`
+- buffered stream delivery remains queued until the host explicitly advances or
+  acknowledges it
 
-This is especially important if the host is allowed to sleep for long periods.
+This keeps the protocol lightweight while still allowing pipelining and
+post-facto reconstruction of companion-link state.
 
 ## Suggested Security Requirements For The Companion Link
 
