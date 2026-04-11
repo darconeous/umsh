@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6dc5117e.js";
+            window.path_to_searchindex_js = "searchindex-5c9600e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -3828,6 +3828,10 @@ as amateur-radio traffic.</p>
 <p>Reticulum’s maximum announce propagation is 128 hops (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L41"><code>Transport.py:41</code></a>, <code>PATHFINDER_M</code>). This constant is hard-coded; the hop count field is one byte and could technically carry values up to 255, but transport logic enforces the 128-hop limit.</p>
 <p>Reticulum v1.1.0 introduced on-network interface discovery: nodes can broadcast structured discovery announces (containing interface type, LoRa parameters, IFAC credentials, and GPS coordinates) to the <code>rnstransport.discovery.interface</code> destination. Other nodes can receive these announces and automatically connect to trusted remote interfaces. This capability requires the LXMF module and uses proof-of-work stamps to prevent spam. UMSH does not define an equivalent mechanism.</p>
 <p>UMSH’s signal-quality filtering (minimum RSSI and SNR options) allows packets to avoid weak links, which is valuable in LoRa networks where marginal links waste airtime on packets that are unlikely to be received reliably. Reticulum does not define equivalent mechanisms at the protocol level.</p>
+<h2 id="rnode-and-lora-access"><a class="header" href="#rnode-and-lora-access">RNode and LoRa Access</a></h2>
+<p>Reticulum does not define radio-level concerns such as channel access or fragmentation at the protocol level. Instead, it relies on <a href="https://unsigned.io/rnode/">RNode</a>, an <a href="https://github.com/markqvist/RNode_Firmware">open-source firmware</a> for commodity ESP32-based LoRa boards, to bridge between the protocol stack and the LoRa physical layer. RNode communicates with the host via <a href="https://en.wikipedia.org/wiki/KISS_(amateur_radio_protocol)">KISS</a> framing over serial, Bluetooth LE, or TCP, and handles radio configuration, CSMA/CA channel access, and airtime regulation in firmware.</p>
+<p>Critically for LoRa use, RNode also handles fragmentation: since Reticulum’s 500-byte network MTU exceeds the ~255-byte LoRa frame limit, the firmware transparently splits oversized packets across two LoRa frames and reassembles them on receive. This keeps the Reticulum stack simple — it sees a 500-byte pipe — but means that large packets require two air frames transmitted back-to-back, doubling airtime and introducing a window where interference or a collision on either frame loses the entire packet. Because fragmentation and channel access are handled in firmware, the protocol stack has no visibility into these concerns and cannot factor them into routing or scheduling decisions.</p>
+<p>UMSH takes the opposite approach: each packet fits within a single LoRa frame, and channel access (CAD with random backoff, SNR-based contention windows) is defined at the protocol level. This allows any radio interface to be used without requiring firmware-level fragmentation or channel access logic, at the cost of bounding per-packet payload to what a single frame can carry.</p>
 <h2 id="privacy-and-anonymity"><a class="header" href="#privacy-and-anonymity">Privacy and Anonymity</a></h2>
 <div class="table-wrapper">
 <table>
