@@ -22,9 +22,9 @@ The most fundamental difference between UMSH and Reticulum is their scope.
 
 UMSH defines a **MAC layer** with cleanly separated application protocols. The MAC layer handles framing, addressing, encryption, authentication, and forwarding, and treats payloads opaquely. Application protocols (text messaging, chat rooms, node management) are architecturally separate and carried in the payload alongside any other higher-layer content such as CoAP or 6LoWPAN.
 
-Reticulum is a **complete network stack** that replaces the IP layer entirely. It provides addressing, routing, link establishment, encryption, reliable delivery (via its Resources API), request/response patterns, and bidirectional channels — all within a single monolithic Python implementation. Reticulum does not separate MAC-layer concerns from application-layer concerns; these are interwoven throughout the stack.
+Reticulum is a **complete network stack** that replaces the IP layer entirely. It provides addressing, routing, link establishment, encryption, reliable delivery (via its Resources API), request/response patterns, and bidirectional channels. Reticulum does not separate MAC-layer concerns from application-layer concerns; these are interwoven throughout the stack.
 
-This difference has practical implications: UMSH can be implemented on constrained microcontrollers with a few kilobytes of RAM, while Reticulum requires a full Python 3 runtime. UMSH's MAC layer can carry arbitrary higher-layer protocols, while Reticulum applications must use Reticulum's own APIs for structured communication.
+This difference has practical implications: UMSH's simpler MAC-layer model has lower minimum state requirements, making it easier to implement on constrained microcontrollers. Reticulum's richer protocol machinery (path tables, link establishment, announce propagation) demands more from an implementation regardless of language. UMSH's MAC layer can carry arbitrary higher-layer protocols, while Reticulum applications must use Reticulum's own APIs for structured communication.
 
 ## Identity and Addressing
 
@@ -128,7 +128,7 @@ UMSH supports MIC sizes of 4, 8, 12, and 16 bytes (see [Security & Cryptography]
 
 UMSH and Reticulum take fundamentally different approaches to routing.
 
-UMSH provides **source routing** — the sender can specify the exact sequence of repeaters a packet should traverse, using 1-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
+UMSH provides **source routing** — the sender can specify the exact sequence of repeaters a packet should traverse, using 2-byte router hints. This can be combined with flood routing: a packet can be source-routed to a specific area and then flood locally. Path discovery is built into the MAC layer via the trace-route option, which accumulates router hints as a packet floods — the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender (see [Route Learning](beacons.md#route-learning)).
 
 UMSH defines channel access mechanisms (CAD with random backoff, SNR-based contention windows) and forwarding confirmation with retries, providing reliable hop-by-hop delivery and collision avoidance. Reticulum does not define equivalent mechanisms at the protocol level, though RNode firmware provides CSMA with persistence probability for LoRa interfaces independently of Reticulum.
 
@@ -139,6 +139,14 @@ Reticulum's maximum announce propagation is 128 hops ([`Transport.py:41`](https:
 Reticulum v1.1.0 introduced on-network interface discovery: nodes can broadcast structured discovery announces (containing interface type, LoRa parameters, IFAC credentials, and GPS coordinates) to the `rnstransport.discovery.interface` destination. Other nodes can receive these announces and automatically connect to trusted remote interfaces. This capability requires the LXMF module and uses proof-of-work stamps to prevent spam. UMSH does not define an equivalent mechanism.
 
 UMSH's signal-quality filtering (minimum RSSI and SNR options) allows packets to avoid weak links, which is valuable in LoRa networks where marginal links waste airtime on packets that are unlikely to be received reliably. Reticulum does not define equivalent mechanisms at the protocol level.
+
+## RNode and LoRa Access
+
+Reticulum does not define radio-level concerns such as channel access or fragmentation at the protocol level. Instead, it relies on [RNode](https://unsigned.io/rnode/), an [open-source firmware](https://github.com/markqvist/RNode_Firmware) for commodity ESP32-based LoRa boards, to bridge between the protocol stack and the LoRa physical layer. RNode communicates with the host via [KISS](https://en.wikipedia.org/wiki/KISS_(amateur_radio_protocol)) framing over serial, Bluetooth LE, or TCP, and handles radio configuration, CSMA/CA channel access, and airtime regulation in firmware.
+
+Critically for LoRa use, RNode also handles fragmentation: since Reticulum's 500-byte network MTU exceeds the ~255-byte LoRa frame limit, the firmware transparently splits oversized packets across two LoRa frames and reassembles them on receive. This keeps the Reticulum stack simple — it sees a 500-byte pipe — but means that large packets require two air frames transmitted back-to-back, doubling airtime and introducing a window where interference or a collision on either frame loses the entire packet. Because fragmentation and channel access are handled in firmware, the protocol stack has no visibility into these concerns and cannot factor them into routing or scheduling decisions.
+
+UMSH takes the opposite approach: each packet fits within a single LoRa frame, and channel access (CAD with random backoff, SNR-based contention windows) is defined at the protocol level. This allows any radio interface to be used without requiring firmware-level fragmentation or channel access logic, at the cost of bounding per-packet payload to what a single frame can carry.
 
 ## Privacy and Anonymity
 
@@ -194,7 +202,7 @@ This is a significant limitation for LoRa mesh networks where multi-hop coverage
 | Amateur radio | Operator/station callsign options, explicit unencrypted mode | Not defined |
 | Implementation language | Protocol spec (language-agnostic) | Python 3 (reference implementation); unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) exists |
 
-Reticulum is defined primarily by its Python implementation. While the Reticulum manual documents the protocol, the Python codebase is the authoritative reference, and the tight coupling between protocol and implementation makes independent reimplementation non-trivial. An unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) exists but is not officially associated with the Reticulum project. UMSH is not tied to any single implementation language or runtime.
+Reticulum's protocol is documented in its [manual](https://reticulum.network/manual/), with the Python codebase serving as the reference implementation. An unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) also exists.
 
 UMSH delegates reliable multi-packet transfer to CoAP's block-wise transfer mechanism, reusing a well-established standard. Reticulum provides its own [Resources API](https://reticulum.network/manual/understanding.html#resources) for the same purpose, including compression, sequencing, and checksumming — capable but proprietary to the Reticulum stack.
 
@@ -250,7 +258,7 @@ The power profiles of UMSH and Reticulum differ across every dimension: platform
 
 The reference Reticulum implementation requires a Python 3 runtime and therefore runs on Linux-capable hardware — a Raspberry Pi, SBC, or similar computer. These platforms consume on the order of 1–5 watts continuously. This is an implementation choice rather than a protocol requirement: the unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) could in principle run on more constrained hardware. However, Reticulum's protocol design places a higher floor than UMSH regardless of implementation language — the path table state required for Transport Node operation, the 500-byte MTU requiring larger packet buffers, and the complexity of the announce propagation and link establishment machinery all demand more RAM and processing than UMSH's simpler MAC-layer model.
 
-UMSH's compact encoding, minimal per-packet state, and single-frame design allow it to run on bare-metal microcontrollers drawing microamps in sleep and milliwatts when active. For battery-powered or solar-powered field deployments this difference is significant: a minimal UMSH node can operate for months or years on a single battery in a way that a full Reticulum stack — even a hypothetical embedded Rust implementation — would find difficult to match.
+UMSH's compact encoding, minimal per-packet state, and single-frame design allow it to run on bare-metal microcontrollers drawing microamps in sleep and milliwatts when active. For battery-powered or solar-powered field deployments, the difference in protocol-level state requirements is significant.
 
 ### False-Positive Filtering
 
@@ -274,7 +282,7 @@ The infrastructure dependency is the key tradeoff: Reticulum's routing model req
 
 ## Summary of Design Differences
 
-Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Its Python implementation provides a full-featured development environment but limits deployment to platforms that can run a Python runtime. Recent versions (v1.1.0+) have added on-network interface discovery and a network identity system that enable more sophisticated network management and trust hierarchies.
+Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Recent versions (v1.1.0+) have added on-network interface discovery and a network identity system that enable more sophisticated network management and trust hierarchies.
 
 UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and absence of mandatory runtime state (no path tables, no clock synchronization) make it deployable on bare-metal microcontrollers with minimal resources.
 
@@ -286,4 +294,4 @@ Key tradeoffs:
 - **Privacy model**: Reticulum provides initiator anonymity by default (no source address), plus a network identity system for administrative trust domains. UMSH provides source addresses by default with opt-in privacy modes.
 - **Multicast**: UMSH supports multi-hop multicast. Reticulum's group communication is currently single-hop only (multi-hop planned).
 - **Scope**: Reticulum is a complete network stack with reliable delivery, sessions, and application APIs. UMSH is a MAC layer with defined-but-separate application protocols, designed to carry arbitrary higher-layer content.
-- **Implementation**: Reticulum requires Python 3. UMSH is not tied to any implementation language or runtime, and its compact design targets constrained devices.
+- **Implementation complexity**: Reticulum's richer protocol machinery (path tables, link establishment, announce propagation) raises the minimum implementation complexity. UMSH's simpler MAC-layer model is more amenable to constrained implementations.
