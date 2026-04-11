@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EncodeError","MessageType","ParseError","Regarding","TextReceiveIssue","TextSendError"],"fn":["encode_text_message","parse_text_message","parse_text_payload"],"mod":["text_message"],"struct":["Fragment","MessageSequence","MulticastTextChatWrapper","OwnedTextMessage","TextMessage","UnicastTextChatWrapper"]};

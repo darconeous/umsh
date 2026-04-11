@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ChatAction","Error"],"fn":["encode","parse"],"struct":["LoginParams","RoomInfo"]};

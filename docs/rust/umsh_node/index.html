@@ -1,0 +1,102 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Application-facing node layer built on top of `umsh-mac`."><title>umsh_node - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="umsh_node" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate umsh_node</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../umsh_node/index.html">umsh_<wbr>node</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#architecture-overview" title="Architecture overview">Architecture overview</a></li><li><a href="#key-types" title="Key types">Key types</a></li><li><a href="#control-payload-types" title="Control payload types">Control payload types</a></li><li><a href="#mac-abstraction" title="MAC abstraction">MAC abstraction</a></li><li><a href="#typical-usage" title="Typical usage">Typical usage</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>umsh_<wbr>node</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/umsh_node/lib.rs.html#1-765">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Application-facing node layer built on top of <a href="../umsh_mac/index.html" title="mod umsh_mac"><code>umsh-mac</code></a>.</p>
+<p><code>umsh-node</code> sits between the radio-facing MAC coordinator in <code>umsh-mac</code> and the
+application. Where <code>umsh-mac</code> thinks in raw frames, keys, replay windows, and transmit
+queues, <code>umsh-node</code> provides composable abstractions for sending and receiving messages,
+tracking in-flight sends, and managing channel membership.</p>
+<p>The receive boundary is intentionally low-level: raw subscriptions get a
+<a href="struct.ReceivedPacketRef.html" title="struct umsh_node::ReceivedPacketRef"><code>ReceivedPacketRef</code></a> that stays close to the accepted on-wire packet. Payload-specific
+helpers such as those in the <code>umsh-text</code> crate live one layer up and are built on top of
+those raw packet callbacks.</p>
+<p>This crate requires <code>alloc</code> (heap allocation for <code>String</code>, <code>Vec</code>, etc.). It is
+otherwise <code>no_std</code> compatible.</p>
+<h2 id="architecture-overview"><a class="doc-anchor" href="#architecture-overview">§</a>Architecture overview</h2><div class="example-wrap"><pre class="language-text"><code>┌──────────────────────────────────────────────────────────────┐
+│  Application                                                 │
+│  Host · LocalNode · PeerConnection · BoundChannel            │
+┌──────────────────────┴───────────────────────────────────────┐
+│  Host                                                        │
+│    ├── drives the shared MAC/runtime event loop              │
+│    └── owns multiple LocalNode handles                       │
+└──────────────────────┬───────────────────────────────────────┘
+                       │
+┌──────────────────────┴───────────────────────────────────────┐
+│  LocalNode&lt;M&gt;                                                │
+│    ├── sends down through MacBackend                         │
+│    ├── owns per-identity PFS state                           │
+│    └── dispatches node/peer callback subscriptions           │
+└──────────────────────┬───────────────────────────────────────┘
+                       │  MacBackend trait
+┌──────────────────────┴───────────────────────────────────────┐
+│  MacHandle → Mac&lt;P&gt;  (no_std, heapless)                      │
+└──────────────────────────────────────────────────────────────┘</code></pre></div><h2 id="key-types"><a class="doc-anchor" href="#key-types">§</a>Key types</h2>
+<ul>
+<li><a href="struct.Host.html" title="struct umsh_node::Host"><code>Host</code></a> — preferred multi-identity driver. Owns the shared MAC event loop and routes
+inbound traffic to the right <a href="struct.LocalNode.html" title="struct umsh_node::LocalNode"><code>LocalNode</code></a>.</li>
+<li><a href="struct.LocalNode.html" title="struct umsh_node::LocalNode"><code>LocalNode</code></a> — per-identity application handle. Implements <a href="trait.Transport.html" title="trait umsh_node::Transport"><code>Transport</code></a> (unicast /
+broadcast), owns PFS state, and exposes raw packet plus control-side subscriptions.</li>
+<li><a href="struct.BoundChannel.html" title="struct umsh_node::BoundChannel"><code>BoundChannel</code></a> — a channel bound to a <code>LocalNode</code>. Implements <a href="trait.Transport.html" title="trait umsh_node::Transport"><code>Transport</code></a>
+(blind unicast / multicast). Available with the <code>software-crypto</code> feature.</li>
+<li><a href="struct.PeerConnection.html" title="struct umsh_node::PeerConnection"><code>PeerConnection</code></a> — relationship with one remote peer, generic over transport context,
+with peer-scoped callback subscriptions.</li>
+<li><a href="trait.Transport.html" title="trait umsh_node::Transport"><code>Transport</code></a> — shared send interface (<code>send</code> / <code>send_all</code>).</li>
+<li><a href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket"><code>SendProgressTicket</code></a> — lightweight polling handle for observing in-flight send
+progress (<code>was_transmitted</code>, <code>was_acked</code>, <code>is_finished</code>).</li>
+<li><a href="struct.Subscription.html" title="struct umsh_node::Subscription"><code>Subscription</code></a> — owned callback registration that auto-unsubscribes on drop.</li>
+<li><a href="struct.ReceivedPacketRef.html" title="struct umsh_node::ReceivedPacketRef"><code>ReceivedPacketRef</code></a> — borrowed receive view passed into low-level <code>on_receive(...)</code>
+handlers and wrappers, including local RX observations such as RSSI, SNR, LQI, and
+receive timestamp.</li>
+<li><a href="trait.MacBackend.html" title="trait umsh_node::MacBackend"><code>MacBackend</code></a> — pluggable MAC backend trait for testability.</li>
+</ul>
+<h2 id="control-payload-types"><a class="doc-anchor" href="#control-payload-types">§</a>Control payload types</h2>
+<p>[<code>umsh_text::OwnedTextMessage</code>], <a href="struct.OwnedNodeIdentityPayload.html" title="struct umsh_node::OwnedNodeIdentityPayload"><code>OwnedNodeIdentityPayload</code></a>, and <a href="enum.OwnedMacCommand.html" title="enum umsh_node::OwnedMacCommand"><code>OwnedMacCommand</code></a> are
+optional heap-allocated conveniences for callers that need
+to retain parsed payloads across task boundaries. Most receive-side code should prefer the
+borrowed views from the payload crates and <a href="struct.ReceivedPacketRef.html" title="struct umsh_node::ReceivedPacketRef"><code>ReceivedPacketRef</code></a>.</p>
+<h2 id="mac-abstraction"><a class="doc-anchor" href="#mac-abstraction">§</a>MAC abstraction</h2>
+<p><a href="trait.MacBackend.html" title="trait umsh_node::MacBackend"><code>MacBackend</code></a> exposes the public send/configure surface of the MAC coordinator.
+Safe PFS session management is available with <code>software-crypto</code> and builds on
+that public surface directly.</p>
+<p><a href="../umsh_mac/handle/struct.MacHandle.html" title="struct umsh_mac::handle::MacHandle"><code>MacHandle</code></a> implements <code>MacBackend</code>, and test code can provide
+a fake implementation to drive the node layer deterministically.</p>
+<h2 id="typical-usage"><a class="doc-anchor" href="#typical-usage">§</a>Typical usage</h2>
+<p>For most applications, register callbacks and then let <a href="struct.Host.html#method.run" title="method umsh_node::Host::run"><code>Host::run</code></a> own the shared
+MAC event loop:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>host = Host::new(mac_handle);
+<span class="kw">let </span>node = host.add_node(identity_id);
+<span class="kw">let </span>peer = node.peer(peer_key)<span class="question-mark">?</span>;
+<span class="kw">let </span>chat = umsh_text::UnicastTextChatWrapper::from_peer(<span class="kw-2">&amp;</span>peer);
+
+<span class="kw">let </span>_messages = chat.on_text(|packet, text| {
+    <span class="macro">println!</span>(
+        <span class="string">"peer says: {} (hops={})"</span>,
+        text.body,
+        packet.flood_hops().map(|h| h.remaining()).unwrap_or(<span class="number">0</span>),
+    );
+});
+
+<span class="kw">let </span>_ticket = chat.send_text(<span class="string">"hello"</span>, <span class="kw-2">&amp;</span>SendOptions::default()).<span class="kw">await</span><span class="question-mark">?</span>;
+host.run().<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<p>If you need to multiplex UMSH progress with another async source such as user input, use
+<a href="struct.Host.html#method.pump_once" title="method umsh_node::Host::pump_once"><code>Host::pump_once</code></a> as a single wake-driven step. It already waits on radio activity and
+protocol deadlines; you should not add a manual poll/sleep loop around it.</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">loop </span>{
+    <span class="macro">tokio::select!</span> {
+        line = stdin.next_line() =&gt; { <span class="comment">/* handle input */ </span>}
+        result = host.pump_once() =&gt; result<span class="question-mark">?</span>,
+    }
+}</code></pre></div>
+<p>If you need protocol fidelity instead of a payload wrapper, subscribe directly on the node
+or peer and inspect the raw packet view:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>_raw = peer.on_receive(|packet| {
+    <span class="kw">if </span>packet.packet_family() == umsh::mac::PacketFamily::Unicast {
+        <span class="macro">println!</span>(
+            <span class="string">"from={:?} encrypted={} mic_len={}"</span>,
+            packet.from_key(),
+            packet.encrypted(),
+            packet.mic_len(),
+        );
+    }
+    <span class="bool-val">false
+</span>});</code></pre></div></div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.CommandId"><code>pub use mac_command::<a class="enum" href="mac_command/enum.CommandId.html" title="enum umsh_node::mac_command::CommandId">CommandId</a>;</code></dt><dt id="reexport.MacCommand"><code>pub use mac_command::<a class="enum" href="mac_command/enum.MacCommand.html" title="enum umsh_node::mac_command::MacCommand">MacCommand</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="identity_payload/index.html" title="mod umsh_node::identity_payload">identity_<wbr>payload</a></dt><dt><a class="mod" href="mac_command/index.html" title="mod umsh_node::mac_command">mac_<wbr>command</a></dt></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.BoundChannel.html" title="struct umsh_node::BoundChannel">Bound<wbr>Channel</a></dt><dd>A channel bound to a specific <code>LocalNode</code>. Implements <code>Transport</code>.</dd><dt><a class="struct" href="struct.Capabilities.html" title="struct umsh_node::Capabilities">Capabilities</a></dt><dt><a class="struct" href="struct.Channel.html" title="struct umsh_node::Channel">Channel</a></dt><dd>A channel descriptor — holds the key, derived ID, and display name.</dd><dt><a class="struct" href="struct.ChannelInfoRef.html" title="struct umsh_node::ChannelInfoRef">Channel<wbr>Info<wbr>Ref</a></dt><dd>Borrowing view of an inbound MAC event.</dd><dt><a class="struct" href="struct.Host.html" title="struct umsh_node::Host">Host</a></dt><dd>Multi-identity orchestration layer for the node API.</dd><dt><a class="struct" href="struct.LocalNode.html" title="struct umsh_node::LocalNode">Local<wbr>Node</a></dt><dd>Per-identity application handle.</dd><dt><a class="struct" href="struct.NodeIdentityPayload.html" title="struct umsh_node::NodeIdentityPayload">Node<wbr>Identity<wbr>Payload</a></dt><dt><a class="struct" href="struct.OwnedNodeIdentityPayload.html" title="struct umsh_node::OwnedNodeIdentityPayload">Owned<wbr>Node<wbr>Identity<wbr>Payload</a></dt><dt><a class="struct" href="struct.PeerConnection.html" title="struct umsh_node::PeerConnection">Peer<wbr>Connection</a></dt><dd>Relationship with one remote peer, bound to a transport context.</dd><dt><a class="struct" href="struct.ReceivedPacketRef.html" title="struct umsh_node::ReceivedPacketRef">Received<wbr>Packet<wbr>Ref</a></dt><dd>Borrowed view of one accepted inbound packet together with parsed on-wire metadata.</dd><dt><a class="struct" href="struct.RouteHops.html" title="struct umsh_node::RouteHops">Route<wbr>Hops</a></dt><dd>Iterator over packed two-byte route hops from a source-route or trace-route option.</dd><dt><a class="struct" href="struct.RxMetadata.html" title="struct umsh_node::RxMetadata">RxMetadata</a></dt><dd>Local physical-layer observations captured when a frame was received.</dd><dt><a class="struct" href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket">Send<wbr>Progress<wbr>Ticket</a></dt><dd>Lightweight handle for observing the progress of an in-flight send.</dd><dt><a class="struct" href="struct.SendToken.html" title="struct umsh_node::SendToken">Send<wbr>Token</a></dt><dd>Identity-scoped send token.</dd><dt><a class="struct" href="struct.Snr.html" title="struct umsh_node::Snr">Snr</a></dt><dd>Signal-to-noise ratio represented in centibels (0.1 dB units).</dd><dt><a class="struct" href="struct.Subscription.html" title="struct umsh_node::Subscription">Subscription</a></dt><dd>Owned subscription guard.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AppEncodeError.html" title="enum umsh_node::AppEncodeError">AppEncode<wbr>Error</a></dt><dt><a class="enum" href="enum.AppParseError.html" title="enum umsh_node::AppParseError">AppParse<wbr>Error</a></dt><dt><a class="enum" href="enum.HostError.html" title="enum umsh_node::HostError">Host<wbr>Error</a></dt><dd>Error returned when a <a href="struct.Host.html" title="struct umsh_node::Host"><code>Host</code></a> cannot make progress.</dd><dt><a class="enum" href="enum.MacBackendError.html" title="enum umsh_node::MacBackendError">MacBackend<wbr>Error</a></dt><dd>Normalized wrapper around MAC-handle failures.</dd><dt><a class="enum" href="enum.NodeError.html" title="enum umsh_node::NodeError">Node<wbr>Error</a></dt><dd>Errors produced by node-layer operations.</dd><dt><a class="enum" href="enum.NodeRole.html" title="enum umsh_node::NodeRole">Node<wbr>Role</a></dt><dt><a class="enum" href="enum.OwnedMacCommand.html" title="enum umsh_node::OwnedMacCommand">Owned<wbr>MacCommand</a></dt><dt><a class="enum" href="enum.PacketFamily.html" title="enum umsh_node::PacketFamily">Packet<wbr>Family</a></dt><dd>Coarser grouping of on-wire packet types.</dd><dt><a class="enum" href="enum.PfsStatus.html" title="enum umsh_node::PfsStatus">PfsStatus</a></dt></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.MacBackend.html" title="trait umsh_node::MacBackend">MacBackend</a></dt><dd>Pluggable backend that the node layer delegates to for MAC operations.</dd><dt><a class="trait" href="trait.Transport.html" title="trait umsh_node::Transport">Transport</a></dt><dd>A context through which UMSH frames can be sent.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.expect_payload_type.html" title="fn umsh_node::expect_payload_type">expect_<wbr>payload_<wbr>type</a></dt><dt><a class="fn" href="fn.parse_mac_command_payload.html" title="fn umsh_node::parse_mac_command_payload">parse_<wbr>mac_<wbr>command_<wbr>payload</a></dt><dt><a class="fn" href="fn.parse_node_identity_payload.html" title="fn umsh_node::parse_node_identity_payload">parse_<wbr>node_<wbr>identity_<wbr>payload</a></dt><dt><a class="fn" href="fn.split_payload_type.html" title="fn umsh_node::split_payload_type">split_<wbr>payload_<wbr>type</a></dt></dl></section></div></main></body></html>
