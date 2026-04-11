@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c418209d.js";
+            window.path_to_searchindex_js = "searchindex-64bd220c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -230,11 +230,11 @@
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Transport ID field (16 bytes) in HEADER_2</td></tr>
 <tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 1-byte field</td></tr>
 <tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500-byte network MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91"><code>Reticulum.py:91</code></a>, <code>MTU = 500</code>); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links</td></tr>
-<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>)</td></tr>
+<tr><td>Typical unicast overhead</td><td>14–28 bytes (depending on MIC size and source hint vs full key)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>), plus crypto overhead</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH achieves very compact headers by using 1-byte and 2-byte fields with optional expansion. Reticulum’s 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum’s minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.</p>
+<p>UMSH uses compact fields that are present only when needed for the packet type. Reticulum’s 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum’s minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.</p>
 <p>Reticulum’s 500-byte network MTU exceeds what most LoRa configurations can carry in a single frame. Reticulum introduced link MTU discovery in v0.9.3, which allows adjacent nodes to negotiate a higher effective MTU than 500 bytes when the underlying interface can support it — but this only applies to high-bandwidth interfaces. The <code>Interface.optimise_mtu()</code> method (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Interfaces/Interface.py#L115-L138"><code>Interface.py:115–138</code></a>) maps link speed to hardware MTU, and sets <code>HW_MTU = None</code> for any interface running at or below 62,500 bps — which encompasses every LoRa configuration. When <code>HW_MTU</code> is <code>None</code>, the link request falls back to signalling the base 500-byte MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L273-L278"><code>Link.py:273–278</code></a>), and link MTU discovery is never entered. For LoRa interfaces, Reticulum relies on the RNode firmware to reassemble sub-255-byte air frames into 500-byte packets before presenting them to the stack via KISS. UMSH is designed to fit within a single LoRa frame, avoiding fragmentation entirely.</p>
 <p>UMSH uses composable CoAP-style options for routing metadata (source routes, trace routes, signal-quality thresholds, region codes), allowing packets to carry exactly the routing information they need. Reticulum uses a fixed two-header-type system: HEADER_1 for direct packets and HEADER_2 for transport-routed packets, with no equivalent to UMSH’s composable options.</p>
 <h2 id="cryptography"><a class="header" href="#cryptography">Cryptography</a></h2>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c418209d.js";
+            window.path_to_searchindex_js = "searchindex-64bd220c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -3475,11 +3475,11 @@ as amateur-radio traffic.</p>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte)</td></tr>
 <tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
 <tr><td>Max LoRa payload</td><td>~255 bytes</td><td>255 bytes (233 bytes application payload after header and encoding overhead)</td></tr>
-<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>16 bytes (always)</td></tr>
+<tr><td>Typical unicast overhead</td><td>14–28 bytes (depending on MIC size and source hint vs full key)</td><td>16 bytes header + 28 bytes crypto = 44 bytes minimum</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH uses a compact 1-byte Frame Control Field with optional expansion — the header scales from 1 byte (minimal broadcast) to the full addressing and security fields as needed. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.</p>
+<p>UMSH uses a compact 1-byte Frame Control Field with optional expansion — fields are present only when needed for the packet type. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.</p>
 <p>Meshtastic’s header is always transmitted in cleartext, exposing sender and recipient node numbers, packet IDs, and channel hashes to any passive observer. UMSH’s addressing fields are compact hints that do not directly reveal node identity, and in blind unicast or encrypted multicast modes, the source address is encrypted.</p>
 <p>Meshtastic encodes application payloads using Protocol Buffers (protobuf), which adds encoding overhead but provides a flexible, self-describing serialization format. UMSH uses raw byte payloads with a 1-byte type prefix, minimizing encoding overhead at the cost of less built-in structure.</p>
 <h2 id="cryptography-1"><a class="header" href="#cryptography-1">Cryptography</a></h2>
@@ -3667,7 +3667,7 @@ as amateur-radio traffic.</p>
 <p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
 <p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.</p>
 <h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
-<p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header scales from 1 byte upward depending on which optional fields are present. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>
+<p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header includes only the fields needed for the packet type. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>
 <h3 id="repeater-power-1"><a class="header" href="#repeater-power-1">Repeater Power</a></h3>
 <p>Both protocols use flood routing as their primary delivery mechanism, so nodes configured as repeaters must receive and retransmit packets. Transmit is the most power-intensive radio operation on a LoRa node. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating and incur no forwarding transmit cost.</p>
 <p>Meshtastic’s managed flood uses SNR-based contention windows: after receiving a packet, each potential relay waits a random delay inversely proportional to its received SNR before retransmitting. If it hears a better-positioned node retransmit first, it suppresses its own retransmission. This heuristic reduces the number of redundant rebroadcasts compared to simple flooding and saves transmit power across the network.</p>
@@ -3744,11 +3744,11 @@ as amateur-radio traffic.</p>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Transport ID field (16 bytes) in HEADER_2</td></tr>
 <tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 1-byte field</td></tr>
 <tr><td>MTU</td><td>LoRa frame size (typically 255 bytes)</td><td>500-byte network MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91"><code>Reticulum.py:91</code></a>, <code>MTU = 500</code>); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links</td></tr>
-<tr><td>Minimum header overhead</td><td>1 byte (broadcast, no options)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>)</td></tr>
+<tr><td>Typical unicast overhead</td><td>14–28 bytes (depending on MIC size and source hint vs full key)</td><td>19 bytes HEADER_1 or 35 bytes HEADER_2 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149"><code>Reticulum.py:148–149</code></a>, <code>HEADER_MINSIZE</code>/<code>HEADER_MAXSIZE</code>), plus crypto overhead</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH achieves very compact headers by using 1-byte and 2-byte fields with optional expansion. Reticulum’s 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum’s minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.</p>
+<p>UMSH uses compact fields that are present only when needed for the packet type. Reticulum’s 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum’s minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.</p>
 <p>Reticulum’s 500-byte network MTU exceeds what most LoRa configurations can carry in a single frame. Reticulum introduced link MTU discovery in v0.9.3, which allows adjacent nodes to negotiate a higher effective MTU than 500 bytes when the underlying interface can support it — but this only applies to high-bandwidth interfaces. The <code>Interface.optimise_mtu()</code> method (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Interfaces/Interface.py#L115-L138"><code>Interface.py:115–138</code></a>) maps link speed to hardware MTU, and sets <code>HW_MTU = None</code> for any interface running at or below 62,500 bps — which encompasses every LoRa configuration. When <code>HW_MTU</code> is <code>None</code>, the link request falls back to signalling the base 500-byte MTU (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L273-L278"><code>Link.py:273–278</code></a>), and link MTU discovery is never entered. For LoRa interfaces, Reticulum relies on the RNode firmware to reassemble sub-255-byte air frames into 500-byte packets before presenting them to the stack via KISS. UMSH is designed to fit within a single LoRa frame, avoiding fragmentation entirely.</p>
 <p>UMSH uses composable CoAP-style options for routing metadata (source routes, trace routes, signal-quality thresholds, region codes), allowing packets to carry exactly the routing information they need. Reticulum uses a fixed two-header-type system: HEADER_1 for direct packets and HEADER_2 for transport-routed packets, with no equivalent to UMSH’s composable options.</p>
 <h2 id="cryptography-2"><a class="header" href="#cryptography-2">Cryptography</a></h2>
