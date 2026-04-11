@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4d3ff43a.js";
+            window.path_to_searchindex_js = "searchindex-1b83070c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -475,6 +475,384 @@ through parallel logical channels. The more important goals are:</p>
 <p>Given the low-speed, high-latency nature of the radio side of the system, a
 single orderly framed protocol is usually more valuable than splitting control
 and data into distinct lanes.</p>
+<h3 id="spinel-like-direction"><a class="header" href="#spinel-like-direction">Spinel-Like Direction</a></h3>
+<p>A good starting point is a protocol that largely mirrors the low-level framing
+discipline of Spinel while defining a completely UMSH-specific command and
+object namespace.</p>
+<p>The important ideas to preserve are:</p>
+<ul>
+<li>lightweight binary framing</li>
+<li>small transaction identifiers</li>
+<li>support for multiple in-flight host commands</li>
+<li>state changes communicated by publication of the new authoritative value</li>
+<li>asynchronous indications using the same general message grammar as
+synchronous replies</li>
+</ul>
+<p>The important idea <strong>not</strong> to cargo-cult is that everything must be forced into
+the property model. Properties are for simple state. Commands are verbs.
+Streams are for event-like or packet-like flows.</p>
+<p>This section intentionally defines only the byte-level frame shape and the
+general semantic categories. It does <strong>not</strong> attempt to fully specify the final
+command set.</p>
+<h3 id="companion-link-wire-frame"><a class="header" href="#companion-link-wire-frame">Companion-Link Wire Frame</a></h3>
+<p>Inside whatever outer transport framing is used (GATT write/notify payload,
+L2CAP payload, SLIP/COBS-encoded serial frame, etc.), each logical
+companion-link frame should have the following structure:</p>
+<pre><code class="language-text">+--------+-------------+-------------------+
+| Header | Command/Key | Command arguments |
++--------+-------------+-------------------+
+  1 byte   packed uint     zero or more bytes
+</code></pre>
+<p>The first octet is the <strong>link header</strong>:</p>
+<pre><code class="language-text">  7 6   5 4 3   2 1 0
++-----+-------+-------+
+|  P  |  IID  |  TID  |
++-----+-------+-------+
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>P</code> is a 2-bit protocol-pattern / version field
+<ul>
+<li>the initial value should be fixed so receivers can quickly reject garbage
+or incompatible major revisions</li>
+</ul>
+</li>
+<li><code>IID</code> is a 3-bit interface identifier
+<ul>
+<li><code>0</code> should be the default companion-radio interface</li>
+<li>other values may later identify additional logical services or vendor
+extensions</li>
+</ul>
+</li>
+<li><code>TID</code> is a 3-bit transaction identifier
+<ul>
+<li><code>0</code> is reserved for unsolicited indications and stream traffic</li>
+<li><code>1..7</code> are host-issued transactions</li>
+</ul>
+</li>
+</ul>
+<p>This preserves the useful “up to seven in-flight host commands” property.</p>
+<h3 id="packed-integer-encoding"><a class="header" href="#packed-integer-encoding">Packed Integer Encoding</a></h3>
+<p>Command identifiers, object identifiers, lengths, and similar scalar values
+should use a compact packed-unsigned-integer encoding in the style of Spinel.
+This keeps common operations to one or two octets while allowing the namespace
+to grow later.</p>
+<p>The exact packed integer encoding can be finalized later, but the intent is:</p>
+<ul>
+<li>small numeric IDs occupy one octet</li>
+<li>larger IDs may spill into subsequent octets</li>
+<li>receivers can parse the stream incrementally without ambiguity</li>
+</ul>
+<h3 id="fundamental-semantic-categories"><a class="header" href="#fundamental-semantic-categories">Fundamental Semantic Categories</a></h3>
+<p>The companion-link protocol should distinguish:</p>
+<ul>
+<li><strong>commands</strong>, which are verbs</li>
+<li><strong>properties</strong>, which are simple pieces of state</li>
+<li><strong>streams</strong>, which are event-like or packet-like flows</li>
+</ul>
+<p>Commands are not objects. They are operations applied to properties or streams.</p>
+<p>The namespace may still need to distinguish at least two kinds of named object:</p>
+<ul>
+<li>property identifiers</li>
+<li>stream identifiers</li>
+</ul>
+<p>These may share one numeric registry or be separated later, but they must
+remain semantically distinct.</p>
+<h4 id="property"><a class="header" href="#property">Property</a></h4>
+<p>A <strong>property</strong> is simple state that is naturally described as “this interface
+currently has this value.”</p>
+<p>Examples:</p>
+<ul>
+<li>repeater enabled/disabled</li>
+<li>current RF profile</li>
+<li>configured wake policy</li>
+<li>current battery status</li>
+<li>statistics counters</li>
+</ul>
+<p>Properties are appropriate when:</p>
+<ul>
+<li>the value is queryable</li>
+<li>the value may change asynchronously</li>
+<li>the authoritative confirmation of a change is publication of the new value</li>
+</ul>
+<p>Properties are <strong>not</strong> appropriate for queued actions, packet ingress/egress,
+or multi-phase workflows.</p>
+<h4 id="stream"><a class="header" href="#stream">Stream</a></h4>
+<p>A <strong>stream</strong> is an event-like or packet-like flow that is not well modeled as
+stable state.</p>
+<p>Examples:</p>
+<ul>
+<li>received UMSH frames</li>
+<li>transmit status events</li>
+<li>buffered frame delivery</li>
+<li>diagnostic log records</li>
+</ul>
+<p>Streams are generally one-way publications. They may optionally support
+flow-control or acknowledgement commands, but they are not properties.</p>
+<h3 id="fundamental-command-vocabulary"><a class="header" href="#fundamental-command-vocabulary">Fundamental Command Vocabulary</a></h3>
+<p>The starting command vocabulary should be small and generic:</p>
+<ul>
+<li><code>Noop</code></li>
+<li><code>Reset</code></li>
+<li><code>Get</code></li>
+<li><code>Set</code></li>
+<li><code>Insert</code></li>
+<li><code>Remove</code></li>
+<li><code>Send</code></li>
+<li><code>Received</code></li>
+<li><code>ValueIs</code></li>
+<li><code>LastStatus</code></li>
+</ul>
+<p>The intended roles are:</p>
+<ul>
+<li><code>Get(key)</code>
+<ul>
+<li>asks for the authoritative value of a property</li>
+</ul>
+</li>
+<li><code>Set(key, value)</code>
+<ul>
+<li>requests that a property be changed</li>
+<li>successful completion is normally reported by a matching <code>ValueIs(key, value)</code> indication rather than by inventing a separate “set succeeded”
+payload shape</li>
+</ul>
+</li>
+<li><code>Insert(key, value)</code>
+<ul>
+<li>adds one member to a list- or table-like property</li>
+</ul>
+</li>
+<li><code>Remove(key, value-or-selector)</code>
+<ul>
+<li>removes one member from a list- or table-like property</li>
+</ul>
+</li>
+<li><code>Send(stream, value)</code>
+<ul>
+<li>sends one item into a stream</li>
+<li>typical examples include host-to-radio frame submission or host
+acknowledgement/consumption of buffered stream items</li>
+</ul>
+</li>
+<li><code>Received(stream, value)</code>
+<ul>
+<li>publishes one item received or emitted on a stream</li>
+<li>typical examples include radio-to-host UMSH frame delivery, transmit status
+events, wake events, or log records</li>
+</ul>
+</li>
+<li><code>ValueIs(key, value)</code>
+<ul>
+<li>publishes the authoritative current value of a property</li>
+<li>used both for replies to <code>Get</code>/<code>Set</code>/<code>Insert</code>/<code>Remove</code> and for asynchronous
+change notification</li>
+</ul>
+</li>
+<li><code>LastStatus(code, ...)</code>
+<ul>
+<li>reports completion status when there is no more specific authoritative
+publication to send, or when a command fails</li>
+</ul>
+</li>
+</ul>
+<p>If the protocol later needs additional verbs, they should be added explicitly
+rather than pretending a new class of action is really a property update.</p>
+<h3 id="object-namespace"><a class="header" href="#object-namespace">Object Namespace</a></h3>
+<p>Properties and streams may share one numeric namespace if desired, but the
+specification must make their semantic category explicit.</p>
+<p>In other words:</p>
+<ul>
+<li>sharing one encoding space is acceptable</li>
+<li>pretending every named thing in that space is a property is not</li>
+</ul>
+<p>Every standardized object identifier should therefore be documented with:</p>
+<ul>
+<li>its semantic category: <code>property</code> or <code>stream</code></li>
+<li>which verbs are valid for it</li>
+<li>whether it may emit unsolicited <code>ValueIs</code> or <code>Received</code> indications</li>
+</ul>
+<h3 id="publication-model"><a class="header" href="#publication-model">Publication Model</a></h3>
+<p>For properties, the authoritative rule should be:</p>
+<ul>
+<li>the result of changing a property is publication of the new value</li>
+</ul>
+<p>For example:</p>
+<pre><code class="language-text">Host  -&gt; Set(Prop::RepeaterEnabled, true)
+Radio -&gt; ValueIs(Prop::RepeaterEnabled, true)
+</code></pre>
+<p>If the value later changes for some other reason, the same <code>ValueIs</code> form is
+used again:</p>
+<pre><code class="language-text">Radio -&gt; ValueIs(Prop::RepeaterEnabled, false)
+</code></pre>
+<p>This makes state reconstruction from an observed packet trace straightforward.</p>
+<h3 id="streams-and-indications"><a class="header" href="#streams-and-indications">Streams And Indications</a></h3>
+<p>Stream traffic uses explicit stream verbs rather than property publication.</p>
+<p>For example:</p>
+<pre><code class="language-text">Host  -&gt; Send(Stream::UmshFrames, tx-envelope)
+Radio -&gt; Received(Stream::TransmitState, queued)
+Radio -&gt; Received(Stream::TransmitState, transmitted)
+Radio -&gt; Received(Stream::TransmitState, acked)
+</code></pre>
+<p>Or:</p>
+<pre><code class="language-text">Radio -&gt; Received(Stream::UmshFrames, rx-envelope)
+</code></pre>
+<p>Unsolicited indications use <code>TID = 0</code>.</p>
+<p>Typical examples:</p>
+<ul>
+<li><code>Stream::UmshFrames</code></li>
+<li><code>Stream::TransmitState</code></li>
+<li><code>Stream::BufferedFrameReady</code></li>
+<li><code>Stream::LogRecord</code></li>
+</ul>
+<p>These are not property publications even if they use the same packed integer
+encoding and frame grammar.</p>
+<h3 id="transactions-and-ordering"><a class="header" href="#transactions-and-ordering">Transactions And Ordering</a></h3>
+<p>The host may have up to seven in-flight requests per interface because <code>TID</code>
+values <code>1..7</code> are available concurrently.</p>
+<p>The radio should:</p>
+<ul>
+<li>preserve the <code>TID</code> on direct replies</li>
+<li>use <code>TID = 0</code> for unsolicited indications</li>
+<li>avoid requiring strict global serialization unless a specific command family
+needs it</li>
+</ul>
+<p>This allows pipelining without abandoning observability.</p>
+<h3 id="initial-object-families"><a class="header" href="#initial-object-families">Initial Object Families</a></h3>
+<p>A first draft of the UMSH companion-link namespace would likely include at
+least the following families:</p>
+<ul>
+<li>protocol identity and capabilities</li>
+<li>radio configuration and current RF state</li>
+<li>repeater policy and wake/filter policy</li>
+<li>buffered inbound/outbound queue state</li>
+<li>transmit and queue-control streams</li>
+<li>received-frame and transmit-status streams</li>
+<li>companion health, battery, and diagnostics</li>
+</ul>
+<p>The exact object numbers are intentionally left open for now.</p>
+<h3 id="initial-candidate-properties-and-streams"><a class="header" href="#initial-candidate-properties-and-streams">Initial Candidate Properties And Streams</a></h3>
+<p>Using the Spinel core specification in <code>/Users/darco/Projects/spinel-spec</code> as a
+model, the most useful first pass is probably to separate candidate objects
+into:</p>
+<ul>
+<li>constant single-value properties</li>
+<li>mutable single-value properties</li>
+<li>multi-value or table-like properties</li>
+<li>stream properties</li>
+</ul>
+<p>The table below is intentionally only a starting point. It is meant to make the
+object surface concrete enough to review, rename, split, or delete.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Candidate object</th><th>Kind</th><th>Likely verbs</th><th>Why it likely exists</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PROP_PROTOCOL_VERSION</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Companion-link major/minor version so the host can reject incompatible radios early</td></tr>
+<tr><td><code>PROP_RADIO_VERSION</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Human-readable firmware/build identifier for the companion radio</td></tr>
+<tr><td><code>PROP_INTERFACE_TYPE</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Identifies this as a UMSH companion-radio interface rather than some other service</td></tr>
+<tr><td><code>PROP_CAPS</code></td><td>Property, multi-value constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Advertises supported capabilities, optional features, and available object families</td></tr>
+<tr><td><code>PROP_INTERFACE_COUNT</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of logical interfaces or services exposed by the companion</td></tr>
+<tr><td><code>PROP_LAST_STATUS</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Last command status or reset reason; useful for failures and post-reset synchronization</td></tr>
+<tr><td><code>PROP_POWER_STATE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Companion-radio power mode such as offline, standby, low-power, online</td></tr>
+<tr><td><code>PROP_HOST_ATTACH_STATE</code></td><td>Property, mutable or read-only</td><td><code>Get</code>, <code>Set?</code>, <code>ValueIs</code></td><td>Whether a host session is attached, suspended, draining, or detached</td></tr>
+<tr><td><code>PROP_BATTERY_STATE</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Battery percentage, voltage, charging state, or external-power presence</td></tr>
+<tr><td><code>PROP_DEVICE_HEALTH</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Compact overall health summary for quick status display</td></tr>
+<tr><td><code>PROP_RF_PROFILE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Selected RF profile or channel plan name/ID</td></tr>
+<tr><td><code>PROP_RF_REGION</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Current regulatory region or UMSH region profile</td></tr>
+<tr><td><code>PROP_RF_FREQUENCY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Actual center frequency when direct tuning is exposed</td></tr>
+<tr><td><code>PROP_RF_BANDWIDTH</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Radio bandwidth</td></tr>
+<tr><td><code>PROP_RF_SPREADING_FACTOR</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>LoRa spreading factor</td></tr>
+<tr><td><code>PROP_RF_CODING_RATE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>LoRa coding rate</td></tr>
+<tr><td><code>PROP_RF_TX_POWER</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Radio TX power</td></tr>
+<tr><td><code>PROP_RF_RSSI</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Latest RSSI snapshot if the host wants direct radio diagnostics</td></tr>
+<tr><td><code>PROP_RF_SNR</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Latest SNR snapshot if the host wants direct radio diagnostics</td></tr>
+<tr><td><code>PROP_REPEATER_ENABLED</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Turns repeater forwarding behavior on or off</td></tr>
+<tr><td><code>PROP_REPEATER_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Encodes repeater thresholds and policy such as min RSSI/SNR and region restrictions</td></tr>
+<tr><td><code>PROP_STATION_CALLSIGN</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Callsign used by the radio’s own repeater behavior where required</td></tr>
+<tr><td><code>PROP_WAKE_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>High-level wake behavior while the host sleeps</td></tr>
+<tr><td><code>PROP_WAKE_REASON</code></td><td>Property, read-only async</td><td><code>Get</code>, <code>ValueIs</code></td><td>Most recent wake cause, with optional unsolicited publication</td></tr>
+<tr><td><code>PROP_RECEIVE_FILTERS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Filter table controlling what wakes the host or gets buffered</td></tr>
+<tr><td><code>PROP_BUFFER_LIMITS</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Queue capacities, thresholds, or retention policy</td></tr>
+<tr><td><code>PROP_BUFFERED_RX_COUNT</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of buffered inbound items waiting for the host</td></tr>
+<tr><td><code>PROP_BUFFERED_TX_COUNT</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of queued outbound items awaiting transmission</td></tr>
+<tr><td><code>PROP_BUFFERED_RX_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Policy for retaining and aging buffered inbound items</td></tr>
+<tr><td><code>PROP_INSTALLED_IDENTITIES</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Host-provided identity contexts the radio is allowed to assist</td></tr>
+<tr><td><code>PROP_INSTALLED_CHANNEL_KEYS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Shared channel keys provisioned to the companion</td></tr>
+<tr><td><code>PROP_INSTALLED_PEER_KEYS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Pairwise symmetric peer material provisioned for limited offline assistance</td></tr>
+<tr><td><code>PROP_BEACON_JOBS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Periodic beacon/advertisement jobs owned by the companion</td></tr>
+<tr><td><code>PROP_STATS_COUNTERS</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Packet/queue/retry counters suitable for UI and diagnostics</td></tr>
+<tr><td><code>PROP_UNSOL_UPDATE_FILTER</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Filters which properties are allowed to generate unsolicited <code>ValueIs</code> updates</td></tr>
+<tr><td><code>PROP_UNSOL_UPDATE_LIST</code></td><td>Property, multi-value constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Lists properties capable of unsolicited publication</td></tr>
+<tr><td><code>STREAM_DEBUG_LOG</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Human-readable debug/log output from the companion</td></tr>
+<tr><td><code>STREAM_UMSH_FRAMES</code></td><td>Stream, input/output</td><td><code>Send</code>, <code>Received</code></td><td>Carries raw UMSH frames across the host/radio boundary, with direction-specific envelopes for transmit and receive metadata</td></tr>
+<tr><td><code>STREAM_TRANSMIT_STATUS</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Reports queued, transmitted, forwarded, acked, timed-out, or dropped outcomes</td></tr>
+<tr><td><code>STREAM_BUFFERED_RX</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Delivers previously buffered inbound frames when the host drains them</td></tr>
+<tr><td><code>STREAM_WAKE_EVENT</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Wake-trigger events such as matching frame, timer, queue threshold, or button press</td></tr>
+<tr><td><code>STREAM_DIAGNOSTIC_EVENT</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Structured diagnostic/fault events that are not well modeled as properties</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="umsh-frame-stream"><a class="header" href="#umsh-frame-stream">UMSH Frame Stream</a></h3>
+<p>The most important stream is the raw <strong>UMSH frame stream</strong> across the
+host/radio boundary.</p>
+<p>This stream is best modeled as a single bidirectional stream rather than as
+separate “transmit” and “receive” streams.</p>
+<p>The stream carries raw UMSH frames together with associated local metadata:</p>
+<ul>
+<li><code>Send(STREAM_UMSH_FRAMES, tx-envelope)</code>
+<ul>
+<li>host to radio</li>
+<li>requests transmission of one raw UMSH frame</li>
+</ul>
+</li>
+<li><code>Received(STREAM_UMSH_FRAMES, rx-envelope)</code>
+<ul>
+<li>radio to host</li>
+<li>reports reception of one raw UMSH frame</li>
+</ul>
+</li>
+</ul>
+<p>The envelope contents are direction-specific:</p>
+<ul>
+<li>a <strong>TX envelope</strong> would normally contain:
+<ul>
+<li>raw UMSH frame bytes</li>
+<li>any companion-link-local transmit metadata or policy hints</li>
+</ul>
+</li>
+<li>an <strong>RX envelope</strong> would normally contain:
+<ul>
+<li>raw UMSH frame bytes</li>
+<li>receive metadata such as RSSI, SNR, timestamp, queue origin, or buffering
+information</li>
+</ul>
+</li>
+</ul>
+<p>This stream is fundamentally about moving raw UMSH traffic across the
+host/radio boundary. It is not a separate application protocol.</p>
+<p>One practical consequence is that the host can also communicate with the
+companion radio’s own local UMSH node using ordinary UMSH frames sent over this
+stream, rather than requiring a separate bespoke message path for such traffic.</p>
+<h3 id="additional-command-candidates"><a class="header" href="#additional-command-candidates">Additional Command Candidates</a></h3>
+<p>The objects above imply a few likely verbs or verb families beyond the very
+basic ones already listed:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Candidate command</th><th>Why it may be needed</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Send</code></td><td>Natural fit for input or bidirectional streams such as <code>STREAM_UMSH_FRAMES</code></td></tr>
+<tr><td><code>Received</code></td><td>Natural fit for output or bidirectional streams such as <code>STREAM_UMSH_FRAMES</code> or <code>STREAM_TRANSMIT_STATUS</code></td></tr>
+<tr><td><code>Acknowledge</code> or <code>Advance</code></td><td>Likely useful if buffered stream delivery needs explicit host acknowledgement without overloading <code>Send</code></td></tr>
+<tr><td><code>Clear</code></td><td>May be clearer than <code>Set(empty)</code> for some queues, logs, or statistics</td></tr>
+<tr><td><code>Describe</code></td><td>May be useful if the host wants schema-like detail for complex properties or stream item formats</td></tr>
+</tbody>
+</table>
+</div>
+<p>These are only candidates. A stricter design may decide that some of these are
+unnecessary and can be replaced by better property or stream definitions.</p>
 <h2 id="ble-as-a-local-bearer"><a class="header" href="#ble-as-a-local-bearer">BLE As A Local Bearer</a></h2>
 <p>If BLE is used for more than tethering, it should be treated as a separate
 local bearer concept rather than an extension of the companion-link protocol.</p>
@@ -587,61 +965,6 @@ may eventually want: one mode for direct tethered interaction and another for
 local many-to-many participation. At the same time, adopting Bluetooth Mesh
 itself would mean adopting a substantial stack, not just borrowing the bearer
 idea.</p>
-<h3 id="suggested-frame-structure"><a class="header" href="#suggested-frame-structure">Suggested Frame Structure</a></h3>
-<p>A companion-link frame likely needs at least:</p>
-<ul>
-<li>a version</li>
-<li>a message type</li>
-<li>flags</li>
-<li>sequence number</li>
-<li>payload length</li>
-<li>payload bytes</li>
-<li>integrity check suitable for the local transport framing</li>
-</ul>
-<p>The exact framing may differ slightly depending on transport, but the message
-contents should remain the same.</p>
-<p>For stream transports such as UART or USB serial, a framing layer also needs:</p>
-<ul>
-<li>a start delimiter or length-prefix strategy</li>
-<li>escaping or COBS/SLIP-style encoding if sentinel-based framing is used</li>
-<li>a checksum or CRC for local corruption detection</li>
-</ul>
-<p>For packet transports, the outer framing may already be provided by the
-transport, in which case only the logical companion-link header needs to be
-retained.</p>
-<h3 id="suggested-message-classes"><a class="header" href="#suggested-message-classes">Suggested Message Classes</a></h3>
-<p>The message set should likely include at least:</p>
-<ul>
-<li><code>GetCapabilities</code></li>
-<li><code>GetRadioConfig</code></li>
-<li><code>SetRadioConfig</code></li>
-<li><code>InstallIdentityContext</code></li>
-<li><code>RemoveIdentityContext</code></li>
-<li><code>InstallChannelKey</code></li>
-<li><code>RemoveChannelKey</code></li>
-<li><code>InstallPeerKeyMaterial</code></li>
-<li><code>RemovePeerKeyMaterial</code></li>
-<li><code>SetReceiveFilter</code></li>
-<li><code>QueueBeacon</code></li>
-<li><code>CancelBeacon</code></li>
-<li><code>FetchBufferedFrames</code></li>
-<li><code>AcknowledgeBufferedFrames</code></li>
-<li><code>TransmitFrame</code></li>
-<li><code>ReceivedFrame</code></li>
-<li><code>GetStatus</code></li>
-</ul>
-<p>These are logical message types of the companion-link protocol, not
-transport-specific commands.</p>
-<h3 id="reliability-model"><a class="header" href="#reliability-model">Reliability Model</a></h3>
-<p>A good default model is:</p>
-<ul>
-<li>command requests carry sequence numbers</li>
-<li>responses echo the request sequence number</li>
-<li>asynchronous events have their own event sequence</li>
-<li>buffered received-frame delivery remains queued until acknowledged by the host</li>
-</ul>
-<p>This makes reconnect and partial loss easier to reason about across all
-transports, not just BLE.</p>
 <h2 id="ble-adaptation-suggestion"><a class="header" href="#ble-adaptation-suggestion">BLE Adaptation Suggestion</a></h2>
 <p>If BLE is used, BLE should carry the unified companion-link protocol rather
 than defining a BLE-specific control protocol.</p>
@@ -672,10 +995,6 @@ byte stream using an ordinary framing scheme such as:</p>
 </ul>
 <p>The important part is that the message protocol above remains unchanged. The
 serial transport should not require a second command language.</p>
-<h3 id="message-encoding"><a class="header" href="#message-encoding">Message Encoding</a></h3>
-<p>The message payloads should use a compact structured encoding such as CBOR or a
-small binary TLV. The encoding should be self-describing enough that the
-protocol can evolve without lock-step upgrades.</p>
 <h3 id="raw-frame-carriage"><a class="header" href="#raw-frame-carriage">Raw Frame Carriage</a></h3>
 <p>Messages carrying raw UMSH frames should include:</p>
 <ul>
@@ -686,16 +1005,17 @@ protocol can evolve without lock-step upgrades.</p>
 </ul>
 <p>Large frames may need fragmentation at the companion-link transport layer. That
 fragmentation belongs to the companion-radio link, not to UMSH itself.</p>
-<h3 id="suggested-reliability-model"><a class="header" href="#suggested-reliability-model">Suggested Reliability Model</a></h3>
+<h3 id="reliability-model"><a class="header" href="#reliability-model">Reliability Model</a></h3>
 <p>For any transport, a good default is:</p>
 <ul>
-<li>command messages are request/response and acknowledged at the companion-link
-protocol layer</li>
-<li>event and frame-delivery messages are sequence-numbered so the host can
-detect gaps after reconnect</li>
-<li>queued buffered frames remain on the radio until the host confirms receipt</li>
+<li>host-originated requests use <code>TID = 1..7</code></li>
+<li>direct replies preserve the request <code>TID</code></li>
+<li>unsolicited indications and stream publications use <code>TID = 0</code></li>
+<li>buffered stream delivery remains queued until the host explicitly advances or
+acknowledges it</li>
 </ul>
-<p>This is especially important if the host is allowed to sleep for long periods.</p>
+<p>This keeps the protocol lightweight while still allowing pipelining and
+post-facto reconstruction of companion-link state.</p>
 <h2 id="suggested-security-requirements-for-the-companion-link"><a class="header" href="#suggested-security-requirements-for-the-companion-link">Suggested Security Requirements For The Companion Link</a></h2>
 <p>Whatever transport is used, the companion-radio link should provide:</p>
 <ul>
