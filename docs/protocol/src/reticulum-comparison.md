@@ -50,9 +50,9 @@ Reticulum does not include a source address in any packet. This provides initiat
 | Routing info | CoAP-style composable options | Transport ID field (16 bytes) in HEADER_2 |
 | Flood hop count | Split 4-bit FHOPS field (max 15) | Mandatory 1-byte field |
 | MTU | LoRa frame size (typically 255 bytes) | 500-byte network MTU ([`Reticulum.py:91`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91), `MTU = 500`); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links |
-| Minimum header overhead | 1 byte (broadcast, no options) | 19 bytes HEADER_1 or 35 bytes HEADER_2 ([`Reticulum.py:148–149`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149), `HEADER_MINSIZE`/`HEADER_MAXSIZE`) |
+| Typical unicast overhead | 14–28 bytes (depending on MIC size and source hint vs full key) | 19 bytes HEADER_1 or 35 bytes HEADER_2 ([`Reticulum.py:148–149`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149), `HEADER_MINSIZE`/`HEADER_MAXSIZE`), plus crypto overhead |
 
-UMSH achieves very compact headers by using 1-byte and 2-byte fields with optional expansion. Reticulum's 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum's minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.
+UMSH uses compact fields that are present only when needed for the packet type. Reticulum's 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum's minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.
 
 Reticulum's 500-byte network MTU exceeds what most LoRa configurations can carry in a single frame. Reticulum introduced link MTU discovery in v0.9.3, which allows adjacent nodes to negotiate a higher effective MTU than 500 bytes when the underlying interface can support it — but this only applies to high-bandwidth interfaces. The `Interface.optimise_mtu()` method ([`Interface.py:115–138`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Interfaces/Interface.py#L115-L138)) maps link speed to hardware MTU, and sets `HW_MTU = None` for any interface running at or below 62,500 bps — which encompasses every LoRa configuration. When `HW_MTU` is `None`, the link request falls back to signalling the base 500-byte MTU ([`Link.py:273–278`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L273-L278)), and link MTU discovery is never entered. For LoRa interfaces, Reticulum relies on the RNode firmware to reassemble sub-255-byte air frames into 500-byte packets before presenting them to the stack via KISS. UMSH is designed to fit within a single LoRa frame, avoiding fragmentation entirely.
 
@@ -258,7 +258,7 @@ Reticulum's 16-byte (128-bit) destination addresses have an essentially zero col
 
 ### Packet Length and Airtime
 
-Reticulum's minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH's minimum overhead is 1 byte, with 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.
+Reticulum's minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH's overhead is 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.
 
 ### Fragmentation
 

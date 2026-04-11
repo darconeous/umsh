@@ -29,9 +29,9 @@ Meshtastic added optional Curve25519 keypairs in v2.5 for direct message encrypt
 | Routing info | CoAP-style composable options | Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte) |
 | Flood hop count | Split 4-bit FHOPS field (max 15) | Mandatory 3-bit field (max 7 hops) |
 | Max LoRa payload | ~255 bytes | 255 bytes (233 bytes application payload after header and encoding overhead) |
-| Minimum header overhead | 1 byte (broadcast, no options) | 16 bytes (always) |
+| Typical unicast overhead | 14–28 bytes (depending on MIC size and source hint vs full key) | 16 bytes header + 28 bytes crypto = 44 bytes minimum |
 
-UMSH uses a compact 1-byte Frame Control Field with optional expansion — the header scales from 1 byte (minimal broadcast) to the full addressing and security fields as needed. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.
+UMSH uses a compact 1-byte Frame Control Field with optional expansion — fields are present only when needed for the packet type. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.
 
 Meshtastic's header is always transmitted in cleartext, exposing sender and recipient node numbers, packet IDs, and channel hashes to any passive observer. UMSH's addressing fields are compact hints that do not directly reveal node identity, and in blind unicast or encrypted multicast modes, the source address is encrypted.
 
@@ -209,7 +209,7 @@ This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering 
 
 ### Packet Length and Airtime
 
-Meshtastic's fixed 16-byte header is transmitted on every packet regardless of content. UMSH's header scales from 1 byte upward depending on which optional fields are present. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.
+Meshtastic's fixed 16-byte header is transmitted on every packet regardless of content. UMSH's header includes only the fields needed for the packet type. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.
 
 ### Repeater Power
 
