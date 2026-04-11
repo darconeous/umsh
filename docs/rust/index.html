@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UMSH Rust API Docs</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #1f2328;
+      --muted: #57606a;
+      --border: #d0d7de;
+      --link: #0969da;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --text: #e6edf3;
+        --muted: #9da7b3;
+        --border: #30363d;
+        --link: #58a6ff;
+      }
+    }
+    body {
+      margin: 0;
+      font: 16px/1.5 system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 20px 64px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    }
+    h1, h2 {
+      line-height: 1.2;
+      margin: 0 0 16px;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+    }
+    ul {
+      margin: 16px 0 0;
+      padding-left: 20px;
+    }
+    li + li {
+      margin-top: 8px;
+    }
+    a {
+      color: var(--link);
+    }
+    .top-links a + a {
+      margin-left: 16px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h1>UMSH Rust API Docs</h1>
+      <p>Workspace API documentation for the UMSH Rust crates.</p>
+      <p class="top-links">
+        <a href="../protocol/">Protocol Book</a>
+        <a href="umsh/">Umbrella Crate</a>
+      </p>
+
+      <h2>Crates</h2>
+      <ul>
+        <li><a href="umsh/">umsh</a> — umbrella crate that re-exports the workspace surface</li>
+        <li><a href="umsh_core/">umsh_core</a> — core packet types and protocol primitives</li>
+        <li><a href="umsh_crypto/">umsh_crypto</a> — cryptographic constructions and identities</li>
+        <li><a href="umsh_hal/">umsh_hal</a> — hardware abstraction traits</li>
+        <li><a href="umsh_uri/">umsh_uri</a> — UMSH URI parsing and formatting</li>
+        <li><a href="umsh_chat_room/">umsh_chat_room</a> — chat room payload types</li>
+        <li><a href="umsh_text/">umsh_text</a> — text messaging payloads and wrappers</li>
+        <li><a href="umsh_mac/">umsh_mac</a> — MAC layer implementation</li>
+        <li><a href="umsh_node/">umsh_node</a> — application-facing node layer</li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>

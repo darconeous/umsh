@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["umsh_mac",[["impl <a class=\"trait\" href=\"umsh_hal/trait.KeyValueStore.html\" title=\"trait umsh_hal::KeyValueStore\">KeyValueStore</a> for <a class=\"struct\" href=\"umsh_mac/test_support/struct.DummyKeyValueStore.html\" title=\"struct umsh_mac::test_support::DummyKeyValueStore\">DummyKeyValueStore</a>",0]]]]);
+    const implementors = Object.fromEntries([["umsh",[["impl <a class=\"trait\" href=\"umsh_hal/trait.KeyValueStore.html\" title=\"trait umsh_hal::KeyValueStore\">KeyValueStore</a> for <a class=\"struct\" href=\"umsh/tokio_support/struct.MemoryKeyValueStore.html\" title=\"struct umsh::tokio_support::MemoryKeyValueStore\">MemoryKeyValueStore</a>",0],["impl <a class=\"trait\" href=\"umsh_hal/trait.KeyValueStore.html\" title=\"trait umsh_hal::KeyValueStore\">KeyValueStore</a> for <a class=\"struct\" href=\"umsh/tokio_support/struct.TokioFileKeyValueStore.html\" title=\"struct umsh::tokio_support::TokioFileKeyValueStore\">TokioFileKeyValueStore</a>",0],["impl&lt;const ENTRIES: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.usize.html\">usize</a>, const KEY_LEN: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.usize.html\">usize</a>, const VALUE_LEN: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.usize.html\">usize</a>&gt; <a class=\"trait\" href=\"umsh_hal/trait.KeyValueStore.html\" title=\"trait umsh_hal::KeyValueStore\">KeyValueStore</a> for <a class=\"struct\" href=\"umsh/embassy_support/struct.MemoryKeyValueStore.html\" title=\"struct umsh::embassy_support::MemoryKeyValueStore\">MemoryKeyValueStore</a>&lt;ENTRIES, KEY_LEN, VALUE_LEN&gt;",0]]],["umsh_mac",[["impl KeyValueStore for <a class=\"struct\" href=\"umsh_mac/test_support/struct.DummyKeyValueStore.html\" title=\"struct umsh_mac::test_support::DummyKeyValueStore\">DummyKeyValueStore</a>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[314]}
+//{"start":59,"fragment_lengths":[1308,209]}

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["prelude","test_vectors"],"trait":["Platform"]};
+window.SIDEBAR_ITEMS = {"mod":["embassy_support","prelude","test_vectors","tokio_support"],"trait":["Platform"]};
