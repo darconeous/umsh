@@ -144,7 +144,7 @@ previously-seen value, allowing old ciphertexts to replay. The coordinator manag
 automatically:</p>
 <ol>
 <li>On startup, call <a href="struct.Mac.html#method.load_persisted_counter" title="method umsh_mac::Mac::load_persisted_counter"><code>Mac::load_persisted_counter</code></a> for each long-term identity to read
-the last-committed boundary from the <a href="../umsh_hal/trait.CounterStore.html" title="trait umsh_hal::CounterStore"><code>umsh_hal::CounterStore</code></a> and set the live
+the last-committed boundary from the [<code>umsh_hal::CounterStore</code>] and set the live
 counter to the next safe starting point.</li>
 <li>At runtime, the coordinator schedules a persist whenever the live counter crosses a
 block boundary (every [<code>COUNTER_PERSIST_BLOCK_SIZE</code>] frames, default 128). While a
