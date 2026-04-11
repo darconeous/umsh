@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1b83070c.js";
+            window.path_to_searchindex_js = "searchindex-c418209d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -438,7 +438,7 @@
 <h3 id="false-positive-filtering"><a class="header" href="#false-positive-filtering">False-Positive Filtering</a></h3>
 <p>Reticulum’s 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH’s 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.</p>
 <h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
-<p>Reticulum’s minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH’s minimum overhead is 1 byte, with 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.</p>
+<p>Reticulum’s minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH’s overhead is 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.</p>
 <h3 id="fragmentation"><a class="header" href="#fragmentation">Fragmentation</a></h3>
 <p>Reticulum’s 500-byte network MTU exceeds the ~255-byte LoRa frame limit, requiring link-layer fragmentation for larger messages. A node receiving a fragmented message must keep its radio and MCU active across multiple frames until reassembly completes. UMSH is designed to fit each packet into a single LoRa frame, so the radio can return to sleep as soon as one frame is processed.</p>
 <h3 id="announce-traffic-and-repeater-power"><a class="header" href="#announce-traffic-and-repeater-power">Announce Traffic and Repeater Power</a></h3>

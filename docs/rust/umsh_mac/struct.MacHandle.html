@@ -39,7 +39,7 @@ loop continues to own radio receive/transmit progression.</p>
     &amp;self,
     identity_id: <a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>,
     peer_id: <a class="struct" href="struct.PeerId.html" title="struct umsh_mac::PeerId">PeerId</a>,
-    pairwise_keys: <a class="struct" href="../umsh_crypto/struct.PairwiseKeys.html" title="struct umsh_crypto::PairwiseKeys">PairwiseKeys</a>,
+    pairwise_keys: PairwiseKeys,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.PeerCryptoState.html" title="struct umsh_mac::PeerCryptoState">PeerCryptoState</a>&gt;, <a class="enum" href="enum.MacHandleError.html" title="enum umsh_mac::MacHandleError">MacHandleError</a>&lt;<a class="enum" href="enum.SendError.html" title="enum umsh_mac::SendError">SendError</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Installs pairwise transport keys for one local identity and remote peer.</p>
 <h5 id="safety-logical"><a class="doc-anchor" href="#safety-logical">§</a>Safety (logical)</h5>
 <p>Installing wrong keys will silently corrupt the session. This method
@@ -99,7 +99,7 @@ hand-roll <code>poll_cycle</code> loops with arbitrary sleeps.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.register_ephemeral" class="method"><a class="src rightside" href="../src/umsh_mac/handle.rs.html#325-331">Source</a><h4 class="code-header">pub fn <a href="#method.register_ephemeral" class="fn">register_ephemeral</a>(
     &amp;self,
     parent: <a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>,
-    identity: <a class="struct" href="../umsh_crypto/software/struct.SoftwareIdentity.html" title="struct umsh_crypto::software::SoftwareIdentity">SoftwareIdentity</a>,
+    identity: SoftwareIdentity,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>, <a class="enum" href="enum.MacHandleError.html" title="enum umsh_mac::MacHandleError">MacHandleError</a>&lt;<a class="struct" href="struct.CapacityError.html" title="struct umsh_mac::CapacityError">CapacityError</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Registers an ephemeral software identity with the shared coordinator.</p>
 <p>This is primarily used by the node layer when a PFS session becomes active.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.remove_ephemeral" class="method"><a class="src rightside" href="../src/umsh_mac/handle.rs.html#335-340">Source</a><h4 class="code-header">pub fn <a href="#method.remove_ephemeral" class="fn">remove_ephemeral</a>(
