@@ -179,6 +179,24 @@ For dedicated repeater nodes, UMSH does not require decrypting or verifying the 
 
 MeshCore's SNR-based retransmit delay implicitly prioritizes better-positioned repeaters — nodes with stronger reception retransmit sooner, which can suppress weaker nodes via duplicate detection. However, no packet is ever dropped due to poor signal quality; every repeater in range of a flooded packet will eventually retransmit it (subject to hop count), regardless of link quality. UMSH's explicit signal-quality thresholds allow the sender to prevent retransmission over weak links entirely, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.
 
+## What This Means in Practice
+
+The protocol differences described above translate into concrete user-visible behaviors:
+
+- **Multi-hop delivery is more reliable.** UMSH defines hop-by-hop forwarding confirmation with retries, so each repeater along the path confirms receipt before the previous hop moves on. Versions of this are present for both source-routed paths and flooded packets in UMSH. MeshCore's forwarding is fire-and-forget in both flood and direct modes — if a transmission is lost at any hop, there is no recovery mechanism at the forwarding layer. This makes multi-hop forwarding much less reliable over long distances.
+
+- **Nodes do not need accurate clocks.** MeshCore uses UNIX timestamps for advertisement freshness and login sequencing, so nodes with drifted or reset clocks may reject valid advertisements or fail login handshakes. UMSH is timestamp-free at the MAC layer — no clock synchronization is required for any protocol operation.
+
+- **Fewer false wake-ups on busy networks.** MeshCore's 1-byte address hints mean that roughly 1 in 256 packets addressed to other nodes will appear to match yours, triggering unnecessary cryptographic verification before the packet can be discarded. UMSH's 3-byte hints reduce this to roughly 1 in 16 million, which matters for battery-powered nodes that need to return to sleep quickly.
+
+- **Routes can combine source routing and flooding.** A UMSH packet can be source-routed to a known region and then flood locally from there, reaching a specific area without flooding the entire mesh. MeshCore treats flood and direct routing as mutually exclusive.
+
+- **Amateur radio operation is a first-class concern.** UMSH defines packet options for operator and station callsigns and an explicit unencrypted mode, allowing compliant operation on amateur radio frequencies where encryption is prohibited and station identification is required. MeshCore does not define equivalent mechanisms.
+
+- **Easier to extend without breaking existing deployments.** UMSH's composable options and opaque payload model let developers add new routing behaviors, packet options, or application protocols without changing the MAC layer — existing nodes simply ignore options and payload types they do not recognize. MeshCore's vertically integrated design, where application-layer semantics are defined at the protocol level, means that new features are more likely to require coordinated firmware updates across the network.
+
+- **Stronger security from a coherent cryptographic design.** MeshCore's cryptographic choices — AES-128-ECB encryption, 2-byte MACs, a 128-entry duplicate cache for replay protection, and no key separation — individually and collectively weaken the security guarantees the protocol can offer. Identical messages produce identical ciphertext, MAC forgery is feasible to brute-force, replayed packets are accepted once the duplicate cache wraps, and the same key material is reused across cryptographic operations. UMSH addresses all of these with AES-CTR encryption using a synthetic IV, configurable MIC sizes up to 16 bytes, monotonic frame counters for replay protection, HKDF-derived domain-separated keys, and optional perfect forward secrecy sessions that protect past traffic if a long-term key is later compromised. Something like this cannot be easily bolted onto MeshCore's current design.
+
 ## Summary of Design Differences
 
 MeshCore optimizes aggressively for minimal packet overhead in the common case, accepting significant cryptographic and flexibility tradeoffs to maximize payload capacity within LoRa frame constraints. It takes a vertically integrated approach, defining application-layer payload types and relying on a fixed-size duplicate cache for deduplication and UNIX timestamps for advertisement freshness.
