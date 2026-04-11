@@ -2,6 +2,9 @@
 
 //! Core wire-format types and packet construction/parsing utilities for UMSH.
 //!
+//! > Note: This reference implementation is a work in progress and was developed
+//! > with the assistance of an LLM. It should be considered experimental.
+//!
 //! This crate stays focused on byte layout, typed header fields, and zero-copy
 //! parsing. It does not perform any cryptographic operations or I/O.
 //!

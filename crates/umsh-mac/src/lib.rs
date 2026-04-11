@@ -2,6 +2,9 @@
 
 //! UMSH MAC-layer coordinator and supporting state types.
 //!
+//! > Note: This reference implementation is a work in progress and was developed
+//! > with the assistance of an LLM. It should be considered experimental.
+//!
 //! This crate is the central runtime for the UMSH mesh protocol. It owns every piece of
 //! radio-facing state and drives the full MAC lifecycle: receiving and authenticating
 //! inbound frames, forwarding eligible frames as a repeater, issuing and verifying transport

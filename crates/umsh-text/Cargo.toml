@@ -3,6 +3,8 @@ name = "umsh-text"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_text/"
 
 [features]
 default = ["std", "software-crypto"]

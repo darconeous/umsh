@@ -16,6 +16,7 @@ resolver = "2"
 edition = "2024"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/darconeous/umsh"
 
 [workspace.dependencies]
 aes = { version = "0.8", default-features = false }

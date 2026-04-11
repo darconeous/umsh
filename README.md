@@ -69,7 +69,8 @@ The [`crates/`](crates/) directory contains a `no_std` Rust implementation organ
 set of layered library crates, from primitive types (`umsh-core`) up through cryptography,
 the MAC layer, node state, and application protocols. The [`umsh/`](umsh/) integration crate
 bundles these together and adds Tokio and Embassy runtime adapters, along with examples
-including a two-node desktop chat and a simulated multi-hop mesh.
+including a two-node desktop chat and a simulated multi-hop mesh. Published Rust API docs
+are available at <https://darconeous.github.io/umsh/docs/rust/>.
 
 ### Wireshark dissector
 

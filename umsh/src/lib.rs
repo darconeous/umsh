@@ -3,6 +3,11 @@
 //! In addition to re-exporting the core protocol crates, this crate defines the
 //! [`Platform`] trait and optional runtime adapters for Tokio and Embassy.
 //!
+//! For more details on the protocol, see the [UMSH protocol specification](https://darconeous.github.io/umsh/docs/protocol/).
+//!
+//! > Note: This reference implementation is a work in progress and was developed
+//! > with the assistance of an LLM. It should be considered experimental.
+//!
 //! # Where to start
 //!
 //! Most applications should begin with:

@@ -3,6 +3,8 @@ name = "umsh-uri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_uri/"
 
 [features]
 default = ["std"]

@@ -3,6 +3,8 @@ name = "umsh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh/"
 
 [features]
 default = ["std", "software-crypto", "chat-rooms"]

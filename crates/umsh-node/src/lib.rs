@@ -3,6 +3,9 @@
 
 //! Application-facing node layer built on top of [`umsh-mac`](umsh_mac).
 //!
+//! > Note: This reference implementation is a work in progress and was developed
+//! > with the assistance of an LLM. It should be considered experimental.
+//!
 //! `umsh-node` sits between the radio-facing MAC coordinator in `umsh-mac` and the
 //! application. Where `umsh-mac` thinks in raw frames, keys, replay windows, and transmit
 //! queues, `umsh-node` provides composable abstractions for sending and receiving messages,
@@ -152,10 +155,17 @@ mod receive;
 mod ticket;
 mod transport;
 
+pub use app_error::{AppEncodeError, AppParseError};
+pub use app_owned::{OwnedMacCommand, OwnedNodeIdentityPayload};
+pub use app_payload::{
+    expect_payload_type, parse_mac_command_payload, parse_node_identity_payload, split_payload_type,
+};
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
 pub use host::{Host, HostError};
+pub use identity::{Capabilities, NodeIdentityPayload, NodeRole};
 pub use mac::{MacBackend, MacBackendError};
+pub use mac_command::{CommandId, MacCommand};
 #[cfg(feature = "software-crypto")]
 pub use node::BoundChannel;
 #[cfg(feature = "software-crypto")]
@@ -165,13 +175,6 @@ pub use peer::PeerConnection;
 pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};
 pub use transport::Transport;
-pub use app_error::{AppEncodeError, AppParseError};
-pub use app_owned::{OwnedMacCommand, OwnedNodeIdentityPayload};
-pub use app_payload::{
-    expect_payload_type, parse_mac_command_payload, parse_node_identity_payload, split_payload_type,
-};
-pub use identity::{Capabilities, NodeIdentityPayload, NodeRole};
-pub use mac_command::{CommandId, MacCommand};
 
 pub mod identity_payload {
     pub use crate::identity::{encode, parse};
@@ -207,9 +210,9 @@ mod tests {
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     use crate::{MacBackend, MacBackendError, OwnedMacCommand, SendToken};
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
-    use umsh_text::OwnedTextMessage;
-    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     use umsh_core::ChannelId;
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    use umsh_text::OwnedTextMessage;
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn peer_receive_handlers_precede_node_receive_handlers() {
