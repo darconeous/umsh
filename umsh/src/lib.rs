@@ -5,8 +5,11 @@
 //!
 //! For more details on the protocol, see the [UMSH protocol specification](https://darconeous.github.io/umsh/docs/protocol/).
 //!
-//! > Note: This reference implementation is a work in progress and was developed
-//! > with the assistance of an LLM. It should be considered experimental.
+//! For other information about the project, see the [UMSH repository on GitHub](https://github.com/darconeous/umsh).
+//!
+//! > *Note*
+//! > This reference implementation is a work in progress and was developed with
+//! > the assistance of an LLM. It should be considered experimental.
 //!
 //! # Where to start
 //!
