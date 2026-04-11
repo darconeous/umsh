@@ -2,6 +2,8 @@
 
 UMSH is a LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as [critical shortcomings](meshcore-comparison.md#cryptography)—shortcomings that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into this comprehensive specification.
 
+The project repository, reference implementation, and supporting tooling are available on [GitHub](https://github.com/darconeous/umsh).
+
 The ideas in UMSH are free for anyone to adopt, but was written with MeshCore V2 in mind. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.
 
 ## Overview
@@ -111,4 +113,3 @@ A channel is a shared symmetric key that serves two roles: **multicast** group c
 ### Perfect Forward Secrecy
 
 UMSH supports [perfect forward secrecy](security.md#perfect-forward-secrecy-sessions), not as a core part of the underlying protocol but instead via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.
-
