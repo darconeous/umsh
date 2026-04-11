@@ -4,7 +4,7 @@
 
 Originally intended as a proposal for a "MeshCore 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh look like with security and clean architecture as primary design goals? Inspired by MeshCore, it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/).
 
-> *Note*
+> [!NOTE]
 > All of the content in this repository was written with the assistance of an LLM.
 > In the case of the [specification](https://darconeous.github.io/umsh/docs/protocol/),
 > LLM usage was largely limited to improving readability and acting as a research
