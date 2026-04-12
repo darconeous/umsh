@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-cfc83646.js";
+            window.path_to_searchindex_js = "searchindex-8bd2379e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -1175,6 +1175,10 @@ K_mic = okm[16..31]
 <h2 id="hybrid-routing"><a class="header" href="#hybrid-routing">Hybrid Routing</a></h2>
 <p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior — useful for reaching a node in a known area without flooding the entire mesh.</p>
 <p>See <a href="#routing-implications">Repeater Operation § Routing Implications</a>.</p>
+<h2 id="bridging"><a class="header" href="#bridging">Bridging</a></h2>
+<p>A <strong>bridge</strong> is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands. Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though <a href="#bridge-hop-confirmation">this may be optimized in the future</a>.</p>
+<p>Bridges participate in source routes and trace routes like any other repeater. A trace route that crosses a bridge will contain the bridge’s router hint, and source-routed packets will traverse the bridge transparently.</p>
+<p>Flooding works across bridges, but the remaining flood hop count is clamped when a packet exits the bridge — by default, to a maximum of 1. This clamping applies even to hybrid-routed packets that transition from source routing to flooding after crossing the bridge. The effect is to keep individual meshes local and accountable while still enabling multi-segment routing.</p>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
 <p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
 <p>If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.</p>
