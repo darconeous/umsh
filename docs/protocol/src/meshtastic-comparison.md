@@ -137,12 +137,14 @@ Both protocols support multiple channels with independent keys. Meshtastic limit
 | Remote administration | Node management MAC commands | ADMIN_APP (portnum 6) |
 | Audio | Not defined | AUDIO_APP (codec2, 2.4 GHz only) |
 | Store and forward | Not defined | STORE_FORWARD_APP |
-| Amateur radio | Operator/station callsign options, explicit unencrypted mode | Not defined |
+| Amateur radio | Operator/station callsign options, explicit unencrypted mode | `is_licensed` flag (lifts power limits, callsign via long name, manual PSK removal) |
 | Implementation | Protocol spec (language-agnostic) | C++ firmware + protobuf definitions |
 
 Meshtastic defines a rich application layer with built-in support for position sharing, telemetry, waypoints, audio, store-and-forward, and TAK integration. These are tightly integrated into the firmware and protobuf schema.
 
 UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This approach is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without protocol changes.
+
+Both protocols address amateur radio operation, but at different levels. Meshtastic provides an [`is_licensed` configuration flag](https://meshtastic.org/docs/configuration/radio/user/) that lifts firmware power limits and expects the operator to manually set their callsign as the node's long name and clear the channel PSK to disable encryption. The callsign is carried in the existing user info field rather than a dedicated protocol field. UMSH defines amateur radio support at the protocol level: dedicated packet options carry operator and station callsigns as structured fields, and the Frame Control Field explicitly indicates whether a packet is encrypted. Both protocols require the operator to configure the device appropriately, but UMSH's approach makes compliance structurally visible in the packets themselves — a monitoring station can verify callsign presence and unencrypted transmission by inspecting the packet, without needing to know the device's configuration state.
 
 ## Layer Separation
 
