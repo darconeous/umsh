@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-61231823.js";
+            window.path_to_searchindex_js = "searchindex-8345985b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -345,11 +345,11 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <dt id="public-key"><a class="header" href="#public-key"><strong>Public Key</strong></a></dt>
 <dd>The public half of an asymmetric keypair, which can be freely shared. In UMSH, a node’s Ed25519 public key <em>is</em> its address. Address hints are derived from it.</dd>
 <dt id="rssi-received-signal-strength-indicator"><a class="header" href="#rssi-received-signal-strength-indicator"><strong>RSSI (Received Signal Strength Indicator)</strong></a></dt>
-<dd>A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger). Used in UMSH’s Minimum RSSI packet option and in repeater forwarding decisions to filter out packets received with insufficient signal strength. See <a href="#minimum-rssi-option-5">Packet Options</a>.</dd>
+<dd>A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger).</dd>
 <dt id="repeater"><a class="header" href="#repeater"><strong>Repeater</strong></a></dt>
 <dd>A node that forwards packets to extend the effective range of the mesh. Repeaters participate in flood routing and source routing but do not generate or consume application payloads for the packets they forward. See <a href="#repeater-operation">Repeater Operation</a>.</dd>
 <dt id="snr-signal-to-noise-ratio"><a class="header" href="#snr-signal-to-noise-ratio"><strong>SNR (Signal-to-Noise Ratio)</strong></a></dt>
-<dd>A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains meaningful at very low signal levels and is used by LoRa for demodulation decisions. Used in UMSH’s Minimum SNR packet option and in repeater contention delay calculations. See <a href="#minimum-snr-option-9">Packet Options</a>.</dd>
+<dd>A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains a reliable indicator of link quality even when the signal is below the noise floor, which is common in LoRa’s spread-spectrum operating regime.</dd>
 <dt id="source-routing"><a class="header" href="#source-routing"><strong>Source Routing</strong></a></dt>
 <dd>A routing strategy where the sender specifies the explicit sequence of repeaters a packet must traverse. Requires the sender to have prior knowledge of a valid path. See <a href="#source-route-option-3">Packet Options</a>.</dd>
 <dt id="trace-route"><a class="header" href="#trace-route"><strong>Trace Route</strong></a></dt>
