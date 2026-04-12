@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-8345985b.js";
+            window.path_to_searchindex_js = "searchindex-c1235fba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -1363,13 +1363,13 @@ delay = uniform_random(0, W)
 <h2 id="routing-invariants"><a class="header" href="#routing-invariants">Routing Invariants</a></h2>
 <p>The routing model is governed by a few simple rules:</p>
 <ul>
-<li>Every currently defined routable on-mesh packet type is routable.
+<li>Every currently defined on-mesh packet type is routable.
 <ul>
 <li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
 <li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
 </ul>
 </li>
-<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding.
+<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="#source-route-option-3">source route</a>, <a href="#trace-route-option-2">trace route</a>, <a href="#flood-hop-count">hop count</a>, etc)
 <ul>
 <li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
 <li>Typical examples are flood hop counts, trace routes, source routes.</li>
