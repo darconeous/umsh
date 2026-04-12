@@ -101,9 +101,9 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 
 ### Minimum RSSI (option 5)
 - Type: unsigned 1-byte integer, interpreted as a negative dBm value
-- Semantics: packet must be received with at least this RSSI to be forwarded.
+- Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.
 - Example: value `130` means `-130 dBm`
-- If present with no value (length 0), default is `-90 dBm`
+- If present with no value (length 0), default is `-100 dBm` (THIS VALUE IS SUBJECT TO CHANGE)
 - If a repeater has a locally configured minimum RSSI, it must use the higher of the packet's minimum RSSI threshold and the repeater's configured minimum RSSI threshold.
 
 ### Route Retry (option 6)
@@ -131,8 +131,8 @@ The assignment and scope of non-IATA-based region codes—and resolution of any 
 
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB
-- Semantics: packet must be received with at least this SNR to be forwarded.
-- If present with no value (length 0), default is `0 dB`.
+- Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
+- If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
 - If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
 
 ## Routing Option Layouts

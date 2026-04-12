@@ -49,7 +49,7 @@ delay = uniform_random(0, W)
 Where:
 
 - `SNR_low` and `SNR_high` define the clamp range used for the contention heuristic. The suggested defaults are **−6 dB** and **+15 dB**, respectively.
-- The effective minimum SNR threshold is still the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT forward at all if the received SNR is below that effective threshold.
+- When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)
 - `W_min` is the minimum contention window for strong receptions. The suggested default is **0.2 × T_frame**.
 - `W_max` is the maximum intentional forwarding-delay window. The suggested default is **2 × T_frame**.
 - `received_SNR` is the SNR measured during reception of the packet being forwarded.

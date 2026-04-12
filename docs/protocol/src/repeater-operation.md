@@ -6,10 +6,10 @@ Forwarding logic is intentionally conservative. A repeater should evaluate packe
 
 The routing model is governed by a few simple rules:
 
-- Every currently defined routable on-mesh packet type is routable.
+- Every currently defined on-mesh packet type is routable.
   - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
   - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.
-- Repeaters MUST mutate specific dynamic routing metadata while forwarding.
+- Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace route](packet-options.md#trace-route-option-2), [hop count](packet-structure.md#flood-hop-count), etc)
   - A repeater MUST NOT simply repeat a packet without making specific changes.
   - Typical examples are flood hop counts, trace routes, source routes.
   - Repeaters themselves to not add the Route Retry flag, only the original sender does that.
@@ -58,37 +58,38 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 2. **Locally-Handled Unicast**
    - If this packet was a unicast (bind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward.
 
-2. **RSSI threshold check**
-   - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
-
-3. **SNR threshold check**
-   - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
-
-4. **Unknown critical options**
+3. **Unknown critical options**
    - If the packet contains any critical option the repeater does not understand, do not forward.
 
-5. **Policy checks**
+4. **Policy checks**
    - If the packet does not satisfy local repeater policy, do not forward.
 
-6. **Source-route match**
+5. **Source-route match**
    - If the packet contains a non-empty source-route option:
      - If this repeater does not match the next source-route hint, do not forward.
      - Otherwise, remove the repeater's own hint from the source-route option.
    - If the repeater mutates a source-route option, it MUST preserve the option on the forwarded packet even when no hints remain.
      - In that case, the forwarded packet carries a source-route option with zero remaining hops.
      - This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.
+   - If the source-route option is still non-empty after removing this repeater's hint, skip directly to step 9 (trace route processing). The remaining steps apply only to flood forwarding.
 
-7. **Transition from source-routing to flooding**
+6. **Transition from source-routing to flooding**
    - If the source-route option is now empty:
      - If the packet has a region code option and this repeater is not configured for that region, do not forward.
      - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
      - Otherwise, do not forward.
 
-8. **Trace route processing**
+7. **RSSI threshold check**
+   - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
+
+8. **SNR threshold check**
+   - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
+
+9. **Trace route processing**
    - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
-9. **Retransmit**
-   - Forward the modified packet.
+10. **Retransmit**
+    - Forward the modified packet.
 
 ## Forwarding Confirmation
 

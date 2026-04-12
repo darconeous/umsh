@@ -124,13 +124,13 @@ The protocol differentiates between source-routed hops and flood-routed hops.
 : The public half of an asymmetric keypair, which can be freely shared. In UMSH, a node's Ed25519 public key *is* its address. Address hints are derived from it.
 
 **RSSI (Received Signal Strength Indicator)**
-: A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger). Used in UMSH's Minimum RSSI packet option and in repeater forwarding decisions to filter out packets received with insufficient signal strength. See [Packet Options](packet-options.md#minimum-rssi-option-5).
+: A measurement of received radio signal power, expressed in dBm (negative values; higher is stronger).
 
 **Repeater**
 : A node that forwards packets to extend the effective range of the mesh. Repeaters participate in flood routing and source routing but do not generate or consume application payloads for the packets they forward. See [Repeater Operation](repeater-operation.md).
 
 **SNR (Signal-to-Noise Ratio)**
-: A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains meaningful at very low signal levels and is used by LoRa for demodulation decisions. Used in UMSH's Minimum SNR packet option and in repeater contention delay calculations. See [Packet Options](packet-options.md#minimum-snr-option-9).
+: A measurement of the ratio between received signal power and background noise, expressed in dB. Unlike RSSI, SNR remains a reliable indicator of link quality even when the signal is below the noise floor, which is common in LoRa's spread-spectrum operating regime.
 
 **Source Routing**
 : A routing strategy where the sender specifies the explicit sequence of repeaters a packet must traverse. Requires the sender to have prior knowledge of a valid path. See [Packet Options](packet-options.md#source-route-option-3).
