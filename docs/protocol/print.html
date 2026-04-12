@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c4afe035.js";
+            window.path_to_searchindex_js = "searchindex-61231823.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0d631dd0.js"></script>
@@ -3614,13 +3614,14 @@ as amateur-radio traffic.</p>
 <tr><td>Remote administration</td><td>Node management MAC commands</td><td>ADMIN_APP (portnum 6)</td></tr>
 <tr><td>Audio</td><td>Not defined</td><td>AUDIO_APP (codec2, 2.4 GHz only)</td></tr>
 <tr><td>Store and forward</td><td>Not defined</td><td>STORE_FORWARD_APP</td></tr>
-<tr><td>Amateur radio</td><td>Operator/station callsign options, explicit unencrypted mode</td><td>Not defined</td></tr>
+<tr><td>Amateur radio</td><td>Operator/station callsign options, explicit unencrypted mode</td><td><code>is_licensed</code> flag (lifts power limits, callsign via long name, manual PSK removal)</td></tr>
 <tr><td>Implementation</td><td>Protocol spec (language-agnostic)</td><td>C++ firmware + protobuf definitions</td></tr>
 </tbody>
 </table>
 </div>
 <p>Meshtastic defines a rich application layer with built-in support for position sharing, telemetry, waypoints, audio, store-and-forward, and TAK integration. These are tightly integrated into the firmware and protobuf schema.</p>
 <p>UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This approach is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without protocol changes.</p>
+<p>Both protocols address amateur radio operation, but at different levels. Meshtastic provides an <a href="https://meshtastic.org/docs/configuration/radio/user/"><code>is_licensed</code> configuration flag</a> that lifts firmware power limits and expects the operator to manually set their callsign as the node’s long name and clear the channel PSK to disable encryption. The callsign is carried in the existing user info field rather than a dedicated protocol field. UMSH defines amateur radio support at the protocol level: dedicated packet options carry operator and station callsigns as structured fields, and the Frame Control Field explicitly indicates whether a packet is encrypted. Both protocols require the operator to configure the device appropriately, but UMSH’s approach makes compliance structurally visible in the packets themselves — a monitoring station can verify callsign presence and unencrypted transmission by inspecting the packet, without needing to know the device’s configuration state.</p>
 <h2 id="layer-separation-1"><a class="header" href="#layer-separation-1">Layer Separation</a></h2>
 <div class="table-wrapper">
 <table>
