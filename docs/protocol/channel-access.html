@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c1235fba.js";
+            window.path_to_searchindex_js = "searchindex-cfc83646.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0d631dd0.js"></script>
+        <script src="toc-6dc6667a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -219,7 +219,7 @@ delay = uniform_random(0, W)
 <p>Where:</p>
 <ul>
 <li><code>SNR_low</code> and <code>SNR_high</code> define the clamp range used for the contention heuristic. The suggested defaults are <strong>−6 dB</strong> and <strong>+15 dB</strong>, respectively.</li>
-<li>The effective minimum SNR threshold is still the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT forward at all if the received SNR is below that effective threshold.</li>
+<li>When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)</li>
 <li><code>W_min</code> is the minimum contention window for strong receptions. The suggested default is <strong>0.2 × T_frame</strong>.</li>
 <li><code>W_max</code> is the maximum intentional forwarding-delay window. The suggested default is <strong>2 × T_frame</strong>.</li>
 <li><code>received_SNR</code> is the SNR measured during reception of the packet being forwarded.</li>

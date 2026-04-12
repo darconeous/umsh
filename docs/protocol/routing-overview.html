@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Repeater Operation - UMSH Protocol Specification</title>
+        <title>Routing Overview - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,206 +174,49 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="repeater-operation"><a class="header" href="#repeater-operation">Repeater Operation</a></h1>
-<p>Forwarding logic is intentionally conservative. A repeater should evaluate packets in the following order.</p>
-<h2 id="routing-invariants"><a class="header" href="#routing-invariants">Routing Invariants</a></h2>
-<p>The routing model is governed by a few simple rules:</p>
+                        <h1 id="routing-overview"><a class="header" href="#routing-overview">Routing Overview</a></h1>
+<p>UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.</p>
+<h2 id="direct-single-hop-delivery"><a class="header" href="#direct-single-hop-delivery">Direct (Single-Hop) Delivery</a></h2>
+<p>The simplest case: the sender transmits a packet with no source-route option and no flood hop count. Only nodes within direct radio range will receive it. No repeater forwarding occurs. This is appropriate when the destination is known to be a direct neighbor, or for local broadcasts and beacons that do not need multi-hop propagation.</p>
+<h2 id="flood-routing"><a class="header" href="#flood-routing">Flood Routing</a></h2>
+<p>The sender sets a <strong>flood hop count</strong> in the packet header, and every repeater that receives the packet decrements the remaining count, increments the accumulated count, and retransmits. The packet radiates outward until the hop count is exhausted or all reachable repeaters have forwarded it.</p>
+<p>Flood routing requires no prior knowledge of the network topology. It is used for broadcasts, multicast, and unicast when no source route is known. The cost is airtime: every repeater in range participates, so a high hop count can saturate a busy mesh.</p>
+<p>See <a href="packet-structure.html#flood-hop-count">Packet Structure § Flood Hop Count</a> for encoding details and <a href="repeater-operation.html#forwarding-procedure">Repeater Operation § Forwarding Procedure</a> for the forwarding rules.</p>
+<h3 id="region-scoping"><a class="header" href="#region-scoping">Region Scoping</a></h3>
+<p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for a specific geographic region. A repeater that does not recognize or is not configured for the region must not flood-forward the packet. Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
+<p>See <a href="packet-options.html#region-code-option-1">Packet Options § Region Code</a>.</p>
+<h3 id="signal-quality-filtering"><a class="header" href="#signal-quality-filtering">Signal-Quality Filtering</a></h3>
+<p>Two packet options let the sender control which links are acceptable for flood forwarding:</p>
 <ul>
-<li>Every currently defined on-mesh packet type is routable.
-<ul>
-<li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
-<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
+<li><strong>Minimum RSSI</strong> — a repeater that received the packet below the specified signal strength must not flood-forward it.</li>
+<li><strong>Minimum SNR</strong> — a repeater that received the packet below the specified signal-to-noise ratio must not flood-forward it.</li>
 </ul>
-</li>
-<li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="packet-options.html#source-route-option-3">source route</a>, <a href="packet-options.html#trace-route-option-2">trace route</a>, <a href="packet-structure.html#flood-hop-count">hop count</a>, etc)
-<ul>
-<li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
-<li>Typical examples are flood hop counts, trace routes, source routes.</li>
-<li>Repeaters themselves to not add the Route Retry flag, only the original sender does that.</li>
-<li>These mutations do <strong>not</strong> create a new logical packet.</li>
-</ul>
-</li>
-<li>A packet’s logical delivery identity and its repeater forwarding identity are related but distinct.
-<ul>
-<li>The final destination decides whether a packet is new by its normal replay and destination-processing rules.</li>
-<li>Repeaters suppress duplicates using a forwarding identity that remains stable across legal forwarding rewrites.</li>
-</ul>
-</li>
-<li>Forwarding confirmation uses the same identity as repeater duplicate suppression.
-<ul>
-<li>This ensures a sender or repeater recognizes “the same packet, forwarded onward” even if the next hop mutates dynamic routing metadata.</li>
-</ul>
-</li>
-</ul>
-<h2 id="duplicate-suppression"><a class="header" href="#duplicate-suppression">Duplicate Suppression</a></h2>
-<p>Each repeater maintains a fixed-size cache of recently seen <strong>cache keys</strong> used to detect duplicate packets.</p>
-<p>Parameters:</p>
-<ul>
-<li>cache size = implementation configurable (see <a href="#cache-sizing">sizing guidance</a> below)</li>
-<li>eviction policy = oldest entry removed when full</li>
-</ul>
-<p>The cache key is derived from the packet as follows:</p>
-<ul>
-<li><strong>Authenticated packets</strong> (unicast, multicast, blind unicast): the cache key is normally the packet’s MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.
-<ul>
-<li>If the packet carries the <a href="packet-options.html#route-retry-option-6">Route Retry option</a>, the cache key must distinguish that retry attempt from the same packet without the option present. A simple and sufficient rule is to treat the cache key as <code>(MIC, route_retry_present)</code>.</li>
-<li>This gives a packet two bounded forwarding identities: the original forwarding attempt and one explicit reroute attempt.</li>
-</ul>
-</li>
-<li><strong>MAC acks and broadcasts</strong>: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.</li>
-</ul>
-<p>Before forwarding a packet, the repeater checks the cache:</p>
-<ul>
-<li>if the cache key is already present, do not forward</li>
-<li>if the cache key is not present, continue processing</li>
-<li>once the repeater decides the packet is eligible, insert the cache key into the cache</li>
-</ul>
-<p>To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.</p>
-<p>Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.</p>
-<h3 id="cache-sizing"><a class="header" href="#cache-sizing">Cache Sizing</a></h3>
-<p>Each cache entry is small (equal to the cache key size — typically 4 to 16 bytes), so generous sizing is inexpensive. The recommended minimum is <strong>32 entries</strong>; the suggested default is <strong>64 entries</strong>. High-traffic deployments or networks with large diameters may benefit from 128 or more entries.</p>
-<h2 id="forwarding-procedure"><a class="header" href="#forwarding-procedure">Forwarding Procedure</a></h2>
-<ol>
-<li>
-<p><strong>Duplicate suppression</strong></p>
-<ul>
-<li>If this packet was forwarded recently, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>Locally-Handled Unicast</strong></p>
-<ul>
-<li>If this packet was a unicast (bind or direct) packet that was fully handled and processed according to <a href="packet-processing.html">Packet Processing</a>, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>Unknown critical options</strong></p>
-<ul>
-<li>If the packet contains any critical option the repeater does not understand, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>Policy checks</strong></p>
-<ul>
-<li>If the packet does not satisfy local repeater policy, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>Source-route match</strong></p>
-<ul>
-<li>If the packet contains a non-empty source-route option:
-<ul>
-<li>If this repeater does not match the next source-route hint, do not forward.</li>
-<li>Otherwise, remove the repeater’s own hint from the source-route option.</li>
-</ul>
-</li>
-<li>If the repeater mutates a source-route option, it MUST preserve the option on the forwarded packet even when no hints remain.
-<ul>
-<li>In that case, the forwarded packet carries a source-route option with zero remaining hops.</li>
-<li>This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.</li>
-</ul>
-</li>
-<li>If the source-route option is still non-empty after removing this repeater’s hint, skip directly to step 9 (trace route processing). The remaining steps apply only to flood forwarding.</li>
-</ul>
-</li>
-<li>
-<p><strong>Transition from source-routing to flooding</strong></p>
-<ul>
-<li>If the source-route option is now empty:
-<ul>
-<li>If the packet has a region code option and this repeater is not configured for that region, do not forward.</li>
-<li>If the packet has a flood hop count field with <code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.</li>
-<li>Otherwise, do not forward.</li>
-</ul>
-</li>
-</ul>
-</li>
-<li>
-<p><strong>RSSI threshold check</strong></p>
-<ul>
-<li>If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>SNR threshold check</strong></p>
-<ul>
-<li>If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>Trace route processing</strong></p>
-<ul>
-<li>If the packet contains a trace-route option, prepend this repeater’s hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.</li>
-</ul>
-</li>
-<li>
-<p><strong>Retransmit</strong></p>
-<ul>
-<li>Forward the modified packet.</li>
-</ul>
-</li>
-</ol>
-<h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
-<p>Repeaters do not generate MAC acks — acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.</p>
-<p>This applies to:</p>
-<ul>
-<li><strong>Source-routed packets</strong>: Each forwarding hop listens for the next hop — the node matching the next source-route hint — to retransmit.</li>
-<li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
-<li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
-</ul>
-<p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression">cache key</a> — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
-<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max
-</code></pre>
-<p>where <code>W_max</code> is the maximum intentional forwarding-delay window permitted for the path. With the suggested default <code>W_max = 2 × T_frame</code>, this yields <code>confirm_timeout = 4 × T_frame</code>.</p>
-<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed.</p>
-<p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered exponential delay:</p>
-<pre><code class="language-text">retry_delay_n = uniform_random(0, min(2^(n−1) × T_frame, 4 × T_frame))
-</code></pre>
-<p>where <code>n</code> is the 1-based retry number. After this delay expires, the retry is transmitted using normal CAD and backoff as described in <a href="channel-access.html#backoff-procedure">Channel Access</a>.</p>
-<p>A node MUST NOT retry more than 3 times.</p>
-<h3 id="source-route-failure-recovery"><a class="header" href="#source-route-failure-recovery">Source-Route Failure Recovery</a></h3>
-<p>When a node uses a cached source route for an ack-requested unicast or blind-unicast packet and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.</p>
-<p>A practical recovery rule is:</p>
-<ol>
-<li>if the sender exhausts the retry budget for a packet sent using a cached source route, it SHOULD treat that cached route as failed</li>
-<li>the failed route SHOULD be discarded or marked unusable for immediate reuse</li>
-<li>if the sender wishes to re-attempt delivery of the <strong>same logical packet</strong>, it SHOULD:
-<ul>
-<li>preserve the same frame counter, payload, and MIC</li>
-<li>remove the stale source-route option</li>
-<li>add or refresh flood hops</li>
-<li>include a trace-route option if route rediscovery is desired</li>
-<li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a></li>
-</ul>
-</li>
-</ol>
-<p>This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the rerouted attempt even if they already suppressed the original source-routed attempt as a duplicate.</p>
-<p>This preserves a useful separation of responsibilities:</p>
-<ul>
-<li><strong>routing recovery</strong> remains a MAC concern</li>
-<li><strong>duplicate application delivery</strong> remains prevented by the end-to-end replay rules</li>
-<li><strong>repeaters</strong> remain largely stateless and do not need to understand application semantics</li>
-</ul>
-<p>For flood-forwarding repeaters that have accepted a packet for forwarding but have not yet transmitted it, overhearing another forwarding of the same packet SHOULD normally cause a bounded deferral rather than an immediate transmission. A safe default is:</p>
-<ol>
-<li>resample a forwarding delay using the contention-window procedure in <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a></li>
-<li>restart the waiting period</li>
-<li>after 3 such deferrals, abandon the pending forward</li>
-</ol>
-<p>This behavior is still provisional and should be validated empirically. The intent is to reduce near-simultaneous forwarding while still allowing a second or third repeater to contribute if an earlier forward was not widely heard.</p>
-<h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>
-<p>This forwarding model allows hybrid routing behavior.</p>
-<p>For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by <code>FHOPS_REM</code>. This permits “delivery-to-region, then flood” behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.</p>
+<p>These thresholds prevent retransmission over weak links that are unlikely to deliver the packet reliably, saving airtime and transmit power. The repeater may also enforce its own local thresholds; the effective threshold is the higher of the two.</p>
+<p>See <a href="packet-options.html#minimum-rssi-option-5">Packet Options § Minimum RSSI</a> and <a href="packet-options.html#minimum-snr-option-9">Packet Options § Minimum SNR</a>.</p>
+<h2 id="source-routing"><a class="header" href="#source-routing">Source Routing</a></h2>
+<p>When the sender knows a path to the destination, it can include a <strong>source-route option</strong> listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.</p>
+<p>Source routes are learned from the <strong>trace-route option</strong>: when a flooded packet carries a trace-route option, each forwarding repeater prepends its own hint. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.</p>
+<p>See <a href="packet-options.html#source-route-option-3">Packet Options § Source Route</a>, <a href="packet-options.html#trace-route-option-2">Packet Options § Trace Route</a>, and <a href="beacons.html#route-learning">Beacons &amp; Path Discovery § Route Learning</a>.</p>
+<h2 id="hybrid-routing"><a class="header" href="#hybrid-routing">Hybrid Routing</a></h2>
+<p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior — useful for reaching a node in a known area without flooding the entire mesh.</p>
+<p>See <a href="repeater-operation.html#routing-implications">Repeater Operation § Routing Implications</a>.</p>
+<h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
+<p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
+<p>If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.</p>
+<p>See <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="repeater-operation.html#source-route-failure-recovery">Repeater Operation § Source-Route Failure Recovery</a>.</p>
+<h2 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h2>
+<p>Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR, so that better-positioned repeaters transmit first and weaker ones can suppress their retransmission if they overhear an earlier forward.</p>
+<p>See <a href="channel-access.html">Channel Access</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="channel-access.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="security.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="beacons.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="packet-processing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -383,11 +226,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="channel-access.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="security.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="beacons.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="packet-processing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

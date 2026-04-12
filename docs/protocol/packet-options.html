@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c1235fba.js";
+            window.path_to_searchindex_js = "searchindex-cfc83646.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0d631dd0.js"></script>
+        <script src="toc-6dc6667a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -297,9 +297,9 @@
 <h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
 <ul>
 <li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
-<li>Semantics: packet must be received with at least this RSSI to be forwarded.</li>
+<li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-90 dBm</code></li>
+<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
 <li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
@@ -336,8 +336,8 @@
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
-<li>Semantics: packet must be received with at least this SNR to be forwarded.</li>
-<li>If present with no value (length 0), default is <code>0 dB</code>.</li>
+<li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
+<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>

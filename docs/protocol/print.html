@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c1235fba.js";
+            window.path_to_searchindex_js = "searchindex-cfc83646.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0d631dd0.js"></script>
+        <script src="toc-6dc6667a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -282,7 +282,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <dt id="broadcast"><a class="header" href="#broadcast"><strong>Broadcast</strong></a></dt>
 <dd>A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See <a href="#frame-types">Frame Types</a>.</dd>
 <dt id="cad-channel-activity-detection"><a class="header" href="#cad-channel-activity-detection"><strong>CAD (Channel Activity Detection)</strong></a></dt>
-<dd>A LoRa physical-layer feature that listens briefly for preamble energy on the channel with minimal power draw. UMSH uses CAD to implement listen-before-talk channel access, reducing collisions without requiring continuous reception. See <a href="#channel-access">Channel Access</a>.</dd>
+<dd>A LoRa physical-layer feature that listens briefly for preamble energy on the channel with minimal power draw. UMSH uses CAD to implement listen-before-talk channel access, reducing collisions without requiring continuous reception. See <a href="#channel-access-1">Channel Access</a>.</dd>
 <dt id="channel"><a class="header" href="#channel"><strong>Channel</strong></a></dt>
 <dd>A logical communication group secured by a shared symmetric key. Channels serve two purposes: group communication (multicast) and metadata concealment (blind unicast). See <a href="#channels-1">Channels</a>.</dd>
 <dt id="coap-constrained-application-protocol"><a class="header" href="#coap-constrained-application-protocol"><strong>CoAP (Constrained Application Protocol)</strong></a></dt>
@@ -775,9 +775,9 @@ unicast semantics without encryption.</p>
 <h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
 <ul>
 <li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
-<li>Semantics: packet must be received with at least this RSSI to be forwarded.</li>
+<li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-90 dBm</code></li>
+<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
 <li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
@@ -814,8 +814,8 @@ unicast semantics without encryption.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
-<li>Semantics: packet must be received with at least this SNR to be forwarded.</li>
-<li>If present with no value (length 0), default is <code>0 dB</code>.</li>
+<li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
+<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
@@ -1149,6 +1149,40 @@ K_mic = okm[16..31]
 <p>Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="routing-overview"><a class="header" href="#routing-overview">Routing Overview</a></h1>
+<p>UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.</p>
+<h2 id="direct-single-hop-delivery"><a class="header" href="#direct-single-hop-delivery">Direct (Single-Hop) Delivery</a></h2>
+<p>The simplest case: the sender transmits a packet with no source-route option and no flood hop count. Only nodes within direct radio range will receive it. No repeater forwarding occurs. This is appropriate when the destination is known to be a direct neighbor, or for local broadcasts and beacons that do not need multi-hop propagation.</p>
+<h2 id="flood-routing-1"><a class="header" href="#flood-routing-1">Flood Routing</a></h2>
+<p>The sender sets a <strong>flood hop count</strong> in the packet header, and every repeater that receives the packet decrements the remaining count, increments the accumulated count, and retransmits. The packet radiates outward until the hop count is exhausted or all reachable repeaters have forwarded it.</p>
+<p>Flood routing requires no prior knowledge of the network topology. It is used for broadcasts, multicast, and unicast when no source route is known. The cost is airtime: every repeater in range participates, so a high hop count can saturate a busy mesh.</p>
+<p>See <a href="#flood-hop-count">Packet Structure § Flood Hop Count</a> for encoding details and <a href="#forwarding-procedure">Repeater Operation § Forwarding Procedure</a> for the forwarding rules.</p>
+<h3 id="region-scoping"><a class="header" href="#region-scoping">Region Scoping</a></h3>
+<p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for a specific geographic region. A repeater that does not recognize or is not configured for the region must not flood-forward the packet. Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
+<p>See <a href="#region-code-option-1">Packet Options § Region Code</a>.</p>
+<h3 id="signal-quality-filtering"><a class="header" href="#signal-quality-filtering">Signal-Quality Filtering</a></h3>
+<p>Two packet options let the sender control which links are acceptable for flood forwarding:</p>
+<ul>
+<li><strong>Minimum RSSI</strong> — a repeater that received the packet below the specified signal strength must not flood-forward it.</li>
+<li><strong>Minimum SNR</strong> — a repeater that received the packet below the specified signal-to-noise ratio must not flood-forward it.</li>
+</ul>
+<p>These thresholds prevent retransmission over weak links that are unlikely to deliver the packet reliably, saving airtime and transmit power. The repeater may also enforce its own local thresholds; the effective threshold is the higher of the two.</p>
+<p>See <a href="#minimum-rssi-option-5">Packet Options § Minimum RSSI</a> and <a href="#minimum-snr-option-9">Packet Options § Minimum SNR</a>.</p>
+<h2 id="source-routing-1"><a class="header" href="#source-routing-1">Source Routing</a></h2>
+<p>When the sender knows a path to the destination, it can include a <strong>source-route option</strong> listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.</p>
+<p>Source routes are learned from the <strong>trace-route option</strong>: when a flooded packet carries a trace-route option, each forwarding repeater prepends its own hint. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.</p>
+<p>See <a href="#source-route-option-3">Packet Options § Source Route</a>, <a href="#trace-route-option-2">Packet Options § Trace Route</a>, and <a href="#route-learning">Beacons &amp; Path Discovery § Route Learning</a>.</p>
+<h2 id="hybrid-routing"><a class="header" href="#hybrid-routing">Hybrid Routing</a></h2>
+<p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior — useful for reaching a node in a known area without flooding the entire mesh.</p>
+<p>See <a href="#routing-implications">Repeater Operation § Routing Implications</a>.</p>
+<h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
+<p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
+<p>If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.</p>
+<p>See <a href="#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="#source-route-failure-recovery">Repeater Operation § Source-Route Failure Recovery</a>.</p>
+<h2 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h2>
+<p>Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR, so that better-positioned repeaters transmit first and weaker ones can suppress their retransmission if they overhear an earlier forward.</p>
+<p>See <a href="#channel-access-1">Channel Access</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-processing"><a class="header" href="#packet-processing">Packet Processing</a></h1>
 <p>This chapter describes how a receiving node processes an incoming packet. This procedure applies to all nodes, not just repeaters. Repeater-specific forwarding logic is described separately in <a href="#repeater-operation">Repeater Operation</a>.</p>
 <h2 id="receive-procedure"><a class="header" href="#receive-procedure">Receive Procedure</a></h2>
@@ -1294,7 +1328,7 @@ K_mic = okm[16..31]
 <h2 id="payload-reuse"><a class="header" href="#payload-reuse">Payload Reuse</a></h2>
 <p>Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same <a href="#text-messages">text message</a> and <a href="#chat-rooms">chat room</a> payload formats as direct messaging. However, not all application types are valid over multicast — see <a href="#payload-format">Payload Types</a> for compatibility.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h1>
+<h1 id="channel-access-1"><a class="header" href="#channel-access-1">Channel Access</a></h1>
 <p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.</p>
 <h2 id="frame-duration"><a class="header" href="#frame-duration">Frame Duration</a></h2>
 <p><strong>T_frame</strong> is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.</p>
@@ -1339,7 +1373,7 @@ delay = uniform_random(0, W)
 <p>Where:</p>
 <ul>
 <li><code>SNR_low</code> and <code>SNR_high</code> define the clamp range used for the contention heuristic. The suggested defaults are <strong>−6 dB</strong> and <strong>+15 dB</strong>, respectively.</li>
-<li>The effective minimum SNR threshold is still the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT forward at all if the received SNR is below that effective threshold.</li>
+<li>When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)</li>
 <li><code>W_min</code> is the minimum contention window for strong receptions. The suggested default is <strong>0.2 × T_frame</strong>.</li>
 <li><code>W_max</code> is the maximum intentional forwarding-delay window. The suggested default is <strong>2 × T_frame</strong>.</li>
 <li><code>received_SNR</code> is the SNR measured during reception of the packet being forwarded.</li>
@@ -1431,18 +1465,6 @@ delay = uniform_random(0, W)
 </ul>
 </li>
 <li>
-<p><strong>RSSI threshold check</strong></p>
-<ul>
-<li>If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.</li>
-</ul>
-</li>
-<li>
-<p><strong>SNR threshold check</strong></p>
-<ul>
-<li>If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.</li>
-</ul>
-</li>
-<li>
 <p><strong>Unknown critical options</strong></p>
 <ul>
 <li>If the packet contains any critical option the repeater does not understand, do not forward.</li>
@@ -1469,6 +1491,7 @@ delay = uniform_random(0, W)
 <li>This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.</li>
 </ul>
 </li>
+<li>If the source-route option is still non-empty after removing this repeater’s hint, skip directly to step 9 (trace route processing). The remaining steps apply only to flood forwarding.</li>
 </ul>
 </li>
 <li>
@@ -1481,6 +1504,18 @@ delay = uniform_random(0, W)
 <li>Otherwise, do not forward.</li>
 </ul>
 </li>
+</ul>
+</li>
+<li>
+<p><strong>RSSI threshold check</strong></p>
+<ul>
+<li>If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.</li>
+</ul>
+</li>
+<li>
+<p><strong>SNR threshold check</strong></p>
+<ul>
+<li>If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.</li>
 </ul>
 </li>
 <li>
