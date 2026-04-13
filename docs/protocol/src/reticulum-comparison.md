@@ -2,6 +2,11 @@
 
 This section compares UMSH with [Reticulum](https://reticulum.network/), a cryptography-based networking stack designed for operation over a wide range of mediums, including LoRa. The comparison is based on Reticulum v1.1.4 (tag [`1.1.4`](https://github.com/markqvist/Reticulum/releases/tag/1.1.4)) and its [manual](https://reticulum.network/manual/) and [source code](https://github.com/markqvist/Reticulum/tree/1.1.4).
 
+> [!NOTE]
+> This comparison aims to be as fair and accurate as possible, not
+> promotional material. If you spot any unfair comparisons, factual
+> errors, or other mistakes, please [file an issue](https://github.com/darconeous/umsh/issues/new)!
+
 The Reticulum claims in this document can be independently verified against the following source files:
 
 | File | Relevant claims |
@@ -90,9 +95,9 @@ Both protocols offer forward secrecy, but with different granularity and overhea
 
 ### Replay Protection
 
-UMSH uses explicit 4-byte monotonic frame counters, which provide deterministic, stateless replay detection with a well-defined forward window. A receiver can immediately reject a replayed packet by comparing the counter to its stored state.
+UMSH uses explicit [4-byte monotonic frame counters](security.md#frame-counter), which provide deterministic, stateless replay detection with a well-defined forward window. A receiver can immediately reject a replayed packet by comparing the counter to its stored state.
 
-Reticulum detects duplicates by caching packet hashes ([`Transport.py:59`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L59), `packet_hashlist = set()`). This approach works but has different tradeoffs: it requires maintaining a hash cache, and once the cache fills it is evicted in bulk via a two-generation rolling scheme — when the active set exceeds 500,000 entries it is moved into a `packet_hashlist_prev` set ([`Transport.py:60`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L60)) and a fresh set starts accumulating ([`Transport.py:565–567`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L565-L567), cap: [`Transport.py:115`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L115), `hashlist_maxsize = 1000000`). A replayed packet that was seen in neither the current nor the previous generation would not be detected.
+Reticulum detects duplicates by caching packet hashes ([`Transport.py:59`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L59), `packet_hashlist = set()`). This approach works but has different tradeoffs: it requires maintaining a hash cache, and once the cache fills it is evicted in bulk via a two-generation rolling scheme — when the active set exceeds 500,000 entries it is moved into a `packet_hashlist_prev` set ([`Transport.py:60`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L60)) and a fresh set starts accumulating ([`Transport.py:565–567`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L565-L567), cap: [`Transport.py:115`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L115), `hashlist_maxsize = 1000000`). A replayed packet that was seen in neither the current nor the previous generation would not be detected. The reference implementation's 500,000-entry threshold assumes ample memory; on constrained hardware where the cache must be significantly smaller, the window for undetected replay narrows accordingly.
 
 ### Cryptographic Overhead
 
@@ -187,7 +192,7 @@ UMSH supports multi-hop multicast via flood forwarding with flood hop count limi
 
 > Packets to this type of destination are not currently transported over multiple hops, although a planned upgrade to Reticulum will allow globally reachable group destinations.
 
-This is a significant limitation for LoRa mesh networks where multi-hop coverage is essential.
+For LoRa mesh networks that rely on multi-hop coverage, this is a notable difference.
 
 ## Application Layer
 
@@ -200,11 +205,11 @@ This is a significant limitation for LoRa mesh networks where multi-hop coverage
 | Interface discovery | Not defined | On-network auto-discovery with trust verification (since v1.1.0) |
 | Network identity | Not defined | Signing authority keypair for administrative domains (since v1.1.0) |
 | Amateur radio | Operator/station callsign options, explicit unencrypted mode | Not defined |
-| Implementation language | Protocol spec (language-agnostic) | Python 3 (reference implementation); unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) exists |
+| Implementations | Protocol spec (language-agnostic); experimental [Rust reference implementation](https://github.com/darconeous/umsh) | [Python 3 reference](https://github.com/markqvist/Reticulum); [C++ for microcontrollers](https://github.com/attermann/microReticulum); [Rust](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) |
 
-Reticulum's protocol is documented in its [manual](https://reticulum.network/manual/), with the Python codebase serving as the reference implementation. An unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) also exists.
+Reticulum's protocol is documented in its [manual](https://reticulum.network/manual/). In addition to the Python reference implementation, Reticulum has community C++ and Rust ports targeting embedded platforms. UMSH's Rust reference implementation is experimental and early in development.
 
-UMSH delegates reliable multi-packet transfer to CoAP's block-wise transfer mechanism, reusing a well-established standard. Reticulum provides its own [Resources API](https://reticulum.network/manual/understanding.html#resources) for the same purpose, including compression, sequencing, and checksumming — capable but proprietary to the Reticulum stack.
+UMSH delegates reliable multi-packet transfer to CoAP's block-wise transfer mechanism, reusing a well-established standard. Reticulum provides its own [Resources API](https://reticulum.network/manual/understanding.html#resources) for the same purpose, including compression, sequencing, and checksumming — capable but specific to the Reticulum stack.
 
 Reticulum v1.1.0 introduced structured interface discovery at the application layer: nodes can publish and consume typed discovery records that include interface parameters, GPS coordinates, IFAC credentials, and network identity signatures. This enables a form of self-organizing network management that has no counterpart in UMSH, which relies on out-of-band coordination for infrastructure configuration.
 
@@ -246,7 +251,7 @@ On a 255-byte LoRa frame:
 |---|---|---|---|---|
 | **Available payload** | **227 B** | **239 B** | **~147 B** | **~164 B** |
 
-With a 16-byte MIC, UMSH provides roughly 45–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH's 16 bytes of total overhead leaves 239 bytes for payload — over 45% more than Reticulum on a typical LoRa frame. For a protocol operating at kilobit-per-second data rates where every byte of airtime is expensive, this difference is substantial.
+With a 16-byte MIC, UMSH provides roughly 45–55% more payload capacity than Reticulum. With a 4-byte MIC, UMSH's 16 bytes of total overhead leaves 239 bytes for payload — over 45% more than Reticulum on a typical LoRa frame. At LoRa data rates where every byte costs airtime, these differences affect how much payload capacity remains for application data.
 
 Reticulum's 500-byte network MTU exceeds what most LoRa configurations can transmit in a single frame, so Reticulum requires link-layer fragmentation at the LoRa interface that further reduces effective throughput. Link MTU discovery (added in v0.9.3) allows Reticulum to negotiate larger MTUs on capable links, but provides no relief for LoRa interfaces with sub-500-byte physical limits.
 
@@ -254,11 +259,11 @@ Reticulum's 500-byte network MTU exceeds what most LoRa configurations can trans
 
 The power profiles of UMSH and Reticulum differ across every dimension: platform, per-packet overhead, and filtering behavior.
 
-### Platform Power Floor
+### Minimum Hardware Floor
 
-The reference Reticulum implementation requires a Python 3 runtime and therefore runs on Linux-capable hardware — a Raspberry Pi, SBC, or similar computer. These platforms consume on the order of 1–5 watts continuously. This is an implementation choice rather than a protocol requirement: the unofficial [Rust implementation](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) could in principle run on more constrained hardware. However, Reticulum's protocol design places a higher floor than UMSH regardless of implementation language — the path table state required for Transport Node operation, the 500-byte MTU requiring larger packet buffers, and the complexity of the announce propagation and link establishment machinery all demand more RAM and processing than UMSH's simpler MAC-layer model.
+Reticulum's protocol machinery — path tables for Transport Node operation, 500-byte packet buffers, announce propagation state, and link establishment sessions — requires more RAM and processing than UMSH's simpler model, raising the minimum hardware floor regardless of implementation language. A higher hardware floor generally means a higher baseline power draw, since more capable hardware tends to consume more power even when idle.
 
-UMSH's compact encoding, minimal per-packet state, and single-frame design allow it to run on bare-metal microcontrollers drawing microamps in sleep and milliwatts when active. For battery-powered or solar-powered field deployments, the difference in protocol-level state requirements is significant.
+UMSH also requires per-node state — own keypair, configured channel keys, per-peer cached keys and frame counters, a duplicate cache, and optionally cached source routes — but the single-frame design avoids the need for large packet buffers, and the simpler protocol machinery fits on lower-power microcontrollers.
 
 ### False-Positive Filtering
 
@@ -274,7 +279,7 @@ Reticulum's 500-byte network MTU exceeds the ~255-byte LoRa frame limit, requiri
 
 ### Announce Traffic and Repeater Power
 
-Reticulum relies on periodic announce flooding to build and maintain path tables. Even at the default 2% bandwidth cap, this represents a continuous background of traffic that all nodes must receive and re-broadcast, regardless of whether they are acting as Transport Nodes. UMSH does not define an equivalent mechanism — path discovery is on-demand via the trace-route option and imposes no standing overhead.
+Reticulum relies on periodic announce flooding to build and maintain path tables. Transport Nodes re-broadcast announces on all interfaces (subject to a default 2% bandwidth cap); regular nodes receive announces but do not re-broadcast them. This creates a continuous background of traffic that all nodes must receive and that Transport Nodes must retransmit. UMSH does not define an equivalent mechanism — path discovery is on-demand via the trace-route option and imposes no standing overhead.
 
 For data packet forwarding, Reticulum divides nodes into two classes at the protocol level: regular nodes, which do not forward unicast packets, and Transport Nodes, which maintain path tables and forward on behalf of others. This means most nodes in a Reticulum network incur zero transmit cost for forwarding unicast traffic. UMSH makes the same distinction at the configuration level — repeating is enabled only on dedicated infrastructure nodes, and end-user devices are typically configured as non-repeating. The practical power implication for non-repeating nodes is the same in both protocols; the difference is that Reticulum enforces the separation in the protocol itself rather than leaving it to deployment configuration.
 
@@ -284,7 +289,7 @@ The infrastructure dependency is the key tradeoff: Reticulum's routing model req
 
 Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Recent versions (v1.1.0+) have added on-network interface discovery and a network identity system that enable more sophisticated network management and trust hierarchies.
 
-UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and absence of mandatory runtime state (no path tables, no clock synchronization) make it deployable on bare-metal microcontrollers with minimal resources.
+UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and lower protocol state requirements (no path tables, no mandatory announce propagation, no clock synchronization) are designed with constrained hardware in mind.
 
 Key tradeoffs:
 

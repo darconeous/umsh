@@ -2,6 +2,11 @@
 
 This section compares UMSH with [Meshtastic](https://meshtastic.org/), a popular open-source LoRa mesh project. The comparison is based on Meshtastic firmware v2.5+ and its [documentation](https://meshtastic.org/docs/) and [protobuf definitions](https://buf.build/meshtastic/protobufs).
 
+> [!NOTE]
+> This comparison aims to be as fair and accurate as possible, not
+> promotional material. If you spot any unfair comparisons, factual
+> errors, or other mistakes, please [file an issue](https://github.com/darconeous/umsh/issues/new)!
+
 Meshtastic and UMSH occupy different positions in the design space. Meshtastic is a mature, widely deployed application-focused system optimized for ease of use and broad hardware support. UMSH prioritizes cryptographic rigor, compact encoding, and clean layer separation. The comparison below highlights the technical differences without implying that one set of tradeoffs is universally better than the other.
 
 ## Identity and Addressing

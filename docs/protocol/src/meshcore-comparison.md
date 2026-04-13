@@ -2,6 +2,11 @@
 
 This section compares UMSH with [MeshCore](https://github.com/meshcore-dev/MeshCore), a LoRa mesh protocol with similar goals. The comparison is based on MeshCore firmware v1.12.0 and its primary source code and documentation.
 
+> [!NOTE]
+> This comparison aims to be as fair and accurate as possible, not
+> promotional material. If you spot any unfair comparisons, factual
+> errors, or other mistakes, please [file an issue](https://github.com/darconeous/umsh/issues/new)!
+
 ## Identity and Addressing
 
 Both protocols use Ed25519 public keys as node identities and perform X25519 ECDH for pairwise key agreement.
