@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4a84f03e.js";
+            window.path_to_searchindex_js = "searchindex-f9494109.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -213,7 +213,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>512-bit keyset: 256-bit X25519 + 256-bit Ed25519 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58"><code>Identity.py:58</code></a>, <code>KEYSIZE = 256*2</code>)</td></tr>
+<tr><td>Identity key</td><td>32-byte Ed25519 public key</td><td>64-byte keyset: 32-byte X25519 + 32-byte Ed25519 (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58"><code>Identity.py:58</code></a>, <code>KEYSIZE = 256*2</code>)</td></tr>
 <tr><td>Address in packets</td><td>compact 3-byte hint (S=0) or full 32-byte key (S=1)</td><td>16-byte truncated SHA-256 hash (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146"><code>Reticulum.py:146</code></a>, <code>TRUNCATED_HASHLENGTH = 128</code>)</td></tr>
 <tr><td>Source address</td><td>3-byte hint (S=0) or full 32-byte key (S=1)</td><td>Not included (no source address in packets)</td></tr>
 <tr><td>Destination address</td><td>3-byte destination hint</td><td>16-byte destination hash</td></tr>
