@@ -35,7 +35,7 @@ This difference has practical implications: UMSH's simpler MAC-layer model has l
 
 | Aspect | UMSH | Reticulum |
 |---|---|---|
-| Identity key | 32-byte Ed25519 public key | 512-bit keyset: 256-bit X25519 + 256-bit Ed25519 ([`Identity.py:58`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58), `KEYSIZE = 256*2`) |
+| Identity key | 32-byte Ed25519 public key | 64-byte keyset: 32-byte X25519 + 32-byte Ed25519 ([`Identity.py:58`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L58), `KEYSIZE = 256*2`) |
 | Address in packets | compact 3-byte hint (S=0) or full 32-byte key (S=1) | 16-byte truncated SHA-256 hash ([`Reticulum.py:146`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L146), `TRUNCATED_HASHLENGTH = 128`) |
 | Source address | 3-byte hint (S=0) or full 32-byte key (S=1) | Not included (no source address in packets) |
 | Destination address | 3-byte destination hint | 16-byte destination hash |
@@ -55,9 +55,9 @@ Reticulum does not include a source address in any packet. This provides initiat
 | Routing info | CoAP-style composable options | Transport ID field (16 bytes) in HEADER_2 |
 | Flood hop count | Split 4-bit FHOPS field (max 15) | Mandatory 1-byte field |
 | MTU | LoRa frame size (typically 255 bytes) | 500-byte network MTU ([`Reticulum.py:91`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L91), `MTU = 500`); per-link MTU discovery (since v0.9.3) allows upward negotiation on capable links |
-| Typical unicast overhead | 14–28 bytes (depending on MIC size and source hint vs full key) | 19 bytes HEADER_1 or 35 bytes HEADER_2 ([`Reticulum.py:148–149`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Reticulum.py#L148-L149), `HEADER_MINSIZE`/`HEADER_MAXSIZE`), plus crypto overhead |
+| Typical unicast overhead (total) | 14–28 bytes (depending on MIC size and source hint vs full key) | ~91 bytes LINK / ~108 bytes SINGLE (19–35 byte header + 56–88 bytes crypto; see [Packet Overhead Comparison](#packet-overhead-comparison)) |
 
-UMSH uses compact fields that are present only when needed for the packet type. Reticulum's 16-byte destination hashes and optional 16-byte transport IDs result in significantly larger headers. For a LoRa link with a 255-byte frame limit, this difference is consequential: Reticulum's minimum 19-byte header (or 35 bytes when routed through transport nodes) consumes a substantial fraction of the available frame.
+UMSH uses compact fields that are present only when needed for the packet type. Reticulum's 16-byte destination hashes and optional 16-byte transport IDs result in larger headers (19–35 bytes before crypto overhead), and the total per-packet overhead — header plus cryptographic fields — ranges from roughly 91 to 108 bytes depending on destination type. On a 255-byte LoRa frame, this leaves 147–164 bytes for payload compared to UMSH's 227–239 bytes.
 
 Reticulum's 500-byte network MTU exceeds what most LoRa configurations can carry in a single frame. Reticulum introduced link MTU discovery in v0.9.3, which allows adjacent nodes to negotiate a higher effective MTU than 500 bytes when the underlying interface can support it — but this only applies to high-bandwidth interfaces. The `Interface.optimise_mtu()` method ([`Interface.py:115–138`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Interfaces/Interface.py#L115-L138)) maps link speed to hardware MTU, and sets `HW_MTU = None` for any interface running at or below 62,500 bps — which encompasses every LoRa configuration. When `HW_MTU` is `None`, the link request falls back to signalling the base 500-byte MTU ([`Link.py:273–278`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L273-L278)), and link MTU discovery is never entered. For LoRa interfaces, Reticulum relies on the RNode firmware to reassemble sub-255-byte air frames into 500-byte packets before presenting them to the stack via KISS. UMSH is designed to fit within a single LoRa frame, avoiding fragmentation entirely.
 
@@ -83,7 +83,7 @@ UMSH uses an AES-SIV-inspired construction where the MIC doubles as the CTR IV, 
 
 ### Authentication and Integrity
 
-UMSH's 16-byte AES-CMAC MIC provides 128-bit integrity protection. Reticulum's 32-byte HMAC-SHA256 tag provides 256-bit integrity — stronger in absolute terms, but at twice the overhead. Both are more than adequate; UMSH's choice is driven by the constrained LoRa frame budget.
+UMSH's AES-CMAC MIC is configurable at 4, 8, 12, or 16 bytes (see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)), providing 32-bit to 128-bit integrity protection. Reticulum's 32-byte HMAC-SHA256 tag provides 256-bit integrity. Both are sound choices; UMSH's configurable size allows deployments to trade integrity margin for payload capacity within the constrained LoRa frame budget.
 
 ### Key Management
 
@@ -229,7 +229,7 @@ Reticulum's ratchet mechanism uses local time for 30-day key expiry and minimum 
 
 ## Packet Overhead Comparison
 
-Minimum overhead for a typical encrypted unicast message:
+Minimum overhead for a typical encrypted unicast message with no routing options (no source route, no flood hops, no trace route). In practice, multi-hop packets will carry additional routing metadata — UMSH adds 1 byte for flood hops and 2 bytes per source-route hop; Reticulum adds 16 bytes for the Transport ID when routed through a transport node:
 
 | Field | UMSH (S=0, 16B MIC) | UMSH (S=0, 4B MIC) | Reticulum (SINGLE) | Reticulum (LINK) |
 |---|---|---|---|---|
@@ -271,7 +271,7 @@ Reticulum's 16-byte (128-bit) destination addresses have an essentially zero col
 
 ### Packet Length and Airtime
 
-Reticulum's minimum packet overhead is 19–35 bytes (header alone), and per-packet crypto adds at minimum 48 bytes (LINK) or 80 bytes (SINGLE), before any payload. UMSH's overhead is 14–26 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.
+Reticulum's total per-packet overhead is roughly 91 bytes (LINK) or 108 bytes (SINGLE), combining header and cryptographic fields. UMSH's total overhead is 14–28 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.
 
 ### Fragmentation
 
@@ -289,7 +289,7 @@ The infrastructure dependency is the key tradeoff: Reticulum's routing model req
 
 Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Recent versions (v1.1.0+) have added on-network interface discovery and a network identity system that enable more sophisticated network management and trust hierarchies.
 
-UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and lower protocol state requirements (no path tables, no mandatory announce propagation, no clock synchronization) are designed with constrained hardware in mind.
+UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and lower protocol state requirements (no path tables, no mandatory announce propagation, no clock synchronization, no global packet hash cache) are designed with constrained hardware in mind.
 
 Key tradeoffs:
 
@@ -298,5 +298,6 @@ Key tradeoffs:
 - **Routing flexibility**: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes, and on-network interface auto-discovery since v1.1.0.
 - **Privacy model**: Reticulum provides initiator anonymity by default (no source address), plus a network identity system for administrative trust domains. UMSH provides source addresses by default with opt-in privacy modes.
 - **Multicast**: UMSH supports multi-hop multicast. Reticulum's group communication is currently single-hop only (multi-hop planned).
+- **Replay protection**: UMSH uses per-peer monotonic frame counters, which require a small amount of per-peer state but provide deterministic replay detection regardless of traffic volume. Reticulum uses a global packet hash cache, which requires no per-peer state but must be large enough to cover the replay window — a tradeoff that favors hosts with ample memory.
 - **Scope**: Reticulum is a complete network stack with reliable delivery, sessions, and application APIs. UMSH is a MAC layer with defined-but-separate application protocols, designed to carry arbitrary higher-layer content.
 - **Implementation complexity**: Reticulum's richer protocol machinery (path tables, link establishment, announce propagation) raises the minimum implementation complexity. UMSH's simpler MAC-layer model is more amenable to constrained implementations.
