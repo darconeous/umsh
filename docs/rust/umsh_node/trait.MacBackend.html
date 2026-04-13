@@ -53,7 +53,7 @@
 <span class="item-spacer"></span>    fn <a href="#tymethod.register_ephemeral" class="fn">register_ephemeral</a>(
         &amp;self,
         parent: LocalIdentityId,
-        identity: SoftwareIdentity,
+        identity: <a class="struct" href="../umsh_crypto/software/struct.SoftwareIdentity.html" title="struct umsh_crypto::software::SoftwareIdentity">SoftwareIdentity</a>,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;LocalIdentityId, <a class="enum" href="enum.MacBackendError.html" title="enum umsh_node::MacBackendError">MacBackendError</a>&lt;Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.SendError" title="type umsh_node::MacBackend::SendError">SendError</a>, Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.CapacityError" title="type umsh_node::MacBackend::CapacityError">CapacityError</a>&gt;&gt;;
 <span class="item-spacer"></span>    fn <a href="#tymethod.remove_ephemeral" class="fn">remove_ephemeral</a>(
         &amp;self,
@@ -114,7 +114,7 @@ lightweight fake.</p>
 </div></details><section id="tymethod.register_ephemeral" class="method"><a class="src rightside" href="../src/umsh_node/mac.rs.html#73-77">Source</a><h4 class="code-header">fn <a href="#tymethod.register_ephemeral" class="fn">register_ephemeral</a>(
     &amp;self,
     parent: LocalIdentityId,
-    identity: SoftwareIdentity,
+    identity: <a class="struct" href="../umsh_crypto/software/struct.SoftwareIdentity.html" title="struct umsh_crypto::software::SoftwareIdentity">SoftwareIdentity</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;LocalIdentityId, <a class="enum" href="enum.MacBackendError.html" title="enum umsh_node::MacBackendError">MacBackendError</a>&lt;Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.SendError" title="type umsh_node::MacBackend::SendError">SendError</a>, Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.CapacityError" title="type umsh_node::MacBackend::CapacityError">CapacityError</a>&gt;&gt;</h4></section><section id="tymethod.remove_ephemeral" class="method"><a class="src rightside" href="../src/umsh_node/mac.rs.html#80-83">Source</a><h4 class="code-header">fn <a href="#tymethod.remove_ephemeral" class="fn">remove_ephemeral</a>(
     &amp;self,
     id: LocalIdentityId,
@@ -159,7 +159,7 @@ lightweight fake.</p>
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a class="enum" href="enum.MacBackendError.html" title="enum umsh_node::MacBackendError">MacBackendError</a>&lt;Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.SendError" title="type umsh_node::MacBackend::SendError">SendError</a>, Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.CapacityError" title="type umsh_node::MacBackend::CapacityError">CapacityError</a>&gt;&gt;</h4></section><section id="method.register_ephemeral" class="method trait-impl"><a class="src rightside" href="../src/umsh_node/mac.rs.html#221-228">Source</a><a href="#method.register_ephemeral" class="anchor">§</a><h4 class="code-header">fn <a href="#tymethod.register_ephemeral" class="fn">register_ephemeral</a>(
     &amp;self,
     parent: LocalIdentityId,
-    identity: SoftwareIdentity,
+    identity: <a class="struct" href="../umsh_crypto/software/struct.SoftwareIdentity.html" title="struct umsh_crypto::software::SoftwareIdentity">SoftwareIdentity</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;LocalIdentityId, <a class="enum" href="enum.MacBackendError.html" title="enum umsh_node::MacBackendError">MacBackendError</a>&lt;Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.SendError" title="type umsh_node::MacBackend::SendError">SendError</a>, Self::<a class="associatedtype" href="trait.MacBackend.html#associatedtype.CapacityError" title="type umsh_node::MacBackend::CapacityError">CapacityError</a>&gt;&gt;</h4></section><section id="method.remove_ephemeral" class="method trait-impl"><a class="src rightside" href="../src/umsh_node/mac.rs.html#231-237">Source</a><a href="#method.remove_ephemeral" class="anchor">§</a><h4 class="code-header">fn <a href="#tymethod.remove_ephemeral" class="fn">remove_ephemeral</a>(
     &amp;self,
     id: LocalIdentityId,
