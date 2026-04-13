@@ -45,6 +45,14 @@ A packet can carry both a source-route option and a flood hop count. The packet 
 
 See [Repeater Operation § Routing Implications](repeater-operation.md#routing-implications).
 
+## Bridging
+
+A **bridge** is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands. Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though [this may be optimized in the future](limitations.md#bridge-hop-confirmation).
+
+Bridges participate in source routes and trace routes like any other repeater. A trace route that crosses a bridge will contain the bridge's router hint, and source-routed packets will traverse the bridge transparently.
+
+Flooding works across bridges, but the remaining flood hop count is clamped when a packet exits the bridge — by default, to a maximum of 1. This clamping applies even to hybrid-routed packets that transition from source routing to flooding after crossing the bridge. The effect is to keep individual meshes local and accountable while still enabling multi-segment routing.
+
 ## Forwarding Confirmation and Recovery
 
 UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.

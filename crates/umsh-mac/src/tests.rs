@@ -3248,6 +3248,91 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
 }
 
 #[test]
+fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().min_rssi = Some(10);
+    repeater.repeater_config_mut().min_snr = Some(10);
+    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = repeater
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
+    let source_route = [repeater_hint, RouterHint([0x21, 0x22])];
+
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        7,
+        None,
+        None,
+        Some(&source_route),
+        Some(20),
+        Some(20),
+    );
+
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+
+    assert!(handled);
+    let forwarded = repeater.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(forwarded.priority, TxPriority::Forward);
+}
+
+#[test]
+fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flooding() {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().min_rssi = Some(10);
+    repeater.repeater_config_mut().min_snr = Some(10);
+    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = repeater
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
+    let source_route = [repeater_hint];
+
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        7,
+        Some((1, 0)),
+        None,
+        Some(&source_route),
+        Some(20),
+        Some(20),
+    );
+
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+
+    assert!(!handled);
+    assert!(repeater.tx_queue_mut().pop_next().is_none());
+}
+
+#[test]
 fn receive_one_repeater_forwards_source_routed_mac_ack() {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;
@@ -6050,6 +6135,35 @@ impl DummyRadio {
         trace_route: Option<&[RouterHint]>,
         source_route: Option<&[RouterHint]>,
     ) {
+        self.queue_received_unicast_with_thresholds(
+            source,
+            keys,
+            dst,
+            payload,
+            ack_requested,
+            frame_counter,
+            flood_hops,
+            trace_route,
+            source_route,
+            None,
+            None,
+        );
+    }
+
+    fn queue_received_unicast_with_thresholds(
+        &mut self,
+        source: &DummyIdentity,
+        keys: &PairwiseKeys,
+        dst: &umsh_core::NodeHint,
+        payload: &[u8],
+        ack_requested: bool,
+        frame_counter: u32,
+        flood_hops: Option<(u8, u8)>,
+        trace_route: Option<&[RouterHint]>,
+        source_route: Option<&[RouterHint]>,
+        min_rssi: Option<i16>,
+        min_snr: Option<i8>,
+    ) {
         let mut buf = [0u8; 256];
         let builder = PacketBuilder::new(&mut buf)
             .unicast(*dst)
@@ -6079,6 +6193,16 @@ impl DummyRadio {
         };
         let builder = if let Some(route) = source_route {
             builder.source_route(route)
+        } else {
+            builder
+        };
+        let builder = if let Some(min_rssi) = min_rssi {
+            builder.option(OptionNumber::MinRssi, &min_rssi.to_be_bytes())
+        } else {
+            builder
+        };
+        let builder = if let Some(min_snr) = min_snr {
+            builder.option(OptionNumber::MinSnr, &[min_snr as u8])
         } else {
             builder
         };

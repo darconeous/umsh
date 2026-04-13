@@ -517,9 +517,10 @@ impl Default for OperatingPolicy {
 /// - **`regions`** — a filter list of 2-byte ARNCE region codes. When non-empty, only packets
 ///   carrying a matching region code in their options block are eligible for forwarding. An
 ///   empty list means "forward regardless of region code".
-/// - **`min_rssi` / `min_snr`** — signal-quality thresholds. Packets received below these
-///   values are not forwarded; this prevents marginal receptions from being re-injected into
-///   the network at full power, which would degrade SNR for nearby nodes rather than help.
+/// - **`min_rssi` / `min_snr`** — signal-quality thresholds for flood forwarding. Packets
+///   received below these values are not flood-forwarded; this prevents marginal receptions
+///   from being re-injected into the network at full power, which would degrade SNR for
+///   nearby nodes rather than help. These thresholds do not apply to source-routed hops.
 /// - **Flood contention tuning** — controls the SNR-to-delay mapping used when several
 ///   eligible repeaters contend to flood-forward the same frame. These values should usually
 ///   remain aligned across the mesh.
@@ -537,9 +538,9 @@ pub struct RepeaterConfig {
     pub enabled: bool,
     /// Allowed repeater region codes.
     pub regions: Vec<[u8; 2], 8>,
-    /// Minimum RSSI threshold for forwarding.
+    /// Minimum RSSI threshold for flood forwarding.
     pub min_rssi: Option<i16>,
-    /// Minimum SNR threshold for forwarding.
+    /// Minimum SNR threshold for flood forwarding.
     pub min_snr: Option<i8>,
     /// Lower clamp bound for SNR-based flood forwarding contention.
     pub flood_contention_snr_low_db: i8,
@@ -3543,16 +3544,6 @@ impl<
         if options.has_unknown_critical {
             return None;
         }
-        if let Some(min_rssi) = Self::effective_min_rssi(options, &self.repeater) {
-            if rx.rssi < min_rssi {
-                return None;
-            }
-        }
-        if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
-            if rx.snr < Snr::from_decibels(min_snr) {
-                return None;
-            }
-        }
 
         let router_hint = self.repeater_router_hint()?;
         let station_action = self.classify_forward_station_action(frame, header)?;
@@ -3586,6 +3577,18 @@ impl<
             let flood_hops = header.flood_hops?;
             if flood_hops.remaining() == 0 {
                 return None;
+            }
+            // Signal-quality filtering applies only to flood forwarding,
+            // not to source-routed hops.
+            if let Some(min_rssi) = Self::effective_min_rssi(options, &self.repeater) {
+                if rx.rssi < min_rssi {
+                    return None;
+                }
+            }
+            if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
+                if rx.snr < Snr::from_decibels(min_snr) {
+                    return None;
+                }
             }
             if let Some(region_code) = options.region_code {
                 if !self
