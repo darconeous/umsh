@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c277772e.js";
+            window.path_to_searchindex_js = "searchindex-d1cfb8c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -179,6 +179,7 @@
 <p>UMSH is an experimental LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as <a href="#cryptography">critical shortcomings</a>—shortcomings that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into this comprehensive specification.</p>
 <p>The project repository, reference implementation, and supporting tooling are available on <a href="https://github.com/darconeous/umsh">GitHub</a>.</p>
 <p>The ideas in UMSH are free for anyone to adopt, but was written with MeshCore V2 in mind. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.</p>
+<p>Point-by-point protocol comparisons with <a href="#comparison-with-meshcore">MeshCore</a>, <a href="#comparison-with-meshtastic">Meshtastic</a>, and <a href="#comparison-with-reticulum">Reticulum</a> are available.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>In UMSH, endpoints are identified
 by public keys, and multicast communication is based on shared symmetric
@@ -189,7 +190,6 @@ and node management that are built on top of this foundation. The MAC
 layer treats payloads opaquely and can equally carry UMSH-defined
 application protocols, third-party protocols such as CoAP, or any other
 higher-layer content.</p>
-<p>Point-by-point protocol comparisons with <a href="#comparison-with-meshcore">MeshCore</a>, <a href="#comparison-with-meshtastic">Meshtastic</a>, and <a href="#comparison-with-reticulum">Reticulum</a> are available.</p>
 <p>UMSH is designed to support:</p>
 <ul>
 <li>Public-key-addressed unicast</li>
