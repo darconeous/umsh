@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-cb89f5ce.js";
+            window.path_to_searchindex_js = "searchindex-3870390a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -457,7 +457,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>The infrastructure dependency is the key tradeoff: Reticulum’s routing model requires Transport Nodes to be present and reachable, and these nodes need reliable power to maintain path tables. UMSH’s flood-based model works without any fixed infrastructure, with repeater nodes sharing the forwarding load.</p>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
 <p>Reticulum is a comprehensive, general-purpose network stack designed to operate across a wide range of mediums — from gigabit Ethernet to sub-kilobit LoRa. It prioritizes medium independence, automatic path discovery, initiator anonymity by default, and a rich application API. Recent versions (v1.1.0+) have added on-network interface discovery and a network identity system that enable more sophisticated network management and trust hierarchies.</p>
-<p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and lower protocol state requirements (no path tables, no mandatory announce propagation, no clock synchronization) are designed with constrained hardware in mind.</p>
+<p>UMSH is purpose-built for constrained LoRa networks. It prioritizes compact packet encoding, minimal overhead, composable routing options, and strict layer separation. Its small per-packet overhead, single-frame design, and lower protocol state requirements (no path tables, no mandatory announce propagation, no clock synchronization, no global packet hash cache) are designed with constrained hardware in mind.</p>
 <p>Key tradeoffs:</p>
 <ul>
 <li><strong>Overhead</strong>: UMSH achieves 60–85% lower per-packet overhead than Reticulum (depending on MIC size), maximizing payload capacity within tight LoRa frame budgets.</li>
@@ -465,6 +465,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li><strong>Routing flexibility</strong>: UMSH offers composable source routing, hybrid routing, and signal-quality filtering. Reticulum offers automatic next-hop routing via transport nodes, and on-network interface auto-discovery since v1.1.0.</li>
 <li><strong>Privacy model</strong>: Reticulum provides initiator anonymity by default (no source address), plus a network identity system for administrative trust domains. UMSH provides source addresses by default with opt-in privacy modes.</li>
 <li><strong>Multicast</strong>: UMSH supports multi-hop multicast. Reticulum’s group communication is currently single-hop only (multi-hop planned).</li>
+<li><strong>Replay protection</strong>: UMSH uses per-peer monotonic frame counters, which require a small amount of per-peer state but provide deterministic replay detection regardless of traffic volume. Reticulum uses a global packet hash cache, which requires no per-peer state but must be large enough to cover the replay window — a tradeoff that favors hosts with ample memory.</li>
 <li><strong>Scope</strong>: Reticulum is a complete network stack with reliable delivery, sessions, and application APIs. UMSH is a MAC layer with defined-but-separate application protocols, designed to carry arbitrary higher-layer content.</li>
 <li><strong>Implementation complexity</strong>: Reticulum’s richer protocol machinery (path tables, link establishment, announce propagation) raises the minimum implementation complexity. UMSH’s simpler MAC-layer model is more amenable to constrained implementations.</li>
 </ul>
