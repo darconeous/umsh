@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d1cfb8c7.js";
+            window.path_to_searchindex_js = "searchindex-945f4d99.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -286,8 +286,7 @@ number of writes.</p>
 <p>The ECDH shared secret is:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
-<p>This shared secret is ised as the input keying material for deriving the cryptographic
-keys to secure and authenticate messages.</p>
+<p>This shared secret is used as the input keying material for deriving the cryptographic keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
 <p>For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>

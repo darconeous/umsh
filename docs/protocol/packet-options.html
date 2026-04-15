@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d1cfb8c7.js";
+            window.path_to_searchindex_js = "searchindex-945f4d99.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -216,6 +216,7 @@
 <tr><th style="text-align: right">Number</th><th>Name</th><th>Classification</th><th>Value</th></tr>
 </thead>
 <tbody>
+<tr><td style="text-align: right">0</td><td><em>RESERVED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">1</td><td>Region Code</td><td>Critical, Static</td><td>2 bytes</td></tr>
 <tr><td style="text-align: right">2</td><td>Trace Route</td><td>Non-Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
@@ -223,6 +224,7 @@
 <tr><td style="text-align: right">5</td><td>Minimum RSSI</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">6</td><td>Route Retry</td><td>Non-Critical, Dynamic</td><td>0 bytes</td></tr>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
+<tr><td style="text-align: right">8</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 </tbody>
 </table>
@@ -234,6 +236,13 @@
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
 </ul>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This option may be renumbered in the future so that it is dynamic.
+This would allow repeaters to tag packets without regions to use local
+region codes, helping to localize the flow of flood traffic across the
+mesh.</p>
+</blockquote>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
 <p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
@@ -261,8 +270,19 @@
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.</p>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.</p>
 <p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>If collisions between IATA-based codes and
+hash-based codes is a concern, we could redefine
+how hash-based codes are calculated to keep
+hashing the previous full hash value until it
+returns a result that is not a
+valid three-letter ARNCE encoding.</p>
+<p>This would have the benefit of allowing IATA codes
+to be immediately renderable in user interfaces.</p>
+</blockquote>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
 <ul>

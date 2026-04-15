@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d1cfb8c7.js";
+            window.path_to_searchindex_js = "searchindex-945f4d99.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -694,6 +694,7 @@ unicast semantics without encryption.</p>
 <tr><th style="text-align: right">Number</th><th>Name</th><th>Classification</th><th>Value</th></tr>
 </thead>
 <tbody>
+<tr><td style="text-align: right">0</td><td><em>RESERVED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">1</td><td>Region Code</td><td>Critical, Static</td><td>2 bytes</td></tr>
 <tr><td style="text-align: right">2</td><td>Trace Route</td><td>Non-Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
@@ -701,6 +702,7 @@ unicast semantics without encryption.</p>
 <tr><td style="text-align: right">5</td><td>Minimum RSSI</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">6</td><td>Route Retry</td><td>Non-Critical, Dynamic</td><td>0 bytes</td></tr>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
+<tr><td style="text-align: right">8</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 </tbody>
 </table>
@@ -712,6 +714,13 @@ unicast semantics without encryption.</p>
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
 </ul>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This option may be renumbered in the future so that it is dynamic.
+This would allow repeaters to tag packets without regions to use local
+region codes, helping to localize the flow of flood traffic across the
+mesh.</p>
+</blockquote>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
 <p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
@@ -739,8 +748,19 @@ unicast semantics without encryption.</p>
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.</p>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.</p>
 <p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>If collisions between IATA-based codes and
+hash-based codes is a concern, we could redefine
+how hash-based codes are calculated to keep
+hashing the previous full hash value until it
+returns a result that is not a
+valid three-letter ARNCE encoding.</p>
+<p>This would have the benefit of allowing IATA codes
+to be immediately renderable in user interfaces.</p>
+</blockquote>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
 <ul>
@@ -961,8 +981,7 @@ number of writes.</p>
 <p>The ECDH shared secret is:</p>
 <pre><code class="language-text">ss = X25519(local_x25519_private, remote_x25519_public)
 </code></pre>
-<p>This shared secret is ised as the input keying material for deriving the cryptographic
-keys to secure and authenticate messages.</p>
+<p>This shared secret is used as the input keying material for deriving the cryptographic keys to secure and authenticate messages.</p>
 <h3 id="hkdf-inputs-for-unicast"><a class="header" href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a></h3>
 <p>For unicast packets, the encryption and MIC keys are derived from the X25519 ECDH shared secret and are stable for a given pair of nodes. These keys are not derived from packet-specific fields.</p>
 <p>Let:</p>
@@ -1158,7 +1177,8 @@ K_mic = okm[16..31]
 <p>Flood routing requires no prior knowledge of the network topology. It is used for broadcasts, multicast, and unicast when no source route is known. The cost is airtime: every repeater in range participates, so a high hop count can saturate a busy mesh.</p>
 <p>See <a href="#flood-hop-count">Packet Structure § Flood Hop Count</a> for encoding details and <a href="#forwarding-procedure">Repeater Operation § Forwarding Procedure</a> for the forwarding rules.</p>
 <h3 id="region-scoping"><a class="header" href="#region-scoping">Region Scoping</a></h3>
-<p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for a specific geographic region. A repeater that does not recognize or is not configured for the region must not flood-forward the packet. Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
+<p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for that specific geographic region. A repeater that does not recognize or is not configured for the region MUST NOT flood-forward the packet.
+Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
 <p>See <a href="#region-code-option-1">Packet Options § Region Code</a>.</p>
 <h3 id="signal-quality-filtering"><a class="header" href="#signal-quality-filtering">Signal-Quality Filtering</a></h3>
 <p>Two packet options let the sender control which links are acceptable for flood forwarding:</p>
@@ -1176,9 +1196,18 @@ K_mic = okm[16..31]
 <p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior — useful for reaching a node in a known area without flooding the entire mesh.</p>
 <p>See <a href="#routing-implications">Repeater Operation § Routing Implications</a>.</p>
 <h2 id="bridging"><a class="header" href="#bridging">Bridging</a></h2>
-<p>A <strong>bridge</strong> is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands. Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though <a href="#bridge-hop-confirmation">this may be optimized in the future</a>.</p>
+<p>A <strong>bridge</strong> is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands.</p>
+<p>Bridges are not prohibited per-se, as that is not a protocol-level decision. Instead, this document provides some guidance on how bridges can be deployed while lowering the risk of hurting local mesh performance.</p>
+<p>Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though <a href="#bridge-hop-confirmation">this may be optimized in the future</a>.</p>
 <p>Bridges participate in source routes and trace routes like any other repeater. A trace route that crosses a bridge will contain the bridge’s router hint, and source-routed packets will traverse the bridge transparently.</p>
 <p>Flooding works across bridges, but the remaining flood hop count is clamped when a packet exits the bridge — by default, to a maximum of 1. This clamping applies even to hybrid-routed packets that transition from source routing to flooding after crossing the bridge. The effect is to keep individual meshes local and accountable while still enabling multi-segment routing.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>Internet bridges have the potential to be destructive to the mesh and are generally discouraged
+because 1) they cannot be relied upon in an emergency, and 2) they can waste airtime with useless,
+non-local chatter. Moreso than other types of bridges, internet bridges MUST limit the flood hop count
+of packets which transit the bridge.</p>
+</blockquote>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
 <p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
 <p>If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.</p>
@@ -1743,6 +1772,7 @@ delay = uniform_random(0, W)
 <li>Node Battery Percentage</li>
 <li>Node Uptime (minutes)</li>
 <li>Amateur Radio Callsign</li>
+<li>Supported Regions (for repeaters)</li>
 </ul>
 <h2 id="signature-usage"><a class="header" href="#signature-usage">Signature Usage</a></h2>
 <p>The optional 64-byte EdDSA signature is generally included only when the identity data must stand on its own, such as:</p>
