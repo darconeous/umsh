@@ -43,12 +43,21 @@ impl From<NodeIdentityPayload<'_>> for OwnedNodeIdentityPayload {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OwnedMacCommand {
-    BeaconRequest { nonce: Option<u32> },
+    BeaconRequest {
+        nonce: Option<u32>,
+    },
     IdentityRequest,
     SignalReportRequest,
-    SignalReportResponse { rssi: u8, snr: i8 },
-    EchoRequest { data: Vec<u8> },
-    EchoResponse { data: Vec<u8> },
+    SignalReportResponse {
+        rssi: u8,
+        snr: i8,
+    },
+    EchoRequest {
+        data: Vec<u8>,
+    },
+    EchoResponse {
+        data: Vec<u8>,
+    },
     PfsSessionRequest {
         ephemeral_key: PublicKey,
         duration_minutes: u16,
@@ -66,9 +75,15 @@ impl From<MacCommand<'_>> for OwnedMacCommand {
             MacCommand::BeaconRequest { nonce } => Self::BeaconRequest { nonce },
             MacCommand::IdentityRequest => Self::IdentityRequest,
             MacCommand::SignalReportRequest => Self::SignalReportRequest,
-            MacCommand::SignalReportResponse { rssi, snr } => Self::SignalReportResponse { rssi, snr },
-            MacCommand::EchoRequest { data } => Self::EchoRequest { data: Vec::from(data) },
-            MacCommand::EchoResponse { data } => Self::EchoResponse { data: Vec::from(data) },
+            MacCommand::SignalReportResponse { rssi, snr } => {
+                Self::SignalReportResponse { rssi, snr }
+            }
+            MacCommand::EchoRequest { data } => Self::EchoRequest {
+                data: Vec::from(data),
+            },
+            MacCommand::EchoResponse { data } => Self::EchoResponse {
+                data: Vec::from(data),
+            },
             MacCommand::PfsSessionRequest {
                 ephemeral_key,
                 duration_minutes,

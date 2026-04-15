@@ -17,12 +17,21 @@ pub enum CommandId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacCommand<'a> {
-    BeaconRequest { nonce: Option<u32> },
+    BeaconRequest {
+        nonce: Option<u32>,
+    },
     IdentityRequest,
     SignalReportRequest,
-    SignalReportResponse { rssi: u8, snr: i8 },
-    EchoRequest { data: &'a [u8] },
-    EchoResponse { data: &'a [u8] },
+    SignalReportResponse {
+        rssi: u8,
+        snr: i8,
+    },
+    EchoRequest {
+        data: &'a [u8],
+    },
+    EchoResponse {
+        data: &'a [u8],
+    },
     PfsSessionRequest {
         ephemeral_key: umsh_core::PublicKey,
         duration_minutes: u16,

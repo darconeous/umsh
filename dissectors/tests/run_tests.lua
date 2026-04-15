@@ -90,11 +90,11 @@ check("ARNCE 0x0640 = A",    options.decode_arnce(from_hex("0640")), "A")
 -- ─────────────────────────────────────────────────────────────────────────────
 section("Options codec")
 
--- Example 7 options block: 12 78 53 10 FF
--- Option 1 (Region Code), delta=1, len=2, value=78 53
--- Option 2 (Trace Route), delta=1, len=0
+-- Example 7 options block: 20 92 78 53 FF
+-- Option 2 (Trace Route), delta=2, len=0
+-- Option 11 (Region Code), delta=9, len=2, value=78 53
 -- End marker FF
-local opts7 = from_hex("127853 10FF")
+local opts7 = from_hex("20 927853 FF")
 
 local nums, vals = {}, {}
 for num, val, consumed in options.decode(opts7, 1) do
@@ -102,18 +102,18 @@ for num, val, consumed in options.decode(opts7, 1) do
   vals[#vals+1] = val
 end
 check("options Example7: count",    #nums, 2)
-check("options Example7: opt[1] num", nums[1], 1)
-check("options Example7: opt[1] val", vals[1], from_hex("7853"))
-check("options Example7: opt[2] num", nums[2], 2)
-check("options Example7: opt[2] val", vals[2], "")
+check("options Example7: opt[1] num", nums[1], 2)
+check("options Example7: opt[1] val", vals[1], "")
+check("options Example7: opt[2] num", nums[2], 11)
+check("options Example7: opt[2] val", vals[2], from_hex("7853"))
 
 -- scan_length should return 5 (3 + 1 + 1 for FF)
 check("options Example7: scan_length", options.scan_length(opts7, 1), 5)
 
 -- Static-option flag (bit 1 of option number)
-check("is_static(1)",  options.is_static(1),  true)   -- Region Code = 1 = 0b001 → bit1=0 → static
+check("is_static(11)", options.is_static(11), false)  -- Region Code = 11 = 0b1011 → bit1=1 → dynamic
 check("is_static(2)",  options.is_static(2),  false)  -- Trace Route = 2 = 0b010 → bit1=1 → dynamic
-check("is_critical(1)", options.is_critical(1), true)  -- bit0=1 → critical
+check("is_critical(11)", options.is_critical(11), true)  -- bit0=1 → critical
 check("is_critical(2)", options.is_critical(2), false) -- bit0=0 → non-critical
 
 -- ─────────────────────────────────────────────────────────────────────────────

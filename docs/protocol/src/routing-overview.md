@@ -2,6 +2,8 @@
 
 UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.
 
+In general, it is the responsibility of the individual endpoints to properly route their traffic to their destination.
+
 ## Direct (Single-Hop) Delivery
 
 The simplest case: the sender transmits a packet with no source-route option and no flood hop count. Only nodes within direct radio range will receive it. No repeater forwarding occurs. This is appropriate when the destination is known to be a direct neighbor, or for local broadcasts and beacons that do not need multi-hop propagation.
@@ -16,9 +18,11 @@ See [Packet Structure § Flood Hop Count](packet-structure.md#flood-hop-count) f
 
 ### Region Scoping
 
-The **region code option** restricts flood forwarding to repeaters configured for a specific geographic region. A repeater that does not recognize or is not configured for the region must not flood-forward the packet. Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.
+The **region code option** restricts flood forwarding to repeaters configured for that specific geographic region. A repeater that does not recognize or is not configured for the region MUST NOT flood-forward the packet.
+If multiple region code options are present, matching any one of them is sufficient for flood forwarding. If a packet is being flood-forwarded without a region code, a repeater may add one according to local policy, but it must never rewrite an existing region code or add a second one.
+Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.
 
-See [Packet Options § Region Code](packet-options.md#region-code-option-1).
+See [Packet Options § Region Code](packet-options.md#region-code-option-11).
 
 ### Signal-Quality Filtering
 
@@ -47,11 +51,21 @@ See [Repeater Operation § Routing Implications](repeater-operation.md#routing-i
 
 ## Bridging
 
-A **bridge** is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands. Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though [this may be optimized in the future](limitations.md#bridge-hop-confirmation).
+A **bridge** is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands.
+
+Bridges are not prohibited per-se, as that is not a protocol-level decision. Instead, this document provides some guidance on how bridges can be deployed while lowering the risk of hurting local mesh performance.
+
+Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though [this may be optimized in the future](limitations.md#bridge-hop-confirmation).
 
 Bridges participate in source routes and trace routes like any other repeater. A trace route that crosses a bridge will contain the bridge's router hint, and source-routed packets will traverse the bridge transparently.
 
 Flooding works across bridges, but the remaining flood hop count is clamped when a packet exits the bridge — by default, to a maximum of 1. This clamping applies even to hybrid-routed packets that transition from source routing to flooding after crossing the bridge. The effect is to keep individual meshes local and accountable while still enabling multi-segment routing.
+
+> [!CAUTION]
+> Internet bridges have the potential to be destructive to the mesh and are generally discouraged
+> because 1) they cannot be relied upon in an emergency, and 2) they can waste airtime with useless,
+> non-local chatter. Moreso than other types of bridges, internet bridges MUST limit the flood hop count
+> of packets which transit the bridge.
 
 ## Forwarding Confirmation and Recovery
 

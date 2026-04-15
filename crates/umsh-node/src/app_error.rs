@@ -14,7 +14,10 @@ pub enum AppParseError {
     InvalidRole(u8),
     InvalidCommandId(u8),
     InvalidOptionValue,
-    InvalidLength { expected: usize, actual: usize },
+    InvalidLength {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl From<CoreParseError> for AppParseError {

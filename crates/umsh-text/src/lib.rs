@@ -83,8 +83,7 @@ impl<T: Transport + Clone> UnicastTextChatWrapper<T> {
         &self,
         message: &TextMessage<'_>,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<T::Error>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<T::Error>> {
         let payload = encode_text_payload(message)?;
         self.peer
             .send(&payload, options)
@@ -96,8 +95,7 @@ impl<T: Transport + Clone> UnicastTextChatWrapper<T> {
         &self,
         message: &OwnedTextMessage,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<T::Error>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<T::Error>> {
         self.send_message(&message.as_borrowed(), options).await
     }
 
@@ -105,8 +103,7 @@ impl<T: Transport + Clone> UnicastTextChatWrapper<T> {
         &self,
         body: &str,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<T::Error>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<T::Error>> {
         let message = TextMessage {
             message_type: MessageType::Basic,
             sender_handle: None,
@@ -137,7 +134,10 @@ impl<M: umsh_node::MacBackend> UnicastTextChatWrapper<LocalNode<M>> {
     {
         self.peer.on_receive(move |packet| {
             if packet.payload_type() != PayloadType::TextMessage {
-                diagnostics(packet, TextReceiveIssue::WrongPayloadType(packet.payload_type()));
+                diagnostics(
+                    packet,
+                    TextReceiveIssue::WrongPayloadType(packet.payload_type()),
+                );
                 return false;
             }
             let message = match parse_text_message(packet.payload()) {
@@ -179,8 +179,7 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
         &self,
         message: &TextMessage<'_>,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>> {
         let payload = encode_text_payload(message)?;
         self.channel
             .send_all(&payload, options)
@@ -192,8 +191,7 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
         &self,
         message: &OwnedTextMessage,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>> {
         self.send_message(&message.as_borrowed(), options).await
     }
 
@@ -201,8 +199,7 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
         &self,
         body: &str,
         options: &SendOptions,
-    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>>
-    {
+    ) -> Result<SendProgressTicket, TextSendError<umsh_node::NodeError<M>>> {
         let message = TextMessage {
             message_type: MessageType::Basic,
             sender_handle: None,
@@ -240,7 +237,10 @@ impl<M: MacBackend> MulticastTextChatWrapper<M> {
                     return false;
                 }
                 if packet.payload_type() != PayloadType::TextMessage {
-                    diagnostics(packet, TextReceiveIssue::WrongPayloadType(packet.payload_type()));
+                    diagnostics(
+                        packet,
+                        TextReceiveIssue::WrongPayloadType(packet.payload_type()),
+                    );
                     return false;
                 }
                 let message = match parse_text_message(packet.payload()) {

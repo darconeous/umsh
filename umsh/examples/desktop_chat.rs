@@ -156,7 +156,10 @@ async fn run_udp_chat(
 
     print_banner("udp-multicast", local_key, Some(peer_key));
     println!("group: {group}:{port}");
-    println!("modeled frame time: {} ms", local_mac.borrow().radio().t_frame_ms());
+    println!(
+        "modeled frame time: {} ms",
+        local_mac.borrow().radio().t_frame_ms()
+    );
     if skip_counter_load {
         println!("counter load: skipped (--skip-counter-load)");
     }
@@ -240,12 +243,8 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let remote_chat = ChatText::from_peer(&remote_peer);
     let outputs = OutputQueue::new();
     let remote_echoes = Rc::new(RefCell::new(Vec::<String>::new()));
-    let _subscriptions = register_peer_callbacks(
-        &local_node,
-        &local_chat,
-        &local_peer,
-        outputs.sink(),
-    );
+    let _subscriptions =
+        register_peer_callbacks(&local_node, &local_chat, &local_peer, outputs.sink());
     let _remote_echo_subscription = {
         let remote_echoes = remote_echoes.clone();
         remote_chat.on_text(move |_packet, text| {
@@ -546,8 +545,7 @@ fn register_peer_callbacks<'a, R: Radio>(
     subscriptions.push(node.on_mac_command(move |from, command| {
         command_lines.borrow_mut().push(format!(
             "mac command from {}: {}",
-            full_key(&from)
-            ,
+            full_key(&from),
             format_mac_command(command)
         ));
     }));
@@ -575,10 +573,9 @@ fn register_peer_callbacks<'a, R: Radio>(
     let peer_key = *peer.peer();
     let pfs_lines = lines.clone();
     subscriptions.push(peer.on_pfs_established(move || {
-        pfs_lines.borrow_mut().push(format!(
-            "pfs established with {}",
-            full_key(&peer_key)
-        ));
+        pfs_lines
+            .borrow_mut()
+            .push(format!("pfs established with {}", full_key(&peer_key)));
     }));
 
     let peer_key = *peer.peer();

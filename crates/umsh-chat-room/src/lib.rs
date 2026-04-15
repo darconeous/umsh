@@ -210,7 +210,10 @@ pub fn encode(action: &ChatAction<'_>, buf: &mut [u8]) -> Result<usize, Error> {
             buf[0] = 3;
             Ok(1)
         }
-        ChatAction::FetchMessages { timestamp, max_count } => {
+        ChatAction::FetchMessages {
+            timestamp,
+            max_count,
+        } => {
             let mut pos = 0usize;
             push_byte(buf, &mut pos, 5)?;
             copy_into(buf, &mut pos, &timestamp.to_be_bytes())?;
@@ -275,7 +278,9 @@ fn decode_options_allow_eof<'a>(
         let (len, len_len) = read_extended(&data[pos..], first & 0x0F)?;
         pos += len_len;
 
-        let end = pos.checked_add(len as usize).ok_or(Error::InvalidOptionValue)?;
+        let end = pos
+            .checked_add(len as usize)
+            .ok_or(Error::InvalidOptionValue)?;
         if end > data.len() {
             return Err(Error::Core(umsh_core::ParseError::Truncated));
         }

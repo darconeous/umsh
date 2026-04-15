@@ -181,7 +181,9 @@ async fn async_main() {
         cached_route_summary(&alice_mac, bob_key)
     );
 
-    println!("== step 3: alice sends a follow-up and should now use the learned source route too ==");
+    println!(
+        "== step 3: alice sends a follow-up and should now use the learned source route too =="
+    );
     let follow_up_options = default_chat_options().with_trace_route();
     alice_chat
         .send_text("alice follow-up over learned route", &follow_up_options)
@@ -242,9 +244,7 @@ async fn async_main() {
     );
     println!(
         "[bob:pfs] status = {}",
-        format_pfs_status(
-            bob.pfs_status().expect("bob pfs status should be readable")
-        )
+        format_pfs_status(bob.pfs_status().expect("bob pfs status should be readable"))
     );
     if *alice_pfs.borrow() && *bob_pfs.borrow() {
         println!("[pfs] established on both sides during the simulated exchange");
@@ -392,9 +392,7 @@ fn register_debug_callbacks(
 type RepeaterHostNode<'a> = umsh::node::LocalNode<
     MacHandle<'a, RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
 >;
-type RepeaterPeer<'a> = umsh::node::PeerConnection<
-    RepeaterHostNode<'a>,
->;
+type RepeaterPeer<'a> = umsh::node::PeerConnection<RepeaterHostNode<'a>>;
 type RepeaterText<'a> = UnicastTextChatWrapper<RepeaterHostNode<'a>>;
 
 #[derive(Clone, Copy, Debug)]
@@ -486,7 +484,11 @@ fn cached_route_summary(mac: &RefCell<RepeaterMac>, peer: PublicKey) -> String {
     let Some((peer_id, _)) = mac.peer_registry().lookup_by_key(&peer) else {
         return "missing-peer".to_string();
     };
-    match mac.peer_registry().get(peer_id).and_then(|info| info.route.as_ref()) {
+    match mac
+        .peer_registry()
+        .get(peer_id)
+        .and_then(|info| info.route.as_ref())
+    {
         Some(CachedRoute::Source(route)) => format!(
             "source {:?}",
             route.iter().map(|hop| hop.0).collect::<std::vec::Vec<_>>()
@@ -498,7 +500,17 @@ fn cached_route_summary(mac: &RefCell<RepeaterMac>, peer: PublicKey) -> String {
 
 async fn pump_until(
     alice_host: &mut RepeaterHost<'_>,
-    repeater_handle: &MacHandle<'_, RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
+    repeater_handle: &MacHandle<
+        '_,
+        RepeaterPlatform,
+        IDENTITIES,
+        PEERS,
+        CHANNELS,
+        ACKS,
+        TX,
+        FRAME,
+        DUP,
+    >,
     bob_host: &mut RepeaterHost<'_>,
     done: impl Fn() -> bool,
     max_steps: usize,
@@ -578,14 +590,12 @@ fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
             packet.rssi(),
             packet.snr(),
         ),
-        MacEventRef::AckReceived { peer, receipt } => format!(
-            "ack-received peer={} receipt={receipt:?}",
-            full_key(peer)
-        ),
-        MacEventRef::AckTimeout { peer, receipt } => format!(
-            "ack-timeout peer={} receipt={receipt:?}",
-            full_key(peer)
-        ),
+        MacEventRef::AckReceived { peer, receipt } => {
+            format!("ack-received peer={} receipt={receipt:?}", full_key(peer))
+        }
+        MacEventRef::AckTimeout { peer, receipt } => {
+            format!("ack-timeout peer={} receipt={receipt:?}", full_key(peer))
+        }
         MacEventRef::Transmitted {
             identity_id,
             receipt,

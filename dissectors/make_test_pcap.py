@@ -70,9 +70,9 @@ VECTORS = [
     (
         "Example 7: Encrypted Unicast with Options and Flood Hops",
         bytes.fromhex(
-            "D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00"
-            " 00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE"
-            " CA 27 90 59 AF"
+            "D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00"
+            " 00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8"
+            " D1 F0 74 85 39"
             .replace(" ", "")
         ),
     ),

@@ -48,6 +48,7 @@ Possible options include:
 - Node Battery Percentage
 - Node Uptime (minutes)
 - Amateur Radio Callsign
+- Supported Regions (for repeaters)
 
 ## Signature Usage
 

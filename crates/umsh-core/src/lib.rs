@@ -181,23 +181,23 @@ mod tests {
             .source_hint(src)
             .frame_counter(10)
             .encrypted()
-            .region_code([0x78, 0x53])
             .trace_route()
+            .region_code([0x78, 0x53])
             .payload(b"hey")
             .build()
             .unwrap();
 
-        assert_eq!(&packet.as_bytes()[1..6], &[0x12, 0x78, 0x53, 0x10, 0xFF]);
+        assert_eq!(&packet.as_bytes()[1..6], &[0x20, 0x92, 0x78, 0x53, 0xFF]);
     }
 
     #[test]
     fn aad_excludes_dynamic_options() {
         let mut bytes = [0u8; 64];
         bytes[0] = Fcf::new(PacketType::Unicast, false, true, false).0;
-        bytes[1] = 0x12;
-        bytes[2] = 0x78;
-        bytes[3] = 0x53;
-        bytes[4] = 0x10;
+        bytes[1] = 0x20;
+        bytes[2] = 0x92;
+        bytes[3] = 0x78;
+        bytes[4] = 0x53;
         bytes[5] = 0xFF;
         bytes[6..9].copy_from_slice(&[0xC3, 0xD4, 0x25]);
         bytes[9..12].copy_from_slice(&[0xA1, 0xB2, 0x03]);
@@ -217,12 +217,6 @@ mod tests {
             &aad[..aad_len],
             &[
                 bytes[0],
-                0,
-                1,
-                0,
-                2,
-                0x78,
-                0x53,
                 0xC3,
                 0xD4,
                 0x25,

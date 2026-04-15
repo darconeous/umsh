@@ -198,9 +198,7 @@ impl SendOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AckState {
     /// Accepted for transmission but not yet sent.
-    Queued {
-        needs_forward_confirmation: bool,
-    },
+    Queued { needs_forward_confirmation: bool },
     /// Waiting to overhear forwarding confirmation from the next hop.
     AwaitingForward { confirm_deadline_ms: u64 },
     /// Retransmission is queued with a retry backoff delay.
@@ -302,11 +300,7 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
 
 impl<const FRAME: usize> PendingAck<FRAME> {
     /// Create pending-ACK state for a direct send.
-    pub fn direct(
-        ack_tag: [u8; 8],
-        peer: PublicKey,
-        resend: ResendRecord<FRAME>,
-    ) -> Self {
+    pub fn direct(ack_tag: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
             ack_tag,
             peer,
@@ -321,11 +315,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     }
 
     /// Create pending-ACK state for a forwarded send.
-    pub fn forwarded(
-        ack_tag: [u8; 8],
-        peer: PublicKey,
-        resend: ResendRecord<FRAME>,
-    ) -> Self {
+    pub fn forwarded(ack_tag: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
             ack_tag,
             peer,

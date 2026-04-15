@@ -203,7 +203,7 @@ end
 -- Known MAC-layer option numbers
 -- ---------------------------------------------------------------------------
 
-M.OPT_REGION_CODE      = 1   -- Critical, Static,  2 bytes
+M.OPT_REGION_CODE      = 11  -- Critical, Dynamic, 2 bytes
 M.OPT_TRACE_ROUTE      = 2   -- Non-Critical, Dynamic
 M.OPT_SOURCE_ROUTE     = 3   -- Critical, Dynamic
 M.OPT_OP_CALLSIGN      = 4   -- Non-Critical, Static, ARNCE
@@ -212,13 +212,13 @@ M.OPT_STATION_CALLSIGN = 7   -- Critical, Dynamic, ARNCE
 M.OPT_MIN_SNR          = 9   -- Critical, Static,  0-1 bytes
 
 M.KNOWN_OPTION_NAMES = {
-  [1] = "Region Code",
   [2] = "Trace Route",
   [3] = "Source Route",
   [4] = "Operator Callsign",
   [5] = "Min RSSI",
   [7] = "Station Callsign",
   [9] = "Min SNR",
+  [11] = "Region Code",
 }
 
 return M

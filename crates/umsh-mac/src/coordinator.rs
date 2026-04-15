@@ -5,9 +5,9 @@ use hamaddr::HamAddr;
 use heapless::{LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
-    BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
-    PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint, SourceAddrRef,
-    UnsealedPacket, feed_aad, options::OptionEncoder,
+    BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
+    PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint,
+    SourceAddrRef, UnsealedPacket, feed_aad, options::OptionEncoder,
 };
 use umsh_crypto::{
     CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -16,9 +16,8 @@ use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
     CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS,
-    DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
-    MAX_SOURCE_ROUTE_HOPS, Platform,
-    ReplayVerdict, ReplayWindow,
+    DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS,
+    Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
@@ -464,6 +463,7 @@ struct ForwardPlan {
     router_hint: RouterHint,
     consume_source_route: bool,
     decrement_flood_hops: bool,
+    insert_region_code: Option<[u8; 2]>,
     delay_ms: u64,
     station_action: ForwardStationAction,
 }
@@ -514,9 +514,11 @@ impl Default for OperatingPolicy {
 ///
 /// - **`enabled`** — master on/off switch. When `false`, all inbound forwarding logic is
 ///   skipped even if the other fields are populated.
-/// - **`regions`** — a filter list of 2-byte ARNCE region codes. When non-empty, only packets
-///   carrying a matching region code in their options block are eligible for forwarding. An
-///   empty list means "forward regardless of region code".
+/// - **`regions`** — a local list of 2-byte ARNCE region codes used both for flood-forwarding
+///   eligibility checks and, when a flood-forwarded packet is untagged, as the local policy
+///   source for inserting a region code. When non-empty, packets carrying a non-matching region
+///   code are not flood-forwarded; when empty, forwarding does not impose a region check and the
+///   repeater has no local region to insert.
 /// - **`min_rssi` / `min_snr`** — signal-quality thresholds for flood forwarding. Packets
 ///   received below these values are not flood-forwarded; this prevents marginal receptions
 ///   from being re-injected into the network at full power, which would degrade SNR for
@@ -1127,14 +1129,14 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if options.trace_route {
             builder = builder.trace_route();
         }
         if let Some(route) = options.source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
@@ -1207,14 +1209,14 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if options.trace_route {
             builder = builder.trace_route();
         }
         if let Some(route) = options.source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
@@ -1325,14 +1327,14 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if options.trace_route {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
@@ -1351,7 +1353,9 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                effective_source_route.as_ref().map(|route| route.as_slice()),
+                effective_source_route
+                    .as_ref()
+                    .map(|route| route.as_slice()),
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -1436,14 +1440,14 @@ impl<
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if options.trace_route {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
@@ -1464,7 +1468,9 @@ impl<
                 from,
                 receipt,
                 packet.as_bytes(),
-                effective_source_route.as_ref().map(|route| route.as_slice()),
+                effective_source_route
+                    .as_ref()
+                    .map(|route| route.as_slice()),
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -2505,9 +2511,7 @@ impl<
                             let backoff_ms = if backoff_cap_ms == 0 {
                                 0
                             } else {
-                                u64::from(
-                                    self.rng.random_range(..backoff_cap_ms.saturating_add(1)),
-                                )
+                                u64::from(self.rng.random_range(..backoff_cap_ms.saturating_add(1)))
                             };
                             actions
                                 .push(Action::RouteRetry {
@@ -2534,14 +2538,14 @@ impl<
                     {
                         if now_ms >= confirm_deadline_ms && pending.retries < MAX_FORWARD_RETRIES {
                             pending.retries = pending.retries.saturating_add(1);
-                            let backoff_cap_ms =
-                                Self::forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms, pending.retries);
+                            let backoff_cap_ms = Self::forward_retry_backoff_cap_ms_for_t_frame(
+                                t_frame_ms,
+                                pending.retries,
+                            );
                             let backoff_ms = if backoff_cap_ms == 0 {
                                 0
                             } else {
-                                u64::from(
-                                    self.rng.random_range(..backoff_cap_ms.saturating_add(1)),
-                                )
+                                u64::from(self.rng.random_range(..backoff_cap_ms.saturating_add(1)))
                             };
                             let not_before_ms = now_ms.saturating_add(backoff_ms);
                             pending.state = crate::AckState::RetryQueued;
@@ -2616,7 +2620,10 @@ impl<
                         if let Some(slot) = self.identity_mut(identity_id) {
                             slot.pending_acks.remove(&receipt);
                         }
-                        on_event(identity_id, crate::MacEventRef::AckTimeout { peer, receipt });
+                        on_event(
+                            identity_id,
+                            crate::MacEventRef::AckTimeout { peer, receipt },
+                        );
                     }
                 }
             }
@@ -3388,7 +3395,8 @@ impl<
         };
 
         if let Some(trace_range) = options.trace_route {
-            if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[])) {
+            if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[]))
+            {
                 self.peer_registry
                     .update_route(peer_id, crate::CachedRoute::Source(route));
                 return;
@@ -3559,6 +3567,7 @@ impl<
 
         let mut consume_source_route = false;
         let mut decrement_flood_hops = false;
+        let mut insert_region_code = None;
         let mut delay_ms = 0u64;
 
         if !source_route_bytes.is_empty() {
@@ -3590,15 +3599,32 @@ impl<
                     return None;
                 }
             }
-            if let Some(region_code) = options.region_code {
-                if !self
-                    .repeater
-                    .regions
-                    .iter()
-                    .any(|configured| *configured == region_code)
-                {
+            let mut saw_region_code = false;
+            let mut matched_region_code = false;
+            if !header.options_range.is_empty() {
+                for entry in umsh_core::iter_options(frame, header.options_range.clone()) {
+                    let (number, value) = entry.ok()?;
+                    if OptionNumber::from(number) != OptionNumber::RegionCode || value.len() != 2 {
+                        continue;
+                    }
+                    saw_region_code = true;
+                    let region_code = [value[0], value[1]];
+                    if self
+                        .repeater
+                        .regions
+                        .iter()
+                        .any(|configured| *configured == region_code)
+                    {
+                        matched_region_code = true;
+                    }
+                }
+            }
+            if saw_region_code {
+                if !matched_region_code {
                     return None;
                 }
+            } else {
+                insert_region_code = self.repeater.regions.first().copied();
             }
             delay_ms = self.sample_flood_contention_delay_ms(rx, options);
         }
@@ -3607,6 +3633,7 @@ impl<
             router_hint,
             consume_source_route,
             decrement_flood_hops,
+            insert_region_code,
             delay_ms,
             station_action,
         })
@@ -3703,6 +3730,7 @@ impl<
         dst: &mut [u8],
     ) -> Result<usize, CapacityError> {
         let mut encoder = OptionEncoder::new(dst);
+        let mut inserted_region = false;
         let mut inserted_station = false;
         let mut saw_station = false;
         let mut wrote_any = false;
@@ -3710,6 +3738,17 @@ impl<
         if !header.options_range.is_empty() {
             for entry in umsh_core::iter_options(src, header.options_range.clone()) {
                 let (number, value) = entry.map_err(|_| CapacityError)?;
+                if !inserted_region {
+                    if let Some(region_code) = plan.insert_region_code {
+                        if number > OptionNumber::RegionCode.as_u16() {
+                            encoder
+                                .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                                .map_err(|_| CapacityError)?;
+                            inserted_region = true;
+                            wrote_any = true;
+                        }
+                    }
+                }
                 if !inserted_station
                     && matches!(plan.station_action, ForwardStationAction::Replace)
                     && number > OptionNumber::StationCallsign.as_u16()
@@ -3729,6 +3768,11 @@ impl<
                 }
 
                 match OptionNumber::from(number) {
+                    OptionNumber::RegionCode => {
+                        inserted_region = true;
+                        encoder.put(number, value).map_err(|_| CapacityError)?;
+                        wrote_any = true;
+                    }
                     OptionNumber::TraceRoute => {
                         let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
                         trace[..2].copy_from_slice(&plan.router_hint.0);
@@ -3743,9 +3787,7 @@ impl<
                             return Err(CapacityError);
                         }
                         let remaining = if value.len() > 2 { &value[2..] } else { &[] };
-                        encoder
-                            .put(number, remaining)
-                            .map_err(|_| CapacityError)?;
+                        encoder.put(number, remaining).map_err(|_| CapacityError)?;
                         wrote_any = true;
                     }
                     OptionNumber::StationCallsign => {
@@ -3792,6 +3834,14 @@ impl<
                 .map_err(|_| CapacityError)?;
             wrote_any = true;
         }
+        if let Some(region_code) = plan.insert_region_code {
+            if !inserted_region {
+                encoder
+                    .put(OptionNumber::RegionCode.as_u16(), &region_code)
+                    .map_err(|_| CapacityError)?;
+                wrote_any = true;
+            }
+        }
         if wrote_any {
             encoder.end_marker().map_err(|_| CapacityError)?;
             Ok(encoder.finish())
@@ -3806,7 +3856,8 @@ impl<
         resend: &ResendRecord<FRAME>,
     ) -> Option<ResendRecord<FRAME>> {
         let header = PacketHeader::parse(resend.frame.as_slice()).ok()?;
-        let options = ParsedOptions::extract(resend.frame.as_slice(), header.options_range.clone()).ok()?;
+        let options =
+            ParsedOptions::extract(resend.frame.as_slice(), header.options_range.clone()).ok()?;
         if options.route_retry {
             return None;
         }
@@ -3818,7 +3869,12 @@ impl<
         let flood_hops = self.route_retry_flood_hops(peer, &header, source_route)?;
         let mut rewritten = [0u8; FRAME];
         let options_len = self
-            .encode_route_retry_options(resend.frame.as_slice(), header.options_range.clone(), &options, &mut rewritten[1..])
+            .encode_route_retry_options(
+                resend.frame.as_slice(),
+                header.options_range.clone(),
+                &options,
+                &mut rewritten[1..],
+            )
             .ok()?;
         let mut cursor = 1 + options_len;
         let has_options = options_len > 0;
@@ -3916,7 +3972,10 @@ impl<
         header: &PacketHeader,
         source_route: &heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>,
     ) -> Option<u8> {
-        let existing = header.flood_hops.map(|hops| hops.remaining()).filter(|hops| *hops > 0);
+        let existing = header
+            .flood_hops
+            .map(|hops| hops.remaining())
+            .filter(|hops| *hops > 0);
         let cached = self
             .peer_registry
             .lookup_by_key(peer)
@@ -3924,7 +3983,9 @@ impl<
                 Some(crate::CachedRoute::Flood { hops }) => Some((*hops).clamp(1, 15)),
                 _ => None,
             });
-        let route_len = u8::try_from(source_route.len()).ok().map(|hops| hops.clamp(1, 15));
+        let route_len = u8::try_from(source_route.len())
+            .ok()
+            .map(|hops| hops.clamp(1, 15));
 
         existing.or(cached).or(route_len).or(Some(5))
     }
@@ -3956,7 +4017,8 @@ impl<
     }
 
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
-        let effective_threshold_db = Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
+        let effective_threshold_db =
+            Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
         let low_db = self
             .repeater
             .flood_contention_snr_low_db
@@ -4157,9 +4219,10 @@ impl<
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
         };
-        let Ok(options) =
-            ParsedOptions::extract(pending.resend.frame.as_slice(), header.options_range.clone())
-        else {
+        let Ok(options) = ParsedOptions::extract(
+            pending.resend.frame.as_slice(),
+            header.options_range.clone(),
+        ) else {
             return false;
         };
         !options.route_retry

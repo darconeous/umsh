@@ -41,7 +41,9 @@ pub struct MessageSequence {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Regarding {
-    Unicast { message_id: u8 },
+    Unicast {
+        message_id: u8,
+    },
     Multicast {
         message_id: u8,
         source_prefix: NodeHint,

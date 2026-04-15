@@ -8,11 +8,11 @@ The routing model is governed by a few simple rules:
 
 - Every currently defined on-mesh packet type is routable.
   - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
-  - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.
+  - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).
 - Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace route](packet-options.md#trace-route-option-2), [hop count](packet-structure.md#flood-hop-count), etc)
-  - A repeater MUST NOT simply repeat a packet without making specific changes.
   - Typical examples are flood hop counts, trace routes, source routes.
-  - Repeaters themselves to not add the Route Retry flag, only the original sender does that.
+  - A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.
+  - The Route Retry flag MUST NOT be added to a packet by anyone other than the original sender.
   - These mutations do **not** create a new logical packet.
 - A packet's logical delivery identity and its repeater forwarding identity are related but distinct.
   - The final destination decides whether a packet is new by its normal replay and destination-processing rules.
@@ -75,7 +75,10 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 
 6. **Transition from source-routing to flooding**
    - If the source-route option is now empty:
-     - If the packet has a region code option and this repeater is not configured for that region, do not forward.
+     - If the packet carries one or more region code options and none of them match this repeater's configured regions, do not forward.
+     - If the packet has no region code option, the repeater MAY insert one according to local policy before flood-forwarding.
+     - If one or more region codes are already present, the repeater MUST preserve them unchanged.
+     - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
      - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
      - Otherwise, do not forward.
 
@@ -89,7 +92,9 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
    - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
 10. **Retransmit**
-    - Forward the modified packet.
+   - Forward the modified packet.
+
+Bridges follow the same packet-rewrite rules as repeaters. A bridge that tunnels traffic to a physically different location generally should not forward flood packets that lack a region code.
 
 ## Forwarding Confirmation
 

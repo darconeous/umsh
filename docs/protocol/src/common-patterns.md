@@ -31,7 +31,7 @@ UMSH uses ARNCE/HAM-64 for:
 
 - **Operator callsign** (packet option 4) — identifies the originating operator under amateur radio rules
 - **Station callsign** (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding
-- **Region codes** (packet option 1) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → `0x7853`)
+- **Region codes** (packet option 11) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → `0x7853`)
 
 ## UTF-8 Strings
 

@@ -324,12 +324,12 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "| Option | Number | Delta | Length | Encoding |").unwrap();
     writeln!(&mut out, "|---|---:|---:|---:|---|").unwrap();
+    writeln!(&mut out, "| Trace Route | 2 | 2 | 0 | `20` |").unwrap();
     writeln!(
         &mut out,
-        "| Region Code | 1 | 1 | 2 | `12` then value `78 53` |"
+        "| Region Code | 11 | 9 | 2 | `92` then value `78 53` |"
     )
     .unwrap();
-    writeln!(&mut out, "| Trace Route | 2 | 1 | 0 | `10` |").unwrap();
     writeln!(&mut out, "| End marker | — | — | — | `FF` |").unwrap();
     writeln!(&mut out).unwrap();
     writeln!(&mut out, "| Field | Value | Hex |").unwrap();
@@ -341,7 +341,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     .unwrap();
     writeln!(
         &mut out,
-        "| Options | Region code + trace route + end marker | `12 78 53 10 FF` |"
+        "| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
     )
     .unwrap();
     writeln!(&mut out, "| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |").unwrap();
@@ -627,8 +627,8 @@ fn build_unicast_with_options(
         .frame_counter(10)
         .encrypted()
         .flood_hops(4)
-        .region_code([0x78, 0x53])
         .trace_route()
+        .region_code([0x78, 0x53])
         .payload(b"hey")
         .build()
         .unwrap();

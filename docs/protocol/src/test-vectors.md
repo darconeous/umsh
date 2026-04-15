@@ -162,26 +162,26 @@ An encrypted unicast with a region code option, an empty trace-route option, and
 
 | Option | Number | Delta | Length | Encoding |
 |---|---:|---:|---:|---|
-| Region Code | 1 | 1 | 2 | `12` then value `78 53` |
-| Trace Route | 2 | 1 | 0 | `10` |
+| Trace Route | 2 | 2 | 0 | `20` |
+| Region Code | 11 | 9 | 2 | `92` then value `78 53` |
 | End marker | — | — | — | `FF` |
 
 | Field | Value | Hex |
 |---|---|---|
 | FCF | VER=3, TYPE=2 (unicast), S=0, O=1, H=1 | `D3` |
-| Options | Region code + trace route + end marker | `12 78 53 10 FF` |
+| Options | Trace route + region code + end marker | `20 92 78 53 FF` |
 | FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |
 | DST | Node B hint | `6C 28 FD` |
 | SRC | Node A hint | `ED 54 A5` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 10 | `00 00 00 0A` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `6F 2F A3` |
-| MIC | 16 bytes | `3C 80 D2 24 72 8E 15 FF 0C B6 EE CA 27 90 59 AF` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `AB 87 DC` |
+| MIC | 16 bytes | `83 07 00 18 AA 22 DB FC 93 86 B8 D1 F0 74 85 39` |
 
 ```text
-D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00
-00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE
-CA 27 90 59 AF
+D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00
+00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8
+D1 F0 74 85 39
 ```
 
 Total: 37 bytes.

@@ -11,11 +11,7 @@ pub(crate) fn fixed<const N: usize>(input: &[u8]) -> Result<&[u8; N], AppParseEr
     })
 }
 
-pub(crate) fn copy_into(
-    dst: &mut [u8],
-    pos: &mut usize,
-    src: &[u8],
-) -> Result<(), AppEncodeError> {
+pub(crate) fn copy_into(dst: &mut [u8], pos: &mut usize, src: &[u8]) -> Result<(), AppEncodeError> {
     if dst.len().saturating_sub(*pos) < src.len() {
         return Err(AppEncodeError::BufferTooSmall);
     }
@@ -24,10 +20,6 @@ pub(crate) fn copy_into(
     Ok(())
 }
 
-pub(crate) fn push_byte(
-    dst: &mut [u8],
-    pos: &mut usize,
-    byte: u8,
-) -> Result<(), AppEncodeError> {
+pub(crate) fn push_byte(dst: &mut [u8], pos: &mut usize, byte: u8) -> Result<(), AppEncodeError> {
     copy_into(dst, pos, &[byte])
 }

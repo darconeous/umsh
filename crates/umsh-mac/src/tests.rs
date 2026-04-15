@@ -1494,8 +1494,11 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    let options = ParsedOptions::extract(queued.frame.as_slice(), header.options_range.clone()).unwrap();
-    let route = options.source_route.expect("mac ack should carry a source route");
+    let options =
+        ParsedOptions::extract(queued.frame.as_slice(), header.options_range.clone()).unwrap();
+    let route = options
+        .source_route
+        .expect("mac ack should carry a source route");
     assert_eq!(queued.frame[route].len(), 4);
 }
 
@@ -3160,7 +3163,14 @@ fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
 fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
     let mut repeater = make_mac();
     repeater.repeater_config_mut().enabled = true;
-    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    repeater
+        .repeater_config_mut()
+        .regions
+        .push([0x78, 0x53])
+        .unwrap();
+    let repeater_id = repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
     let repeater_hint = repeater
         .identity(repeater_id)
         .unwrap()
@@ -3203,9 +3213,10 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
 
     let forwarded = repeater.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
-    let options = ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone())
-        .unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
     assert!(options.trace_route.is_none());
+    assert_eq!(options.region_code, Some([0x78, 0x53]));
     assert!(
         options.source_route.is_some(),
         "final forwarded frame should preserve an empty source-route option: {:?}",
@@ -3253,7 +3264,9 @@ fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
     repeater.repeater_config_mut().enabled = true;
     repeater.repeater_config_mut().min_rssi = Some(10);
     repeater.repeater_config_mut().min_snr = Some(10);
-    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_id = repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
     let repeater_hint = repeater
         .identity(repeater_id)
         .unwrap()
@@ -3296,7 +3309,9 @@ fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flood
     repeater.repeater_config_mut().enabled = true;
     repeater.repeater_config_mut().min_rssi = Some(10);
     repeater.repeater_config_mut().min_snr = Some(10);
-    let repeater_id = repeater.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_id = repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
     let repeater_hint = repeater
         .identity(repeater_id)
         .unwrap()
@@ -3360,8 +3375,8 @@ fn receive_one_repeater_forwards_source_routed_mac_ack() {
     let forwarded = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
     assert_eq!(header.packet_type(), PacketType::MacAck);
-    let options = ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone())
-        .unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
     let source_route = options
         .source_route
         .expect("forwarded MAC ACK should keep the remaining source route");
@@ -3402,6 +3417,146 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
 
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
     assert_eq!(header.flood_hops.unwrap(), FloodHops::new(3, 3).unwrap());
+}
+
+#[test]
+fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut()
+        .regions
+        .push([0x78, 0x53])
+        .unwrap();
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let frame = build_received_unicast_frame(
+        &remote,
+        &keys,
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"hello",
+        false,
+        Some((4, 1)),
+        None,
+        None,
+    );
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
+
+    assert_eq!(options.region_code, Some([0x78, 0x53]));
+    assert_eq!(header.flood_hops.unwrap(), FloodHops::new(3, 2).unwrap());
+}
+
+#[test]
+fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut()
+        .regions
+        .push([0x31, 0xD9])
+        .unwrap();
+    mac.repeater_config_mut()
+        .regions
+        .push([0x78, 0x53])
+        .unwrap();
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(umsh_core::NodeHint([0x77, 0x66, 0x55]))
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .flood_hops(4)
+        .region_code([0x78, 0x53])
+        .payload(b"hello")
+        .build()
+        .unwrap();
+    {
+        let header = packet.header().unwrap();
+        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 0).unwrap().0;
+    }
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
+    let region_occurrences = iter_options(forwarded.frame.as_slice(), header.options_range.clone())
+        .filter_map(Result::ok)
+        .filter(|(number, _)| OptionNumber::from(*number) == OptionNumber::RegionCode)
+        .count();
+
+    assert_eq!(options.region_code, Some([0x78, 0x53]));
+    assert_eq!(region_occurrences, 1);
+}
+
+#[test]
+fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut()
+        .regions
+        .push([0x78, 0x53])
+        .unwrap();
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(umsh_core::NodeHint([0x77, 0x66, 0x55]))
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .flood_hops(4)
+        .option(OptionNumber::RegionCode, &[0x31, 0xD9])
+        .option(OptionNumber::RegionCode, &[0x78, 0x53])
+        .payload(b"hello")
+        .build()
+        .unwrap();
+    {
+        let header = packet.header().unwrap();
+        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 0).unwrap().0;
+    }
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let region_occurrences = iter_options(forwarded.frame.as_slice(), header.options_range.clone())
+        .filter_map(Result::ok)
+        .filter(|(number, _)| OptionNumber::from(*number) == OptionNumber::RegionCode)
+        .count();
+
+    assert_eq!(region_occurrences, 2);
 }
 
 #[test]
@@ -3627,7 +3782,10 @@ fn modeled_network_drops_colliding_frames_and_respects_packet_loss() {
 
     network.advance_ms(100);
     let mut buf = [0u8; 32];
-    assert!(matches!(poll_radio_once(&mut carol, &mut buf), Poll::Pending));
+    assert!(matches!(
+        poll_radio_once(&mut carol, &mut buf),
+        Poll::Pending
+    ));
 
     let mut dave = network.add_radio_with_config(256, 100);
     network.set_link_profile(
@@ -3641,7 +3799,10 @@ fn modeled_network_drops_colliding_frames_and_respects_packet_loss() {
     );
     block_on(alice.transmit(b"lost", TxOptions::default())).unwrap();
     network.advance_ms(100);
-    assert!(matches!(poll_radio_once(&mut dave, &mut buf), Poll::Pending));
+    assert!(matches!(
+        poll_radio_once(&mut dave, &mut buf),
+        Poll::Pending
+    ));
 }
 
 #[test]
@@ -3872,9 +4033,7 @@ fn modeled_route_retry_recovers_after_mid_route_break_via_alternate_repeaters() 
                 scenario.identity_ids[alice],
                 &scenario.keys[bob],
                 b"prime-route",
-                &SendOptions::default()
-                    .with_flood_hops(8)
-                    .with_trace_route(),
+                &SendOptions::default().with_flood_hops(8).with_trace_route(),
             )
             .unwrap();
     }
@@ -3985,7 +4144,10 @@ fn modeled_route_retry_recovers_after_mid_route_break_via_alternate_repeaters() 
                 }
             }
             if node_index == alice {
-                if let MacEventRef::AckTimeout { receipt: timed_out, .. } = event {
+                if let MacEventRef::AckTimeout {
+                    receipt: timed_out, ..
+                } = event
+                {
                     if identity_id == scenario.identity_ids[alice] && *timed_out == receipt {
                         ack_timeout_seen.set(true);
                     }
@@ -4165,7 +4327,9 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
         .router_hint();
     assert_eq!(
         learned_route,
-        Some(CachedRoute::Source(heapless::Vec::from_slice(&[strong_hint]).unwrap()))
+        Some(CachedRoute::Source(
+            heapless::Vec::from_slice(&[strong_hint]).unwrap()
+        ))
     );
 }
 
@@ -4363,10 +4527,9 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
         let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
         mac.repeater_config_mut().enabled = (1..=4).contains(&index);
         let id = mac
-            .add_identity(crate::test_support::DummyIdentity::new([
-                0x30u8.wrapping_add(index as u8);
-                32
-            ]))
+            .add_identity(crate::test_support::DummyIdentity::new(
+                [0x30u8.wrapping_add(index as u8); 32],
+            ))
             .unwrap();
         identity_ids.push(id);
         keys.push(*mac.identity(id).unwrap().identity().public_key());
@@ -4395,8 +4558,18 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
                 drop_per_thousand: 0,
             }
         };
-        connect_modeled_bidirectional_with_profile(&network, radio_ids[0], radio_ids[repeater], profile);
-        connect_modeled_bidirectional_with_profile(&network, radio_ids[repeater], radio_ids[5], profile);
+        connect_modeled_bidirectional_with_profile(
+            &network,
+            radio_ids[0],
+            radio_ids[repeater],
+            profile,
+        );
+        connect_modeled_bidirectional_with_profile(
+            &network,
+            radio_ids[repeater],
+            radio_ids[5],
+            profile,
+        );
     }
     for left in 1..=4 {
         for right in (left + 1)..=4 {
@@ -4424,12 +4597,16 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
     {
         let mut alice_mac = macs[0].borrow_mut();
         let peer_id = alice_mac.add_peer(keys[5]).unwrap();
-        alice_mac.install_pairwise_keys(identity_ids[0], peer_id, pairwise.clone()).unwrap();
+        alice_mac
+            .install_pairwise_keys(identity_ids[0], peer_id, pairwise.clone())
+            .unwrap();
     }
     {
         let mut bob_mac = macs[5].borrow_mut();
         let peer_id = bob_mac.add_peer(keys[0]).unwrap();
-        bob_mac.install_pairwise_keys(identity_ids[5], peer_id, pairwise).unwrap();
+        bob_mac
+            .install_pairwise_keys(identity_ids[5], peer_id, pairwise)
+            .unwrap();
     }
 
     let receipt = {
@@ -4476,7 +4653,11 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
         "one of the stronger candidate repeaters should carry the first route-learning packet",
     );
 
-    let (alice_peer_id, _) = macs[5].borrow().peer_registry().lookup_by_key(&keys[0]).unwrap();
+    let (alice_peer_id, _) = macs[5]
+        .borrow()
+        .peer_registry()
+        .lookup_by_key(&keys[0])
+        .unwrap();
     let learned_route = macs[5]
         .borrow()
         .peer_registry()
@@ -4485,8 +4666,20 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
         .route
         .clone();
     let strong_hints = [
-        macs[1].borrow().identity(identity_ids[1]).unwrap().identity().public_key().router_hint(),
-        macs[2].borrow().identity(identity_ids[2]).unwrap().identity().public_key().router_hint(),
+        macs[1]
+            .borrow()
+            .identity(identity_ids[1])
+            .unwrap()
+            .identity()
+            .public_key()
+            .router_hint(),
+        macs[2]
+            .borrow()
+            .identity(identity_ids[2])
+            .unwrap()
+            .identity()
+            .public_key()
+            .router_hint(),
     ];
     assert!(matches!(
         learned_route,
@@ -4542,23 +4735,30 @@ fn modeled_unknown_multicast_senders_deliver_unique_messages_without_peer_regist
                 return;
             };
             seen.borrow_mut().insert((
-                packet.from_hint().expect("multicast source hint should be present").0,
+                packet
+                    .from_hint()
+                    .expect("multicast source hint should be present")
+                    .0,
                 packet.payload_bytes().to_vec(),
             ));
         },
         || seen.borrow().len() == 2,
         "receiver should accept multicast from unknown senders without peer registration",
     );
-    assert!(scenario.macs[receiver]
-        .borrow()
-        .peer_registry()
-        .lookup_by_key(&scenario.keys[sender_a])
-        .is_none());
-    assert!(scenario.macs[receiver]
-        .borrow()
-        .peer_registry()
-        .lookup_by_key(&scenario.keys[sender_b])
-        .is_none());
+    assert!(
+        scenario.macs[receiver]
+            .borrow()
+            .peer_registry()
+            .lookup_by_key(&scenario.keys[sender_a])
+            .is_none()
+    );
+    assert!(
+        scenario.macs[receiver]
+            .borrow()
+            .peer_registry()
+            .lookup_by_key(&scenario.keys[sender_b])
+            .is_none()
+    );
 }
 
 #[test]
@@ -4698,10 +4898,14 @@ fn modeled_multihop_counter_resync_routes_echo_request_and_response() {
                 return;
             };
             match packet.payload_bytes() {
-                [payload_type, 4, ..] if node_index == alice && *payload_type == PayloadType::MacCommand as u8 => {
+                [payload_type, 4, ..]
+                    if node_index == alice && *payload_type == PayloadType::MacCommand as u8 =>
+                {
                     alice_echo_requests.set(alice_echo_requests.get() + 1);
                 }
-                [payload_type, 5, ..] if node_index == bob && *payload_type == PayloadType::MacCommand as u8 => {
+                [payload_type, 5, ..]
+                    if node_index == bob && *payload_type == PayloadType::MacCommand as u8 =>
+                {
                     bob_echo_responses.set(bob_echo_responses.get() + 1);
                 }
                 _ => {}
@@ -4732,7 +4936,9 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
                 scenario.identity_ids[alice],
                 &scenario.keys[bob],
                 b"mixed-unicast",
-                &SendOptions::default().with_ack_requested(true).with_flood_hops(4),
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(4),
             )
             .unwrap()
             .unwrap()
@@ -4804,7 +5010,9 @@ fn modeled_mixed_packet_classes_coexist_on_the_same_mesh() {
                 &scenario.keys[alice],
                 &channel_id,
                 b"mixed-blind",
-                &SendOptions::default().with_ack_requested(true).with_flood_hops(4),
+                &SendOptions::default()
+                    .with_ack_requested(true)
+                    .with_flood_hops(4),
             )
             .unwrap()
             .unwrap()
@@ -5407,7 +5615,8 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     assert_eq!(retry.receipt, Some(receipt));
 
     let retry_header = PacketHeader::parse(retry.frame.as_slice()).unwrap();
-    let retry_options = ParsedOptions::extract(retry.frame.as_slice(), retry_header.options_range.clone()).unwrap();
+    let retry_options =
+        ParsedOptions::extract(retry.frame.as_slice(), retry_header.options_range.clone()).unwrap();
     assert!(retry_options.route_retry);
     assert!(retry_options.trace_route.is_some());
     assert!(retry_options.source_route.is_none());
@@ -5419,7 +5628,11 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
         &original_frame.as_slice()[original_header.mic_range.clone()]
     );
 
-    let pending = mac.identity(local_id).unwrap().pending_ack(&receipt).unwrap();
+    let pending = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap();
     assert!(matches!(pending.state, AckState::RetryQueued));
     assert_eq!(pending.retries, 0);
     assert_eq!(pending.ack_deadline_ms, 0);
@@ -5796,10 +6009,9 @@ fn build_modeled_line_scenario(node_count: usize) -> ModeledScenario {
         let mut mac = crate::test_support::make_modeled_test_mac(radio, clock.clone());
         mac.repeater_config_mut().enabled = index > 0 && index + 1 < node_count;
         let id = mac
-            .add_identity(crate::test_support::DummyIdentity::new([
-                0x10u8.wrapping_add(index as u8);
-                32
-            ]))
+            .add_identity(crate::test_support::DummyIdentity::new(
+                [0x10u8.wrapping_add(index as u8); 32],
+            ))
             .unwrap();
         let key = *mac.identity(id).unwrap().identity().public_key();
         identity_ids.push(id);
@@ -5911,10 +6123,7 @@ fn pump_modeled_until(
     panic!("timed out waiting for {waiting_for}");
 }
 
-fn install_channel_on_all(
-    scenario: &mut ModeledScenario,
-    channel_key: ChannelKey,
-) -> ChannelId {
+fn install_channel_on_all(scenario: &mut ModeledScenario, channel_key: ChannelKey) -> ChannelId {
     let channel_id = scenario.macs[0]
         .borrow()
         .crypto()

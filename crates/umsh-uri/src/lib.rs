@@ -186,10 +186,7 @@ pub fn format_channel_name_uri(name: &str, buf: &mut [u8]) -> Result<usize, Erro
     Ok(pos)
 }
 
-pub fn format_channel_key_uri(
-    key: &umsh_core::ChannelKey,
-    buf: &mut [u8],
-) -> Result<usize, Error> {
+pub fn format_channel_key_uri(key: &umsh_core::ChannelKey, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
     copy_into(buf, &mut pos, b"umsh:ck:")?;
     let written = bs58::encode(&key.0)
@@ -284,7 +281,8 @@ mod tests {
             region: Some("Eugine"),
             raw_query: None,
         };
-        let channel_name_len = format_channel_name_uri_with_params("Public", &params, &mut buf).unwrap();
+        let channel_name_len =
+            format_channel_name_uri_with_params("Public", &params, &mut buf).unwrap();
         let channel_name_uri =
             UriRef::from_str(core::str::from_utf8(&buf[..channel_name_len]).unwrap()).unwrap();
         match parse_umsh_uri(channel_name_uri).unwrap() {
@@ -316,6 +314,9 @@ mod tests {
         let channel_text = encode_channel_key_base58(&channel_key);
 
         assert_eq!(parse_public_key_base58(&public_text).unwrap(), public_key);
-        assert_eq!(parse_channel_key_base58(&channel_text).unwrap(), channel_key);
+        assert_eq!(
+            parse_channel_key_base58(&channel_text).unwrap(),
+            channel_key
+        );
     }
 }

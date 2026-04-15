@@ -141,8 +141,7 @@ The ECDH shared secret is:
 ss = X25519(local_x25519_private, remote_x25519_public)
 ```
 
-This shared secret is ised as the input keying material for deriving the cryptographic
-keys to secure and authenticate messages.
+This shared secret is used as the input keying material for deriving the cryptographic keys to secure and authenticate messages.
 
 ### HKDF Inputs for Unicast
 

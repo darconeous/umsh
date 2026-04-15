@@ -38,20 +38,28 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 | Number | Name | Classification | Value |
 |---:|---|---|---|
-| 1 | Region Code | Critical, Static | 2 bytes |
+| 0 | *RESERVED* | Non-Critical, Static | |
+| 1 | *UNASSIGNED* | Critical, Static | |
 | 2 | Trace Route | Non-Critical, Dynamic | 0+ bytes |
 | 3 | Source Route | Critical, Dynamic | 0+ bytes |
 | 4 | Operator Callsign | Non-Critical, Static | ARNCE/HAM-64 |
 | 5 | Minimum RSSI | Critical, Static | 0–1 bytes |
 | 6 | Route Retry | Non-Critical, Dynamic | 0 bytes |
 | 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
+| 8 | *UNASSIGNED* | Non-Critical, Static | |
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
+| 11 | Region Code | Critical, Dynamic | 2 bytes |
 
-### Region Code (option 1)
+### Region Code (option 11)
 - Type: 2-byte region identifier
 - Semantics: restricts flood-routing to repeaters configured for the specified region.
 - A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.
 - This option is not enforced until the source route list is exhausted.
+- Multiple region-code options may appear on the same packet. In that case, a repeater may flood-forward the packet if any one of the listed regions matches local policy.
+- Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.
+- A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.
+- Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.
+- Region insertion applies only during flood forwarding. A source-routed packet without a region does not gain one until its source route is exhausted and it transitions to flooding.
 
 #### Region Code Encoding
 
@@ -72,9 +80,20 @@ Region codes are 2-byte identifiers derived by one of two methods, depending on 
 | SF Bay Area | `0x31d9...` | `0x31d9` |
 | Southern Oregon | `0x6af2...` | `0x6af2` |
 
-IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions.
+IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.
 
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).
+
+> [!NOTE]
+> If collisions between IATA-based codes and
+> hash-based codes is a concern, we could redefine
+> how hash-based codes are calculated to keep
+> hashing the previous full hash value until it
+> returns a result that is not a
+> valid three-letter ARNCE encoding.
+>
+> This would have the benefit of allowing IATA codes
+> to be immediately renderable in user interfaces.
 
 The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
 

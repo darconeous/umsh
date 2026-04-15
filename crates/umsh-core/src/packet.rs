@@ -424,7 +424,7 @@ impl OptionNumber {
     /// Return the numeric option number used on the wire.
     pub fn as_u16(self) -> u16 {
         match self {
-            Self::RegionCode => 1,
+            Self::RegionCode => 11,
             Self::TraceRoute => 2,
             Self::SourceRoute => 3,
             Self::OperatorCallsign => 4,
@@ -450,7 +450,6 @@ impl OptionNumber {
 impl From<u16> for OptionNumber {
     fn from(value: u16) -> Self {
         match value {
-            1 => Self::RegionCode,
             2 => Self::TraceRoute,
             3 => Self::SourceRoute,
             4 => Self::OperatorCallsign,
@@ -458,6 +457,7 @@ impl From<u16> for OptionNumber {
             6 => Self::RouteRetry,
             7 => Self::StationCallsign,
             9 => Self::MinSnr,
+            11 => Self::RegionCode,
             other => Self::Unknown(other),
         }
     }

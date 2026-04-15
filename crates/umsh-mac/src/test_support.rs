@@ -463,7 +463,9 @@ impl ModeledNetwork {
             row.push(ModeledLinkProfile::default());
         }
         state.inboxes.push(VecDeque::new());
-        state.links.push(vec![ModeledLinkProfile::default(); id + 1]);
+        state
+            .links
+            .push(vec![ModeledLinkProfile::default(); id + 1]);
         ModeledRadio {
             network: self.clone(),
             id,
@@ -599,10 +601,7 @@ impl ModeledNetwork {
                 data: frame.to_vec(),
                 rssi: profile.base_rssi.saturating_add(rssi_jitter),
                 snr: Snr::from_centibels(
-                    profile
-                        .base_snr
-                        .as_centibels()
-                        .saturating_add(snr_jitter),
+                    profile.base_snr.as_centibels().saturating_add(snr_jitter),
                 ),
                 collided: false,
             };
@@ -718,7 +717,8 @@ impl Radio for ModeledRadio {
         data: &[u8],
         options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
-        self.network.transmit(self.id, data, self.t_frame_ms, options)
+        self.network
+            .transmit(self.id, data, self.t_frame_ms, options)
     }
 
     fn poll_receive(
