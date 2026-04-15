@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-945f4d99.js";
+            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -217,7 +217,7 @@
 </thead>
 <tbody>
 <tr><td style="text-align: right">0</td><td><em>RESERVED</em></td><td>Non-Critical, Static</td><td></td></tr>
-<tr><td style="text-align: right">1</td><td>Region Code</td><td>Critical, Static</td><td>2 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td><em>UNASSIGNED</em></td><td>Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">2</td><td>Trace Route</td><td>Non-Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">4</td><td>Operator Callsign</td><td>Non-Critical, Static</td><td>ARNCE/HAM-64</td></tr>
@@ -226,23 +226,22 @@
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">8</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">11</td><td>Region Code</td><td>Critical, Dynamic</td><td>2 bytes</td></tr>
 </tbody>
 </table>
 </div>
-<h3 id="region-code-option-1"><a class="header" href="#region-code-option-1">Region Code (option 1)</a></h3>
+<h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
+<li>Multiple region-code options may appear on the same packet. In that case, a repeater may flood-forward the packet if any one of the listed regions matches local policy.</li>
+<li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
+<li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
+<li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
+<li>Region insertion applies only during flood forwarding. A source-routed packet without a region does not gain one until its source route is exhausted and it transitions to flooding.</li>
 </ul>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>This option may be renumbered in the future so that it is dynamic.
-This would allow repeaters to tag packets without regions to use local
-region codes, helping to localize the flow of flood traffic across the
-mesh.</p>
-</blockquote>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
 <p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>

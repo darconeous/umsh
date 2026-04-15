@@ -198,823 +198,813 @@
 <a href=#198 id=198 data-nosnippet>198</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 <a href=#199 id=199 data-nosnippet>199</a></span><span class="kw">pub enum </span>AckState {
 <a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Accepted for transmission but not yet sent.
-<a href=#201 id=201 data-nosnippet>201</a>    </span>Queued {
-<a href=#202 id=202 data-nosnippet>202</a>        needs_forward_confirmation: bool,
-<a href=#203 id=203 data-nosnippet>203</a>    },
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// Waiting to overhear forwarding confirmation from the next hop.
-<a href=#205 id=205 data-nosnippet>205</a>    </span>AwaitingForward { confirm_deadline_ms: u64 },
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// Retransmission is queued with a retry backoff delay.
-<a href=#207 id=207 data-nosnippet>207</a>    </span>RetryQueued,
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// Waiting for the final destination's transport ACK.
-<a href=#209 id=209 data-nosnippet>209</a>    </span>AwaitingAck,
-<a href=#210 id=210 data-nosnippet>210</a>}
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a><span class="doccomment">/// Sealed frame bytes and optional source route retained for retransmission.
-<a href=#213 id=213 data-nosnippet>213</a>///
-<a href=#214 id=214 data-nosnippet>214</a>/// When the coordinator sends an ACK-requested packet, it must keep a verbatim copy of the
-<a href=#215 id=215 data-nosnippet>215</a>/// already-sealed frame for potential retransmission — not just the plaintext — because
-<a href=#216 id=216 data-nosnippet>216</a>/// re-building and re-sealing would produce a different ciphertext and a different ACK tag,
-<a href=#217 id=217 data-nosnippet>217</a>/// which the destination would not recognize.
-<a href=#218 id=218 data-nosnippet>218</a>///
-<a href=#219 id=219 data-nosnippet>219</a>/// `ResendRecord` stores up to `FRAME` bytes of the original sealed frame alongside any
-<a href=#220 id=220 data-nosnippet>220</a>/// source route that may need to be re-injected into the frame header on retransmit. Records
-<a href=#221 id=221 data-nosnippet>221</a>/// are created via [`ResendRecord::try_new`] and embedded inside [`PendingAck`]. The `FRAME`
-<a href=#222 id=222 data-nosnippet>222</a>/// const generic must be at least as large as the largest unicast frame the application will
-<a href=#223 id=223 data-nosnippet>223</a>/// send; oversized frames are rejected at queue time with [`crate::CapacityError`].
-<a href=#224 id=224 data-nosnippet>224</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#225 id=225 data-nosnippet>225</a></span><span class="kw">pub struct </span>ResendRecord&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="doccomment">/// Exact sealed frame bytes.
-<a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">pub </span>frame: Vec&lt;u8, FRAME&gt;,
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// Optional source route retained for retransmission.
-<a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">pub </span>source_route: <span class="prelude-ty">Option</span>&lt;Vec&lt;RouterHint, MAX_SOURCE_ROUTE_HOPS&gt;&gt;,
-<a href=#230 id=230 data-nosnippet>230</a>}
-<a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; ResendRecord&lt;FRAME&gt; {
-<a href=#233 id=233 data-nosnippet>233</a>    <span class="doccomment">/// Copy frame bytes and an optional route into fixed-capacity storage.
-<a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">pub fn </span>try_new(
-<a href=#235 id=235 data-nosnippet>235</a>        frame: <span class="kw-2">&amp;</span>[u8],
-<a href=#236 id=236 data-nosnippet>236</a>        source_route: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[RouterHint]&gt;,
-<a href=#237 id=237 data-nosnippet>237</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span><span class="kw-2">mut </span>stored_frame = Vec::new();
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">for </span>byte <span class="kw">in </span>frame {
-<a href=#240 id=240 data-nosnippet>240</a>            stored_frame.push(<span class="kw-2">*</span>byte).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#241 id=241 data-nosnippet>241</a>        }
-<a href=#242 id=242 data-nosnippet>242</a>
-<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>stored_route = <span class="kw">match </span>source_route {
-<a href=#244 id=244 data-nosnippet>244</a>            <span class="prelude-val">Some</span>(route) =&gt; {
-<a href=#245 id=245 data-nosnippet>245</a>                <span class="kw">let </span><span class="kw-2">mut </span>owned = Vec::new();
-<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw">for </span>hop <span class="kw">in </span>route {
-<a href=#247 id=247 data-nosnippet>247</a>                    owned.push(<span class="kw-2">*</span>hop).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#248 id=248 data-nosnippet>248</a>                }
-<a href=#249 id=249 data-nosnippet>249</a>                <span class="prelude-val">Some</span>(owned)
-<a href=#250 id=250 data-nosnippet>250</a>            }
-<a href=#251 id=251 data-nosnippet>251</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#252 id=252 data-nosnippet>252</a>        };
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#255 id=255 data-nosnippet>255</a>            frame: stored_frame,
-<a href=#256 id=256 data-nosnippet>256</a>            source_route: stored_route,
-<a href=#257 id=257 data-nosnippet>257</a>        })
-<a href=#258 id=258 data-nosnippet>258</a>    }
-<a href=#259 id=259 data-nosnippet>259</a>}
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a><span class="doccomment">/// Complete tracking state for one in-flight ACK-requested transmission.
-<a href=#262 id=262 data-nosnippet>262</a>///
-<a href=#263 id=263 data-nosnippet>263</a>/// The coordinator's [`IdentitySlot`](crate::IdentitySlot) maintains a `LinearMap` of
-<a href=#264 id=264 data-nosnippet>264</a>/// `PendingAck` records keyed by [`SendReceipt`], one per active ACK-requested send. The
-<a href=#265 id=265 data-nosnippet>265</a>/// record holds everything needed to detect completion, detect timeout, and retransmit:
-<a href=#266 id=266 data-nosnippet>266</a>///
-<a href=#267 id=267 data-nosnippet>267</a>/// - **`ack_tag`** — the 8-byte CMAC-derived value that will appear in the destination's
-<a href=#268 id=268 data-nosnippet>268</a>///   MAC ACK packet. Only a node that received and successfully decrypted the original frame
-<a href=#269 id=269 data-nosnippet>269</a>///   can produce the correct tag, so a matching `ack_tag` is cryptographic proof of delivery.
-<a href=#270 id=270 data-nosnippet>270</a>/// - **`peer`** — the destination's full public key, used to look up the correct pending
-<a href=#271 id=271 data-nosnippet>271</a>///   entry when matching an inbound MAC ACK against the pending table.
-<a href=#272 id=272 data-nosnippet>272</a>/// - **`resend`** — a verbatim copy of the sealed frame for retransmission. See
-<a href=#273 id=273 data-nosnippet>273</a>///   [`ResendRecord`].
-<a href=#274 id=274 data-nosnippet>274</a>/// - **`sent_ms`** — the monotonic millisecond timestamp at which the frame was first
-<a href=#275 id=275 data-nosnippet>275</a>///   transmitted; useful for latency measurement.
-<a href=#276 id=276 data-nosnippet>276</a>/// - **`ack_deadline_ms`** — absolute deadline for the final ACK. Expiry means failure and
-<a href=#277 id=277 data-nosnippet>277</a>///   the entry is removed.
-<a href=#278 id=278 data-nosnippet>278</a>/// - **`retries`** — the number of retransmissions already attempted; capped at
-<a href=#279 id=279 data-nosnippet>279</a>///   [`MAX_FORWARD_RETRIES`](crate::MAX_FORWARD_RETRIES).
-<a href=#280 id=280 data-nosnippet>280</a>/// - **`state`** — current position in the [`AckState`] lifecycle (forwarding confirmation
-<a href=#281 id=281 data-nosnippet>281</a>///   wait or final-ACK wait).
-<a href=#282 id=282 data-nosnippet>282</a>///
-<a href=#283 id=283 data-nosnippet>283</a>/// Use [`PendingAck::direct`] for sends to nodes in direct radio range, or
-<a href=#284 id=284 data-nosnippet>284</a>/// [`PendingAck::forwarded`] when routing through a repeater.
-<a href=#285 id=285 data-nosnippet>285</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#286 id=286 data-nosnippet>286</a></span><span class="kw">pub struct </span>PendingAck&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Internal ACK tag used for inbound matching.
-<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">pub </span>ack_tag: [u8; <span class="number">8</span>],
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// Final destination peer.
-<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">pub </span>peer: PublicKey,
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// Retransmission data.
-<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">pub </span>resend: ResendRecord&lt;FRAME&gt;,
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="doccomment">/// Initial send timestamp in milliseconds.
-<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">pub </span>sent_ms: u64,
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// Absolute deadline for the final ACK.
-<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">pub </span>ack_deadline_ms: u64,
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// Number of retries already attempted.
-<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">pub </span>retries: u8,
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// Current state in the ACK lifecycle.
-<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">pub </span>state: AckState,
-<a href=#301 id=301 data-nosnippet>301</a>}
-<a href=#302 id=302 data-nosnippet>302</a>
-<a href=#303 id=303 data-nosnippet>303</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; PendingAck&lt;FRAME&gt; {
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="doccomment">/// Create pending-ACK state for a direct send.
-<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">pub fn </span>direct(
-<a href=#306 id=306 data-nosnippet>306</a>        ack_tag: [u8; <span class="number">8</span>],
-<a href=#307 id=307 data-nosnippet>307</a>        peer: PublicKey,
-<a href=#308 id=308 data-nosnippet>308</a>        resend: ResendRecord&lt;FRAME&gt;,
-<a href=#309 id=309 data-nosnippet>309</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="self">Self </span>{
-<a href=#311 id=311 data-nosnippet>311</a>            ack_tag,
-<a href=#312 id=312 data-nosnippet>312</a>            peer,
-<a href=#313 id=313 data-nosnippet>313</a>            resend,
-<a href=#314 id=314 data-nosnippet>314</a>            sent_ms: <span class="number">0</span>,
-<a href=#315 id=315 data-nosnippet>315</a>            ack_deadline_ms: <span class="number">0</span>,
-<a href=#316 id=316 data-nosnippet>316</a>            retries: <span class="number">0</span>,
-<a href=#317 id=317 data-nosnippet>317</a>            state: AckState::Queued {
-<a href=#318 id=318 data-nosnippet>318</a>                needs_forward_confirmation: <span class="bool-val">false</span>,
-<a href=#319 id=319 data-nosnippet>319</a>            },
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>    }
-<a href=#322 id=322 data-nosnippet>322</a>
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="doccomment">/// Create pending-ACK state for a forwarded send.
-<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub fn </span>forwarded(
-<a href=#325 id=325 data-nosnippet>325</a>        ack_tag: [u8; <span class="number">8</span>],
-<a href=#326 id=326 data-nosnippet>326</a>        peer: PublicKey,
-<a href=#327 id=327 data-nosnippet>327</a>        resend: ResendRecord&lt;FRAME&gt;,
-<a href=#328 id=328 data-nosnippet>328</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="self">Self </span>{
-<a href=#330 id=330 data-nosnippet>330</a>            ack_tag,
-<a href=#331 id=331 data-nosnippet>331</a>            peer,
-<a href=#332 id=332 data-nosnippet>332</a>            resend,
-<a href=#333 id=333 data-nosnippet>333</a>            sent_ms: <span class="number">0</span>,
-<a href=#334 id=334 data-nosnippet>334</a>            ack_deadline_ms: <span class="number">0</span>,
-<a href=#335 id=335 data-nosnippet>335</a>            retries: <span class="number">0</span>,
-<a href=#336 id=336 data-nosnippet>336</a>            state: AckState::Queued {
-<a href=#337 id=337 data-nosnippet>337</a>                needs_forward_confirmation: <span class="bool-val">true</span>,
-<a href=#338 id=338 data-nosnippet>338</a>            },
-<a href=#339 id=339 data-nosnippet>339</a>        }
-<a href=#340 id=340 data-nosnippet>340</a>    }
-<a href=#341 id=341 data-nosnippet>341</a>}
-<a href=#342 id=342 data-nosnippet>342</a>
-<a href=#343 id=343 data-nosnippet>343</a><span class="doccomment">/// Errors returned when recording pending-ACK state in an identity slot.
-<a href=#344 id=344 data-nosnippet>344</a>///
-<a href=#345 id=345 data-nosnippet>345</a>/// Returned by [`IdentitySlot::try_insert_pending_ack`](crate::IdentitySlot::try_insert_pending_ack)
-<a href=#346 id=346 data-nosnippet>346</a>/// when the coordinator attempts to register a new in-flight ACK-requested send.
-<a href=#347 id=347 data-nosnippet>347</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#348 id=348 data-nosnippet>348</a></span><span class="kw">pub enum </span>PendingAckError {
-<a href=#349 id=349 data-nosnippet>349</a>    <span class="doccomment">/// The [`LocalIdentityId`](crate::LocalIdentityId) supplied does not correspond to an
-<a href=#350 id=350 data-nosnippet>350</a>    /// occupied slot — the identity was removed while the send was being set up.
-<a href=#351 id=351 data-nosnippet>351</a>    </span>IdentityMissing,
-<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// The pending-ACK `LinearMap` inside the identity slot has reached its `ACKS` capacity.
-<a href=#353 id=353 data-nosnippet>353</a>    /// Wait for an in-flight send to complete or time out before issuing another ACK-requested
-<a href=#354 id=354 data-nosnippet>354</a>    /// send on this identity.
-<a href=#355 id=355 data-nosnippet>355</a>    </span>TableFull,
-<a href=#356 id=356 data-nosnippet>356</a>}
-<a href=#357 id=357 data-nosnippet>357</a>
-<a href=#358 id=358 data-nosnippet>358</a><span class="doccomment">/// Priority class assigned to entries in the [`TxQueue`].
-<a href=#359 id=359 data-nosnippet>359</a>///
-<a href=#360 id=360 data-nosnippet>360</a>/// The transmit queue services entries in priority order (lowest rank first) so that
-<a href=#361 id=361 data-nosnippet>361</a>/// time-sensitive control traffic is never delayed by a backlog of application sends.
-<a href=#362 id=362 data-nosnippet>362</a>/// Within the same priority class, entries are served in FIFO order by sequence number.
-<a href=#363 id=363 data-nosnippet>363</a>///
-<a href=#364 id=364 data-nosnippet>364</a>/// Priority levels from highest to lowest:
-<a href=#365 id=365 data-nosnippet>365</a>///
-<a href=#366 id=366 data-nosnippet>366</a>/// - **`ImmediateAck`** (rank 0) — MAC ACK frames generated in response to a received
-<a href=#367 id=367 data-nosnippet>367</a>///   unicast or blind-unicast with ACK-requested. Must be sent as quickly as possible so
-<a href=#368 id=368 data-nosnippet>368</a>///   the original sender's retransmit timer does not expire.
-<a href=#369 id=369 data-nosnippet>369</a>/// - **`Forward`** (rank 1) — frames being forwarded by the repeater. Prompt forwarding
-<a href=#370 id=370 data-nosnippet>370</a>///   feeds the sender's forwarding-confirmation window, so delays here can trigger
-<a href=#371 id=371 data-nosnippet>371</a>///   unnecessary retransmissions at the source.
-<a href=#372 id=372 data-nosnippet>372</a>/// - **`Retry`** (rank 2) — retransmissions of unacknowledged ACK-requested sends. These
-<a href=#373 id=373 data-nosnippet>373</a>///   have already been delayed by a full forwarding-confirmation window and need to get out
-<a href=#374 id=374 data-nosnippet>374</a>///   before the final ACK deadline expires.
-<a href=#375 id=375 data-nosnippet>375</a>/// - **`Application`** (rank 3) — new application-originated frames (`queue_broadcast`,
-<a href=#376 id=376 data-nosnippet>376</a>///   `queue_unicast`, `queue_multicast`, etc.). Lowest priority; yields to all control traffic.
-<a href=#377 id=377 data-nosnippet>377</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#378 id=378 data-nosnippet>378</a></span><span class="kw">pub enum </span>TxPriority {
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="doccomment">/// Immediate transport ACK.
-<a href=#380 id=380 data-nosnippet>380</a>    </span>ImmediateAck,
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="doccomment">/// Receive-triggered forwarding.
-<a href=#382 id=382 data-nosnippet>382</a>    </span>Forward,
-<a href=#383 id=383 data-nosnippet>383</a>    <span class="doccomment">/// Retransmission after missed confirmation.
-<a href=#384 id=384 data-nosnippet>384</a>    </span>Retry,
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="doccomment">/// Application-originated send.
-<a href=#386 id=386 data-nosnippet>386</a>    </span>Application,
-<a href=#387 id=387 data-nosnippet>387</a>}
-<a href=#388 id=388 data-nosnippet>388</a>
-<a href=#389 id=389 data-nosnippet>389</a><span class="kw">impl </span>TxPriority {
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>rank(<span class="self">self</span>) -&gt; u8 {
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#392 id=392 data-nosnippet>392</a>            <span class="self">Self</span>::ImmediateAck =&gt; <span class="number">0</span>,
-<a href=#393 id=393 data-nosnippet>393</a>            <span class="self">Self</span>::Forward =&gt; <span class="number">1</span>,
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="self">Self</span>::Retry =&gt; <span class="number">2</span>,
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="self">Self</span>::Application =&gt; <span class="number">3</span>,
-<a href=#396 id=396 data-nosnippet>396</a>        }
-<a href=#397 id=397 data-nosnippet>397</a>    }
-<a href=#398 id=398 data-nosnippet>398</a>}
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a><span class="doccomment">/// One entry in the [`TxQueue`] waiting to be transmitted by the [`Mac`](crate::Mac) coordinator.
-<a href=#401 id=401 data-nosnippet>401</a>///
-<a href=#402 id=402 data-nosnippet>402</a>/// Each `QueuedTx` holds a complete, already-sealed frame ready to hand directly to the
-<a href=#403 id=403 data-nosnippet>403</a>/// radio driver. The coordinator does not re-seal on retransmit; the frame bytes are the
-<a href=#404 id=404 data-nosnippet>404</a>/// authoritative on-the-wire representation.
-<a href=#405 id=405 data-nosnippet>405</a>///
-<a href=#406 id=406 data-nosnippet>406</a>/// - **`priority`** — determines service order within the queue. See [`TxPriority`].
-<a href=#407 id=407 data-nosnippet>407</a>/// - **`frame`** — the sealed frame bytes, at most `FRAME` bytes. The coordinator calls
-<a href=#408 id=408 data-nosnippet>408</a>///   `radio.transmit(&amp;entry.frame, tx_options).await` when this entry reaches the head of
-<a href=#409 id=409 data-nosnippet>409</a>///   the queue and its `not_before_ms` has elapsed.
-<a href=#410 id=410 data-nosnippet>410</a>/// - **`receipt`** — for ACK-requested sends, the associated [`SendReceipt`] so the
-<a href=#411 id=411 data-nosnippet>411</a>///   coordinator can update the [`PendingAck`] state after a successful transmit.
-<a href=#412 id=412 data-nosnippet>412</a>/// - **`sequence`** — a monotonic counter assigned at enqueue time, used to preserve
-<a href=#413 id=413 data-nosnippet>413</a>///   FIFO ordering among entries sharing the same priority.
-<a href=#414 id=414 data-nosnippet>414</a>/// - **`not_before_ms`** — earliest acceptable transmit time in monotonic milliseconds.
-<a href=#415 id=415 data-nosnippet>415</a>///   Entries with a future `not_before_ms` are skipped until the clock advances past it.
-<a href=#416 id=416 data-nosnippet>416</a>///   Used to introduce per-node forwarding delay jitter that reduces collision probability.
-<a href=#417 id=417 data-nosnippet>417</a>///   Zero means transmit immediately.
-<a href=#418 id=418 data-nosnippet>418</a>/// - **`cad_attempts`** — number of channel-activity-detection retries already consumed
-<a href=#419 id=419 data-nosnippet>419</a>///   on this entry; compared against [`MAX_CAD_ATTEMPTS`](crate::MAX_CAD_ATTEMPTS) to bound
-<a href=#420 id=420 data-nosnippet>420</a>///   medium contention retries.
-<a href=#421 id=421 data-nosnippet>421</a>/// - **`forward_deferrals`** — number of times a queued flood-forward has already been
-<a href=#422 id=422 data-nosnippet>422</a>///   deferred after overhearing another copy of the same packet before it transmitted.
-<a href=#423 id=423 data-nosnippet>423</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#424 id=424 data-nosnippet>424</a></span><span class="kw">pub struct </span>QueuedTx&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// Priority class.
-<a href=#426 id=426 data-nosnippet>426</a>    </span><span class="kw">pub </span>priority: TxPriority,
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="doccomment">/// Stored frame bytes.
-<a href=#428 id=428 data-nosnippet>428</a>    </span><span class="kw">pub </span>frame: Vec&lt;u8, FRAME&gt;,
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Optional receipt associated with the frame.
-<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">pub </span>receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#431 id=431 data-nosnippet>431</a>    <span class="doccomment">/// Identity that owns this send; set for identity-originated sends, `None` for
-<a href=#432 id=432 data-nosnippet>432</a>    /// internally generated frames (MAC ACKs, forwarded frames).
-<a href=#433 id=433 data-nosnippet>433</a>    </span><span class="kw">pub </span>identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="doccomment">/// Monotonic sequence number for stable ordering.
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">pub </span>sequence: u32,
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// Earliest transmission timestamp.
-<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">pub </span>not_before_ms: u64,
-<a href=#438 id=438 data-nosnippet>438</a>    <span class="doccomment">/// Number of CAD attempts already consumed.
-<a href=#439 id=439 data-nosnippet>439</a>    </span><span class="kw">pub </span>cad_attempts: u8,
-<a href=#440 id=440 data-nosnippet>440</a>    <span class="doccomment">/// Number of overheard-repeat deferrals already consumed.
-<a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">pub </span>forward_deferrals: u8,
-<a href=#442 id=442 data-nosnippet>442</a>}
-<a href=#443 id=443 data-nosnippet>443</a>
-<a href=#444 id=444 data-nosnippet>444</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; QueuedTx&lt;FRAME&gt; {
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="doccomment">/// Create a queue entry ready to send immediately.
-<a href=#446 id=446 data-nosnippet>446</a>    </span><span class="kw">pub fn </span>try_new(
-<a href=#447 id=447 data-nosnippet>447</a>        priority: TxPriority,
-<a href=#448 id=448 data-nosnippet>448</a>        frame: <span class="kw-2">&amp;</span>[u8],
-<a href=#449 id=449 data-nosnippet>449</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#450 id=450 data-nosnippet>450</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
-<a href=#451 id=451 data-nosnippet>451</a>        sequence: u32,
-<a href=#452 id=452 data-nosnippet>452</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="self">Self</span>::try_new_with_state(priority, frame, receipt, identity_id, sequence, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>)
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="doccomment">/// Create a queue entry with explicit timer and CAD state.
-<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">pub fn </span>try_new_with_state(
-<a href=#458 id=458 data-nosnippet>458</a>        priority: TxPriority,
-<a href=#459 id=459 data-nosnippet>459</a>        frame: <span class="kw-2">&amp;</span>[u8],
-<a href=#460 id=460 data-nosnippet>460</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#461 id=461 data-nosnippet>461</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
-<a href=#462 id=462 data-nosnippet>462</a>        sequence: u32,
-<a href=#463 id=463 data-nosnippet>463</a>        not_before_ms: u64,
-<a href=#464 id=464 data-nosnippet>464</a>        cad_attempts: u8,
-<a href=#465 id=465 data-nosnippet>465</a>        forward_deferrals: u8,
-<a href=#466 id=466 data-nosnippet>466</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span><span class="kw-2">mut </span>stored_frame = Vec::new();
-<a href=#468 id=468 data-nosnippet>468</a>        <span class="kw">for </span>byte <span class="kw">in </span>frame {
-<a href=#469 id=469 data-nosnippet>469</a>            stored_frame.push(<span class="kw-2">*</span>byte).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#470 id=470 data-nosnippet>470</a>        }
-<a href=#471 id=471 data-nosnippet>471</a>
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#473 id=473 data-nosnippet>473</a>            priority,
-<a href=#474 id=474 data-nosnippet>474</a>            frame: stored_frame,
-<a href=#475 id=475 data-nosnippet>475</a>            receipt,
-<a href=#476 id=476 data-nosnippet>476</a>            identity_id,
-<a href=#477 id=477 data-nosnippet>477</a>            sequence,
-<a href=#478 id=478 data-nosnippet>478</a>            not_before_ms,
-<a href=#479 id=479 data-nosnippet>479</a>            cad_attempts,
-<a href=#480 id=480 data-nosnippet>480</a>            forward_deferrals,
-<a href=#481 id=481 data-nosnippet>481</a>        })
-<a href=#482 id=482 data-nosnippet>482</a>    }
-<a href=#483 id=483 data-nosnippet>483</a>}
-<a href=#484 id=484 data-nosnippet>484</a>
-<a href=#485 id=485 data-nosnippet>485</a><span class="doccomment">/// Fixed-capacity, priority-ordered transmit queue owned by the [`Mac`](crate::Mac) coordinator.
-<a href=#486 id=486 data-nosnippet>486</a>///
-<a href=#487 id=487 data-nosnippet>487</a>/// The `TxQueue` serializes all outgoing frames — MAC ACKs, forwarded frames, retransmissions,
-<a href=#488 id=488 data-nosnippet>488</a>/// and application sends — into a single ordered sequence for delivery to the radio one at a
-<a href=#489 id=489 data-nosnippet>489</a>/// time. Entries are serviced in [`TxPriority`] order, with FIFO ordering within each class.
-<a href=#490 id=490 data-nosnippet>490</a>///
-<a href=#491 id=491 data-nosnippet>491</a>/// The queue capacity `N` is a compile-time constant (default [`DEFAULT_TX`](crate::DEFAULT_TX)).
-<a href=#492 id=492 data-nosnippet>492</a>/// Attempts to enqueue beyond capacity fail with [`crate::CapacityError`], propagated as
-<a href=#493 id=493 data-nosnippet>493</a>/// [`SendError::QueueFull`](crate::SendError::QueueFull) or
-<a href=#494 id=494 data-nosnippet>494</a>/// [`MacError::QueueFull`](crate::MacError::QueueFull). Choose `N` large enough to absorb
-<a href=#495 id=495 data-nosnippet>495</a>/// the worst-case burst: a forwarded frame, its MAC ACK, plus any application sends already
-<a href=#496 id=496 data-nosnippet>496</a>/// queued, plus the retransmit backlog.
-<a href=#497 id=497 data-nosnippet>497</a>///
-<a href=#498 id=498 data-nosnippet>498</a>/// Internally the queue is an unsorted `heapless::Vec&lt;QueuedTx, N&gt;`. The `dequeue` operation
-<a href=#499 id=499 data-nosnippet>499</a>/// does a linear scan for the highest-priority, lowest-sequence entry whose `not_before_ms`
-<a href=#500 id=500 data-nosnippet>500</a>/// has elapsed, which is O(N) — acceptable for the small N typical in embedded deployments.
-<a href=#501 id=501 data-nosnippet>501</a></span><span class="attr">#[derive(Clone, Debug)]
-<a href=#502 id=502 data-nosnippet>502</a></span><span class="kw">pub struct </span>TxQueue&lt;<span class="kw">const </span>N: usize = <span class="number">16</span>, <span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
-<a href=#503 id=503 data-nosnippet>503</a>    entries: Vec&lt;QueuedTx&lt;FRAME&gt;, N&gt;,
-<a href=#504 id=504 data-nosnippet>504</a>    next_sequence: u32,
-<a href=#505 id=505 data-nosnippet>505</a>}
-<a href=#506 id=506 data-nosnippet>506</a>
-<a href=#507 id=507 data-nosnippet>507</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>FRAME: usize&gt; Default <span class="kw">for </span>TxQueue&lt;N, FRAME&gt; {
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="self">Self</span>::new()
+<a href=#201 id=201 data-nosnippet>201</a>    </span>Queued { needs_forward_confirmation: bool },
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Waiting to overhear forwarding confirmation from the next hop.
+<a href=#203 id=203 data-nosnippet>203</a>    </span>AwaitingForward { confirm_deadline_ms: u64 },
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// Retransmission is queued with a retry backoff delay.
+<a href=#205 id=205 data-nosnippet>205</a>    </span>RetryQueued,
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// Waiting for the final destination's transport ACK.
+<a href=#207 id=207 data-nosnippet>207</a>    </span>AwaitingAck,
+<a href=#208 id=208 data-nosnippet>208</a>}
+<a href=#209 id=209 data-nosnippet>209</a>
+<a href=#210 id=210 data-nosnippet>210</a><span class="doccomment">/// Sealed frame bytes and optional source route retained for retransmission.
+<a href=#211 id=211 data-nosnippet>211</a>///
+<a href=#212 id=212 data-nosnippet>212</a>/// When the coordinator sends an ACK-requested packet, it must keep a verbatim copy of the
+<a href=#213 id=213 data-nosnippet>213</a>/// already-sealed frame for potential retransmission — not just the plaintext — because
+<a href=#214 id=214 data-nosnippet>214</a>/// re-building and re-sealing would produce a different ciphertext and a different ACK tag,
+<a href=#215 id=215 data-nosnippet>215</a>/// which the destination would not recognize.
+<a href=#216 id=216 data-nosnippet>216</a>///
+<a href=#217 id=217 data-nosnippet>217</a>/// `ResendRecord` stores up to `FRAME` bytes of the original sealed frame alongside any
+<a href=#218 id=218 data-nosnippet>218</a>/// source route that may need to be re-injected into the frame header on retransmit. Records
+<a href=#219 id=219 data-nosnippet>219</a>/// are created via [`ResendRecord::try_new`] and embedded inside [`PendingAck`]. The `FRAME`
+<a href=#220 id=220 data-nosnippet>220</a>/// const generic must be at least as large as the largest unicast frame the application will
+<a href=#221 id=221 data-nosnippet>221</a>/// send; oversized frames are rejected at queue time with [`crate::CapacityError`].
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#223 id=223 data-nosnippet>223</a></span><span class="kw">pub struct </span>ResendRecord&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="doccomment">/// Exact sealed frame bytes.
+<a href=#225 id=225 data-nosnippet>225</a>    </span><span class="kw">pub </span>frame: Vec&lt;u8, FRAME&gt;,
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="doccomment">/// Optional source route retained for retransmission.
+<a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">pub </span>source_route: <span class="prelude-ty">Option</span>&lt;Vec&lt;RouterHint, MAX_SOURCE_ROUTE_HOPS&gt;&gt;,
+<a href=#228 id=228 data-nosnippet>228</a>}
+<a href=#229 id=229 data-nosnippet>229</a>
+<a href=#230 id=230 data-nosnippet>230</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; ResendRecord&lt;FRAME&gt; {
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="doccomment">/// Copy frame bytes and an optional route into fixed-capacity storage.
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">pub fn </span>try_new(
+<a href=#233 id=233 data-nosnippet>233</a>        frame: <span class="kw-2">&amp;</span>[u8],
+<a href=#234 id=234 data-nosnippet>234</a>        source_route: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[RouterHint]&gt;,
+<a href=#235 id=235 data-nosnippet>235</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span><span class="kw-2">mut </span>stored_frame = Vec::new();
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">for </span>byte <span class="kw">in </span>frame {
+<a href=#238 id=238 data-nosnippet>238</a>            stored_frame.push(<span class="kw-2">*</span>byte).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#239 id=239 data-nosnippet>239</a>        }
+<a href=#240 id=240 data-nosnippet>240</a>
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>stored_route = <span class="kw">match </span>source_route {
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="prelude-val">Some</span>(route) =&gt; {
+<a href=#243 id=243 data-nosnippet>243</a>                <span class="kw">let </span><span class="kw-2">mut </span>owned = Vec::new();
+<a href=#244 id=244 data-nosnippet>244</a>                <span class="kw">for </span>hop <span class="kw">in </span>route {
+<a href=#245 id=245 data-nosnippet>245</a>                    owned.push(<span class="kw-2">*</span>hop).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#246 id=246 data-nosnippet>246</a>                }
+<a href=#247 id=247 data-nosnippet>247</a>                <span class="prelude-val">Some</span>(owned)
+<a href=#248 id=248 data-nosnippet>248</a>            }
+<a href=#249 id=249 data-nosnippet>249</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#250 id=250 data-nosnippet>250</a>        };
+<a href=#251 id=251 data-nosnippet>251</a>
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#253 id=253 data-nosnippet>253</a>            frame: stored_frame,
+<a href=#254 id=254 data-nosnippet>254</a>            source_route: stored_route,
+<a href=#255 id=255 data-nosnippet>255</a>        })
+<a href=#256 id=256 data-nosnippet>256</a>    }
+<a href=#257 id=257 data-nosnippet>257</a>}
+<a href=#258 id=258 data-nosnippet>258</a>
+<a href=#259 id=259 data-nosnippet>259</a><span class="doccomment">/// Complete tracking state for one in-flight ACK-requested transmission.
+<a href=#260 id=260 data-nosnippet>260</a>///
+<a href=#261 id=261 data-nosnippet>261</a>/// The coordinator's [`IdentitySlot`](crate::IdentitySlot) maintains a `LinearMap` of
+<a href=#262 id=262 data-nosnippet>262</a>/// `PendingAck` records keyed by [`SendReceipt`], one per active ACK-requested send. The
+<a href=#263 id=263 data-nosnippet>263</a>/// record holds everything needed to detect completion, detect timeout, and retransmit:
+<a href=#264 id=264 data-nosnippet>264</a>///
+<a href=#265 id=265 data-nosnippet>265</a>/// - **`ack_tag`** — the 8-byte CMAC-derived value that will appear in the destination's
+<a href=#266 id=266 data-nosnippet>266</a>///   MAC ACK packet. Only a node that received and successfully decrypted the original frame
+<a href=#267 id=267 data-nosnippet>267</a>///   can produce the correct tag, so a matching `ack_tag` is cryptographic proof of delivery.
+<a href=#268 id=268 data-nosnippet>268</a>/// - **`peer`** — the destination's full public key, used to look up the correct pending
+<a href=#269 id=269 data-nosnippet>269</a>///   entry when matching an inbound MAC ACK against the pending table.
+<a href=#270 id=270 data-nosnippet>270</a>/// - **`resend`** — a verbatim copy of the sealed frame for retransmission. See
+<a href=#271 id=271 data-nosnippet>271</a>///   [`ResendRecord`].
+<a href=#272 id=272 data-nosnippet>272</a>/// - **`sent_ms`** — the monotonic millisecond timestamp at which the frame was first
+<a href=#273 id=273 data-nosnippet>273</a>///   transmitted; useful for latency measurement.
+<a href=#274 id=274 data-nosnippet>274</a>/// - **`ack_deadline_ms`** — absolute deadline for the final ACK. Expiry means failure and
+<a href=#275 id=275 data-nosnippet>275</a>///   the entry is removed.
+<a href=#276 id=276 data-nosnippet>276</a>/// - **`retries`** — the number of retransmissions already attempted; capped at
+<a href=#277 id=277 data-nosnippet>277</a>///   [`MAX_FORWARD_RETRIES`](crate::MAX_FORWARD_RETRIES).
+<a href=#278 id=278 data-nosnippet>278</a>/// - **`state`** — current position in the [`AckState`] lifecycle (forwarding confirmation
+<a href=#279 id=279 data-nosnippet>279</a>///   wait or final-ACK wait).
+<a href=#280 id=280 data-nosnippet>280</a>///
+<a href=#281 id=281 data-nosnippet>281</a>/// Use [`PendingAck::direct`] for sends to nodes in direct radio range, or
+<a href=#282 id=282 data-nosnippet>282</a>/// [`PendingAck::forwarded`] when routing through a repeater.
+<a href=#283 id=283 data-nosnippet>283</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">pub struct </span>PendingAck&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Internal ACK tag used for inbound matching.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">pub </span>ack_tag: [u8; <span class="number">8</span>],
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Final destination peer.
+<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">pub </span>peer: PublicKey,
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// Retransmission data.
+<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">pub </span>resend: ResendRecord&lt;FRAME&gt;,
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// Initial send timestamp in milliseconds.
+<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">pub </span>sent_ms: u64,
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="doccomment">/// Absolute deadline for the final ACK.
+<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">pub </span>ack_deadline_ms: u64,
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// Number of retries already attempted.
+<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">pub </span>retries: u8,
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// Current state in the ACK lifecycle.
+<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">pub </span>state: AckState,
+<a href=#299 id=299 data-nosnippet>299</a>}
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; PendingAck&lt;FRAME&gt; {
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="doccomment">/// Create pending-ACK state for a direct send.
+<a href=#303 id=303 data-nosnippet>303</a>    </span><span class="kw">pub fn </span>direct(ack_tag: [u8; <span class="number">8</span>], peer: PublicKey, resend: ResendRecord&lt;FRAME&gt;) -&gt; <span class="self">Self </span>{
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="self">Self </span>{
+<a href=#305 id=305 data-nosnippet>305</a>            ack_tag,
+<a href=#306 id=306 data-nosnippet>306</a>            peer,
+<a href=#307 id=307 data-nosnippet>307</a>            resend,
+<a href=#308 id=308 data-nosnippet>308</a>            sent_ms: <span class="number">0</span>,
+<a href=#309 id=309 data-nosnippet>309</a>            ack_deadline_ms: <span class="number">0</span>,
+<a href=#310 id=310 data-nosnippet>310</a>            retries: <span class="number">0</span>,
+<a href=#311 id=311 data-nosnippet>311</a>            state: AckState::Queued {
+<a href=#312 id=312 data-nosnippet>312</a>                needs_forward_confirmation: <span class="bool-val">false</span>,
+<a href=#313 id=313 data-nosnippet>313</a>            },
+<a href=#314 id=314 data-nosnippet>314</a>        }
+<a href=#315 id=315 data-nosnippet>315</a>    }
+<a href=#316 id=316 data-nosnippet>316</a>
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="doccomment">/// Create pending-ACK state for a forwarded send.
+<a href=#318 id=318 data-nosnippet>318</a>    </span><span class="kw">pub fn </span>forwarded(ack_tag: [u8; <span class="number">8</span>], peer: PublicKey, resend: ResendRecord&lt;FRAME&gt;) -&gt; <span class="self">Self </span>{
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="self">Self </span>{
+<a href=#320 id=320 data-nosnippet>320</a>            ack_tag,
+<a href=#321 id=321 data-nosnippet>321</a>            peer,
+<a href=#322 id=322 data-nosnippet>322</a>            resend,
+<a href=#323 id=323 data-nosnippet>323</a>            sent_ms: <span class="number">0</span>,
+<a href=#324 id=324 data-nosnippet>324</a>            ack_deadline_ms: <span class="number">0</span>,
+<a href=#325 id=325 data-nosnippet>325</a>            retries: <span class="number">0</span>,
+<a href=#326 id=326 data-nosnippet>326</a>            state: AckState::Queued {
+<a href=#327 id=327 data-nosnippet>327</a>                needs_forward_confirmation: <span class="bool-val">true</span>,
+<a href=#328 id=328 data-nosnippet>328</a>            },
+<a href=#329 id=329 data-nosnippet>329</a>        }
+<a href=#330 id=330 data-nosnippet>330</a>    }
+<a href=#331 id=331 data-nosnippet>331</a>}
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a><span class="doccomment">/// Errors returned when recording pending-ACK state in an identity slot.
+<a href=#334 id=334 data-nosnippet>334</a>///
+<a href=#335 id=335 data-nosnippet>335</a>/// Returned by [`IdentitySlot::try_insert_pending_ack`](crate::IdentitySlot::try_insert_pending_ack)
+<a href=#336 id=336 data-nosnippet>336</a>/// when the coordinator attempts to register a new in-flight ACK-requested send.
+<a href=#337 id=337 data-nosnippet>337</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#338 id=338 data-nosnippet>338</a></span><span class="kw">pub enum </span>PendingAckError {
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// The [`LocalIdentityId`](crate::LocalIdentityId) supplied does not correspond to an
+<a href=#340 id=340 data-nosnippet>340</a>    /// occupied slot — the identity was removed while the send was being set up.
+<a href=#341 id=341 data-nosnippet>341</a>    </span>IdentityMissing,
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// The pending-ACK `LinearMap` inside the identity slot has reached its `ACKS` capacity.
+<a href=#343 id=343 data-nosnippet>343</a>    /// Wait for an in-flight send to complete or time out before issuing another ACK-requested
+<a href=#344 id=344 data-nosnippet>344</a>    /// send on this identity.
+<a href=#345 id=345 data-nosnippet>345</a>    </span>TableFull,
+<a href=#346 id=346 data-nosnippet>346</a>}
+<a href=#347 id=347 data-nosnippet>347</a>
+<a href=#348 id=348 data-nosnippet>348</a><span class="doccomment">/// Priority class assigned to entries in the [`TxQueue`].
+<a href=#349 id=349 data-nosnippet>349</a>///
+<a href=#350 id=350 data-nosnippet>350</a>/// The transmit queue services entries in priority order (lowest rank first) so that
+<a href=#351 id=351 data-nosnippet>351</a>/// time-sensitive control traffic is never delayed by a backlog of application sends.
+<a href=#352 id=352 data-nosnippet>352</a>/// Within the same priority class, entries are served in FIFO order by sequence number.
+<a href=#353 id=353 data-nosnippet>353</a>///
+<a href=#354 id=354 data-nosnippet>354</a>/// Priority levels from highest to lowest:
+<a href=#355 id=355 data-nosnippet>355</a>///
+<a href=#356 id=356 data-nosnippet>356</a>/// - **`ImmediateAck`** (rank 0) — MAC ACK frames generated in response to a received
+<a href=#357 id=357 data-nosnippet>357</a>///   unicast or blind-unicast with ACK-requested. Must be sent as quickly as possible so
+<a href=#358 id=358 data-nosnippet>358</a>///   the original sender's retransmit timer does not expire.
+<a href=#359 id=359 data-nosnippet>359</a>/// - **`Forward`** (rank 1) — frames being forwarded by the repeater. Prompt forwarding
+<a href=#360 id=360 data-nosnippet>360</a>///   feeds the sender's forwarding-confirmation window, so delays here can trigger
+<a href=#361 id=361 data-nosnippet>361</a>///   unnecessary retransmissions at the source.
+<a href=#362 id=362 data-nosnippet>362</a>/// - **`Retry`** (rank 2) — retransmissions of unacknowledged ACK-requested sends. These
+<a href=#363 id=363 data-nosnippet>363</a>///   have already been delayed by a full forwarding-confirmation window and need to get out
+<a href=#364 id=364 data-nosnippet>364</a>///   before the final ACK deadline expires.
+<a href=#365 id=365 data-nosnippet>365</a>/// - **`Application`** (rank 3) — new application-originated frames (`queue_broadcast`,
+<a href=#366 id=366 data-nosnippet>366</a>///   `queue_unicast`, `queue_multicast`, etc.). Lowest priority; yields to all control traffic.
+<a href=#367 id=367 data-nosnippet>367</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#368 id=368 data-nosnippet>368</a></span><span class="kw">pub enum </span>TxPriority {
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Immediate transport ACK.
+<a href=#370 id=370 data-nosnippet>370</a>    </span>ImmediateAck,
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="doccomment">/// Receive-triggered forwarding.
+<a href=#372 id=372 data-nosnippet>372</a>    </span>Forward,
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="doccomment">/// Retransmission after missed confirmation.
+<a href=#374 id=374 data-nosnippet>374</a>    </span>Retry,
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="doccomment">/// Application-originated send.
+<a href=#376 id=376 data-nosnippet>376</a>    </span>Application,
+<a href=#377 id=377 data-nosnippet>377</a>}
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a><span class="kw">impl </span>TxPriority {
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>rank(<span class="self">self</span>) -&gt; u8 {
+<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="self">Self</span>::ImmediateAck =&gt; <span class="number">0</span>,
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="self">Self</span>::Forward =&gt; <span class="number">1</span>,
+<a href=#384 id=384 data-nosnippet>384</a>            <span class="self">Self</span>::Retry =&gt; <span class="number">2</span>,
+<a href=#385 id=385 data-nosnippet>385</a>            <span class="self">Self</span>::Application =&gt; <span class="number">3</span>,
+<a href=#386 id=386 data-nosnippet>386</a>        }
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>}
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a><span class="doccomment">/// One entry in the [`TxQueue`] waiting to be transmitted by the [`Mac`](crate::Mac) coordinator.
+<a href=#391 id=391 data-nosnippet>391</a>///
+<a href=#392 id=392 data-nosnippet>392</a>/// Each `QueuedTx` holds a complete, already-sealed frame ready to hand directly to the
+<a href=#393 id=393 data-nosnippet>393</a>/// radio driver. The coordinator does not re-seal on retransmit; the frame bytes are the
+<a href=#394 id=394 data-nosnippet>394</a>/// authoritative on-the-wire representation.
+<a href=#395 id=395 data-nosnippet>395</a>///
+<a href=#396 id=396 data-nosnippet>396</a>/// - **`priority`** — determines service order within the queue. See [`TxPriority`].
+<a href=#397 id=397 data-nosnippet>397</a>/// - **`frame`** — the sealed frame bytes, at most `FRAME` bytes. The coordinator calls
+<a href=#398 id=398 data-nosnippet>398</a>///   `radio.transmit(&amp;entry.frame, tx_options).await` when this entry reaches the head of
+<a href=#399 id=399 data-nosnippet>399</a>///   the queue and its `not_before_ms` has elapsed.
+<a href=#400 id=400 data-nosnippet>400</a>/// - **`receipt`** — for ACK-requested sends, the associated [`SendReceipt`] so the
+<a href=#401 id=401 data-nosnippet>401</a>///   coordinator can update the [`PendingAck`] state after a successful transmit.
+<a href=#402 id=402 data-nosnippet>402</a>/// - **`sequence`** — a monotonic counter assigned at enqueue time, used to preserve
+<a href=#403 id=403 data-nosnippet>403</a>///   FIFO ordering among entries sharing the same priority.
+<a href=#404 id=404 data-nosnippet>404</a>/// - **`not_before_ms`** — earliest acceptable transmit time in monotonic milliseconds.
+<a href=#405 id=405 data-nosnippet>405</a>///   Entries with a future `not_before_ms` are skipped until the clock advances past it.
+<a href=#406 id=406 data-nosnippet>406</a>///   Used to introduce per-node forwarding delay jitter that reduces collision probability.
+<a href=#407 id=407 data-nosnippet>407</a>///   Zero means transmit immediately.
+<a href=#408 id=408 data-nosnippet>408</a>/// - **`cad_attempts`** — number of channel-activity-detection retries already consumed
+<a href=#409 id=409 data-nosnippet>409</a>///   on this entry; compared against [`MAX_CAD_ATTEMPTS`](crate::MAX_CAD_ATTEMPTS) to bound
+<a href=#410 id=410 data-nosnippet>410</a>///   medium contention retries.
+<a href=#411 id=411 data-nosnippet>411</a>/// - **`forward_deferrals`** — number of times a queued flood-forward has already been
+<a href=#412 id=412 data-nosnippet>412</a>///   deferred after overhearing another copy of the same packet before it transmitted.
+<a href=#413 id=413 data-nosnippet>413</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">pub struct </span>QueuedTx&lt;<span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
+<a href=#415 id=415 data-nosnippet>415</a>    <span class="doccomment">/// Priority class.
+<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="kw">pub </span>priority: TxPriority,
+<a href=#417 id=417 data-nosnippet>417</a>    <span class="doccomment">/// Stored frame bytes.
+<a href=#418 id=418 data-nosnippet>418</a>    </span><span class="kw">pub </span>frame: Vec&lt;u8, FRAME&gt;,
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="doccomment">/// Optional receipt associated with the frame.
+<a href=#420 id=420 data-nosnippet>420</a>    </span><span class="kw">pub </span>receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Identity that owns this send; set for identity-originated sends, `None` for
+<a href=#422 id=422 data-nosnippet>422</a>    /// internally generated frames (MAC ACKs, forwarded frames).
+<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">pub </span>identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="doccomment">/// Monotonic sequence number for stable ordering.
+<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">pub </span>sequence: u32,
+<a href=#426 id=426 data-nosnippet>426</a>    <span class="doccomment">/// Earliest transmission timestamp.
+<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">pub </span>not_before_ms: u64,
+<a href=#428 id=428 data-nosnippet>428</a>    <span class="doccomment">/// Number of CAD attempts already consumed.
+<a href=#429 id=429 data-nosnippet>429</a>    </span><span class="kw">pub </span>cad_attempts: u8,
+<a href=#430 id=430 data-nosnippet>430</a>    <span class="doccomment">/// Number of overheard-repeat deferrals already consumed.
+<a href=#431 id=431 data-nosnippet>431</a>    </span><span class="kw">pub </span>forward_deferrals: u8,
+<a href=#432 id=432 data-nosnippet>432</a>}
+<a href=#433 id=433 data-nosnippet>433</a>
+<a href=#434 id=434 data-nosnippet>434</a><span class="kw">impl</span>&lt;<span class="kw">const </span>FRAME: usize&gt; QueuedTx&lt;FRAME&gt; {
+<a href=#435 id=435 data-nosnippet>435</a>    <span class="doccomment">/// Create a queue entry ready to send immediately.
+<a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">pub fn </span>try_new(
+<a href=#437 id=437 data-nosnippet>437</a>        priority: TxPriority,
+<a href=#438 id=438 data-nosnippet>438</a>        frame: <span class="kw-2">&amp;</span>[u8],
+<a href=#439 id=439 data-nosnippet>439</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#440 id=440 data-nosnippet>440</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
+<a href=#441 id=441 data-nosnippet>441</a>        sequence: u32,
+<a href=#442 id=442 data-nosnippet>442</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="self">Self</span>::try_new_with_state(priority, frame, receipt, identity_id, sequence, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>)
+<a href=#444 id=444 data-nosnippet>444</a>    }
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// Create a queue entry with explicit timer and CAD state.
+<a href=#447 id=447 data-nosnippet>447</a>    </span><span class="kw">pub fn </span>try_new_with_state(
+<a href=#448 id=448 data-nosnippet>448</a>        priority: TxPriority,
+<a href=#449 id=449 data-nosnippet>449</a>        frame: <span class="kw-2">&amp;</span>[u8],
+<a href=#450 id=450 data-nosnippet>450</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#451 id=451 data-nosnippet>451</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
+<a href=#452 id=452 data-nosnippet>452</a>        sequence: u32,
+<a href=#453 id=453 data-nosnippet>453</a>        not_before_ms: u64,
+<a href=#454 id=454 data-nosnippet>454</a>        cad_attempts: u8,
+<a href=#455 id=455 data-nosnippet>455</a>        forward_deferrals: u8,
+<a href=#456 id=456 data-nosnippet>456</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CapacityError&gt; {
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span><span class="kw-2">mut </span>stored_frame = Vec::new();
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">for </span>byte <span class="kw">in </span>frame {
+<a href=#459 id=459 data-nosnippet>459</a>            stored_frame.push(<span class="kw-2">*</span>byte).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#460 id=460 data-nosnippet>460</a>        }
+<a href=#461 id=461 data-nosnippet>461</a>
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#463 id=463 data-nosnippet>463</a>            priority,
+<a href=#464 id=464 data-nosnippet>464</a>            frame: stored_frame,
+<a href=#465 id=465 data-nosnippet>465</a>            receipt,
+<a href=#466 id=466 data-nosnippet>466</a>            identity_id,
+<a href=#467 id=467 data-nosnippet>467</a>            sequence,
+<a href=#468 id=468 data-nosnippet>468</a>            not_before_ms,
+<a href=#469 id=469 data-nosnippet>469</a>            cad_attempts,
+<a href=#470 id=470 data-nosnippet>470</a>            forward_deferrals,
+<a href=#471 id=471 data-nosnippet>471</a>        })
+<a href=#472 id=472 data-nosnippet>472</a>    }
+<a href=#473 id=473 data-nosnippet>473</a>}
+<a href=#474 id=474 data-nosnippet>474</a>
+<a href=#475 id=475 data-nosnippet>475</a><span class="doccomment">/// Fixed-capacity, priority-ordered transmit queue owned by the [`Mac`](crate::Mac) coordinator.
+<a href=#476 id=476 data-nosnippet>476</a>///
+<a href=#477 id=477 data-nosnippet>477</a>/// The `TxQueue` serializes all outgoing frames — MAC ACKs, forwarded frames, retransmissions,
+<a href=#478 id=478 data-nosnippet>478</a>/// and application sends — into a single ordered sequence for delivery to the radio one at a
+<a href=#479 id=479 data-nosnippet>479</a>/// time. Entries are serviced in [`TxPriority`] order, with FIFO ordering within each class.
+<a href=#480 id=480 data-nosnippet>480</a>///
+<a href=#481 id=481 data-nosnippet>481</a>/// The queue capacity `N` is a compile-time constant (default [`DEFAULT_TX`](crate::DEFAULT_TX)).
+<a href=#482 id=482 data-nosnippet>482</a>/// Attempts to enqueue beyond capacity fail with [`crate::CapacityError`], propagated as
+<a href=#483 id=483 data-nosnippet>483</a>/// [`SendError::QueueFull`](crate::SendError::QueueFull) or
+<a href=#484 id=484 data-nosnippet>484</a>/// [`MacError::QueueFull`](crate::MacError::QueueFull). Choose `N` large enough to absorb
+<a href=#485 id=485 data-nosnippet>485</a>/// the worst-case burst: a forwarded frame, its MAC ACK, plus any application sends already
+<a href=#486 id=486 data-nosnippet>486</a>/// queued, plus the retransmit backlog.
+<a href=#487 id=487 data-nosnippet>487</a>///
+<a href=#488 id=488 data-nosnippet>488</a>/// Internally the queue is an unsorted `heapless::Vec&lt;QueuedTx, N&gt;`. The `dequeue` operation
+<a href=#489 id=489 data-nosnippet>489</a>/// does a linear scan for the highest-priority, lowest-sequence entry whose `not_before_ms`
+<a href=#490 id=490 data-nosnippet>490</a>/// has elapsed, which is O(N) — acceptable for the small N typical in embedded deployments.
+<a href=#491 id=491 data-nosnippet>491</a></span><span class="attr">#[derive(Clone, Debug)]
+<a href=#492 id=492 data-nosnippet>492</a></span><span class="kw">pub struct </span>TxQueue&lt;<span class="kw">const </span>N: usize = <span class="number">16</span>, <span class="kw">const </span>FRAME: usize = MAX_RESEND_FRAME_LEN&gt; {
+<a href=#493 id=493 data-nosnippet>493</a>    entries: Vec&lt;QueuedTx&lt;FRAME&gt;, N&gt;,
+<a href=#494 id=494 data-nosnippet>494</a>    next_sequence: u32,
+<a href=#495 id=495 data-nosnippet>495</a>}
+<a href=#496 id=496 data-nosnippet>496</a>
+<a href=#497 id=497 data-nosnippet>497</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>FRAME: usize&gt; Default <span class="kw">for </span>TxQueue&lt;N, FRAME&gt; {
+<a href=#498 id=498 data-nosnippet>498</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="self">Self</span>::new()
+<a href=#500 id=500 data-nosnippet>500</a>    }
+<a href=#501 id=501 data-nosnippet>501</a>}
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>FRAME: usize&gt; TxQueue&lt;N, FRAME&gt; {
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="doccomment">/// Create an empty transmission queue.
+<a href=#505 id=505 data-nosnippet>505</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="self">Self </span>{
+<a href=#507 id=507 data-nosnippet>507</a>            entries: Vec::new(),
+<a href=#508 id=508 data-nosnippet>508</a>            next_sequence: <span class="number">0</span>,
+<a href=#509 id=509 data-nosnippet>509</a>        }
 <a href=#510 id=510 data-nosnippet>510</a>    }
-<a href=#511 id=511 data-nosnippet>511</a>}
-<a href=#512 id=512 data-nosnippet>512</a>
-<a href=#513 id=513 data-nosnippet>513</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>FRAME: usize&gt; TxQueue&lt;N, FRAME&gt; {
-<a href=#514 id=514 data-nosnippet>514</a>    <span class="doccomment">/// Create an empty transmission queue.
-<a href=#515 id=515 data-nosnippet>515</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="self">Self </span>{
-<a href=#517 id=517 data-nosnippet>517</a>            entries: Vec::new(),
-<a href=#518 id=518 data-nosnippet>518</a>            next_sequence: <span class="number">0</span>,
-<a href=#519 id=519 data-nosnippet>519</a>        }
+<a href=#511 id=511 data-nosnippet>511</a>
+<a href=#512 id=512 data-nosnippet>512</a>    <span class="doccomment">/// Return the number of queued transmissions.
+<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="self">self</span>.entries.len()
+<a href=#515 id=515 data-nosnippet>515</a>    }
+<a href=#516 id=516 data-nosnippet>516</a>
+<a href=#517 id=517 data-nosnippet>517</a>    <span class="doccomment">/// Return whether no transmissions are queued.
+<a href=#518 id=518 data-nosnippet>518</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#519 id=519 data-nosnippet>519</a>        <span class="self">self</span>.entries.is_empty()
 <a href=#520 id=520 data-nosnippet>520</a>    }
 <a href=#521 id=521 data-nosnippet>521</a>
-<a href=#522 id=522 data-nosnippet>522</a>    <span class="doccomment">/// Return the number of queued transmissions.
-<a href=#523 id=523 data-nosnippet>523</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="self">self</span>.entries.len()
-<a href=#525 id=525 data-nosnippet>525</a>    }
-<a href=#526 id=526 data-nosnippet>526</a>
-<a href=#527 id=527 data-nosnippet>527</a>    <span class="doccomment">/// Return whether no transmissions are queued.
-<a href=#528 id=528 data-nosnippet>528</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="self">self</span>.entries.is_empty()
-<a href=#530 id=530 data-nosnippet>530</a>    }
-<a href=#531 id=531 data-nosnippet>531</a>
-<a href=#532 id=532 data-nosnippet>532</a>    <span class="doccomment">/// Enqueue a frame and return its internal sequence number.
-<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="kw">pub fn </span>enqueue(
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#535 id=535 data-nosnippet>535</a>        priority: TxPriority,
-<a href=#536 id=536 data-nosnippet>536</a>        frame: <span class="kw-2">&amp;</span>[u8],
-<a href=#537 id=537 data-nosnippet>537</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#538 id=538 data-nosnippet>538</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
-<a href=#539 id=539 data-nosnippet>539</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u32, CapacityError&gt; {
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span>sequence = <span class="self">self</span>.next_sequence;
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>entry = QueuedTx::try_new(priority, frame, receipt, identity_id, sequence)<span class="question-mark">?</span>;
-<a href=#542 id=542 data-nosnippet>542</a>        <span class="self">self</span>.entries.push(entry).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#543 id=543 data-nosnippet>543</a>        <span class="self">self</span>.next_sequence = <span class="self">self</span>.next_sequence.wrapping_add(<span class="number">1</span>);
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="prelude-val">Ok</span>(sequence)
-<a href=#545 id=545 data-nosnippet>545</a>    }
-<a href=#546 id=546 data-nosnippet>546</a>
-<a href=#547 id=547 data-nosnippet>547</a>    <span class="doccomment">/// Enqueue a frame with explicit timer and CAD state.
-<a href=#548 id=548 data-nosnippet>548</a>    </span><span class="kw">pub fn </span>enqueue_with_state(
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#550 id=550 data-nosnippet>550</a>        priority: TxPriority,
-<a href=#551 id=551 data-nosnippet>551</a>        frame: <span class="kw-2">&amp;</span>[u8],
-<a href=#552 id=552 data-nosnippet>552</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#553 id=553 data-nosnippet>553</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
-<a href=#554 id=554 data-nosnippet>554</a>        not_before_ms: u64,
-<a href=#555 id=555 data-nosnippet>555</a>        cad_attempts: u8,
-<a href=#556 id=556 data-nosnippet>556</a>        forward_deferrals: u8,
-<a href=#557 id=557 data-nosnippet>557</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u32, CapacityError&gt; {
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>sequence = <span class="self">self</span>.next_sequence;
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span>entry = QueuedTx::try_new_with_state(
-<a href=#560 id=560 data-nosnippet>560</a>            priority,
-<a href=#561 id=561 data-nosnippet>561</a>            frame,
-<a href=#562 id=562 data-nosnippet>562</a>            receipt,
-<a href=#563 id=563 data-nosnippet>563</a>            identity_id,
-<a href=#564 id=564 data-nosnippet>564</a>            sequence,
-<a href=#565 id=565 data-nosnippet>565</a>            not_before_ms,
-<a href=#566 id=566 data-nosnippet>566</a>            cad_attempts,
-<a href=#567 id=567 data-nosnippet>567</a>            forward_deferrals,
-<a href=#568 id=568 data-nosnippet>568</a>        )<span class="question-mark">?</span>;
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="self">self</span>.entries.push(entry).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="self">self</span>.next_sequence = <span class="self">self</span>.next_sequence.wrapping_add(<span class="number">1</span>);
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="prelude-val">Ok</span>(sequence)
-<a href=#572 id=572 data-nosnippet>572</a>    }
-<a href=#573 id=573 data-nosnippet>573</a>
-<a href=#574 id=574 data-nosnippet>574</a>    <span class="doccomment">/// Remove and return the highest-priority queued frame.
-<a href=#575 id=575 data-nosnippet>575</a>    </span><span class="kw">pub fn </span>pop_next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;QueuedTx&lt;FRAME&gt;&gt; {
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span>index = <span class="self">self
-<a href=#577 id=577 data-nosnippet>577</a>            </span>.entries
+<a href=#522 id=522 data-nosnippet>522</a>    <span class="doccomment">/// Enqueue a frame and return its internal sequence number.
+<a href=#523 id=523 data-nosnippet>523</a>    </span><span class="kw">pub fn </span>enqueue(
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#525 id=525 data-nosnippet>525</a>        priority: TxPriority,
+<a href=#526 id=526 data-nosnippet>526</a>        frame: <span class="kw-2">&amp;</span>[u8],
+<a href=#527 id=527 data-nosnippet>527</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#528 id=528 data-nosnippet>528</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
+<a href=#529 id=529 data-nosnippet>529</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u32, CapacityError&gt; {
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>sequence = <span class="self">self</span>.next_sequence;
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="kw">let </span>entry = QueuedTx::try_new(priority, frame, receipt, identity_id, sequence)<span class="question-mark">?</span>;
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="self">self</span>.entries.push(entry).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="self">self</span>.next_sequence = <span class="self">self</span>.next_sequence.wrapping_add(<span class="number">1</span>);
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="prelude-val">Ok</span>(sequence)
+<a href=#535 id=535 data-nosnippet>535</a>    }
+<a href=#536 id=536 data-nosnippet>536</a>
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="doccomment">/// Enqueue a frame with explicit timer and CAD state.
+<a href=#538 id=538 data-nosnippet>538</a>    </span><span class="kw">pub fn </span>enqueue_with_state(
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#540 id=540 data-nosnippet>540</a>        priority: TxPriority,
+<a href=#541 id=541 data-nosnippet>541</a>        frame: <span class="kw-2">&amp;</span>[u8],
+<a href=#542 id=542 data-nosnippet>542</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#543 id=543 data-nosnippet>543</a>        identity_id: <span class="prelude-ty">Option</span>&lt;LocalIdentityId&gt;,
+<a href=#544 id=544 data-nosnippet>544</a>        not_before_ms: u64,
+<a href=#545 id=545 data-nosnippet>545</a>        cad_attempts: u8,
+<a href=#546 id=546 data-nosnippet>546</a>        forward_deferrals: u8,
+<a href=#547 id=547 data-nosnippet>547</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u32, CapacityError&gt; {
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span>sequence = <span class="self">self</span>.next_sequence;
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">let </span>entry = QueuedTx::try_new_with_state(
+<a href=#550 id=550 data-nosnippet>550</a>            priority,
+<a href=#551 id=551 data-nosnippet>551</a>            frame,
+<a href=#552 id=552 data-nosnippet>552</a>            receipt,
+<a href=#553 id=553 data-nosnippet>553</a>            identity_id,
+<a href=#554 id=554 data-nosnippet>554</a>            sequence,
+<a href=#555 id=555 data-nosnippet>555</a>            not_before_ms,
+<a href=#556 id=556 data-nosnippet>556</a>            cad_attempts,
+<a href=#557 id=557 data-nosnippet>557</a>            forward_deferrals,
+<a href=#558 id=558 data-nosnippet>558</a>        )<span class="question-mark">?</span>;
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="self">self</span>.entries.push(entry).map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#560 id=560 data-nosnippet>560</a>        <span class="self">self</span>.next_sequence = <span class="self">self</span>.next_sequence.wrapping_add(<span class="number">1</span>);
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="prelude-val">Ok</span>(sequence)
+<a href=#562 id=562 data-nosnippet>562</a>    }
+<a href=#563 id=563 data-nosnippet>563</a>
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="doccomment">/// Remove and return the highest-priority queued frame.
+<a href=#565 id=565 data-nosnippet>565</a>    </span><span class="kw">pub fn </span>pop_next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;QueuedTx&lt;FRAME&gt;&gt; {
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>index = <span class="self">self
+<a href=#567 id=567 data-nosnippet>567</a>            </span>.entries
+<a href=#568 id=568 data-nosnippet>568</a>            .iter()
+<a href=#569 id=569 data-nosnippet>569</a>            .enumerate()
+<a href=#570 id=570 data-nosnippet>570</a>            .min_by_key(|(<span class="kw">_</span>, entry)| (entry.priority.rank(), entry.sequence))
+<a href=#571 id=571 data-nosnippet>571</a>            .map(|(index, <span class="kw">_</span>)| index)<span class="question-mark">?</span>;
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.entries.swap_remove(index))
+<a href=#573 id=573 data-nosnippet>573</a>    }
+<a href=#574 id=574 data-nosnippet>574</a>
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// Return the earliest `not_before_ms` across all entries, if any are deferred.
+<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="kw">pub fn </span>earliest_not_before_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="self">self</span>.entries
 <a href=#578 id=578 data-nosnippet>578</a>            .iter()
-<a href=#579 id=579 data-nosnippet>579</a>            .enumerate()
-<a href=#580 id=580 data-nosnippet>580</a>            .min_by_key(|(<span class="kw">_</span>, entry)| (entry.priority.rank(), entry.sequence))
-<a href=#581 id=581 data-nosnippet>581</a>            .map(|(index, <span class="kw">_</span>)| index)<span class="question-mark">?</span>;
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.entries.swap_remove(index))
-<a href=#583 id=583 data-nosnippet>583</a>    }
-<a href=#584 id=584 data-nosnippet>584</a>
-<a href=#585 id=585 data-nosnippet>585</a>    <span class="doccomment">/// Return the earliest `not_before_ms` across all entries, if any are deferred.
-<a href=#586 id=586 data-nosnippet>586</a>    </span><span class="kw">pub fn </span>earliest_not_before_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="self">self</span>.entries
-<a href=#588 id=588 data-nosnippet>588</a>            .iter()
-<a href=#589 id=589 data-nosnippet>589</a>            .filter(|entry| entry.not_before_ms &gt; <span class="number">0</span>)
-<a href=#590 id=590 data-nosnippet>590</a>            .map(|entry| entry.not_before_ms)
-<a href=#591 id=591 data-nosnippet>591</a>            .min()
-<a href=#592 id=592 data-nosnippet>592</a>    }
-<a href=#593 id=593 data-nosnippet>593</a>
-<a href=#594 id=594 data-nosnippet>594</a>    <span class="doccomment">/// Return whether the queue contains any entry that is ready to send now.
-<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="kw">pub fn </span>has_ready(<span class="kw-2">&amp;</span><span class="self">self</span>, now_ms: u64) -&gt; bool {
-<a href=#596 id=596 data-nosnippet>596</a>        <span class="self">self</span>.entries
-<a href=#597 id=597 data-nosnippet>597</a>            .iter()
-<a href=#598 id=598 data-nosnippet>598</a>            .any(|entry| entry.not_before_ms &lt;= now_ms)
-<a href=#599 id=599 data-nosnippet>599</a>    }
-<a href=#600 id=600 data-nosnippet>600</a>
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="doccomment">/// Remove and return the first queued frame matching `predicate`.
-<a href=#602 id=602 data-nosnippet>602</a>    </span><span class="kw">pub fn </span>remove_first_matching(
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw-2">mut </span>predicate: <span class="kw">impl </span>FnMut(<span class="kw-2">&amp;</span>QueuedTx&lt;FRAME&gt;) -&gt; bool,
-<a href=#605 id=605 data-nosnippet>605</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;QueuedTx&lt;FRAME&gt;&gt; {
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>index = <span class="self">self
-<a href=#607 id=607 data-nosnippet>607</a>            </span>.entries
-<a href=#608 id=608 data-nosnippet>608</a>            .iter()
-<a href=#609 id=609 data-nosnippet>609</a>            .enumerate()
-<a href=#610 id=610 data-nosnippet>610</a>            .find_map(|(index, entry)| predicate(entry).then_some(index))<span class="question-mark">?</span>;
-<a href=#611 id=611 data-nosnippet>611</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.entries.swap_remove(index))
-<a href=#612 id=612 data-nosnippet>612</a>    }
-<a href=#613 id=613 data-nosnippet>613</a>}
-<a href=#614 id=614 data-nosnippet>614</a>
-<a href=#615 id=615 data-nosnippet>615</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
-<a href=#616 id=616 data-nosnippet>616</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#617 id=617 data-nosnippet>617</a></span><span class="kw">pub struct </span>ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#618 id=618 data-nosnippet>618</a>    <span class="kw">pub </span>id: ChannelId,
-<a href=#619 id=619 data-nosnippet>619</a>    <span class="kw">pub </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ChannelKey,
+<a href=#579 id=579 data-nosnippet>579</a>            .filter(|entry| entry.not_before_ms &gt; <span class="number">0</span>)
+<a href=#580 id=580 data-nosnippet>580</a>            .map(|entry| entry.not_before_ms)
+<a href=#581 id=581 data-nosnippet>581</a>            .min()
+<a href=#582 id=582 data-nosnippet>582</a>    }
+<a href=#583 id=583 data-nosnippet>583</a>
+<a href=#584 id=584 data-nosnippet>584</a>    <span class="doccomment">/// Return whether the queue contains any entry that is ready to send now.
+<a href=#585 id=585 data-nosnippet>585</a>    </span><span class="kw">pub fn </span>has_ready(<span class="kw-2">&amp;</span><span class="self">self</span>, now_ms: u64) -&gt; bool {
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="self">self</span>.entries
+<a href=#587 id=587 data-nosnippet>587</a>            .iter()
+<a href=#588 id=588 data-nosnippet>588</a>            .any(|entry| entry.not_before_ms &lt;= now_ms)
+<a href=#589 id=589 data-nosnippet>589</a>    }
+<a href=#590 id=590 data-nosnippet>590</a>
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="doccomment">/// Remove and return the first queued frame matching `predicate`.
+<a href=#592 id=592 data-nosnippet>592</a>    </span><span class="kw">pub fn </span>remove_first_matching(
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw-2">mut </span>predicate: <span class="kw">impl </span>FnMut(<span class="kw-2">&amp;</span>QueuedTx&lt;FRAME&gt;) -&gt; bool,
+<a href=#595 id=595 data-nosnippet>595</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;QueuedTx&lt;FRAME&gt;&gt; {
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">let </span>index = <span class="self">self
+<a href=#597 id=597 data-nosnippet>597</a>            </span>.entries
+<a href=#598 id=598 data-nosnippet>598</a>            .iter()
+<a href=#599 id=599 data-nosnippet>599</a>            .enumerate()
+<a href=#600 id=600 data-nosnippet>600</a>            .find_map(|(index, entry)| predicate(entry).then_some(index))<span class="question-mark">?</span>;
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.entries.swap_remove(index))
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>}
+<a href=#604 id=604 data-nosnippet>604</a>
+<a href=#605 id=605 data-nosnippet>605</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
+<a href=#606 id=606 data-nosnippet>606</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#607 id=607 data-nosnippet>607</a></span><span class="kw">pub struct </span>ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#608 id=608 data-nosnippet>608</a>    <span class="kw">pub </span>id: ChannelId,
+<a href=#609 id=609 data-nosnippet>609</a>    <span class="kw">pub </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ChannelKey,
+<a href=#610 id=610 data-nosnippet>610</a>}
+<a href=#611 id=611 data-nosnippet>611</a>
+<a href=#612 id=612 data-nosnippet>612</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ChannelId {
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="self">self</span>.id
+<a href=#615 id=615 data-nosnippet>615</a>    }
+<a href=#616 id=616 data-nosnippet>616</a>
+<a href=#617 id=617 data-nosnippet>617</a>    <span class="kw">pub fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ChannelKey {
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="self">self</span>.key
+<a href=#619 id=619 data-nosnippet>619</a>    }
 <a href=#620 id=620 data-nosnippet>620</a>}
 <a href=#621 id=621 data-nosnippet>621</a>
-<a href=#622 id=622 data-nosnippet>622</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#623 id=623 data-nosnippet>623</a>    <span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ChannelId {
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="self">self</span>.id
-<a href=#625 id=625 data-nosnippet>625</a>    }
-<a href=#626 id=626 data-nosnippet>626</a>
-<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">pub fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ChannelKey {
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="self">self</span>.key
-<a href=#629 id=629 data-nosnippet>629</a>    }
-<a href=#630 id=630 data-nosnippet>630</a>}
-<a href=#631 id=631 data-nosnippet>631</a>
-<a href=#632 id=632 data-nosnippet>632</a><span class="doccomment">/// Coarser grouping of on-wire packet types.
-<a href=#633 id=633 data-nosnippet>633</a>///
-<a href=#634 id=634 data-nosnippet>634</a>/// This is useful for applications that care about "unicast-like" or
-<a href=#635 id=635 data-nosnippet>635</a>/// "blind-unicast-like" traffic without matching both ACK and non-ACK packet
-<a href=#636 id=636 data-nosnippet>636</a>/// variants individually.
-<a href=#637 id=637 data-nosnippet>637</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#638 id=638 data-nosnippet>638</a></span><span class="kw">pub enum </span>PacketFamily {
-<a href=#639 id=639 data-nosnippet>639</a>    Broadcast,
-<a href=#640 id=640 data-nosnippet>640</a>    MacAck,
-<a href=#641 id=641 data-nosnippet>641</a>    Unicast,
-<a href=#642 id=642 data-nosnippet>642</a>    Multicast,
-<a href=#643 id=643 data-nosnippet>643</a>    BlindUnicast,
-<a href=#644 id=644 data-nosnippet>644</a>    Reserved,
-<a href=#645 id=645 data-nosnippet>645</a>}
-<a href=#646 id=646 data-nosnippet>646</a>
-<a href=#647 id=647 data-nosnippet>647</a><span class="kw">impl </span>PacketFamily {
-<a href=#648 id=648 data-nosnippet>648</a>    <span class="kw">pub fn </span>includes(<span class="self">self</span>, packet_type: PacketType) -&gt; bool {
-<a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#650 id=650 data-nosnippet>650</a>            <span class="self">Self</span>::Broadcast =&gt; packet_type == PacketType::Broadcast,
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="self">Self</span>::MacAck =&gt; packet_type == PacketType::MacAck,
-<a href=#652 id=652 data-nosnippet>652</a>            <span class="self">Self</span>::Unicast =&gt; <span class="macro">matches!</span>(packet_type, PacketType::Unicast | PacketType::UnicastAckReq),
-<a href=#653 id=653 data-nosnippet>653</a>            <span class="self">Self</span>::Multicast =&gt; packet_type == PacketType::Multicast,
-<a href=#654 id=654 data-nosnippet>654</a>            <span class="self">Self</span>::BlindUnicast =&gt; {
-<a href=#655 id=655 data-nosnippet>655</a>                <span class="macro">matches!</span>(
-<a href=#656 id=656 data-nosnippet>656</a>                    packet_type,
-<a href=#657 id=657 data-nosnippet>657</a>                    PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
-<a href=#658 id=658 data-nosnippet>658</a>                )
-<a href=#659 id=659 data-nosnippet>659</a>            }
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="self">Self</span>::Reserved =&gt; packet_type == PacketType::Reserved5,
-<a href=#661 id=661 data-nosnippet>661</a>        }
-<a href=#662 id=662 data-nosnippet>662</a>    }
-<a href=#663 id=663 data-nosnippet>663</a>}
-<a href=#664 id=664 data-nosnippet>664</a>
-<a href=#665 id=665 data-nosnippet>665</a><span class="doccomment">/// Iterator over packed two-byte route hops from a source-route or trace-route option.
-<a href=#666 id=666 data-nosnippet>666</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#667 id=667 data-nosnippet>667</a></span><span class="kw">pub struct </span>RouteHops&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#668 id=668 data-nosnippet>668</a>    bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#669 id=669 data-nosnippet>669</a>    cursor: usize,
-<a href=#670 id=670 data-nosnippet>670</a>}
-<a href=#671 id=671 data-nosnippet>671</a>
-<a href=#672 id=672 data-nosnippet>672</a><span class="doccomment">/// Local physical-layer observations captured when a frame was received.
-<a href=#673 id=673 data-nosnippet>673</a>///
-<a href=#674 id=674 data-nosnippet>674</a>/// SNR is represented in centibels (0.1 dB units). This is finer than whole
-<a href=#675 id=675 data-nosnippet>675</a>/// decibels, but still compact and integer-friendly. Some common LoRa radios
-<a href=#676 id=676 data-nosnippet>676</a>/// report packet SNR in quarter-dB steps; converting those readings into
-<a href=#677 id=677 data-nosnippet>677</a>/// centibels may therefore introduce a small rounding error.
-<a href=#678 id=678 data-nosnippet>678</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-<a href=#679 id=679 data-nosnippet>679</a></span><span class="kw">pub struct </span>RxMetadata {
-<a href=#680 id=680 data-nosnippet>680</a>    rssi: <span class="prelude-ty">Option</span>&lt;i16&gt;,
-<a href=#681 id=681 data-nosnippet>681</a>    snr: <span class="prelude-ty">Option</span>&lt;Snr&gt;,
-<a href=#682 id=682 data-nosnippet>682</a>    lqi: <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt;,
-<a href=#683 id=683 data-nosnippet>683</a>    received_at_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-<a href=#684 id=684 data-nosnippet>684</a>}
-<a href=#685 id=685 data-nosnippet>685</a>
-<a href=#686 id=686 data-nosnippet>686</a><span class="kw">impl </span>RxMetadata {
-<a href=#687 id=687 data-nosnippet>687</a>    <span class="kw">pub fn </span>new(
-<a href=#688 id=688 data-nosnippet>688</a>        rssi: <span class="prelude-ty">Option</span>&lt;i16&gt;,
-<a href=#689 id=689 data-nosnippet>689</a>        snr: <span class="prelude-ty">Option</span>&lt;Snr&gt;,
-<a href=#690 id=690 data-nosnippet>690</a>        lqi: <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt;,
-<a href=#691 id=691 data-nosnippet>691</a>        received_at_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-<a href=#692 id=692 data-nosnippet>692</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#693 id=693 data-nosnippet>693</a>        <span class="self">Self </span>{
-<a href=#694 id=694 data-nosnippet>694</a>            rssi,
-<a href=#695 id=695 data-nosnippet>695</a>            snr,
-<a href=#696 id=696 data-nosnippet>696</a>            lqi,
-<a href=#697 id=697 data-nosnippet>697</a>            received_at_ms,
-<a href=#698 id=698 data-nosnippet>698</a>        }
-<a href=#699 id=699 data-nosnippet>699</a>    }
-<a href=#700 id=700 data-nosnippet>700</a>
-<a href=#701 id=701 data-nosnippet>701</a>    <span class="kw">pub fn </span>rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
-<a href=#702 id=702 data-nosnippet>702</a>        <span class="self">self</span>.rssi
-<a href=#703 id=703 data-nosnippet>703</a>    }
-<a href=#704 id=704 data-nosnippet>704</a>
-<a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">pub fn </span>snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Snr&gt; {
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="self">self</span>.snr
-<a href=#707 id=707 data-nosnippet>707</a>    }
-<a href=#708 id=708 data-nosnippet>708</a>
-<a href=#709 id=709 data-nosnippet>709</a>    <span class="kw">pub fn </span>lqi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt; {
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="self">self</span>.lqi
+<a href=#622 id=622 data-nosnippet>622</a><span class="doccomment">/// Coarser grouping of on-wire packet types.
+<a href=#623 id=623 data-nosnippet>623</a>///
+<a href=#624 id=624 data-nosnippet>624</a>/// This is useful for applications that care about "unicast-like" or
+<a href=#625 id=625 data-nosnippet>625</a>/// "blind-unicast-like" traffic without matching both ACK and non-ACK packet
+<a href=#626 id=626 data-nosnippet>626</a>/// variants individually.
+<a href=#627 id=627 data-nosnippet>627</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#628 id=628 data-nosnippet>628</a></span><span class="kw">pub enum </span>PacketFamily {
+<a href=#629 id=629 data-nosnippet>629</a>    Broadcast,
+<a href=#630 id=630 data-nosnippet>630</a>    MacAck,
+<a href=#631 id=631 data-nosnippet>631</a>    Unicast,
+<a href=#632 id=632 data-nosnippet>632</a>    Multicast,
+<a href=#633 id=633 data-nosnippet>633</a>    BlindUnicast,
+<a href=#634 id=634 data-nosnippet>634</a>    Reserved,
+<a href=#635 id=635 data-nosnippet>635</a>}
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a><span class="kw">impl </span>PacketFamily {
+<a href=#638 id=638 data-nosnippet>638</a>    <span class="kw">pub fn </span>includes(<span class="self">self</span>, packet_type: PacketType) -&gt; bool {
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="self">Self</span>::Broadcast =&gt; packet_type == PacketType::Broadcast,
+<a href=#641 id=641 data-nosnippet>641</a>            <span class="self">Self</span>::MacAck =&gt; packet_type == PacketType::MacAck,
+<a href=#642 id=642 data-nosnippet>642</a>            <span class="self">Self</span>::Unicast =&gt; <span class="macro">matches!</span>(packet_type, PacketType::Unicast | PacketType::UnicastAckReq),
+<a href=#643 id=643 data-nosnippet>643</a>            <span class="self">Self</span>::Multicast =&gt; packet_type == PacketType::Multicast,
+<a href=#644 id=644 data-nosnippet>644</a>            <span class="self">Self</span>::BlindUnicast =&gt; {
+<a href=#645 id=645 data-nosnippet>645</a>                <span class="macro">matches!</span>(
+<a href=#646 id=646 data-nosnippet>646</a>                    packet_type,
+<a href=#647 id=647 data-nosnippet>647</a>                    PacketType::BlindUnicast | PacketType::BlindUnicastAckReq
+<a href=#648 id=648 data-nosnippet>648</a>                )
+<a href=#649 id=649 data-nosnippet>649</a>            }
+<a href=#650 id=650 data-nosnippet>650</a>            <span class="self">Self</span>::Reserved =&gt; packet_type == PacketType::Reserved5,
+<a href=#651 id=651 data-nosnippet>651</a>        }
+<a href=#652 id=652 data-nosnippet>652</a>    }
+<a href=#653 id=653 data-nosnippet>653</a>}
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a><span class="doccomment">/// Iterator over packed two-byte route hops from a source-route or trace-route option.
+<a href=#656 id=656 data-nosnippet>656</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#657 id=657 data-nosnippet>657</a></span><span class="kw">pub struct </span>RouteHops&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#658 id=658 data-nosnippet>658</a>    bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#659 id=659 data-nosnippet>659</a>    cursor: usize,
+<a href=#660 id=660 data-nosnippet>660</a>}
+<a href=#661 id=661 data-nosnippet>661</a>
+<a href=#662 id=662 data-nosnippet>662</a><span class="doccomment">/// Local physical-layer observations captured when a frame was received.
+<a href=#663 id=663 data-nosnippet>663</a>///
+<a href=#664 id=664 data-nosnippet>664</a>/// SNR is represented in centibels (0.1 dB units). This is finer than whole
+<a href=#665 id=665 data-nosnippet>665</a>/// decibels, but still compact and integer-friendly. Some common LoRa radios
+<a href=#666 id=666 data-nosnippet>666</a>/// report packet SNR in quarter-dB steps; converting those readings into
+<a href=#667 id=667 data-nosnippet>667</a>/// centibels may therefore introduce a small rounding error.
+<a href=#668 id=668 data-nosnippet>668</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+<a href=#669 id=669 data-nosnippet>669</a></span><span class="kw">pub struct </span>RxMetadata {
+<a href=#670 id=670 data-nosnippet>670</a>    rssi: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#671 id=671 data-nosnippet>671</a>    snr: <span class="prelude-ty">Option</span>&lt;Snr&gt;,
+<a href=#672 id=672 data-nosnippet>672</a>    lqi: <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt;,
+<a href=#673 id=673 data-nosnippet>673</a>    received_at_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#674 id=674 data-nosnippet>674</a>}
+<a href=#675 id=675 data-nosnippet>675</a>
+<a href=#676 id=676 data-nosnippet>676</a><span class="kw">impl </span>RxMetadata {
+<a href=#677 id=677 data-nosnippet>677</a>    <span class="kw">pub fn </span>new(
+<a href=#678 id=678 data-nosnippet>678</a>        rssi: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#679 id=679 data-nosnippet>679</a>        snr: <span class="prelude-ty">Option</span>&lt;Snr&gt;,
+<a href=#680 id=680 data-nosnippet>680</a>        lqi: <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt;,
+<a href=#681 id=681 data-nosnippet>681</a>        received_at_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#682 id=682 data-nosnippet>682</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="self">Self </span>{
+<a href=#684 id=684 data-nosnippet>684</a>            rssi,
+<a href=#685 id=685 data-nosnippet>685</a>            snr,
+<a href=#686 id=686 data-nosnippet>686</a>            lqi,
+<a href=#687 id=687 data-nosnippet>687</a>            received_at_ms,
+<a href=#688 id=688 data-nosnippet>688</a>        }
+<a href=#689 id=689 data-nosnippet>689</a>    }
+<a href=#690 id=690 data-nosnippet>690</a>
+<a href=#691 id=691 data-nosnippet>691</a>    <span class="kw">pub fn </span>rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="self">self</span>.rssi
+<a href=#693 id=693 data-nosnippet>693</a>    }
+<a href=#694 id=694 data-nosnippet>694</a>
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="kw">pub fn </span>snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Snr&gt; {
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="self">self</span>.snr
+<a href=#697 id=697 data-nosnippet>697</a>    }
+<a href=#698 id=698 data-nosnippet>698</a>
+<a href=#699 id=699 data-nosnippet>699</a>    <span class="kw">pub fn </span>lqi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt; {
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="self">self</span>.lqi
+<a href=#701 id=701 data-nosnippet>701</a>    }
+<a href=#702 id=702 data-nosnippet>702</a>
+<a href=#703 id=703 data-nosnippet>703</a>    <span class="kw">pub fn </span>received_at_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="self">self</span>.received_at_ms
+<a href=#705 id=705 data-nosnippet>705</a>    }
+<a href=#706 id=706 data-nosnippet>706</a>}
+<a href=#707 id=707 data-nosnippet>707</a>
+<a href=#708 id=708 data-nosnippet>708</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#709 id=709 data-nosnippet>709</a>    <span class="kw">pub fn </span>new(bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]) -&gt; <span class="self">Self </span>{
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="self">Self </span>{ bytes, cursor: <span class="number">0 </span>}
 <a href=#711 id=711 data-nosnippet>711</a>    }
-<a href=#712 id=712 data-nosnippet>712</a>
-<a href=#713 id=713 data-nosnippet>713</a>    <span class="kw">pub fn </span>received_at_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#714 id=714 data-nosnippet>714</a>        <span class="self">self</span>.received_at_ms
-<a href=#715 id=715 data-nosnippet>715</a>    }
-<a href=#716 id=716 data-nosnippet>716</a>}
-<a href=#717 id=717 data-nosnippet>717</a>
-<a href=#718 id=718 data-nosnippet>718</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#719 id=719 data-nosnippet>719</a>    <span class="kw">pub fn </span>new(bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]) -&gt; <span class="self">Self </span>{
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="self">Self </span>{ bytes, cursor: <span class="number">0 </span>}
+<a href=#712 id=712 data-nosnippet>712</a>}
+<a href=#713 id=713 data-nosnippet>713</a>
+<a href=#714 id=714 data-nosnippet>714</a><span class="kw">impl </span>Iterator <span class="kw">for </span>RouteHops&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#715 id=715 data-nosnippet>715</a>    <span class="kw">type </span>Item = RouterHint;
+<a href=#716 id=716 data-nosnippet>716</a>
+<a href=#717 id=717 data-nosnippet>717</a>    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>chunk = <span class="self">self</span>.bytes.get(<span class="self">self</span>.cursor..<span class="self">self</span>.cursor + <span class="number">2</span>)<span class="question-mark">?</span>;
+<a href=#719 id=719 data-nosnippet>719</a>        <span class="self">self</span>.cursor += <span class="number">2</span>;
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="prelude-val">Some</span>(RouterHint([chunk[<span class="number">0</span>], chunk[<span class="number">1</span>]]))
 <a href=#721 id=721 data-nosnippet>721</a>    }
 <a href=#722 id=722 data-nosnippet>722</a>}
 <a href=#723 id=723 data-nosnippet>723</a>
-<a href=#724 id=724 data-nosnippet>724</a><span class="kw">impl </span>Iterator <span class="kw">for </span>RouteHops&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#725 id=725 data-nosnippet>725</a>    <span class="kw">type </span>Item = RouterHint;
-<a href=#726 id=726 data-nosnippet>726</a>
-<a href=#727 id=727 data-nosnippet>727</a>    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">let </span>chunk = <span class="self">self</span>.bytes.get(<span class="self">self</span>.cursor..<span class="self">self</span>.cursor + <span class="number">2</span>)<span class="question-mark">?</span>;
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="self">self</span>.cursor += <span class="number">2</span>;
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="prelude-val">Some</span>(RouterHint([chunk[<span class="number">0</span>], chunk[<span class="number">1</span>]]))
-<a href=#731 id=731 data-nosnippet>731</a>    }
-<a href=#732 id=732 data-nosnippet>732</a>}
-<a href=#733 id=733 data-nosnippet>733</a>
-<a href=#734 id=734 data-nosnippet>734</a><span class="doccomment">/// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
-<a href=#735 id=735 data-nosnippet>735</a>///
-<a href=#736 id=736 data-nosnippet>736</a>/// `ReceivedPacketRef` is meant to stay close to the original packet rather than eagerly
-<a href=#737 id=737 data-nosnippet>737</a>/// translating it into application-level events. It includes the accepted wire bytes, the
-<a href=#738 id=738 data-nosnippet>738</a>/// decrypted/usable payload slice, parsed header and option metadata, resolved sender and
-<a href=#739 id=739 data-nosnippet>739</a>/// channel information, and security details such as frame counter, salt, MIC bytes, and
-<a href=#740 id=740 data-nosnippet>740</a>/// authentication status.
-<a href=#741 id=741 data-nosnippet>741</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#742 id=742 data-nosnippet>742</a></span><span class="kw">pub struct </span>ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#743 id=743 data-nosnippet>743</a>    wire: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#744 id=744 data-nosnippet>744</a>    payload_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#745 id=745 data-nosnippet>745</a>    payload_type: PayloadType,
-<a href=#746 id=746 data-nosnippet>746</a>    payload: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#747 id=747 data-nosnippet>747</a>    header: PacketHeader,
-<a href=#748 id=748 data-nosnippet>748</a>    options: ParsedOptions,
-<a href=#749 id=749 data-nosnippet>749</a>    from_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
-<a href=#750 id=750 data-nosnippet>750</a>    from_hint: <span class="prelude-ty">Option</span>&lt;NodeHint&gt;,
-<a href=#751 id=751 data-nosnippet>751</a>    source_authenticated: bool,
-<a href=#752 id=752 data-nosnippet>752</a>    channel: <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#753 id=753 data-nosnippet>753</a>    rx: RxMetadata,
-<a href=#754 id=754 data-nosnippet>754</a>}
-<a href=#755 id=755 data-nosnippet>755</a>
-<a href=#756 id=756 data-nosnippet>756</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#757 id=757 data-nosnippet>757</a>    <span class="kw">pub fn </span>new(
-<a href=#758 id=758 data-nosnippet>758</a>        wire: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#759 id=759 data-nosnippet>759</a>        payload_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#760 id=760 data-nosnippet>760</a>        header: PacketHeader,
-<a href=#761 id=761 data-nosnippet>761</a>        options: ParsedOptions,
-<a href=#762 id=762 data-nosnippet>762</a>        from_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
-<a href=#763 id=763 data-nosnippet>763</a>        from_hint: <span class="prelude-ty">Option</span>&lt;NodeHint&gt;,
-<a href=#764 id=764 data-nosnippet>764</a>        source_authenticated: bool,
-<a href=#765 id=765 data-nosnippet>765</a>        channel: <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#766 id=766 data-nosnippet>766</a>        rx: RxMetadata,
-<a href=#767 id=767 data-nosnippet>767</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let </span>(payload_type, payload) = <span class="kw">if </span>payload_bytes.is_empty() {
-<a href=#769 id=769 data-nosnippet>769</a>            (PayloadType::Empty, <span class="kw-2">&amp;</span>[][..])
-<a href=#770 id=770 data-nosnippet>770</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(payload_type) = PayloadType::from_byte(payload_bytes[<span class="number">0</span>]) {
-<a href=#771 id=771 data-nosnippet>771</a>            (payload_type, <span class="kw-2">&amp;</span>payload_bytes[<span class="number">1</span>..])
-<a href=#772 id=772 data-nosnippet>772</a>        } <span class="kw">else </span>{
-<a href=#773 id=773 data-nosnippet>773</a>            (PayloadType::Empty, payload_bytes)
-<a href=#774 id=774 data-nosnippet>774</a>        };
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="self">Self </span>{
-<a href=#776 id=776 data-nosnippet>776</a>            wire,
-<a href=#777 id=777 data-nosnippet>777</a>            payload_bytes,
-<a href=#778 id=778 data-nosnippet>778</a>            payload_type,
-<a href=#779 id=779 data-nosnippet>779</a>            payload,
-<a href=#780 id=780 data-nosnippet>780</a>            header,
-<a href=#781 id=781 data-nosnippet>781</a>            options,
-<a href=#782 id=782 data-nosnippet>782</a>            from_key,
-<a href=#783 id=783 data-nosnippet>783</a>            from_hint,
-<a href=#784 id=784 data-nosnippet>784</a>            source_authenticated,
-<a href=#785 id=785 data-nosnippet>785</a>            channel,
-<a href=#786 id=786 data-nosnippet>786</a>            rx,
-<a href=#787 id=787 data-nosnippet>787</a>        }
-<a href=#788 id=788 data-nosnippet>788</a>    }
-<a href=#789 id=789 data-nosnippet>789</a>
-<a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">pub fn </span>packet_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PacketType {
-<a href=#791 id=791 data-nosnippet>791</a>        <span class="self">self</span>.header.packet_type()
-<a href=#792 id=792 data-nosnippet>792</a>    }
-<a href=#793 id=793 data-nosnippet>793</a>
-<a href=#794 id=794 data-nosnippet>794</a>    <span class="doccomment">/// Return the coarse packet family for this frame.
-<a href=#795 id=795 data-nosnippet>795</a>    </span><span class="kw">pub fn </span>packet_family(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PacketFamily {
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">match </span><span class="self">self</span>.packet_type() {
-<a href=#797 id=797 data-nosnippet>797</a>            PacketType::Broadcast =&gt; PacketFamily::Broadcast,
-<a href=#798 id=798 data-nosnippet>798</a>            PacketType::MacAck =&gt; PacketFamily::MacAck,
-<a href=#799 id=799 data-nosnippet>799</a>            PacketType::Unicast | PacketType::UnicastAckReq =&gt; PacketFamily::Unicast,
-<a href=#800 id=800 data-nosnippet>800</a>            PacketType::Multicast =&gt; PacketFamily::Multicast,
-<a href=#801 id=801 data-nosnippet>801</a>            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq =&gt; PacketFamily::BlindUnicast,
-<a href=#802 id=802 data-nosnippet>802</a>            PacketType::Reserved5 =&gt; PacketFamily::Reserved,
-<a href=#803 id=803 data-nosnippet>803</a>        }
-<a href=#804 id=804 data-nosnippet>804</a>    }
-<a href=#805 id=805 data-nosnippet>805</a>
-<a href=#806 id=806 data-nosnippet>806</a>    <span class="kw">pub fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>PacketHeader {
-<a href=#807 id=807 data-nosnippet>807</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.header
-<a href=#808 id=808 data-nosnippet>808</a>    }
-<a href=#809 id=809 data-nosnippet>809</a>
-<a href=#810 id=810 data-nosnippet>810</a>    <span class="kw">pub fn </span>options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ParsedOptions {
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.options
-<a href=#812 id=812 data-nosnippet>812</a>    }
-<a href=#813 id=813 data-nosnippet>813</a>
-<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">pub fn </span>wire_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
-<a href=#815 id=815 data-nosnippet>815</a>        <span class="self">self</span>.wire
-<a href=#816 id=816 data-nosnippet>816</a>    }
-<a href=#817 id=817 data-nosnippet>817</a>
-<a href=#818 id=818 data-nosnippet>818</a>    <span class="doccomment">/// Return the payload bytes after any successful decryption/authentication work.
-<a href=#819 id=819 data-nosnippet>819</a>    ///
-<a href=#820 id=820 data-nosnippet>820</a>    /// This is the application payload body only; it does not include the leading
-<a href=#821 id=821 data-nosnippet>821</a>    /// typed-payload byte. Use [`Self::payload_type`] or [`Self::payload_bytes`]
-<a href=#822 id=822 data-nosnippet>822</a>    /// to inspect the application envelope.
-<a href=#823 id=823 data-nosnippet>823</a>    </span><span class="kw">pub fn </span>payload(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
-<a href=#824 id=824 data-nosnippet>824</a>        <span class="self">self</span>.payload
-<a href=#825 id=825 data-nosnippet>825</a>    }
-<a href=#826 id=826 data-nosnippet>826</a>
-<a href=#827 id=827 data-nosnippet>827</a>    <span class="doccomment">/// Return the application payload type carried by this frame.
-<a href=#828 id=828 data-nosnippet>828</a>    </span><span class="kw">pub fn </span>payload_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PayloadType {
-<a href=#829 id=829 data-nosnippet>829</a>        <span class="self">self</span>.payload_type
-<a href=#830 id=830 data-nosnippet>830</a>    }
-<a href=#831 id=831 data-nosnippet>831</a>
-<a href=#832 id=832 data-nosnippet>832</a>    <span class="doccomment">/// Return the exact application payload bytes including the leading
-<a href=#833 id=833 data-nosnippet>833</a>    /// typed-payload byte when present.
-<a href=#834 id=834 data-nosnippet>834</a>    </span><span class="kw">pub fn </span>payload_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="self">self</span>.payload_bytes
-<a href=#836 id=836 data-nosnippet>836</a>    }
-<a href=#837 id=837 data-nosnippet>837</a>
-<a href=#838 id=838 data-nosnippet>838</a>    <span class="doccomment">/// Return the exact on-wire body region before higher-layer payload parsing.
-<a href=#839 id=839 data-nosnippet>839</a>    </span><span class="kw">pub fn </span>wire_body(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
-<a href=#840 id=840 data-nosnippet>840</a>        <span class="self">self</span>.wire
-<a href=#841 id=841 data-nosnippet>841</a>            .get(<span class="self">self</span>.header.body_range.clone())
-<a href=#842 id=842 data-nosnippet>842</a>            .unwrap_or_default()
-<a href=#843 id=843 data-nosnippet>843</a>    }
-<a href=#844 id=844 data-nosnippet>844</a>
-<a href=#845 id=845 data-nosnippet>845</a>    <span class="kw">pub fn </span>is_beacon(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#846 id=846 data-nosnippet>846</a>        <span class="self">self</span>.header.is_beacon()
-<a href=#847 id=847 data-nosnippet>847</a>    }
-<a href=#848 id=848 data-nosnippet>848</a>
-<a href=#849 id=849 data-nosnippet>849</a>    <span class="kw">pub fn </span>from_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PublicKey&gt; {
-<a href=#850 id=850 data-nosnippet>850</a>        <span class="self">self</span>.from_key
-<a href=#851 id=851 data-nosnippet>851</a>    }
-<a href=#852 id=852 data-nosnippet>852</a>
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">pub fn </span>from_hint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NodeHint&gt; {
-<a href=#854 id=854 data-nosnippet>854</a>        <span class="self">self</span>.from_hint
-<a href=#855 id=855 data-nosnippet>855</a>    }
-<a href=#856 id=856 data-nosnippet>856</a>
-<a href=#857 id=857 data-nosnippet>857</a>    <span class="kw">pub fn </span>source_authenticated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#858 id=858 data-nosnippet>858</a>        <span class="self">self</span>.source_authenticated
-<a href=#859 id=859 data-nosnippet>859</a>    }
-<a href=#860 id=860 data-nosnippet>860</a>
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="doccomment">/// Local radio observations captured when this frame was received.
-<a href=#862 id=862 data-nosnippet>862</a>    </span><span class="kw">pub fn </span>rx(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>RxMetadata {
-<a href=#863 id=863 data-nosnippet>863</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.rx
-<a href=#864 id=864 data-nosnippet>864</a>    }
-<a href=#865 id=865 data-nosnippet>865</a>
-<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">pub fn </span>rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
-<a href=#867 id=867 data-nosnippet>867</a>        <span class="self">self</span>.rx.rssi()
-<a href=#868 id=868 data-nosnippet>868</a>    }
-<a href=#869 id=869 data-nosnippet>869</a>
-<a href=#870 id=870 data-nosnippet>870</a>    <span class="kw">pub fn </span>snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Snr&gt; {
-<a href=#871 id=871 data-nosnippet>871</a>        <span class="self">self</span>.rx.snr()
-<a href=#872 id=872 data-nosnippet>872</a>    }
-<a href=#873 id=873 data-nosnippet>873</a>
-<a href=#874 id=874 data-nosnippet>874</a>    <span class="kw">pub fn </span>lqi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt; {
-<a href=#875 id=875 data-nosnippet>875</a>        <span class="self">self</span>.rx.lqi()
-<a href=#876 id=876 data-nosnippet>876</a>    }
-<a href=#877 id=877 data-nosnippet>877</a>
-<a href=#878 id=878 data-nosnippet>878</a>    <span class="kw">pub fn </span>received_at_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="self">self</span>.rx.received_at_ms()
+<a href=#724 id=724 data-nosnippet>724</a><span class="doccomment">/// Borrowed view of one accepted inbound packet together with parsed on-wire metadata.
+<a href=#725 id=725 data-nosnippet>725</a>///
+<a href=#726 id=726 data-nosnippet>726</a>/// `ReceivedPacketRef` is meant to stay close to the original packet rather than eagerly
+<a href=#727 id=727 data-nosnippet>727</a>/// translating it into application-level events. It includes the accepted wire bytes, the
+<a href=#728 id=728 data-nosnippet>728</a>/// decrypted/usable payload slice, parsed header and option metadata, resolved sender and
+<a href=#729 id=729 data-nosnippet>729</a>/// channel information, and security details such as frame counter, salt, MIC bytes, and
+<a href=#730 id=730 data-nosnippet>730</a>/// authentication status.
+<a href=#731 id=731 data-nosnippet>731</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#732 id=732 data-nosnippet>732</a></span><span class="kw">pub struct </span>ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#733 id=733 data-nosnippet>733</a>    wire: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#734 id=734 data-nosnippet>734</a>    payload_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#735 id=735 data-nosnippet>735</a>    payload_type: PayloadType,
+<a href=#736 id=736 data-nosnippet>736</a>    payload: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#737 id=737 data-nosnippet>737</a>    header: PacketHeader,
+<a href=#738 id=738 data-nosnippet>738</a>    options: ParsedOptions,
+<a href=#739 id=739 data-nosnippet>739</a>    from_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+<a href=#740 id=740 data-nosnippet>740</a>    from_hint: <span class="prelude-ty">Option</span>&lt;NodeHint&gt;,
+<a href=#741 id=741 data-nosnippet>741</a>    source_authenticated: bool,
+<a href=#742 id=742 data-nosnippet>742</a>    channel: <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#743 id=743 data-nosnippet>743</a>    rx: RxMetadata,
+<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#745 id=745 data-nosnippet>745</a>
+<a href=#746 id=746 data-nosnippet>746</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#747 id=747 data-nosnippet>747</a>    <span class="kw">pub fn </span>new(
+<a href=#748 id=748 data-nosnippet>748</a>        wire: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#749 id=749 data-nosnippet>749</a>        payload_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#750 id=750 data-nosnippet>750</a>        header: PacketHeader,
+<a href=#751 id=751 data-nosnippet>751</a>        options: ParsedOptions,
+<a href=#752 id=752 data-nosnippet>752</a>        from_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+<a href=#753 id=753 data-nosnippet>753</a>        from_hint: <span class="prelude-ty">Option</span>&lt;NodeHint&gt;,
+<a href=#754 id=754 data-nosnippet>754</a>        source_authenticated: bool,
+<a href=#755 id=755 data-nosnippet>755</a>        channel: <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#756 id=756 data-nosnippet>756</a>        rx: RxMetadata,
+<a href=#757 id=757 data-nosnippet>757</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">let </span>(payload_type, payload) = <span class="kw">if </span>payload_bytes.is_empty() {
+<a href=#759 id=759 data-nosnippet>759</a>            (PayloadType::Empty, <span class="kw-2">&amp;</span>[][..])
+<a href=#760 id=760 data-nosnippet>760</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(payload_type) = PayloadType::from_byte(payload_bytes[<span class="number">0</span>]) {
+<a href=#761 id=761 data-nosnippet>761</a>            (payload_type, <span class="kw-2">&amp;</span>payload_bytes[<span class="number">1</span>..])
+<a href=#762 id=762 data-nosnippet>762</a>        } <span class="kw">else </span>{
+<a href=#763 id=763 data-nosnippet>763</a>            (PayloadType::Empty, payload_bytes)
+<a href=#764 id=764 data-nosnippet>764</a>        };
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="self">Self </span>{
+<a href=#766 id=766 data-nosnippet>766</a>            wire,
+<a href=#767 id=767 data-nosnippet>767</a>            payload_bytes,
+<a href=#768 id=768 data-nosnippet>768</a>            payload_type,
+<a href=#769 id=769 data-nosnippet>769</a>            payload,
+<a href=#770 id=770 data-nosnippet>770</a>            header,
+<a href=#771 id=771 data-nosnippet>771</a>            options,
+<a href=#772 id=772 data-nosnippet>772</a>            from_key,
+<a href=#773 id=773 data-nosnippet>773</a>            from_hint,
+<a href=#774 id=774 data-nosnippet>774</a>            source_authenticated,
+<a href=#775 id=775 data-nosnippet>775</a>            channel,
+<a href=#776 id=776 data-nosnippet>776</a>            rx,
+<a href=#777 id=777 data-nosnippet>777</a>        }
+<a href=#778 id=778 data-nosnippet>778</a>    }
+<a href=#779 id=779 data-nosnippet>779</a>
+<a href=#780 id=780 data-nosnippet>780</a>    <span class="kw">pub fn </span>packet_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PacketType {
+<a href=#781 id=781 data-nosnippet>781</a>        <span class="self">self</span>.header.packet_type()
+<a href=#782 id=782 data-nosnippet>782</a>    }
+<a href=#783 id=783 data-nosnippet>783</a>
+<a href=#784 id=784 data-nosnippet>784</a>    <span class="doccomment">/// Return the coarse packet family for this frame.
+<a href=#785 id=785 data-nosnippet>785</a>    </span><span class="kw">pub fn </span>packet_family(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PacketFamily {
+<a href=#786 id=786 data-nosnippet>786</a>        <span class="kw">match </span><span class="self">self</span>.packet_type() {
+<a href=#787 id=787 data-nosnippet>787</a>            PacketType::Broadcast =&gt; PacketFamily::Broadcast,
+<a href=#788 id=788 data-nosnippet>788</a>            PacketType::MacAck =&gt; PacketFamily::MacAck,
+<a href=#789 id=789 data-nosnippet>789</a>            PacketType::Unicast | PacketType::UnicastAckReq =&gt; PacketFamily::Unicast,
+<a href=#790 id=790 data-nosnippet>790</a>            PacketType::Multicast =&gt; PacketFamily::Multicast,
+<a href=#791 id=791 data-nosnippet>791</a>            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq =&gt; PacketFamily::BlindUnicast,
+<a href=#792 id=792 data-nosnippet>792</a>            PacketType::Reserved5 =&gt; PacketFamily::Reserved,
+<a href=#793 id=793 data-nosnippet>793</a>        }
+<a href=#794 id=794 data-nosnippet>794</a>    }
+<a href=#795 id=795 data-nosnippet>795</a>
+<a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">pub fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>PacketHeader {
+<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.header
+<a href=#798 id=798 data-nosnippet>798</a>    }
+<a href=#799 id=799 data-nosnippet>799</a>
+<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">pub fn </span>options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ParsedOptions {
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.options
+<a href=#802 id=802 data-nosnippet>802</a>    }
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="kw">pub fn </span>wire_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="self">self</span>.wire
+<a href=#806 id=806 data-nosnippet>806</a>    }
+<a href=#807 id=807 data-nosnippet>807</a>
+<a href=#808 id=808 data-nosnippet>808</a>    <span class="doccomment">/// Return the payload bytes after any successful decryption/authentication work.
+<a href=#809 id=809 data-nosnippet>809</a>    ///
+<a href=#810 id=810 data-nosnippet>810</a>    /// This is the application payload body only; it does not include the leading
+<a href=#811 id=811 data-nosnippet>811</a>    /// typed-payload byte. Use [`Self::payload_type`] or [`Self::payload_bytes`]
+<a href=#812 id=812 data-nosnippet>812</a>    /// to inspect the application envelope.
+<a href=#813 id=813 data-nosnippet>813</a>    </span><span class="kw">pub fn </span>payload(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
+<a href=#814 id=814 data-nosnippet>814</a>        <span class="self">self</span>.payload
+<a href=#815 id=815 data-nosnippet>815</a>    }
+<a href=#816 id=816 data-nosnippet>816</a>
+<a href=#817 id=817 data-nosnippet>817</a>    <span class="doccomment">/// Return the application payload type carried by this frame.
+<a href=#818 id=818 data-nosnippet>818</a>    </span><span class="kw">pub fn </span>payload_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PayloadType {
+<a href=#819 id=819 data-nosnippet>819</a>        <span class="self">self</span>.payload_type
+<a href=#820 id=820 data-nosnippet>820</a>    }
+<a href=#821 id=821 data-nosnippet>821</a>
+<a href=#822 id=822 data-nosnippet>822</a>    <span class="doccomment">/// Return the exact application payload bytes including the leading
+<a href=#823 id=823 data-nosnippet>823</a>    /// typed-payload byte when present.
+<a href=#824 id=824 data-nosnippet>824</a>    </span><span class="kw">pub fn </span>payload_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
+<a href=#825 id=825 data-nosnippet>825</a>        <span class="self">self</span>.payload_bytes
+<a href=#826 id=826 data-nosnippet>826</a>    }
+<a href=#827 id=827 data-nosnippet>827</a>
+<a href=#828 id=828 data-nosnippet>828</a>    <span class="doccomment">/// Return the exact on-wire body region before higher-layer payload parsing.
+<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="kw">pub fn </span>wire_body(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="self">self</span>.wire
+<a href=#831 id=831 data-nosnippet>831</a>            .get(<span class="self">self</span>.header.body_range.clone())
+<a href=#832 id=832 data-nosnippet>832</a>            .unwrap_or_default()
+<a href=#833 id=833 data-nosnippet>833</a>    }
+<a href=#834 id=834 data-nosnippet>834</a>
+<a href=#835 id=835 data-nosnippet>835</a>    <span class="kw">pub fn </span>is_beacon(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#836 id=836 data-nosnippet>836</a>        <span class="self">self</span>.header.is_beacon()
+<a href=#837 id=837 data-nosnippet>837</a>    }
+<a href=#838 id=838 data-nosnippet>838</a>
+<a href=#839 id=839 data-nosnippet>839</a>    <span class="kw">pub fn </span>from_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PublicKey&gt; {
+<a href=#840 id=840 data-nosnippet>840</a>        <span class="self">self</span>.from_key
+<a href=#841 id=841 data-nosnippet>841</a>    }
+<a href=#842 id=842 data-nosnippet>842</a>
+<a href=#843 id=843 data-nosnippet>843</a>    <span class="kw">pub fn </span>from_hint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NodeHint&gt; {
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="self">self</span>.from_hint
+<a href=#845 id=845 data-nosnippet>845</a>    }
+<a href=#846 id=846 data-nosnippet>846</a>
+<a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">pub fn </span>source_authenticated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#848 id=848 data-nosnippet>848</a>        <span class="self">self</span>.source_authenticated
+<a href=#849 id=849 data-nosnippet>849</a>    }
+<a href=#850 id=850 data-nosnippet>850</a>
+<a href=#851 id=851 data-nosnippet>851</a>    <span class="doccomment">/// Local radio observations captured when this frame was received.
+<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="kw">pub fn </span>rx(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>RxMetadata {
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.rx
+<a href=#854 id=854 data-nosnippet>854</a>    }
+<a href=#855 id=855 data-nosnippet>855</a>
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">pub fn </span>rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="self">self</span>.rx.rssi()
+<a href=#858 id=858 data-nosnippet>858</a>    }
+<a href=#859 id=859 data-nosnippet>859</a>
+<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">pub fn </span>snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Snr&gt; {
+<a href=#861 id=861 data-nosnippet>861</a>        <span class="self">self</span>.rx.snr()
+<a href=#862 id=862 data-nosnippet>862</a>    }
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">pub fn </span>lqi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NonZeroU8&gt; {
+<a href=#865 id=865 data-nosnippet>865</a>        <span class="self">self</span>.rx.lqi()
+<a href=#866 id=866 data-nosnippet>866</a>    }
+<a href=#867 id=867 data-nosnippet>867</a>
+<a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">pub fn </span>received_at_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="self">self</span>.rx.received_at_ms()
+<a href=#870 id=870 data-nosnippet>870</a>    }
+<a href=#871 id=871 data-nosnippet>871</a>
+<a href=#872 id=872 data-nosnippet>872</a>    <span class="doccomment">/// True when the source address in the accepted frame used the full public key form.
+<a href=#873 id=873 data-nosnippet>873</a>    </span><span class="kw">pub fn </span>has_full_source(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#874 id=874 data-nosnippet>874</a>        <span class="self">self</span>.header.fcf.full_source()
+<a href=#875 id=875 data-nosnippet>875</a>    }
+<a href=#876 id=876 data-nosnippet>876</a>
+<a href=#877 id=877 data-nosnippet>877</a>    <span class="doccomment">/// Resolved channel metadata, when this packet was accepted via a known private channel.
+<a href=#878 id=878 data-nosnippet>878</a>    </span><span class="kw">pub fn </span>channel(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt; {
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="self">self</span>.channel
 <a href=#880 id=880 data-nosnippet>880</a>    }
 <a href=#881 id=881 data-nosnippet>881</a>
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="doccomment">/// True when the source address in the accepted frame used the full public key form.
-<a href=#883 id=883 data-nosnippet>883</a>    </span><span class="kw">pub fn </span>has_full_source(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#884 id=884 data-nosnippet>884</a>        <span class="self">self</span>.header.fcf.full_source()
-<a href=#885 id=885 data-nosnippet>885</a>    }
-<a href=#886 id=886 data-nosnippet>886</a>
-<a href=#887 id=887 data-nosnippet>887</a>    <span class="doccomment">/// Resolved channel metadata, when this packet was accepted via a known private channel.
-<a href=#888 id=888 data-nosnippet>888</a>    </span><span class="kw">pub fn </span>channel(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ChannelInfoRef&lt;<span class="lifetime">'a</span>&gt;&gt; {
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="self">self</span>.channel
-<a href=#890 id=890 data-nosnippet>890</a>    }
-<a href=#891 id=891 data-nosnippet>891</a>
-<a href=#892 id=892 data-nosnippet>892</a>    <span class="kw">pub fn </span>ack_requested(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#893 id=893 data-nosnippet>893</a>        <span class="self">self</span>.packet_type().ack_requested()
-<a href=#894 id=894 data-nosnippet>894</a>    }
-<a href=#895 id=895 data-nosnippet>895</a>
-<a href=#896 id=896 data-nosnippet>896</a>    <span class="doccomment">/// Whether the accepted frame carried a valid SECINFO block.
-<a href=#897 id=897 data-nosnippet>897</a>    </span><span class="kw">pub fn </span>is_secure(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="self">self</span>.packet_type().is_secure()
+<a href=#882 id=882 data-nosnippet>882</a>    <span class="kw">pub fn </span>ack_requested(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="self">self</span>.packet_type().ack_requested()
+<a href=#884 id=884 data-nosnippet>884</a>    }
+<a href=#885 id=885 data-nosnippet>885</a>
+<a href=#886 id=886 data-nosnippet>886</a>    <span class="doccomment">/// Whether the accepted frame carried a valid SECINFO block.
+<a href=#887 id=887 data-nosnippet>887</a>    </span><span class="kw">pub fn </span>is_secure(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="self">self</span>.packet_type().is_secure()
+<a href=#889 id=889 data-nosnippet>889</a>    }
+<a href=#890 id=890 data-nosnippet>890</a>
+<a href=#891 id=891 data-nosnippet>891</a>    <span class="kw">pub fn </span>sec_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SecInfo&gt; {
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="self">self</span>.header.sec_info
+<a href=#893 id=893 data-nosnippet>893</a>    }
+<a href=#894 id=894 data-nosnippet>894</a>
+<a href=#895 id=895 data-nosnippet>895</a>    <span class="kw">pub fn </span>encrypted(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="self">self</span>.sec_info()
+<a href=#897 id=897 data-nosnippet>897</a>            .map(|sec| sec.scf.encrypted())
+<a href=#898 id=898 data-nosnippet>898</a>            .unwrap_or(<span class="bool-val">false</span>)
 <a href=#899 id=899 data-nosnippet>899</a>    }
 <a href=#900 id=900 data-nosnippet>900</a>
-<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">pub fn </span>sec_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SecInfo&gt; {
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="self">self</span>.header.sec_info
+<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">pub fn </span>frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="self">self</span>.sec_info().map(|sec| sec.frame_counter)
 <a href=#903 id=903 data-nosnippet>903</a>    }
 <a href=#904 id=904 data-nosnippet>904</a>
-<a href=#905 id=905 data-nosnippet>905</a>    <span class="kw">pub fn </span>encrypted(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#906 id=906 data-nosnippet>906</a>        <span class="self">self</span>.sec_info()
-<a href=#907 id=907 data-nosnippet>907</a>            .map(|sec| sec.scf.encrypted())
-<a href=#908 id=908 data-nosnippet>908</a>            .unwrap_or(<span class="bool-val">false</span>)
-<a href=#909 id=909 data-nosnippet>909</a>    }
-<a href=#910 id=910 data-nosnippet>910</a>
-<a href=#911 id=911 data-nosnippet>911</a>    <span class="kw">pub fn </span>frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-<a href=#912 id=912 data-nosnippet>912</a>        <span class="self">self</span>.sec_info().map(|sec| sec.frame_counter)
-<a href=#913 id=913 data-nosnippet>913</a>    }
-<a href=#914 id=914 data-nosnippet>914</a>
-<a href=#915 id=915 data-nosnippet>915</a>    <span class="kw">pub fn </span>salt(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="self">self</span>.sec_info().and_then(|sec| sec.salt)
-<a href=#917 id=917 data-nosnippet>917</a>    }
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a>    <span class="kw">pub fn </span>mic_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;MicSize&gt; {
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="self">self</span>.sec_info().and_then(|sec| sec.scf.mic_size().ok())
-<a href=#921 id=921 data-nosnippet>921</a>    }
-<a href=#922 id=922 data-nosnippet>922</a>
-<a href=#923 id=923 data-nosnippet>923</a>    <span class="doccomment">/// Return the authenticated MIC bytes from the original wire frame.
-<a href=#924 id=924 data-nosnippet>924</a>    </span><span class="kw">pub fn </span>mic(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="self">self</span>.wire
-<a href=#926 id=926 data-nosnippet>926</a>            .get(<span class="self">self</span>.header.mic_range.clone())
-<a href=#927 id=927 data-nosnippet>927</a>            .unwrap_or_default()
-<a href=#928 id=928 data-nosnippet>928</a>    }
-<a href=#929 id=929 data-nosnippet>929</a>
-<a href=#930 id=930 data-nosnippet>930</a>    <span class="kw">pub fn </span>mic_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#931 id=931 data-nosnippet>931</a>        <span class="self">self</span>.mic().len()
-<a href=#932 id=932 data-nosnippet>932</a>    }
-<a href=#933 id=933 data-nosnippet>933</a>
-<a href=#934 id=934 data-nosnippet>934</a>    <span class="kw">pub fn </span>flood_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FloodHops&gt; {
-<a href=#935 id=935 data-nosnippet>935</a>        <span class="self">self</span>.header.flood_hops
-<a href=#936 id=936 data-nosnippet>936</a>    }
-<a href=#937 id=937 data-nosnippet>937</a>
-<a href=#938 id=938 data-nosnippet>938</a>    <span class="kw">pub fn </span>region_code(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">2</span>]&gt; {
-<a href=#939 id=939 data-nosnippet>939</a>        <span class="self">self</span>.options.region_code
-<a href=#940 id=940 data-nosnippet>940</a>    }
-<a href=#941 id=941 data-nosnippet>941</a>
-<a href=#942 id=942 data-nosnippet>942</a>    <span class="kw">pub fn </span>min_rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
-<a href=#943 id=943 data-nosnippet>943</a>        <span class="self">self</span>.options.min_rssi
-<a href=#944 id=944 data-nosnippet>944</a>    }
-<a href=#945 id=945 data-nosnippet>945</a>
-<a href=#946 id=946 data-nosnippet>946</a>    <span class="kw">pub fn </span>min_snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i8&gt; {
-<a href=#947 id=947 data-nosnippet>947</a>        <span class="self">self</span>.options.min_snr
-<a href=#948 id=948 data-nosnippet>948</a>    }
-<a href=#949 id=949 data-nosnippet>949</a>
-<a href=#950 id=950 data-nosnippet>950</a>    <span class="kw">pub fn </span>has_unknown_critical_options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#951 id=951 data-nosnippet>951</a>        <span class="self">self</span>.options.has_unknown_critical
-<a href=#952 id=952 data-nosnippet>952</a>    }
-<a href=#953 id=953 data-nosnippet>953</a>
-<a href=#954 id=954 data-nosnippet>954</a>    <span class="kw">pub fn </span>source_route(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]&gt; {
-<a href=#955 id=955 data-nosnippet>955</a>        <span class="self">self</span>.options
-<a href=#956 id=956 data-nosnippet>956</a>            .source_route
-<a href=#957 id=957 data-nosnippet>957</a>            .as_ref()
-<a href=#958 id=958 data-nosnippet>958</a>            .and_then(|range| <span class="self">self</span>.wire.get(range.clone()))
-<a href=#959 id=959 data-nosnippet>959</a>    }
-<a href=#960 id=960 data-nosnippet>960</a>
-<a href=#961 id=961 data-nosnippet>961</a>    <span class="doccomment">/// Iterate decoded source-route hops from the packed option bytes.
-<a href=#962 id=962 data-nosnippet>962</a>    </span><span class="kw">pub fn </span>source_route_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#963 id=963 data-nosnippet>963</a>        RouteHops::new(<span class="self">self</span>.source_route().unwrap_or(<span class="kw-2">&amp;</span>[]))
-<a href=#964 id=964 data-nosnippet>964</a>    }
-<a href=#965 id=965 data-nosnippet>965</a>
-<a href=#966 id=966 data-nosnippet>966</a>    <span class="kw">pub fn </span>trace_route(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]&gt; {
-<a href=#967 id=967 data-nosnippet>967</a>        <span class="self">self</span>.options
-<a href=#968 id=968 data-nosnippet>968</a>            .trace_route
-<a href=#969 id=969 data-nosnippet>969</a>            .as_ref()
-<a href=#970 id=970 data-nosnippet>970</a>            .and_then(|range| <span class="self">self</span>.wire.get(range.clone()))
-<a href=#971 id=971 data-nosnippet>971</a>    }
-<a href=#972 id=972 data-nosnippet>972</a>
-<a href=#973 id=973 data-nosnippet>973</a>    <span class="doccomment">/// Iterate decoded trace-route hops from the packed option bytes.
-<a href=#974 id=974 data-nosnippet>974</a>    </span><span class="kw">pub fn </span>trace_route_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#975 id=975 data-nosnippet>975</a>        RouteHops::new(<span class="self">self</span>.trace_route().unwrap_or(<span class="kw-2">&amp;</span>[]))
+<a href=#905 id=905 data-nosnippet>905</a>    <span class="kw">pub fn </span>salt(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
+<a href=#906 id=906 data-nosnippet>906</a>        <span class="self">self</span>.sec_info().and_then(|sec| sec.salt)
+<a href=#907 id=907 data-nosnippet>907</a>    }
+<a href=#908 id=908 data-nosnippet>908</a>
+<a href=#909 id=909 data-nosnippet>909</a>    <span class="kw">pub fn </span>mic_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;MicSize&gt; {
+<a href=#910 id=910 data-nosnippet>910</a>        <span class="self">self</span>.sec_info().and_then(|sec| sec.scf.mic_size().ok())
+<a href=#911 id=911 data-nosnippet>911</a>    }
+<a href=#912 id=912 data-nosnippet>912</a>
+<a href=#913 id=913 data-nosnippet>913</a>    <span class="doccomment">/// Return the authenticated MIC bytes from the original wire frame.
+<a href=#914 id=914 data-nosnippet>914</a>    </span><span class="kw">pub fn </span>mic(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8] {
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="self">self</span>.wire
+<a href=#916 id=916 data-nosnippet>916</a>            .get(<span class="self">self</span>.header.mic_range.clone())
+<a href=#917 id=917 data-nosnippet>917</a>            .unwrap_or_default()
+<a href=#918 id=918 data-nosnippet>918</a>    }
+<a href=#919 id=919 data-nosnippet>919</a>
+<a href=#920 id=920 data-nosnippet>920</a>    <span class="kw">pub fn </span>mic_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="self">self</span>.mic().len()
+<a href=#922 id=922 data-nosnippet>922</a>    }
+<a href=#923 id=923 data-nosnippet>923</a>
+<a href=#924 id=924 data-nosnippet>924</a>    <span class="kw">pub fn </span>flood_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FloodHops&gt; {
+<a href=#925 id=925 data-nosnippet>925</a>        <span class="self">self</span>.header.flood_hops
+<a href=#926 id=926 data-nosnippet>926</a>    }
+<a href=#927 id=927 data-nosnippet>927</a>
+<a href=#928 id=928 data-nosnippet>928</a>    <span class="kw">pub fn </span>region_code(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">2</span>]&gt; {
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="self">self</span>.options.region_code
+<a href=#930 id=930 data-nosnippet>930</a>    }
+<a href=#931 id=931 data-nosnippet>931</a>
+<a href=#932 id=932 data-nosnippet>932</a>    <span class="kw">pub fn </span>min_rssi(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
+<a href=#933 id=933 data-nosnippet>933</a>        <span class="self">self</span>.options.min_rssi
+<a href=#934 id=934 data-nosnippet>934</a>    }
+<a href=#935 id=935 data-nosnippet>935</a>
+<a href=#936 id=936 data-nosnippet>936</a>    <span class="kw">pub fn </span>min_snr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i8&gt; {
+<a href=#937 id=937 data-nosnippet>937</a>        <span class="self">self</span>.options.min_snr
+<a href=#938 id=938 data-nosnippet>938</a>    }
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a>    <span class="kw">pub fn </span>has_unknown_critical_options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="self">self</span>.options.has_unknown_critical
+<a href=#942 id=942 data-nosnippet>942</a>    }
+<a href=#943 id=943 data-nosnippet>943</a>
+<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">pub fn </span>source_route(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]&gt; {
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="self">self</span>.options
+<a href=#946 id=946 data-nosnippet>946</a>            .source_route
+<a href=#947 id=947 data-nosnippet>947</a>            .as_ref()
+<a href=#948 id=948 data-nosnippet>948</a>            .and_then(|range| <span class="self">self</span>.wire.get(range.clone()))
+<a href=#949 id=949 data-nosnippet>949</a>    }
+<a href=#950 id=950 data-nosnippet>950</a>
+<a href=#951 id=951 data-nosnippet>951</a>    <span class="doccomment">/// Iterate decoded source-route hops from the packed option bytes.
+<a href=#952 id=952 data-nosnippet>952</a>    </span><span class="kw">pub fn </span>source_route_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#953 id=953 data-nosnippet>953</a>        RouteHops::new(<span class="self">self</span>.source_route().unwrap_or(<span class="kw-2">&amp;</span>[]))
+<a href=#954 id=954 data-nosnippet>954</a>    }
+<a href=#955 id=955 data-nosnippet>955</a>
+<a href=#956 id=956 data-nosnippet>956</a>    <span class="kw">pub fn </span>trace_route(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]&gt; {
+<a href=#957 id=957 data-nosnippet>957</a>        <span class="self">self</span>.options
+<a href=#958 id=958 data-nosnippet>958</a>            .trace_route
+<a href=#959 id=959 data-nosnippet>959</a>            .as_ref()
+<a href=#960 id=960 data-nosnippet>960</a>            .and_then(|range| <span class="self">self</span>.wire.get(range.clone()))
+<a href=#961 id=961 data-nosnippet>961</a>    }
+<a href=#962 id=962 data-nosnippet>962</a>
+<a href=#963 id=963 data-nosnippet>963</a>    <span class="doccomment">/// Iterate decoded trace-route hops from the packed option bytes.
+<a href=#964 id=964 data-nosnippet>964</a>    </span><span class="kw">pub fn </span>trace_route_hops(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RouteHops&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#965 id=965 data-nosnippet>965</a>        RouteHops::new(<span class="self">self</span>.trace_route().unwrap_or(<span class="kw-2">&amp;</span>[]))
+<a href=#966 id=966 data-nosnippet>966</a>    }
+<a href=#967 id=967 data-nosnippet>967</a>
+<a href=#968 id=968 data-nosnippet>968</a>    <span class="kw">pub fn </span>source_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#969 id=969 data-nosnippet>969</a>        <span class="self">self</span>.source_route()
+<a href=#970 id=970 data-nosnippet>970</a>            .map(|route| route.len() / <span class="number">2</span>)
+<a href=#971 id=971 data-nosnippet>971</a>            .unwrap_or(<span class="number">0</span>)
+<a href=#972 id=972 data-nosnippet>972</a>    }
+<a href=#973 id=973 data-nosnippet>973</a>
+<a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">pub fn </span>trace_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#975 id=975 data-nosnippet>975</a>        <span class="self">self</span>.trace_route().map(|route| route.len() / <span class="number">2</span>).unwrap_or(<span class="number">0</span>)
 <a href=#976 id=976 data-nosnippet>976</a>    }
-<a href=#977 id=977 data-nosnippet>977</a>
-<a href=#978 id=978 data-nosnippet>978</a>    <span class="kw">pub fn </span>source_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#979 id=979 data-nosnippet>979</a>        <span class="self">self</span>.source_route()
-<a href=#980 id=980 data-nosnippet>980</a>            .map(|route| route.len() / <span class="number">2</span>)
-<a href=#981 id=981 data-nosnippet>981</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#982 id=982 data-nosnippet>982</a>    }
-<a href=#983 id=983 data-nosnippet>983</a>
-<a href=#984 id=984 data-nosnippet>984</a>    <span class="kw">pub fn </span>trace_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#985 id=985 data-nosnippet>985</a>        <span class="self">self</span>.trace_route().map(|route| route.len() / <span class="number">2</span>).unwrap_or(<span class="number">0</span>)
-<a href=#986 id=986 data-nosnippet>986</a>    }
-<a href=#987 id=987 data-nosnippet>987</a>}
-<a href=#988 id=988 data-nosnippet>988</a>
-<a href=#989 id=989 data-nosnippet>989</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
-<a href=#990 id=990 data-nosnippet>990</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#991 id=991 data-nosnippet>991</a></span><span class="kw">pub enum </span>MacEventRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#992 id=992 data-nosnippet>992</a>    <span class="doccomment">/// Accepted inbound packet with parsed metadata and resolved sender/channel information.
-<a href=#993 id=993 data-nosnippet>993</a>    </span>Received(ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt;),
-<a href=#994 id=994 data-nosnippet>994</a>    <span class="doccomment">/// Matching transport ACK received.
-<a href=#995 id=995 data-nosnippet>995</a>    </span>AckReceived {
-<a href=#996 id=996 data-nosnippet>996</a>        peer: PublicKey,
-<a href=#997 id=997 data-nosnippet>997</a>        receipt: SendReceipt,
-<a href=#998 id=998 data-nosnippet>998</a>    },
-<a href=#999 id=999 data-nosnippet>999</a>    <span class="doccomment">/// Pending ACK timed out.
-<a href=#1000 id=1000 data-nosnippet>1000</a>    </span>AckTimeout {
-<a href=#1001 id=1001 data-nosnippet>1001</a>        peer: PublicKey,
-<a href=#1002 id=1002 data-nosnippet>1002</a>        receipt: SendReceipt,
-<a href=#1003 id=1003 data-nosnippet>1003</a>    },
-<a href=#1004 id=1004 data-nosnippet>1004</a>    <span class="doccomment">/// Frame was successfully handed to the radio transmitter.
-<a href=#1005 id=1005 data-nosnippet>1005</a>    ///
-<a href=#1006 id=1006 data-nosnippet>1006</a>    /// `identity_id` + `receipt` together form the identity-scoped send token.
-<a href=#1007 id=1007 data-nosnippet>1007</a>    /// `receipt` is `Some` only for ACK-requested sends.
-<a href=#1008 id=1008 data-nosnippet>1008</a>    </span>Transmitted {
-<a href=#1009 id=1009 data-nosnippet>1009</a>        identity_id: LocalIdentityId,
-<a href=#1010 id=1010 data-nosnippet>1010</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#1011 id=1011 data-nosnippet>1011</a>    },
-<a href=#1012 id=1012 data-nosnippet>1012</a>    <span class="doccomment">/// A repeater was overheard forwarding this frame
-<a href=#1013 id=1013 data-nosnippet>1013</a>    /// (AwaitingForward → AwaitingAck transition).
-<a href=#1014 id=1014 data-nosnippet>1014</a>    </span>Forwarded {
-<a href=#1015 id=1015 data-nosnippet>1015</a>        identity_id: LocalIdentityId,
-<a href=#1016 id=1016 data-nosnippet>1016</a>        receipt: SendReceipt,
-<a href=#1017 id=1017 data-nosnippet>1017</a>        hint: <span class="prelude-ty">Option</span>&lt;RouterHint&gt;,
-<a href=#1018 id=1018 data-nosnippet>1018</a>    },
-<a href=#1019 id=1019 data-nosnippet>1019</a>}
+<a href=#977 id=977 data-nosnippet>977</a>}
+<a href=#978 id=978 data-nosnippet>978</a>
+<a href=#979 id=979 data-nosnippet>979</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
+<a href=#980 id=980 data-nosnippet>980</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#981 id=981 data-nosnippet>981</a></span><span class="kw">pub enum </span>MacEventRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#982 id=982 data-nosnippet>982</a>    <span class="doccomment">/// Accepted inbound packet with parsed metadata and resolved sender/channel information.
+<a href=#983 id=983 data-nosnippet>983</a>    </span>Received(ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt;),
+<a href=#984 id=984 data-nosnippet>984</a>    <span class="doccomment">/// Matching transport ACK received.
+<a href=#985 id=985 data-nosnippet>985</a>    </span>AckReceived {
+<a href=#986 id=986 data-nosnippet>986</a>        peer: PublicKey,
+<a href=#987 id=987 data-nosnippet>987</a>        receipt: SendReceipt,
+<a href=#988 id=988 data-nosnippet>988</a>    },
+<a href=#989 id=989 data-nosnippet>989</a>    <span class="doccomment">/// Pending ACK timed out.
+<a href=#990 id=990 data-nosnippet>990</a>    </span>AckTimeout {
+<a href=#991 id=991 data-nosnippet>991</a>        peer: PublicKey,
+<a href=#992 id=992 data-nosnippet>992</a>        receipt: SendReceipt,
+<a href=#993 id=993 data-nosnippet>993</a>    },
+<a href=#994 id=994 data-nosnippet>994</a>    <span class="doccomment">/// Frame was successfully handed to the radio transmitter.
+<a href=#995 id=995 data-nosnippet>995</a>    ///
+<a href=#996 id=996 data-nosnippet>996</a>    /// `identity_id` + `receipt` together form the identity-scoped send token.
+<a href=#997 id=997 data-nosnippet>997</a>    /// `receipt` is `Some` only for ACK-requested sends.
+<a href=#998 id=998 data-nosnippet>998</a>    </span>Transmitted {
+<a href=#999 id=999 data-nosnippet>999</a>        identity_id: LocalIdentityId,
+<a href=#1000 id=1000 data-nosnippet>1000</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#1001 id=1001 data-nosnippet>1001</a>    },
+<a href=#1002 id=1002 data-nosnippet>1002</a>    <span class="doccomment">/// A repeater was overheard forwarding this frame
+<a href=#1003 id=1003 data-nosnippet>1003</a>    /// (AwaitingForward → AwaitingAck transition).
+<a href=#1004 id=1004 data-nosnippet>1004</a>    </span>Forwarded {
+<a href=#1005 id=1005 data-nosnippet>1005</a>        identity_id: LocalIdentityId,
+<a href=#1006 id=1006 data-nosnippet>1006</a>        receipt: SendReceipt,
+<a href=#1007 id=1007 data-nosnippet>1007</a>        hint: <span class="prelude-ty">Option</span>&lt;RouterHint&gt;,
+<a href=#1008 id=1008 data-nosnippet>1008</a>    },
+<a href=#1009 id=1009 data-nosnippet>1009</a>}
 </code></pre></div></section></main></body></html>

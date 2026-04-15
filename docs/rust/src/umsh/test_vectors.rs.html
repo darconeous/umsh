@@ -324,12 +324,12 @@
 <a href=#324 id=324 data-nosnippet>324</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out).unwrap();
 <a href=#325 id=325 data-nosnippet>325</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Option | Number | Delta | Length | Encoding |"</span>).unwrap();
 <a href=#326 id=326 data-nosnippet>326</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"|---|---:|---:|---:|---|"</span>).unwrap();
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="macro">writeln!</span>(
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="string">"| Region Code | 1 | 1 | 2 | `12` then value `78 53` |"
-<a href=#330 id=330 data-nosnippet>330</a>    </span>)
-<a href=#331 id=331 data-nosnippet>331</a>    .unwrap();
-<a href=#332 id=332 data-nosnippet>332</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Trace Route | 2 | 1 | 0 | `10` |"</span>).unwrap();
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Trace Route | 2 | 2 | 0 | `20` |"</span>).unwrap();
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="macro">writeln!</span>(
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw-2">&amp;mut </span>out,
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="string">"| Region Code | 11 | 9 | 2 | `92` then value `78 53` |"
+<a href=#331 id=331 data-nosnippet>331</a>    </span>)
+<a href=#332 id=332 data-nosnippet>332</a>    .unwrap();
 <a href=#333 id=333 data-nosnippet>333</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| End marker | — | — | — | `FF` |"</span>).unwrap();
 <a href=#334 id=334 data-nosnippet>334</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out).unwrap();
 <a href=#335 id=335 data-nosnippet>335</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Field | Value | Hex |"</span>).unwrap();
@@ -341,7 +341,7 @@
 <a href=#341 id=341 data-nosnippet>341</a>    .unwrap();
 <a href=#342 id=342 data-nosnippet>342</a>    <span class="macro">writeln!</span>(
 <a href=#343 id=343 data-nosnippet>343</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="string">"| Options | Region code + trace route + end marker | `12 78 53 10 FF` |"
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="string">"| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
 <a href=#345 id=345 data-nosnippet>345</a>    </span>)
 <a href=#346 id=346 data-nosnippet>346</a>    .unwrap();
 <a href=#347 id=347 data-nosnippet>347</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |"</span>).unwrap();
@@ -627,8 +627,8 @@
 <a href=#627 id=627 data-nosnippet>627</a>        .frame_counter(<span class="number">10</span>)
 <a href=#628 id=628 data-nosnippet>628</a>        .encrypted()
 <a href=#629 id=629 data-nosnippet>629</a>        .flood_hops(<span class="number">4</span>)
-<a href=#630 id=630 data-nosnippet>630</a>        .region_code([<span class="number">0x78</span>, <span class="number">0x53</span>])
-<a href=#631 id=631 data-nosnippet>631</a>        .trace_route()
+<a href=#630 id=630 data-nosnippet>630</a>        .trace_route()
+<a href=#631 id=631 data-nosnippet>631</a>        .region_code([<span class="number">0x78</span>, <span class="number">0x53</span>])
 <a href=#632 id=632 data-nosnippet>632</a>        .payload(<span class="string">b"hey"</span>)
 <a href=#633 id=633 data-nosnippet>633</a>        .build()
 <a href=#634 id=634 data-nosnippet>634</a>        .unwrap();

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-945f4d99.js";
+            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -384,7 +384,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <ul>
 <li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
 <li><strong>Station callsign</strong> (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding</li>
-<li><strong>Region codes</strong> (packet option 1) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
+<li><strong>Region codes</strong> (packet option 11) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
 </ul>
 <h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
 <p>All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:</p>
@@ -695,7 +695,7 @@ unicast semantics without encryption.</p>
 </thead>
 <tbody>
 <tr><td style="text-align: right">0</td><td><em>RESERVED</em></td><td>Non-Critical, Static</td><td></td></tr>
-<tr><td style="text-align: right">1</td><td>Region Code</td><td>Critical, Static</td><td>2 bytes</td></tr>
+<tr><td style="text-align: right">1</td><td><em>UNASSIGNED</em></td><td>Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">2</td><td>Trace Route</td><td>Non-Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">3</td><td>Source Route</td><td>Critical, Dynamic</td><td>0+ bytes</td></tr>
 <tr><td style="text-align: right">4</td><td>Operator Callsign</td><td>Non-Critical, Static</td><td>ARNCE/HAM-64</td></tr>
@@ -704,23 +704,22 @@ unicast semantics without encryption.</p>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">8</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Static</td><td></td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">11</td><td>Region Code</td><td>Critical, Dynamic</td><td>2 bytes</td></tr>
 </tbody>
 </table>
 </div>
-<h3 id="region-code-option-1"><a class="header" href="#region-code-option-1">Region Code (option 1)</a></h3>
+<h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
 <li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
 <li>This option is not enforced until the source route list is exhausted.</li>
+<li>Multiple region-code options may appear on the same packet. In that case, a repeater may flood-forward the packet if any one of the listed regions matches local policy.</li>
+<li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
+<li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
+<li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
+<li>Region insertion applies only during flood forwarding. A source-routed packet without a region does not gain one until its source route is exhausted and it transitions to flooding.</li>
 </ul>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>This option may be renumbered in the future so that it is dynamic.
-This would allow repeaters to tag packets without regions to use local
-region codes, helping to localize the flow of flood traffic across the
-mesh.</p>
-</blockquote>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
 <p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
@@ -1170,6 +1169,7 @@ K_mic = okm[16..31]
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="routing-overview"><a class="header" href="#routing-overview">Routing Overview</a></h1>
 <p>UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.</p>
+<p>In general, it is the responsibility of the individual endpoints to properly route their traffic to their destination.</p>
 <h2 id="direct-single-hop-delivery"><a class="header" href="#direct-single-hop-delivery">Direct (Single-Hop) Delivery</a></h2>
 <p>The simplest case: the sender transmits a packet with no source-route option and no flood hop count. Only nodes within direct radio range will receive it. No repeater forwarding occurs. This is appropriate when the destination is known to be a direct neighbor, or for local broadcasts and beacons that do not need multi-hop propagation.</p>
 <h2 id="flood-routing-1"><a class="header" href="#flood-routing-1">Flood Routing</a></h2>
@@ -1178,8 +1178,9 @@ K_mic = okm[16..31]
 <p>See <a href="#flood-hop-count">Packet Structure § Flood Hop Count</a> for encoding details and <a href="#forwarding-procedure">Repeater Operation § Forwarding Procedure</a> for the forwarding rules.</p>
 <h3 id="region-scoping"><a class="header" href="#region-scoping">Region Scoping</a></h3>
 <p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for that specific geographic region. A repeater that does not recognize or is not configured for the region MUST NOT flood-forward the packet.
+If multiple region code options are present, matching any one of them is sufficient for flood forwarding. If a packet is being flood-forwarded without a region code, a repeater may add one according to local policy, but it must never rewrite an existing region code or add a second one.
 Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
-<p>See <a href="#region-code-option-1">Packet Options § Region Code</a>.</p>
+<p>See <a href="#region-code-option-11">Packet Options § Region Code</a>.</p>
 <h3 id="signal-quality-filtering"><a class="header" href="#signal-quality-filtering">Signal-Quality Filtering</a></h3>
 <p>Two packet options let the sender control which links are acceptable for flood forwarding:</p>
 <ul>
@@ -1433,14 +1434,14 @@ delay = uniform_random(0, W)
 <li>Every currently defined on-mesh packet type is routable.
 <ul>
 <li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
-<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
+<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).</li>
 </ul>
 </li>
 <li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="#source-route-option-3">source route</a>, <a href="#trace-route-option-2">trace route</a>, <a href="#flood-hop-count">hop count</a>, etc)
 <ul>
-<li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
 <li>Typical examples are flood hop counts, trace routes, source routes.</li>
-<li>Repeaters themselves to not add the Route Retry flag, only the original sender does that.</li>
+<li>A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.</li>
+<li>The Route Retry flag MUST NOT be added to a packet by anyone other than the original sender.</li>
 <li>These mutations do <strong>not</strong> create a new logical packet.</li>
 </ul>
 </li>
@@ -1532,7 +1533,10 @@ delay = uniform_random(0, W)
 <ul>
 <li>If the source-route option is now empty:
 <ul>
-<li>If the packet has a region code option and this repeater is not configured for that region, do not forward.</li>
+<li>If the packet carries one or more region code options and none of them match this repeater’s configured regions, do not forward.</li>
+<li>If the packet has no region code option, the repeater MAY insert one according to local policy before flood-forwarding.</li>
+<li>If one or more region codes are already present, the repeater MUST preserve them unchanged.</li>
+<li>A repeater MUST NOT add a second region code to a packet that already carries at least one region code.</li>
 <li>If the packet has a flood hop count field with <code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.</li>
 <li>Otherwise, do not forward.</li>
 </ul>
@@ -1559,11 +1563,12 @@ delay = uniform_random(0, W)
 </li>
 <li>
 <p><strong>Retransmit</strong></p>
+</li>
+</ol>
 <ul>
 <li>Forward the modified packet.</li>
 </ul>
-</li>
-</ol>
+<p>Bridges follow the same packet-rewrite rules as repeaters. A bridge that tunnels traffic to a physically different location generally should not forward flood packets that lack a region code.</p>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
 <p>Repeaters do not generate MAC acks — acks are generated only by the <a href="#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.</p>
 <p>This applies to:</p>
@@ -4262,8 +4267,8 @@ C4
 <tr><th>Option</th><th style="text-align: right">Number</th><th style="text-align: right">Delta</th><th style="text-align: right">Length</th><th>Encoding</th></tr>
 </thead>
 <tbody>
-<tr><td>Region Code</td><td style="text-align: right">1</td><td style="text-align: right">1</td><td style="text-align: right">2</td><td><code>12</code> then value <code>78 53</code></td></tr>
-<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">1</td><td style="text-align: right">0</td><td><code>10</code></td></tr>
+<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">2</td><td style="text-align: right">0</td><td><code>20</code></td></tr>
+<tr><td>Region Code</td><td style="text-align: right">11</td><td style="text-align: right">9</td><td style="text-align: right">2</td><td><code>92</code> then value <code>78 53</code></td></tr>
 <tr><td>End marker</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td><code>FF</code></td></tr>
 </tbody>
 </table>
@@ -4275,20 +4280,20 @@ C4
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
-<tr><td>Options</td><td>Region code + trace route + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
+<tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
 <tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>6C 28 FD</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>6F 2F A3</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>3C 80 D2 24 72 8E 15 FF 0C B6 EE CA 27 90 59 AF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>AB 87 DC</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>83 07 00 18 AA 22 DB FC 93 86 B8 D1 F0 74 85 39</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00
-00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE
-CA 27 90 59 AF
+<pre><code class="language-text">D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00
+00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8
+D1 F0 74 85 39
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>

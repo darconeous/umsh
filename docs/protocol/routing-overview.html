@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-945f4d99.js";
+            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -176,6 +176,7 @@
                     <main>
                         <h1 id="routing-overview"><a class="header" href="#routing-overview">Routing Overview</a></h1>
 <p>UMSH packets can be delivered directly to nodes within radio range, flooded across the mesh, source-routed through a specific sequence of repeaters, or delivered using a hybrid of source routing and flooding. This chapter gives a high-level picture of how these mechanisms fit together; detailed procedures are covered in the sections linked below.</p>
+<p>In general, it is the responsibility of the individual endpoints to properly route their traffic to their destination.</p>
 <h2 id="direct-single-hop-delivery"><a class="header" href="#direct-single-hop-delivery">Direct (Single-Hop) Delivery</a></h2>
 <p>The simplest case: the sender transmits a packet with no source-route option and no flood hop count. Only nodes within direct radio range will receive it. No repeater forwarding occurs. This is appropriate when the destination is known to be a direct neighbor, or for local broadcasts and beacons that do not need multi-hop propagation.</p>
 <h2 id="flood-routing"><a class="header" href="#flood-routing">Flood Routing</a></h2>
@@ -184,8 +185,9 @@
 <p>See <a href="packet-structure.html#flood-hop-count">Packet Structure § Flood Hop Count</a> for encoding details and <a href="repeater-operation.html#forwarding-procedure">Repeater Operation § Forwarding Procedure</a> for the forwarding rules.</p>
 <h3 id="region-scoping"><a class="header" href="#region-scoping">Region Scoping</a></h3>
 <p>The <strong>region code option</strong> restricts flood forwarding to repeaters configured for that specific geographic region. A repeater that does not recognize or is not configured for the region MUST NOT flood-forward the packet.
+If multiple region code options are present, matching any one of them is sufficient for flood forwarding. If a packet is being flood-forwarded without a region code, a repeater may add one according to local policy, but it must never rewrite an existing region code or add a second one.
 Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.</p>
-<p>See <a href="packet-options.html#region-code-option-1">Packet Options § Region Code</a>.</p>
+<p>See <a href="packet-options.html#region-code-option-11">Packet Options § Region Code</a>.</p>
 <h3 id="signal-quality-filtering"><a class="header" href="#signal-quality-filtering">Signal-Quality Filtering</a></h3>
 <p>Two packet options let the sender control which links are acceptable for flood forwarding:</p>
 <ul>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-945f4d99.js";
+            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -345,8 +345,8 @@ C4
 <tr><th>Option</th><th style="text-align: right">Number</th><th style="text-align: right">Delta</th><th style="text-align: right">Length</th><th>Encoding</th></tr>
 </thead>
 <tbody>
-<tr><td>Region Code</td><td style="text-align: right">1</td><td style="text-align: right">1</td><td style="text-align: right">2</td><td><code>12</code> then value <code>78 53</code></td></tr>
-<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">1</td><td style="text-align: right">0</td><td><code>10</code></td></tr>
+<tr><td>Trace Route</td><td style="text-align: right">2</td><td style="text-align: right">2</td><td style="text-align: right">0</td><td><code>20</code></td></tr>
+<tr><td>Region Code</td><td style="text-align: right">11</td><td style="text-align: right">9</td><td style="text-align: right">2</td><td><code>92</code> then value <code>78 53</code></td></tr>
 <tr><td>End marker</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td><code>FF</code></td></tr>
 </tbody>
 </table>
@@ -358,20 +358,20 @@ C4
 </thead>
 <tbody>
 <tr><td>FCF</td><td>VER=3, TYPE=2 (unicast), S=0, O=1, H=1</td><td><code>D3</code></td></tr>
-<tr><td>Options</td><td>Region code + trace route + end marker</td><td><code>12 78 53 10 FF</code></td></tr>
+<tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
 <tr><td>FHOPS</td><td>FHOPS_REM=4, FHOPS_ACC=0</td><td><code>40</code></td></tr>
 <tr><td>DST</td><td>Node B hint</td><td><code>6C 28 FD</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>6F 2F A3</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>3C 80 D2 24 72 8E 15 FF 0C B6 EE CA 27 90 59 AF</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>AB 87 DC</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>83 07 00 18 AA 22 DB FC 93 86 B8 D1 F0 74 85 39</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D3 12 78 53 10 FF 40 6C 28 FD ED 54 A5 E0 00 00
-00 0A 6F 2F A3 3C 80 D2 24 72 8E 15 FF 0C B6 EE
-CA 27 90 59 AF
+<pre><code class="language-text">D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00
+00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8
+D1 F0 74 85 39
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-945f4d99.js";
+            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -182,14 +182,14 @@
 <li>Every currently defined on-mesh packet type is routable.
 <ul>
 <li>In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.</li>
-<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics.</li>
+<li>Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).</li>
 </ul>
 </li>
 <li>Repeaters MUST mutate specific dynamic routing metadata while forwarding (<a href="packet-options.html#source-route-option-3">source route</a>, <a href="packet-options.html#trace-route-option-2">trace route</a>, <a href="packet-structure.html#flood-hop-count">hop count</a>, etc)
 <ul>
-<li>A repeater MUST NOT simply repeat a packet without making specific changes.</li>
 <li>Typical examples are flood hop counts, trace routes, source routes.</li>
-<li>Repeaters themselves to not add the Route Retry flag, only the original sender does that.</li>
+<li>A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.</li>
+<li>The Route Retry flag MUST NOT be added to a packet by anyone other than the original sender.</li>
 <li>These mutations do <strong>not</strong> create a new logical packet.</li>
 </ul>
 </li>
@@ -281,7 +281,10 @@
 <ul>
 <li>If the source-route option is now empty:
 <ul>
-<li>If the packet has a region code option and this repeater is not configured for that region, do not forward.</li>
+<li>If the packet carries one or more region code options and none of them match this repeater’s configured regions, do not forward.</li>
+<li>If the packet has no region code option, the repeater MAY insert one according to local policy before flood-forwarding.</li>
+<li>If one or more region codes are already present, the repeater MUST preserve them unchanged.</li>
+<li>A repeater MUST NOT add a second region code to a packet that already carries at least one region code.</li>
 <li>If the packet has a flood hop count field with <code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.</li>
 <li>Otherwise, do not forward.</li>
 </ul>
@@ -308,11 +311,12 @@
 </li>
 <li>
 <p><strong>Retransmit</strong></p>
+</li>
+</ol>
 <ul>
 <li>Forward the modified packet.</li>
 </ul>
-</li>
-</ol>
+<p>Bridges follow the same packet-rewrite rules as repeaters. A bridge that tunnels traffic to a physically different location generally should not forward flood packets that lack a region code.</p>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
 <p>Repeaters do not generate MAC acks — acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.</p>
 <p>This applies to:</p>
