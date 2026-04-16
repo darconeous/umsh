@@ -33,7 +33,7 @@ Where:
 
 Because the ack tag requires knowledge of the pairwise `K_enc`, it cannot be forged by a passive observer — even one who received the original packet in its entirety.
 
-The ack is routed back to the original sender using whatever routing state is available — a cached source route, a flood scoped by `FHOPS_ACC`, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.
+The ack is routed back to the original sender using whatever routing state is available — a cached source route, a cached flood response scoped by `FHOPS_ACC` and any learned region-code options, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.
 
 ## Unicast Packet
 

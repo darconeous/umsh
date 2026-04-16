@@ -1252,8 +1252,11 @@ impl<
                 Some(CachedRoute::Source(route)) => {
                     builder = builder.source_route(route.as_slice());
                 }
-                Some(CachedRoute::Flood { hops }) => {
+                Some(CachedRoute::Flood { hops, regions }) => {
                     builder = builder.flood_hops((*hops).clamp(1, 15));
+                    for region in regions {
+                        builder = builder.region_code(*region);
+                    }
                 }
                 None => {}
             }
@@ -3404,13 +3407,37 @@ impl<
         }
 
         if let Some(flood_hops) = header.flood_hops {
+            let regions = Self::region_codes_from_options(frame, header.options_range.clone());
             self.peer_registry.update_route(
                 peer_id,
                 crate::CachedRoute::Flood {
                     hops: flood_hops.accumulated(),
+                    regions,
                 },
             );
         }
+    }
+
+    fn region_codes_from_options(
+        frame: &[u8],
+        options_range: core::ops::Range<usize>,
+    ) -> Vec<[u8; 2], 8> {
+        let mut regions = Vec::new();
+        if options_range.is_empty() {
+            return regions;
+        }
+        for entry in umsh_core::iter_options(frame, options_range) {
+            let Ok((number, value)) = entry else {
+                continue;
+            };
+            if OptionNumber::from(number) != OptionNumber::RegionCode || value.len() != 2 {
+                continue;
+            }
+            if regions.push([value[0], value[1]]).is_err() {
+                break;
+            }
+        }
+        regions
     }
 
     fn resolve_broadcast_source(
@@ -3980,7 +4007,7 @@ impl<
             .peer_registry
             .lookup_by_key(peer)
             .and_then(|(_, info)| match info.route.as_ref() {
-                Some(crate::CachedRoute::Flood { hops }) => Some((*hops).clamp(1, 15)),
+                Some(crate::CachedRoute::Flood { hops, .. }) => Some((*hops).clamp(1, 15)),
                 _ => None,
             });
         let route_len = u8::try_from(source_route.len())

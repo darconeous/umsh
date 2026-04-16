@@ -53,7 +53,7 @@ Receivers that see an unknown source hint on an authenticated packet should trea
 
 ### How does a MAC Ack get routed back to the original sender?
 
-MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet's trace route, or a flood scoped by `FHOPS_ACC`. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
+MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet's trace route, or a flood scoped by the inbound packet's `FHOPS_ACC` together with any learned region-code options. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
 
 Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop's retransmission of the same packet (see [Forwarding Confirmation](repeater-operation.md#forwarding-confirmation)).
 

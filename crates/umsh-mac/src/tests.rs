@@ -1503,6 +1503,37 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
 }
 
 #[test]
+fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
+    let mut mac = make_mac();
+    let peer_key = PublicKey([0xAB; 32]);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::from_slice(&[[0x31, 0xD9], [0x78, 0x53]]).unwrap(),
+        },
+    );
+
+    mac.queue_mac_ack_for_peer(peer_id, peer_key.hint(), [0xA5; 8])
+        .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+    assert_eq!(header.flood_hops, Some(FloodHops::new(2, 0).unwrap()));
+    let mut regions = std::vec::Vec::<[u8; 2]>::new();
+    for entry in iter_options(queued.frame.as_slice(), header.options_range.clone()) {
+        let (number, value) = entry.unwrap();
+        if OptionNumber::from(number) != OptionNumber::RegionCode {
+            continue;
+        }
+        regions.push([value[0], value[1]]);
+    }
+    assert_eq!(regions.as_slice(), &[[0x31, 0xD9], [0x78, 0x53]]);
+}
+
+#[test]
 fn queued_mac_ack_transmits_before_application_traffic() {
     let mut mac = make_mac();
     mac.tx_queue_mut()
@@ -3047,7 +3078,59 @@ fn receive_one_learns_flood_hops_for_multicast_sender() {
     assert!(handled);
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
-        Some(CachedRoute::Flood { hops: 2 })
+        Some(CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
+    let mut mac = make_mac();
+    let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    mac.add_channel(channel_key.clone()).unwrap();
+
+    let derived = mac.crypto().derive_channel_keys(&channel_key);
+    let keys = PairwiseKeys {
+        k_enc: derived.k_enc,
+        k_mic: derived.k_mic,
+    };
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .multicast(channel_id)
+        .source_full(remote.public_key())
+        .frame_counter(11)
+        .encrypted()
+        .option(OptionNumber::RegionCode, &[0x31, 0xD9])
+        .option(OptionNumber::RegionCode, &[0x78, 0x53])
+        .flood_hops(4)
+        .payload(b"group")
+        .build()
+        .unwrap();
+    {
+        let header = packet.header().unwrap();
+        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 2).unwrap().0;
+    }
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(handled);
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::from_slice(&[[0x31, 0xD9], [0x78, 0x53]]).unwrap(),
+        })
     );
 }
 

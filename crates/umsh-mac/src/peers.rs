@@ -13,8 +13,8 @@ pub struct PeerId(pub u8);
 pub enum CachedRoute {
     /// Explicit source route.
     Source(Vec<RouterHint, 15>),
-    /// Flood-distance estimate.
-    Flood { hops: u8 },
+    /// Flood-delivery parameters learned from an inbound packet.
+    Flood { hops: u8, regions: Vec<[u8; 2], 8> },
 }
 
 /// Shared metadata tracked for a remote peer.

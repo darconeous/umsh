@@ -50,12 +50,75 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
 | 11 | Region Code | Critical, Dynamic | 2 bytes |
 
+
+### Trace Route (option 2)
+- Semantics: if present, repeaters prepend their own repeater hint before retransmitting.
+- If absent, no trace-route information is added automatically.
+- If more than one option with this number is present, the packet MUST be dropped.
+- Value layout: see [Trace Route Option Value](#trace-route-option-value).
+
+### Source Route (option 3)
+- Semantics: contains an ordered list of repeater hints designating the forwarding path.
+- If more than one option with this number is present, the packet MUST be dropped.
+- Repeater behavior:
+  - Only the repeater matching the first hint may forward the packet.
+  - That repeater removes its own hint before retransmission.
+  - If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
+    - This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.
+  - Repeaters that do not match the first hint must not forward the packet.
+- Value layout: see [Source Route Option Value](#source-route-option-value).
+
+### Operator Callsign (option 4)
+- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
+- Semantics: identifies the original packet sender's amateur radio callsign.
+- Use: required for locally originated packets in `Licensed-Only` amateur operation.
+- In `Hybrid` operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.
+
+### Minimum RSSI (option 5)
+- Type: unsigned 1-byte integer, interpreted as a negative dBm value
+- If more than one option with this number is present, the packet MUST be dropped.
+- Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.
+- Example: value `130` means `-130 dBm`
+- If present with no value (length 0), default is `-100 dBm` (THIS VALUE IS SUBJECT TO CHANGE)
+- If a repeater has a locally configured minimum RSSI, it must use the higher of the packet's minimum RSSI threshold and the repeater's configured minimum RSSI threshold.
+
+### Route Retry (option 6)
+- Type: zero-length flag
+- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.
+- If more than one option with this number is present, the packet MUST be dropped.
+- This option is intended for sender-originated route recovery, not for ordinary first transmission.
+- When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
+- The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
+- A sender using this option for route recovery typically:
+  - removes the stale source-route option
+  - adds or refreshes flood hops
+  - includes a trace-route option to learn a replacement route
+  - preserves the same frame counter and payload
+- This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.
+
+### Station Callsign (option 7)
+- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
+- Semantics: identifies the transmitting station's amateur radio callsign.
+- If absent, the station callsign is assumed to equal the source callsign (if present)
+- This option is critical because repeaters must replace or remove it during forwarding.
+- Use:
+  - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
+  - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
+  - in `Unlicensed` mode, repeaters remove it if present and do not add their own
+
+### Minimum SNR (option 9)
+- Type: signed 1-byte integer, in dB
+- Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
+- If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
+- If more than one option with this number is present, the packet MUST be dropped.
+- If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
+
 ### Region Code (option 11)
 - Type: 2-byte region identifier
 - Semantics: restricts flood-routing to repeaters configured for the specified region.
-- A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.
-- This option is not enforced until the source route list is exhausted.
-- Multiple region-code options may appear on the same packet. In that case, a repeater may flood-forward the packet if any one of the listed regions matches local policy.
+- A repeater that does not recognize or is not configured for the region MUST NOT forward the packet when flooding.
+- This option MUST NOT be enforced until the source route list is exhausted.
+- Multiple region-code options may appear on the same packet. In that case, a repeater MAY flood-forward the packet if any one of the listed regions matches local policy.
 - Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.
 - A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.
 - Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.
@@ -96,63 +159,6 @@ These collisions are rarely of practical concern. If a region code in one part o
 > to be immediately renderable in user interfaces.
 
 The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
-
-### Trace Route (option 2)
-- Semantics: if present, repeaters prepend their own repeater hint before retransmitting.
-- If absent, no trace-route information is added automatically.
-- Value layout: see [Trace Route Option Value](#trace-route-option-value).
-
-### Source Route (option 3)
-- Semantics: contains an ordered list of repeater hints designating the forwarding path.
-- Repeater behavior:
-  - Only the repeater matching the first hint may forward the packet.
-  - That repeater removes its own hint before retransmission.
-  - If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
-    - This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.
-  - Repeaters that do not match the first hint must not forward the packet.
-- Value layout: see [Source Route Option Value](#source-route-option-value).
-
-### Operator Callsign (option 4)
-- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
-- Semantics: identifies the original packet sender's amateur radio callsign.
-- Use: required for locally originated packets in `Licensed-Only` amateur operation.
-- In `Hybrid` operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.
-
-### Minimum RSSI (option 5)
-- Type: unsigned 1-byte integer, interpreted as a negative dBm value
-- Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.
-- Example: value `130` means `-130 dBm`
-- If present with no value (length 0), default is `-100 dBm` (THIS VALUE IS SUBJECT TO CHANGE)
-- If a repeater has a locally configured minimum RSSI, it must use the higher of the packet's minimum RSSI threshold and the repeater's configured minimum RSSI threshold.
-
-### Route Retry (option 6)
-- Type: zero-length flag
-- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.
-- This option is intended for sender-originated route recovery, not for ordinary first transmission.
-- When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
-- The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
-- A sender using this option for route recovery typically:
-  - removes the stale source-route option
-  - adds or refreshes flood hops
-  - includes a trace-route option to learn a replacement route
-  - preserves the same frame counter and payload
-- This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.
-
-### Station Callsign (option 7)
-- Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
-- Semantics: identifies the transmitting station's amateur radio callsign.
-- If absent, the station callsign is assumed to equal the source callsign (if present)
-- This option is critical because repeaters must replace or remove it during forwarding.
-- Use:
-  - in `Licensed-Only` mode, repeaters replace or insert it on every forwarded packet
-  - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
-  - in `Unlicensed` mode, repeaters remove it if present and do not add their own
-
-### Minimum SNR (option 9)
-- Type: signed 1-byte integer, in dB
-- Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
-- If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
-- If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
 
 ## Routing Option Layouts
 

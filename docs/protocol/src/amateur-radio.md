@@ -10,11 +10,11 @@ spectrum where amateur operation and unlicensed operation may coexist.
 In `Unlicensed` mode, the node operates only under non-amateur rules.
 
 - Locally originated packets are treated as unlicensed traffic.
-- Encryption and blind unicast are allowed.
-- A repeater may forward any packet it lawfully may retransmit under unlicensed rules.
+- Encryption is enabled by default.
+- A repeater MAY forward any packet it may lawfully retransmit under unlicensed rules.
 - Maximum transmit power and duty cycle are determined by local rules for unlicensed operation.
-- If a forwarded packet carries a [station callsign](packet-options.md#station-callsign-option-7), the repeater removes it rather than replacing it.
-- The repeater must not add its own station callsign.
+- If a forwarded packet carries a [station callsign](packet-options.md#station-callsign-option-7), the repeater MUST remove it rather than replacing it.
+- The repeater SHOULD NOT add its own station callsign.
 
 The specific requirements for unlicensed transmission vary by jurisdiction and frequency, but may include restrictions on transmit power, antenna gain, and/or duty cycle.
 
@@ -23,23 +23,23 @@ The specific requirements for unlicensed transmission vary by jurisdiction and f
 In `Licensed-Only` mode, all locally originated and forwarded traffic is treated
 as amateur-radio traffic.
 
-- Encryption is forbidden. All encrypted packets encountered must be immediately dropped.
-- Locally originated packets must include an [operator callsign](packet-options.md#operator-callsign-option-4).
+- Encryption SHALL NOT be enabled for any packet. All encrypted packets encountered SHOULD be immediately dropped.
+- Locally originated packets MUST include an [operator callsign](packet-options.md#operator-callsign-option-4).
 - Restrictions on transmit power and duty cycle are generally more relaxed.
-- A repeater forwards only packets that already carry an operator callsign.
-- A repeater replaces or inserts the station callsign option with its own callsign on every forwarded packet.
+- A repeater SHALL NOT forward packets that are missing an operator callsign.
+- A repeater SHALL replace or insert the station callsign option with its own callsign on every forwarded packet.
 
-> [!NOTE]
-> Blind unicast is not categorically forbidden by this mode, but the expected utility of using it without encryption is limited.
+> [!TIP]
+> While blind unicast is not categorically forbidden by this mode, the expected utility of using it without encryption is limited.
 
 ### Hybrid
 
 In `Hybrid` mode, the node may operate under either authority depending on the packet.
 
-- A repeater always adds or replaces the station callsign option on forwarded packets.
-- Packets carrying an operator callsign may be forwarded under amateur-radio authority.
-- Packets lacking an operator callsign may still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.
-- If encryption is enabled, the transmission must be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.
+- A repeater SHOULD add or replace the station callsign option on forwarded packets.
+- Packets carrying an operator callsign MAY be forwarded under amateur-radio authority.
+- Packets lacking an operator callsign MAY still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.
+- If the packet has encryption enabled, the transmission MUST be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.
 
 Hybrid mode is useful where amateur stations may use higher power for qualifying amateur traffic, while still allowing encrypted or otherwise unlicensed-only traffic to transit the same repeater at unlicensed settings.
 
