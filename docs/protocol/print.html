@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
+            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -176,10 +176,10 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p>UMSH is an experimental LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as <a href="#cryptography">critical shortcomings</a>—shortcomings that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into this comprehensive specification.</p>
+<p>UMSH is an experimental LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as <a href="#cryptography">critical shortcomings</a>—shortcomings that would practically require backward-incompatible changes to properly fix. What began as a toy protocol has since developed into this comprehensive specification.</p>
+<p>Few, if any, of the ideas presented here are new or exotic. Many come directly from MeshCore — cryptographic addressing, source routing, regions, and more. The key contribution is a clean, extensible design with stronger cryptography and clear layer separation.</p>
+<p>This specification was written with MeshCore V2 in mind, but the ideas are free for anyone to adopt. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well. Point-by-point protocol comparisons with <a href="#comparison-with-meshcore">MeshCore</a>, <a href="#comparison-with-meshtastic">Meshtastic</a>, and <a href="#comparison-with-reticulum">Reticulum</a> are available in the appendices.</p>
 <p>The project repository, reference implementation, and supporting tooling are available on <a href="https://github.com/darconeous/umsh">GitHub</a>.</p>
-<p>The ideas in UMSH are free for anyone to adopt, but was written with MeshCore V2 in mind. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well.</p>
-<p>Point-by-point protocol comparisons with <a href="#comparison-with-meshcore">MeshCore</a>, <a href="#comparison-with-meshtastic">Meshtastic</a>, and <a href="#comparison-with-reticulum">Reticulum</a> are available.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>In UMSH, endpoints are identified
 by public keys, and multicast communication is based on shared symmetric
@@ -566,7 +566,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <li><code>ACK TAG</code> is an 8-byte value derived from the original packet’s MIC and the pairwise encryption key (see <a href="#ack-tag-construction">Ack Tag Construction</a>)</li>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
-<p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a flood scoped by <code>FHOPS_ACC</code>, or both. See <a href="#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
+<p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a cached flood response scoped by <code>FHOPS_ACC</code> and any learned region-code options, or both. See <a href="#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
 <h2 id="unicast-packet"><a class="header" href="#unicast-packet">Unicast Packet</a></h2>
 <p>Unicast packets are addressed by destination hint and carry the source address.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+
@@ -708,13 +708,94 @@ unicast semantics without encryption.</p>
 </tbody>
 </table>
 </div>
+<h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
+<ul>
+<li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>
+<li>If absent, no trace-route information is added automatically.</li>
+<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
+</ul>
+<h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
+<ul>
+<li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
+<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>Repeater behavior:
+<ul>
+<li>Only the repeater matching the first hint may forward the packet.</li>
+<li>That repeater removes its own hint before retransmission.</li>
+<li>If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
+<ul>
+<li>This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.</li>
+</ul>
+</li>
+<li>Repeaters that do not match the first hint must not forward the packet.</li>
+</ul>
+</li>
+<li>Value layout: see <a href="#source-route-option-value">Source Route Option Value</a>.</li>
+</ul>
+<h3 id="operator-callsign-option-4"><a class="header" href="#operator-callsign-option-4">Operator Callsign (option 4)</a></h3>
+<ul>
+<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
+<li>Semantics: identifies the original packet sender’s amateur radio callsign.</li>
+<li>Use: required for locally originated packets in <code>Licensed-Only</code> amateur operation.</li>
+<li>In <code>Hybrid</code> operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.</li>
+</ul>
+<h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
+<ul>
+<li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
+<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
+<li>Example: value <code>130</code> means <code>-130 dBm</code></li>
+<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
+</ul>
+<h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
+<ul>
+<li>Type: zero-length flag</li>
+<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.</li>
+<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
+<li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
+<li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
+<li>A sender using this option for route recovery typically:
+<ul>
+<li>removes the stale source-route option</li>
+<li>adds or refreshes flood hops</li>
+<li>includes a trace-route option to learn a replacement route</li>
+<li>preserves the same frame counter and payload</li>
+</ul>
+</li>
+<li>This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.</li>
+</ul>
+<h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
+<ul>
+<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
+<li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
+<li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
+<li>This option is critical because repeaters must replace or remove it during forwarding.</li>
+<li>Use:
+<ul>
+<li>in <code>Licensed-Only</code> mode, repeaters replace or insert it on every forwarded packet</li>
+<li>in <code>Hybrid</code> mode, repeaters also replace or insert it on every forwarded packet</li>
+<li>in <code>Unlicensed</code> mode, repeaters remove it if present and do not add their own</li>
+</ul>
+</li>
+</ul>
+<h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
+<ul>
+<li>Type: signed 1-byte integer, in dB</li>
+<li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
+<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
+<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
+</ul>
 <h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
-<li>A repeater that does not recognize or is not configured for the region must not forward the packet when flooding.</li>
-<li>This option is not enforced until the source route list is exhausted.</li>
-<li>Multiple region-code options may appear on the same packet. In that case, a repeater may flood-forward the packet if any one of the listed regions matches local policy.</li>
+<li>A repeater that does not recognize or is not configured for the region MUST NOT forward the packet when flooding.</li>
+<li>This option MUST NOT be enforced until the source route list is exhausted.</li>
+<li>Multiple region-code options may appear on the same packet. In that case, a repeater MAY flood-forward the packet if any one of the listed regions matches local policy.</li>
 <li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
 <li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
 <li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
@@ -761,82 +842,6 @@ valid three-letter ARNCE encoding.</p>
 to be immediately renderable in user interfaces.</p>
 </blockquote>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
-<h3 id="trace-route-option-2"><a class="header" href="#trace-route-option-2">Trace Route (option 2)</a></h3>
-<ul>
-<li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>
-<li>If absent, no trace-route information is added automatically.</li>
-<li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
-</ul>
-<h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
-<ul>
-<li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
-<li>Repeater behavior:
-<ul>
-<li>Only the repeater matching the first hint may forward the packet.</li>
-<li>That repeater removes its own hint before retransmission.</li>
-<li>If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
-<ul>
-<li>This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.</li>
-</ul>
-</li>
-<li>Repeaters that do not match the first hint must not forward the packet.</li>
-</ul>
-</li>
-<li>Value layout: see <a href="#source-route-option-value">Source Route Option Value</a>.</li>
-</ul>
-<h3 id="operator-callsign-option-4"><a class="header" href="#operator-callsign-option-4">Operator Callsign (option 4)</a></h3>
-<ul>
-<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
-<li>Semantics: identifies the original packet sender’s amateur radio callsign.</li>
-<li>Use: required for locally originated packets in <code>Licensed-Only</code> amateur operation.</li>
-<li>In <code>Hybrid</code> operation, its presence marks the packet as eligible for forwarding under amateur-radio authority; packets without it may still be forwarded under unlicensed authority if local rules allow.</li>
-</ul>
-<h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
-<ul>
-<li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
-<li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
-<li>Example: value <code>130</code> means <code>-130 dBm</code></li>
-<li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
-<li>If a repeater has a locally configured minimum RSSI, it must use the higher of the packet’s minimum RSSI threshold and the repeater’s configured minimum RSSI threshold.</li>
-</ul>
-<h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
-<ul>
-<li>Type: zero-length flag</li>
-<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.</li>
-<li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
-<li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
-<li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
-<li>A sender using this option for route recovery typically:
-<ul>
-<li>removes the stale source-route option</li>
-<li>adds or refreshes flood hops</li>
-<li>includes a trace-route option to learn a replacement route</li>
-<li>preserves the same frame counter and payload</li>
-</ul>
-</li>
-<li>This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.</li>
-</ul>
-<h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
-<ul>
-<li>Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)</li>
-<li>Semantics: identifies the transmitting station’s amateur radio callsign.</li>
-<li>If absent, the station callsign is assumed to equal the source callsign (if present)</li>
-<li>This option is critical because repeaters must replace or remove it during forwarding.</li>
-<li>Use:
-<ul>
-<li>in <code>Licensed-Only</code> mode, repeaters replace or insert it on every forwarded packet</li>
-<li>in <code>Hybrid</code> mode, repeaters also replace or insert it on every forwarded packet</li>
-<li>in <code>Unlicensed</code> mode, repeaters remove it if present and do not add their own</li>
-</ul>
-</li>
-</ul>
-<h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
-<ul>
-<li>Type: signed 1-byte integer, in dB</li>
-<li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
-<li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
-<li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
-</ul>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
@@ -1656,7 +1661,7 @@ delay = uniform_random(0, W)
 <p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
 <ul>
 <li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</li>
-<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
+<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.</li>
 </ul>
 <p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 <p>In practice, “proven unreachable” usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:</p>
@@ -3153,34 +3158,34 @@ spectrum where amateur operation and unlicensed operation may coexist.</p>
 <p>In <code>Unlicensed</code> mode, the node operates only under non-amateur rules.</p>
 <ul>
 <li>Locally originated packets are treated as unlicensed traffic.</li>
-<li>Encryption and blind unicast are allowed.</li>
-<li>A repeater may forward any packet it lawfully may retransmit under unlicensed rules.</li>
+<li>Encryption is enabled by default.</li>
+<li>A repeater MAY forward any packet it may lawfully retransmit under unlicensed rules.</li>
 <li>Maximum transmit power and duty cycle are determined by local rules for unlicensed operation.</li>
-<li>If a forwarded packet carries a <a href="#station-callsign-option-7">station callsign</a>, the repeater removes it rather than replacing it.</li>
-<li>The repeater must not add its own station callsign.</li>
+<li>If a forwarded packet carries a <a href="#station-callsign-option-7">station callsign</a>, the repeater MUST remove it rather than replacing it.</li>
+<li>The repeater SHOULD NOT add its own station callsign.</li>
 </ul>
 <p>The specific requirements for unlicensed transmission vary by jurisdiction and frequency, but may include restrictions on transmit power, antenna gain, and/or duty cycle.</p>
 <h3 id="licensed-only"><a class="header" href="#licensed-only">Licensed-Only</a></h3>
 <p>In <code>Licensed-Only</code> mode, all locally originated and forwarded traffic is treated
 as amateur-radio traffic.</p>
 <ul>
-<li>Encryption is forbidden. All encrypted packets encountered must be immediately dropped.</li>
-<li>Locally originated packets must include an <a href="#operator-callsign-option-4">operator callsign</a>.</li>
+<li>Encryption SHALL NOT be enabled for any packet. All encrypted packets encountered SHOULD be immediately dropped.</li>
+<li>Locally originated packets MUST include an <a href="#operator-callsign-option-4">operator callsign</a>.</li>
 <li>Restrictions on transmit power and duty cycle are generally more relaxed.</li>
-<li>A repeater forwards only packets that already carry an operator callsign.</li>
-<li>A repeater replaces or inserts the station callsign option with its own callsign on every forwarded packet.</li>
+<li>A repeater SHALL NOT forward packets that are missing an operator callsign.</li>
+<li>A repeater SHALL replace or insert the station callsign option with its own callsign on every forwarded packet.</li>
 </ul>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>Blind unicast is not categorically forbidden by this mode, but the expected utility of using it without encryption is limited.</p>
+<blockquote class="blockquote-tag blockquote-tag-tip">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"></path></svg>Tip</p>
+<p>While blind unicast is not categorically forbidden by this mode, the expected utility of using it without encryption is limited.</p>
 </blockquote>
 <h3 id="hybrid"><a class="header" href="#hybrid">Hybrid</a></h3>
 <p>In <code>Hybrid</code> mode, the node may operate under either authority depending on the packet.</p>
 <ul>
-<li>A repeater always adds or replaces the station callsign option on forwarded packets.</li>
-<li>Packets carrying an operator callsign may be forwarded under amateur-radio authority.</li>
-<li>Packets lacking an operator callsign may still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.</li>
-<li>If encryption is enabled, the transmission must be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.</li>
+<li>A repeater SHOULD add or replace the station callsign option on forwarded packets.</li>
+<li>Packets carrying an operator callsign MAY be forwarded under amateur-radio authority.</li>
+<li>Packets lacking an operator callsign MAY still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.</li>
+<li>If the packet has encryption enabled, the transmission MUST be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.</li>
 </ul>
 <p>Hybrid mode is useful where amateur stations may use higher power for qualifying amateur traffic, while still allowing encrypted or otherwise unlicensed-only traffic to transit the same repeater at unlicensed settings.</p>
 <h2 id="locally-originated-packets"><a class="header" href="#locally-originated-packets">Locally Originated Packets</a></h2>
@@ -3290,7 +3295,7 @@ as amateur-radio traffic.</p>
 <p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.</p>
 <p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
 <h3 id="how-does-a-mac-ack-get-routed-back-to-the-original-sender"><a class="header" href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">How does a MAC Ack get routed back to the original sender?</a></h3>
-<p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet’s trace route, or a flood scoped by <code>FHOPS_ACC</code>. This is the same <a href="#route-learning">route learning</a> mechanism used for all communication, not an ack-specific feature.</p>
+<p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet’s trace route, or a flood scoped by the inbound packet’s <code>FHOPS_ACC</code> together with any learned region-code options. This is the same <a href="#route-learning">route learning</a> mechanism used for all communication, not an ack-specific feature.</p>
 <p>Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop’s retransmission of the same packet (see <a href="#forwarding-confirmation">Forwarding Confirmation</a>).</p>
 <h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
 <p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, and the AES-SIV-inspired construction provides nonce-misuse resistance as an additional safety margin.</p>

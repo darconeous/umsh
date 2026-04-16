@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
+            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -197,7 +197,7 @@
 <li><code>ACK TAG</code> is an 8-byte value derived from the original packet’s MIC and the pairwise encryption key (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>)</li>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
-<p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a flood scoped by <code>FHOPS_ACC</code>, or both. See <a href="beacons.html#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
+<p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a cached flood response scoped by <code>FHOPS_ACC</code> and any learned region-code options, or both. See <a href="beacons.html#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
 <h2 id="unicast-packet"><a class="header" href="#unicast-packet">Unicast Packet</a></h2>
 <p>Unicast packets are addressed by destination hint and carry the source address.</p>
 <pre><code class="language-text">+-----+-----------+------+-----+-----+---------+---------+------+

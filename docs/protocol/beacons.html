@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
+            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -209,7 +209,7 @@
 <p>When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:</p>
 <ul>
 <li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</li>
-<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value as a distance estimate. When no source route is available, this value can be used as <code>FHOPS_REM</code> for flood responses — scoping the flood to approximately the right radius rather than flooding the entire network.</li>
+<li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.</li>
 </ul>
 <p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 <p>In practice, “proven unreachable” usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:</p>

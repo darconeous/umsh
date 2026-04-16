@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b4081cd8.js";
+            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -182,34 +182,34 @@ spectrum where amateur operation and unlicensed operation may coexist.</p>
 <p>In <code>Unlicensed</code> mode, the node operates only under non-amateur rules.</p>
 <ul>
 <li>Locally originated packets are treated as unlicensed traffic.</li>
-<li>Encryption and blind unicast are allowed.</li>
-<li>A repeater may forward any packet it lawfully may retransmit under unlicensed rules.</li>
+<li>Encryption is enabled by default.</li>
+<li>A repeater MAY forward any packet it may lawfully retransmit under unlicensed rules.</li>
 <li>Maximum transmit power and duty cycle are determined by local rules for unlicensed operation.</li>
-<li>If a forwarded packet carries a <a href="packet-options.html#station-callsign-option-7">station callsign</a>, the repeater removes it rather than replacing it.</li>
-<li>The repeater must not add its own station callsign.</li>
+<li>If a forwarded packet carries a <a href="packet-options.html#station-callsign-option-7">station callsign</a>, the repeater MUST remove it rather than replacing it.</li>
+<li>The repeater SHOULD NOT add its own station callsign.</li>
 </ul>
 <p>The specific requirements for unlicensed transmission vary by jurisdiction and frequency, but may include restrictions on transmit power, antenna gain, and/or duty cycle.</p>
 <h3 id="licensed-only"><a class="header" href="#licensed-only">Licensed-Only</a></h3>
 <p>In <code>Licensed-Only</code> mode, all locally originated and forwarded traffic is treated
 as amateur-radio traffic.</p>
 <ul>
-<li>Encryption is forbidden. All encrypted packets encountered must be immediately dropped.</li>
-<li>Locally originated packets must include an <a href="packet-options.html#operator-callsign-option-4">operator callsign</a>.</li>
+<li>Encryption SHALL NOT be enabled for any packet. All encrypted packets encountered SHOULD be immediately dropped.</li>
+<li>Locally originated packets MUST include an <a href="packet-options.html#operator-callsign-option-4">operator callsign</a>.</li>
 <li>Restrictions on transmit power and duty cycle are generally more relaxed.</li>
-<li>A repeater forwards only packets that already carry an operator callsign.</li>
-<li>A repeater replaces or inserts the station callsign option with its own callsign on every forwarded packet.</li>
+<li>A repeater SHALL NOT forward packets that are missing an operator callsign.</li>
+<li>A repeater SHALL replace or insert the station callsign option with its own callsign on every forwarded packet.</li>
 </ul>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>Blind unicast is not categorically forbidden by this mode, but the expected utility of using it without encryption is limited.</p>
+<blockquote class="blockquote-tag blockquote-tag-tip">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"></path></svg>Tip</p>
+<p>While blind unicast is not categorically forbidden by this mode, the expected utility of using it without encryption is limited.</p>
 </blockquote>
 <h3 id="hybrid"><a class="header" href="#hybrid">Hybrid</a></h3>
 <p>In <code>Hybrid</code> mode, the node may operate under either authority depending on the packet.</p>
 <ul>
-<li>A repeater always adds or replaces the station callsign option on forwarded packets.</li>
-<li>Packets carrying an operator callsign may be forwarded under amateur-radio authority.</li>
-<li>Packets lacking an operator callsign may still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.</li>
-<li>If encryption is enabled, the transmission must be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.</li>
+<li>A repeater SHOULD add or replace the station callsign option on forwarded packets.</li>
+<li>Packets carrying an operator callsign MAY be forwarded under amateur-radio authority.</li>
+<li>Packets lacking an operator callsign MAY still be forwarded, but only when the retransmission can lawfully occur under unlicensed rules.</li>
+<li>If the packet has encryption enabled, the transmission MUST be treated as unlicensed traffic, including using power and any other regulatory limits appropriate for unlicensed operation.</li>
 </ul>
 <p>Hybrid mode is useful where amateur stations may use higher power for qualifying amateur traffic, while still allowing encrypted or otherwise unlicensed-only traffic to transit the same repeater at unlicensed settings.</p>
 <h2 id="locally-originated-packets"><a class="header" href="#locally-originated-packets">Locally Originated Packets</a></h2>

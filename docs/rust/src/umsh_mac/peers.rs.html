@@ -13,8 +13,8 @@
 <a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">pub enum </span>CachedRoute {
 <a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// Explicit source route.
 <a href=#15 id=15 data-nosnippet>15</a>    </span>Source(Vec&lt;RouterHint, <span class="number">15</span>&gt;),
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Flood-distance estimate.
-<a href=#17 id=17 data-nosnippet>17</a>    </span>Flood { hops: u8 },
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Flood-delivery parameters learned from an inbound packet.
+<a href=#17 id=17 data-nosnippet>17</a>    </span>Flood { hops: u8, regions: Vec&lt;[u8; <span class="number">2</span>], <span class="number">8</span>&gt; },
 <a href=#18 id=18 data-nosnippet>18</a>}
 <a href=#19 id=19 data-nosnippet>19</a>
 <a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// Shared metadata tracked for a remote peer.
