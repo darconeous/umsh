@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
+            window.path_to_searchindex_js = "searchindex-7188006e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -181,7 +181,7 @@
 <li>a broadcast packet with no payload, or</li>
 <li>a multicast packet with no payload</li>
 </ul>
-<p>Beacons are used to announce the presence of a node on the network without carrying additional data.</p>
+<p>Beacons are used to announce the presence of a node on the network without carrying additional data. Because beacons have no payload, they omit the <code>0xFF</code> end-of-options marker; the options block is parsed until the end of the packet. The minimum beacon size is unchanged.</p>
 <p>A beacon with a trace-route option can inform listeners of both:</p>
 <ul>
 <li>the node’s presence</li>

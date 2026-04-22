@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
+            window.path_to_searchindex_js = "searchindex-7188006e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -177,26 +177,26 @@
                         <h1 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h1>
 <p>All UMSH packets begin with a one-byte Frame Control Field (<code>FCF</code>). Optional common fields then follow in a fixed order, followed by packet-type-specific fields.</p>
 <h2 id="top-level-packet-layout"><a class="header" href="#top-level-packet-layout">Top-Level Packet Layout</a></h2>
-<pre><code class="language-text">+--------+-----------+--------+--------------+------------+-----------+---------+------+
-|  FCF   |  OPTIONS  | FHOPS  | DST/CHANNEL  |    SRC     |  SECINFO  | PAYLOAD | MIC  |
-+--------+-----------+--------+--------------+------------+-----------+---------+------+
-   1 B      variable    0/1 B      0/2/3 B     0/3/32 B     0/5/7 B      var.   0-16 B
+<pre><code class="language-text">+-----+-------+----------+---------+-----------+---------+---------+-----+
+| FCF | FHOPS | DST/CHAN |   SRC   |  SECINFO  | OPTIONS | PAYLOAD | MIC |
++-----+-------+----------+---------+-----------+---------+---------+-----+
+  1 B   0/1 B    0/2/3 B   0/3/32 B   0/5/7 B   variable  variable  0-16 B
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>OPTIONS</code> are present if the FCF options flag is set</li>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
 <li><code>DST</code> is a 3-byte destination hint (2 bytes in MAC Ack packets)</li>
-<li><code>CHANNEL</code> is a 2-byte channel identifier</li>
+<li><code>CHAN</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a compact 3-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast and blind unicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
 <li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry an <a href="security.html#ack-tag-construction">ack tag</a> instead</li>
 </ul>
+<p>Not all fields are supported for all packet types.</p>
 <h2 id="frame-control-field"><a class="header" href="#frame-control-field">Frame Control Field</a></h2>
 <p>The Frame Control Field is one byte:</p>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
 +-------+-----------+---+---+---+
-| VER   | PKT TYPE  | S | O | H |
+|  VER  | PKT TYPE  | S | R | H |
 +-------+-----------+---+---+---+
  2 bits    3 bits     1   1   1
 </code></pre>
@@ -205,8 +205,8 @@
 <li><code>VER</code> = protocol version (this specification defines version <strong>3</strong>, i.e., both bits set)</li>
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="addressing.html#source-address">Source Address</a> for hint size by packet type)</li>
-<li><code>O</code> = options present</li>
-<li><code>H</code> = flood hop count present</li>
+<li><code>R</code> = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero</li>
+<li><code>H</code> = flood hop count present. Zero if direct.</li>
 </ul>
 <h3 id="packet-type-values"><a class="header" href="#packet-type-values">Packet Type Values</a></h3>
 <div class="table-wrapper">
@@ -227,8 +227,23 @@
 </table>
 </div>
 <h2 id="common-optional-fields"><a class="header" href="#common-optional-fields">Common Optional Fields</a></h2>
+<h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
+<p>If present, <code>FHOPS</code> is a single byte containing two 4-bit fields:</p>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---------------+---------------+
+| FHOPS_REM     | FHOPS_ACC     |
++---------------+---------------+
+     4 bits          4 bits
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
+</ul>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
+<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 <h3 id="options-field"><a class="header" href="#options-field">Options Field</a></h3>
-<p>Options use the same delta-length encoding as CoAP (RFC 7252 §3.1). Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> byte.</p>
+<p>Options use the same delta-length encoding as CoAP (RFC 7252 §3.1). Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> byte if a payload is present.</p>
 <h4 id="option-encoding"><a class="header" href="#option-encoding">Option Encoding</a></h4>
 <p>Each option begins with a single byte containing two 4-bit fields:</p>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
@@ -264,7 +279,15 @@
 </div>
 <p>The option delta is the difference between this option’s number and the previous option’s number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).</p>
 <h4 id="end-of-options-marker"><a class="header" href="#end-of-options-marker">End-of-Options Marker</a></h4>
-<p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) terminates the options field. It is always present when the <code>O</code> flag is set in the FCF.</p>
+<p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.</p>
+<p>Parsing proceeds as follows:</p>
+<ol>
+<li>Determine the <strong>options+payload region</strong>: <code>buf[options_start .. packet_end − trailer_len]</code>, where <code>trailer_len</code> is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for ACK_TAG, or 0 for broadcast). The trailer length is known before options are parsed.</li>
+<li>Scan options in order through that region, consuming each delta-length-value record. Because option records are variable-length, this scan is the only way to locate the end of the options block.</li>
+<li>If a <code>0xFF</code> byte is encountered during the scan, the bytes remaining in the region (between the <code>0xFF</code> and the trailer) are the payload. A <code>0xFF</code> with zero bytes remaining is a valid empty payload.</li>
+<li>If the region is exhausted without encountering a <code>0xFF</code>, there is no payload.</li>
+</ol>
+<p>Senders SHOULD omit <code>0xFF</code> when there is no payload. Receivers MUST accept a <code>0xFF</code> in any position where the marker is syntactically valid (i.e., immediately after the last option record), regardless of if payload bytes follow.</p>
 <h4 id="example"><a class="header" href="#example">Example</a></h4>
 <p>Two options — option 3 (1-byte value) followed by option 9 (2-byte value):</p>
 <pre><code class="language-text">+------+-------+  +------+-------+-------+  +------+
@@ -273,21 +296,6 @@
  delta=3 opt 3     delta=6 opt 9             marker
  len=1   val (1B)  len=2   val (2B)
 </code></pre>
-<h3 id="flood-hop-count"><a class="header" href="#flood-hop-count">Flood Hop Count</a></h3>
-<p>If present, <code>FHOPS</code> is a single byte containing two 4-bit fields:</p>
-<pre><code class="language-text">  7   6   5   4   3   2   1   0
-+---------------+---------------+
-| FHOPS_REM     | FHOPS_ACC     |
-+---------------+---------------+
-     4 bits          4 bits
-</code></pre>
-<p>Where:</p>
-<ul>
-<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
-<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
-</ul>
-<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
-<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 
                     </main>
 

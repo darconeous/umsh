@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
+            window.path_to_searchindex_js = "searchindex-7188006e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -175,23 +175,29 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="node-identity"><a class="header" href="#node-identity">Node Identity</a></h1>
-<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="security.html#frame-counter">Frame Counter</a>).</p>
-<p>A node’s identity may be expressed as the following structure:</p>
+<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp option below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="security.html#frame-counter">Frame Counter</a>).</p>
+<h2 id="structure"><a class="header" href="#structure">Structure</a></h2>
+<pre><code class="language-text">+------+------+---------+------+-----------+
+| ROLE | CAPS | OPTIONS | 0xFF | SIGNATURE |
++------+------+---------+------+-----------+
+  1 B    1 B   variable   1 B     64 B
+</code></pre>
+<p>Fields:</p>
 <ul>
-<li><strong>4 bytes</strong>: UNIX timestamp from when this information was last updated, truncated to 32 bits</li>
-<li><strong>1 byte</strong>: Node primary role</li>
-<li><strong>1 byte</strong>: Node feature/capability bitmap</li>
-<li><strong>N bytes, optional</strong>: zero-terminated node name</li>
-<li><strong>N bytes, optional</strong>: CoAP-style option list, terminated by <code>0xFF</code> if EdDSA signature is present.</li>
-<li><strong>64 bytes, optional</strong>: EdDSA signature over the preceding identity data</li>
+<li><code>ROLE</code> (1 byte) — the node’s <a href="#node-primary-role">primary role</a>.</li>
+<li><code>CAPS</code> (1 byte) — the node’s <a href="#capability-bitmap">capability bitmap</a>.</li>
+<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="packet-options.html#options-field">packet options</a>.</li>
+<li><code>0xFF</code> (1 byte, optional) — options-terminator marker. Present only when a signature follows.</li>
+<li><code>SIGNATURE</code> (64 bytes, optional) — EdDSA signature covering <code>ROLE</code> through the <code>0xFF</code> terminator, inclusive.</li>
 </ul>
+<p>The smallest node identity payload is two bytes: role and capability bitmap, with no options or signature.</p>
 <h2 id="node-primary-role"><a class="header" href="#node-primary-role">Node Primary Role</a></h2>
 <p>Defined values:</p>
 <ul>
 <li><code>0</code> — Unspecified</li>
 <li><code>1</code> — Repeater</li>
 <li><code>2</code> — Chat</li>
-<li><code>3</code> — Tracker</li>
+<li><code>3</code> — Tracker/Companion-Radio</li>
 <li><code>4</code> — Sensor</li>
 <li><code>5</code> — Bridge</li>
 <li><code>6</code> — Chat Room</li>
@@ -199,34 +205,148 @@
 <li>all other values — Reserved</li>
 </ul>
 <h2 id="capability-bitmap"><a class="header" href="#capability-bitmap">Capability Bitmap</a></h2>
-<p>Bit assignments:</p>
+<p>A single byte describing optional feature support, orthogonal to the primary role:</p>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---+---+---+---+---+---+---+---+
+| - | - |CoA|CHR|TLM|TXT|MOB|REP|
++---+---+---+---+---+---+---+---+
+</code></pre>
 <ul>
-<li>bit 0 — Repeater</li>
-<li>bit 1 — Mobile</li>
-<li>bit 2 — Text Messages</li>
-<li>bit 3 — Telemetry</li>
-<li>bit 4 — Chat Room</li>
-<li>bit 5 — CoAP</li>
-<li>bit 6 — Node name included</li>
-<li>bit 7 — Node options included</li>
+<li>bit 0 (<code>REP</code>) — Repeater</li>
+<li>bit 1 (<code>MOB</code>) — Mobile/Handheld</li>
+<li>bit 2 (<code>TXT</code>) — Text Messages</li>
+<li>bit 3 (<code>TLM</code>) — Telemetry</li>
+<li>bit 4 (<code>CHR</code>) — Chat Room</li>
+<li>bit 5 (<code>CoA</code>) — CoAP</li>
+<li>bits 6–7 — RESERVED (set to zero; ignore on read)</li>
 </ul>
-<p>If the node-name-included bit is clear, the node name is simply not advertised in this identity payload; it does not imply the node lacks a name.</p>
+<p>A node may advertise multiple capabilities independently of its primary role. For example, a node with role <strong>Chat</strong> may also set the <code>REP</code> bit to advertise repeater duty.</p>
 <h2 id="node-identity-options"><a class="header" href="#node-identity-options">Node Identity Options</a></h2>
-<p>Possible options include:</p>
+<p>Options use the CoAP-style delta-length encoding defined in <a href="packet-options.html#option-encoding">Packet Options</a>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
+<tr><td style="text-align: right">1</td><td>Node Location</td><td>1+ bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
+<tr><td style="text-align: right">2</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
+<tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
+<tr><td style="text-align: right">4</td><td>Node Uptime</td><td>unsigned integer, minutes since boot</td></tr>
+<tr><td style="text-align: right">5</td><td>Amateur Radio Callsign</td><td>ARNCE/HAM-64 (2, 4, 6, or 8 bytes)</td></tr>
+<tr><td style="text-align: right">6</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">7</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="node-name-option-0"><a class="header" href="#node-name-option-0">Node Name (option 0)</a></h3>
+<p>A UTF-8 string naming the node, typically shown in user interfaces.</p>
+<h3 id="node-location-option-1"><a class="header" href="#node-location-option-1">Node Location (option 1)</a></h3>
+<p>A variable-precision grid code encoding the node’s geographic position. See <a href="#variable-precision-location-format">Variable-Precision Location Format</a>.</p>
+<h3 id="node-battery-percentage-option-2"><a class="header" href="#node-battery-percentage-option-2">Node Battery Percentage (option 2)</a></h3>
+<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
+<h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
+<p>A freshness marker, as seconds since the Unix epoch, indicating when the identity payload was generated. It lets a consumer judge whether the identity is recent — most useful when the identity stands alone, such as in a QR code, where a stale capture could otherwise be presented indefinitely. Not interpreted by the MAC layer.</p>
+<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<h3 id="node-uptime-option-4"><a class="header" href="#node-uptime-option-4">Node Uptime (option 4)</a></h3>
+<p>Minutes since the node last booted. Primarily a health and diagnostic signal for operators.
+Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<h3 id="amateur-radio-callsign-option-5"><a class="header" href="#amateur-radio-callsign-option-5">Amateur Radio Callsign (option 5)</a></h3>
+<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length.</p>
+<h3 id="supported-regions-option-6"><a class="header" href="#supported-regions-option-6">Supported Regions (option 6)</a></h3>
+<p>For repeaters, a list of <a href="packet-options.html#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy.</p>
+<h3 id="altitude-option-7"><a class="header" href="#altitude-option-7">Altitude (option 7)</a></h3>
+<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
+<p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
+<h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
+<p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along longitude and the low nibble indexes along latitude:</p>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---------------+---------------+
+|   LON NIBBLE  |   LAT NIBBLE  |
++---------------+---------------+
+     4 bits          4 bits
+</code></pre>
+<p>The first byte subdivides the entire globe (longitude in 16 slices of 22.5°, latitude in 16 slices of 11.25°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-longitude, low-nibble-latitude convention.</p>
+<h4 id="encoding-a-location"><a class="header" href="#encoding-a-location">Encoding a Location</a></h4>
+<p>Given latitude <code>LAT</code> in degrees (-90..+90) and longitude <code>LON</code> in degrees (-180..+180), an N-byte code can be derived either in a single step or byte by byte.</p>
+<h5 id="direct-form"><a class="header" href="#direct-form">Direct form</a></h5>
+<p>Compute two 4N-bit indices over the full desired precision:</p>
 <ul>
-<li>Node Location (longitude/latitude)</li>
-<li>Node Battery Percentage</li>
-<li>Node Uptime (minutes)</li>
-<li>Amateur Radio Callsign</li>
-<li>Supported Regions (for repeaters)</li>
+<li><code>lon_index = floor((LON + 180) × 16^N / 360)</code></li>
+<li><code>lat_index = floor((LAT +  90) × 16^N / 180)</code></li>
+</ul>
+<p>Then read nibbles from most significant to least significant:</p>
+<ul>
+<li>byte <em>k</em> high nibble = <code>(lon_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+<li>byte <em>k</em> low  nibble = <code>(lat_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+</ul>
+<p>This form makes the hierarchy explicit: truncating an N-byte code to <em>k</em> bytes yields exactly the <em>k</em>-byte code for the same position.</p>
+<p>Edge cases: <code>LON = +180°</code> is equivalent to <code>LON = −180°</code> and wraps <code>lon_index</code> to 0. <code>LAT = +90°</code> is a single degenerate point; clamp <code>lat_index</code> to <code>16^N − 1</code>.</p>
+<h5 id="iterative-form"><a class="header" href="#iterative-form">Iterative form</a></h5>
+<p>Emitting one byte at a time, with <code>lon_step = 22.5° / 16^k</code> and <code>lat_step = 11.25° / 16^k</code>:</p>
+<ul>
+<li>byte <em>k</em> high nibble = <code>floor(((LON + 180) mod (16 × lon_step)) / lon_step)</code></li>
+<li>byte <em>k</em> low  nibble = <code>floor(((LAT +  90) mod (16 × lat_step)) / lat_step)</code></li>
+</ul>
+<p>For byte 0 (<code>k = 0</code>), <code>lon_step = 22.5°</code> and <code>lat_step = 11.25°</code>, so the modulus is a no-op for valid inputs and the formulas reduce to:</p>
+<ul>
+<li><code>high_nibble = floor((LON + 180) / 22.5)</code></li>
+<li><code>low_nibble  = floor((LAT +  90) / 11.25)</code></li>
+</ul>
+<h5 id="worked-example"><a class="header" href="#worked-example">Worked Example</a></h5>
+<p>Encode <code>(LAT, LON) = (37.331°, −121.883°)</code> (San Jose, CA) at 3-byte precision.</p>
+<p>Direct form:</p>
+<ul>
+<li><code>lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.13) = 661 = 0x295</code></li>
+<li><code>lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.22) = 2897 = 0xB51</code></li>
+</ul>
+<p>Reading nibbles most-significant first:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Byte</th><th style="text-align: center">High (lon)</th><th style="text-align: center">Low (lat)</th><th style="text-align: center">Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td style="text-align: center"><code>0x2</code></td><td style="text-align: center"><code>0xB</code></td><td style="text-align: center"><code>0x2B</code></td></tr>
+<tr><td style="text-align: right">1</td><td style="text-align: center"><code>0x9</code></td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x95</code></td></tr>
+<tr><td style="text-align: right">2</td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x1</code></td><td style="text-align: center"><code>0x51</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Final code: <code>2B 95 51</code>.</p>
+<h4 id="precision-scaling"><a class="header" href="#precision-scaling">Precision Scaling</a></h4>
+<p>Each additional byte divides both the longitude and latitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Bytes</th><th>Longitude cell</th><th>Latitude cell</th><th>Equator cell size (approx.)</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">1</td><td>22.5°</td><td>11.25°</td><td>2,500 × 1,250 km</td></tr>
+<tr><td style="text-align: right">2</td><td>1.40625°</td><td>0.703125°</td><td>156 × 78 km</td></tr>
+<tr><td style="text-align: right">3</td><td>0.0879°</td><td>0.0439°</td><td>9.8 × 4.9 km</td></tr>
+<tr><td style="text-align: right">4</td><td>0.00549°</td><td>0.00275°</td><td>610 × 305 m</td></tr>
+<tr><td style="text-align: right">5</td><td>0.000343°</td><td>0.000172°</td><td>38 × 19 m</td></tr>
+</tbody>
+</table>
+</div>
+<p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
+<h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
+<ul>
+<li><strong>Simple encoding.</strong> Two nibble divisions per byte; no floating-point math required to decode.</li>
+<li><strong>Arbitrary precision.</strong> Any desired accuracy is reachable by adding bytes.</li>
+<li><strong>Compact.</strong> Scales linearly with precision: one byte per factor-of-16 refinement in both axes.</li>
+<li><strong>Free coarsening.</strong> Reducing precision is just truncation; no recomputation is needed. This makes it trivial to publish, say, a 2-byte location in a broadcast and a 5-byte location in a private message, both derived from the same underlying position.</li>
 </ul>
 <h2 id="signature-usage"><a class="header" href="#signature-usage">Signature Usage</a></h2>
-<p>The optional 64-byte EdDSA signature is generally included only when the identity data must stand on its own, such as:</p>
+<p>The optional 64-byte EdDSA signature is generally included only when the identity data must stand on its own without any authentication, such as:</p>
 <ul>
 <li>QR codes</li>
-<li>broadcasts without a MIC</li>
+<li>broadcasts</li>
 </ul>
-<p>When the enclosing packet already carries a MIC, the EdDSA signature is generally omitted.</p>
+<p>When the enclosing packet already carries a MIC, the EdDSA signature MAY be omitted.</p>
 
                     </main>
 

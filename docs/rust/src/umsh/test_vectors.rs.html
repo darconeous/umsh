@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"```text"</span>).unwrap();
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"  7   6   5   4   3   2   1   0"</span>).unwrap();
 <a href=#113 id=113 data-nosnippet>113</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"+-------+-----------+---+---+---+"</span>).unwrap();
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| VER   | PKT TYPE  | S | O | H |"</span>).unwrap();
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| VER   | PKT TYPE  | S | R | H |"</span>).unwrap();
 <a href=#115 id=115 data-nosnippet>115</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"+-------+-----------+---+---+---+"</span>).unwrap();
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"```"</span>).unwrap();
 <a href=#117 id=117 data-nosnippet>117</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out).unwrap();
@@ -131,7 +131,7 @@
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="kw-2">&amp;</span>[
 <a href=#132 id=132 data-nosnippet>132</a>            (
 <a href=#133 id=133 data-nosnippet>133</a>                <span class="string">"FCF"</span>,
-<a href=#134 id=134 data-nosnippet>134</a>                <span class="string">"VER=3, TYPE=0 (broadcast), S=0, O=0, H=0"</span>,
+<a href=#134 id=134 data-nosnippet>134</a>                <span class="string">"VER=3, TYPE=0 (broadcast), S=0, R=0, H=0"</span>,
 <a href=#135 id=135 data-nosnippet>135</a>                <span class="string">"C0"</span>.into(),
 <a href=#136 id=136 data-nosnippet>136</a>            ),
 <a href=#137 id=137 data-nosnippet>137</a>            (
@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>        <span class="kw-2">&amp;</span>[
 <a href=#151 id=151 data-nosnippet>151</a>            (
 <a href=#152 id=152 data-nosnippet>152</a>                <span class="string">"FCF"</span>,
-<a href=#153 id=153 data-nosnippet>153</a>                <span class="string">"VER=3, TYPE=0 (broadcast), S=1, O=0, H=0"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>                <span class="string">"VER=3, TYPE=0 (broadcast), S=1, R=0, H=0"</span>,
 <a href=#154 id=154 data-nosnippet>154</a>                <span class="string">"C4"</span>.into(),
 <a href=#155 id=155 data-nosnippet>155</a>            ),
 <a href=#156 id=156 data-nosnippet>156</a>            (
@@ -167,7 +167,7 @@
 <a href=#167 id=167 data-nosnippet>167</a>        <span class="string">"Example 3: Encrypted Unicast (S=0)"</span>,
 <a href=#168 id=168 data-nosnippet>168</a>        <span class="string">"An encrypted unicast from Node A to Node B using source hints and frame counter 42."</span>,
 <a href=#169 id=169 data-nosnippet>169</a>        <span class="kw-2">&amp;</span>[
-<a href=#170 id=170 data-nosnippet>170</a>            (<span class="string">"FCF"</span>, <span class="string">"VER=3, TYPE=2 (unicast), S=0, O=0, H=0"</span>, <span class="string">"D0"</span>.into()),
+<a href=#170 id=170 data-nosnippet>170</a>            (<span class="string">"FCF"</span>, <span class="string">"VER=3, TYPE=2 (unicast), S=0, R=0, H=0"</span>, <span class="string">"D0"</span>.into()),
 <a href=#171 id=171 data-nosnippet>171</a>            (
 <a href=#172 id=172 data-nosnippet>172</a>                <span class="string">"DST"</span>,
 <a href=#173 id=173 data-nosnippet>173</a>                <span class="string">"Node B hint"</span>,
@@ -201,7 +201,7 @@
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="kw-2">&amp;</span>[
 <a href=#202 id=202 data-nosnippet>202</a>            (
 <a href=#203 id=203 data-nosnippet>203</a>                <span class="string">"FCF"</span>,
-<a href=#204 id=204 data-nosnippet>204</a>                <span class="string">"VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0"</span>,
+<a href=#204 id=204 data-nosnippet>204</a>                <span class="string">"VER=3, TYPE=3 (unicast ack-req), S=1, R=0, H=0"</span>,
 <a href=#205 id=205 data-nosnippet>205</a>                <span class="string">"DC"</span>.into(),
 <a href=#206 id=206 data-nosnippet>206</a>            ),
 <a href=#207 id=207 data-nosnippet>207</a>            (
@@ -241,7 +241,7 @@
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="kw-2">&amp;</span>[
 <a href=#242 id=242 data-nosnippet>242</a>            (
 <a href=#243 id=243 data-nosnippet>243</a>                <span class="string">"FCF"</span>,
-<a href=#244 id=244 data-nosnippet>244</a>                <span class="string">"VER=3, TYPE=4 (multicast), S=0, O=0, H=0"</span>,
+<a href=#244 id=244 data-nosnippet>244</a>                <span class="string">"VER=3, TYPE=4 (multicast), S=0, R=0, H=0"</span>,
 <a href=#245 id=245 data-nosnippet>245</a>                <span class="string">"E0"</span>.into(),
 <a href=#246 id=246 data-nosnippet>246</a>            ),
 <a href=#247 id=247 data-nosnippet>247</a>            (
@@ -276,7 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>        <span class="kw-2">&amp;</span>[
 <a href=#277 id=277 data-nosnippet>277</a>            (
 <a href=#278 id=278 data-nosnippet>278</a>                <span class="string">"FCF"</span>,
-<a href=#279 id=279 data-nosnippet>279</a>                <span class="string">"VER=3, TYPE=4 (multicast), S=0, O=0, H=0"</span>,
+<a href=#279 id=279 data-nosnippet>279</a>                <span class="string">"VER=3, TYPE=4 (multicast), S=0, R=0, H=0"</span>,
 <a href=#280 id=280 data-nosnippet>280</a>                <span class="string">"E0"</span>.into(),
 <a href=#281 id=281 data-nosnippet>281</a>            ),
 <a href=#282 id=282 data-nosnippet>282</a>            (
@@ -336,29 +336,29 @@
 <a href=#336 id=336 data-nosnippet>336</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"|---|---|---|"</span>).unwrap();
 <a href=#337 id=337 data-nosnippet>337</a>    <span class="macro">writeln!</span>(
 <a href=#338 id=338 data-nosnippet>338</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="string">"| FCF | VER=3, TYPE=2 (unicast), S=0, O=1, H=1 | `D3` |"
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="string">"| FCF | VER=3, TYPE=2 (unicast), S=0, R=0, H=1 | `D1` |"
 <a href=#340 id=340 data-nosnippet>340</a>    </span>)
 <a href=#341 id=341 data-nosnippet>341</a>    .unwrap();
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="macro">writeln!</span>(
-<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="string">"| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
-<a href=#345 id=345 data-nosnippet>345</a>    </span>)
-<a href=#346 id=346 data-nosnippet>346</a>    .unwrap();
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |"</span>).unwrap();
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="macro">writeln!</span>(
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="string">"| DST | Node B hint | `{}` |"</span>,
-<a href=#351 id=351 data-nosnippet>351</a>        hex_spaced(<span class="kw-2">&amp;</span>vectors.node_b_public.hint().<span class="number">0</span>)
-<a href=#352 id=352 data-nosnippet>352</a>    )
-<a href=#353 id=353 data-nosnippet>353</a>    .unwrap();
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="macro">writeln!</span>(
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw-2">&amp;mut </span>out,
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="string">"| SRC | Node A hint | `{}` |"</span>,
-<a href=#357 id=357 data-nosnippet>357</a>        hex_spaced(<span class="kw-2">&amp;</span>vectors.node_a_public.hint().<span class="number">0</span>)
-<a href=#358 id=358 data-nosnippet>358</a>    )
-<a href=#359 id=359 data-nosnippet>359</a>    .unwrap();
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |"</span>).unwrap();
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Frame Counter | 10 | `00 00 00 0A` |"</span>).unwrap();
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |"</span>).unwrap();
+<a href=#343 id=343 data-nosnippet>343</a>    <span class="macro">writeln!</span>(
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw-2">&amp;mut </span>out,
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="string">"| DST | Node B hint | `{}` |"</span>,
+<a href=#346 id=346 data-nosnippet>346</a>        hex_spaced(<span class="kw-2">&amp;</span>vectors.node_b_public.hint().<span class="number">0</span>)
+<a href=#347 id=347 data-nosnippet>347</a>    )
+<a href=#348 id=348 data-nosnippet>348</a>    .unwrap();
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="macro">writeln!</span>(
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw-2">&amp;mut </span>out,
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="string">"| SRC | Node A hint | `{}` |"</span>,
+<a href=#352 id=352 data-nosnippet>352</a>        hex_spaced(<span class="kw-2">&amp;</span>vectors.node_a_public.hint().<span class="number">0</span>)
+<a href=#353 id=353 data-nosnippet>353</a>    )
+<a href=#354 id=354 data-nosnippet>354</a>    .unwrap();
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |"</span>).unwrap();
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="macro">writeln!</span>(<span class="kw-2">&amp;mut </span>out, <span class="string">"| Frame Counter | 10 | `00 00 00 0A` |"</span>).unwrap();
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="macro">writeln!</span>(
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw-2">&amp;mut </span>out,
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="string">"| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
+<a href=#360 id=360 data-nosnippet>360</a>    </span>)
+<a href=#361 id=361 data-nosnippet>361</a>    .unwrap();
 <a href=#362 id=362 data-nosnippet>362</a>    <span class="macro">writeln!</span>(
 <a href=#363 id=363 data-nosnippet>363</a>        <span class="kw-2">&amp;mut </span>out,
 <a href=#364 id=364 data-nosnippet>364</a>        <span class="string">"| Payload | Encrypted `68 65 79` (`\"hey\"`) | `{}` |"</span>,
@@ -395,7 +395,7 @@
 <a href=#395 id=395 data-nosnippet>395</a>        <span class="kw-2">&amp;</span>[
 <a href=#396 id=396 data-nosnippet>396</a>            (
 <a href=#397 id=397 data-nosnippet>397</a>                <span class="string">"FCF"</span>,
-<a href=#398 id=398 data-nosnippet>398</a>                <span class="string">"VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0"</span>,
+<a href=#398 id=398 data-nosnippet>398</a>                <span class="string">"VER=3, TYPE=6 (blind unicast), S=0, R=0, H=0"</span>,
 <a href=#399 id=399 data-nosnippet>399</a>                <span class="string">"F0"</span>.into(),
 <a href=#400 id=400 data-nosnippet>400</a>            ),
 <a href=#401 id=401 data-nosnippet>401</a>            (
@@ -408,7 +408,7 @@
 <a href=#408 id=408 data-nosnippet>408</a>            (
 <a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"ENC_DST_SRC"</span>,
 <a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"ENCRYPT(`DST || SRC`)"</span>,
-<a href=#411 id=411 data-nosnippet>411</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[<span class="number">8</span>..blind_unicast_header.body_range.start]),
+<a href=#411 id=411 data-nosnippet>411</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.options_range.end..blind_unicast_header.body_range.start]),
 <a href=#412 id=412 data-nosnippet>412</a>            ),
 <a href=#413 id=413 data-nosnippet>413</a>            (
 <a href=#414 id=414 data-nosnippet>414</a>                <span class="string">"ENC_PAYLOAD"</span>,

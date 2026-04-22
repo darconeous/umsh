@@ -126,8 +126,8 @@
 <a href=#126 id=126 data-nosnippet>126</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#127 id=127 data-nosnippet>127</a>        }
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if </span><span class="self">self</span>.pos &gt;= <span class="self">self</span>.data.len() {
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="self">self</span>.errored = <span class="bool-val">true</span>;
-<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ParseError::MissingOptionTerminator));
+<a href=#129 id=129 data-nosnippet>129</a>            <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#131 id=131 data-nosnippet>131</a>        }
 <a href=#132 id=132 data-nosnippet>132</a>
 <a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>first = <span class="self">self</span>.data[<span class="self">self</span>.pos];

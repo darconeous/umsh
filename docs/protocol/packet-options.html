@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
+            window.path_to_searchindex_js = "searchindex-7188006e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -224,8 +224,9 @@
 <tr><td style="text-align: right">5</td><td>Minimum RSSI</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">6</td><td>Route Retry</td><td>Non-Critical, Dynamic</td><td>0 bytes</td></tr>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
-<tr><td style="text-align: right">8</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Static</td><td></td></tr>
+<tr><td style="text-align: right">8</td><td>ACK Tag</td><td>Non-Critical, Static</td><td>8 bytes</td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">10</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Dynamic</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">11</td><td>Region Code</td><td>Critical, Dynamic</td><td>2 bytes</td></tr>
 </tbody>
 </table>
@@ -303,6 +304,11 @@
 </ul>
 </li>
 </ul>
+<h3 id="ack-tag-option-8"><a class="header" href="#ack-tag-option-8">ACK Tag (option 8)</a></h3>
+<p>This option represents a piggy-backed MAC ACK that, when received, behaves as if it was an ACK for the given packet, instead of sending both a UACK and an application-level response in two separate packets.</p>
+<ul>
+<li>Type: 8-byte ACK tag.</li>
+</ul>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
@@ -325,7 +331,7 @@
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
-<p><strong>Airport-based regions.</strong> For regions defined by proximity to an airport, encode the airport’s 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:</p>
+<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with it’s own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>

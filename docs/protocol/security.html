@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b7a583d8.js";
+            window.path_to_searchindex_js = "searchindex-7188006e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -396,6 +396,7 @@ K_mic = okm[16..31]
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
 <p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
+<p>Note that the AAD ordering above is <strong>canonical</strong> and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
 <pre><code class="language-text">+----------+----------+-------+

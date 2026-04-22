@@ -7,16 +7,16 @@
 <a href=#7 id=7 data-nosnippet>7</a>    </span>Truncated,
 <a href=#8 id=8 data-nosnippet>8</a>    <span class="doccomment">/// The frame-control version bits do not match the supported protocol.
 <a href=#9 id=9 data-nosnippet>9</a>    </span>InvalidVersion(u8),
-<a href=#10 id=10 data-nosnippet>10</a>    <span class="doccomment">/// Reserved bits in the security-control field were non-zero.
-<a href=#11 id=11 data-nosnippet>11</a>    </span>InvalidScfReserved,
-<a href=#12 id=12 data-nosnippet>12</a>    <span class="doccomment">/// The encoded MIC size is not assigned.
-<a href=#13 id=13 data-nosnippet>13</a>    </span>InvalidMicSize(u8),
-<a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// A flood-hop byte could not be interpreted.
-<a href=#15 id=15 data-nosnippet>15</a>    </span>InvalidFloodHops,
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// A CoAP-style option nibble used an invalid extension marker.
-<a href=#17 id=17 data-nosnippet>17</a>    </span>InvalidOptionNibble,
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// An option block was missing its terminating marker.
-<a href=#19 id=19 data-nosnippet>19</a>    </span>MissingOptionTerminator,
+<a href=#10 id=10 data-nosnippet>10</a>    <span class="doccomment">/// The reserved bit in the frame-control field was non-zero.
+<a href=#11 id=11 data-nosnippet>11</a>    </span>InvalidFcfReserved,
+<a href=#12 id=12 data-nosnippet>12</a>    <span class="doccomment">/// Reserved bits in the security-control field were non-zero.
+<a href=#13 id=13 data-nosnippet>13</a>    </span>InvalidScfReserved,
+<a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// The encoded MIC size is not assigned.
+<a href=#15 id=15 data-nosnippet>15</a>    </span>InvalidMicSize(u8),
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// A flood-hop byte could not be interpreted.
+<a href=#17 id=17 data-nosnippet>17</a>    </span>InvalidFloodHops,
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// A CoAP-style option nibble used an invalid extension marker.
+<a href=#19 id=19 data-nosnippet>19</a>    </span>InvalidOptionNibble,
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Option numbers were not monotonically increasing.
 <a href=#21 id=21 data-nosnippet>21</a>    </span>OptionOutOfOrder,
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// The option stream was structurally malformed.
