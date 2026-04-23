@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7188006e.js";
+            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -213,9 +213,9 @@
 </code></pre>
 <ul>
 <li>bit 0 (<code>REP</code>) — Repeater</li>
-<li>bit 1 (<code>MOB</code>) — Mobile/Handheld</li>
+<li>bit 1 (<code>MOB</code>) — Mobile/Handheld (As opposed to “fixed”)</li>
 <li>bit 2 (<code>TXT</code>) — Text Messages</li>
-<li>bit 3 (<code>TLM</code>) — Telemetry</li>
+<li>bit 3 (<code>TLM</code>) — Public Telemetry</li>
 <li>bit 4 (<code>CHR</code>) — Chat Room</li>
 <li>bit 5 (<code>CoA</code>) — CoAP</li>
 <li>bits 6–7 — RESERVED (set to zero; ignore on read)</li>
@@ -230,34 +230,39 @@
 </thead>
 <tbody>
 <tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
-<tr><td style="text-align: right">1</td><td>Node Location</td><td>1+ bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
-<tr><td style="text-align: right">2</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
+<tr><td style="text-align: right">1</td><td>Node Location</td><td>1-8 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
+<tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
 <tr><td style="text-align: right">4</td><td>Node Uptime</td><td>unsigned integer, minutes since boot</td></tr>
 <tr><td style="text-align: right">5</td><td>Amateur Radio Callsign</td><td>ARNCE/HAM-64 (2, 4, 6, or 8 bytes)</td></tr>
 <tr><td style="text-align: right">6</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
-<tr><td style="text-align: right">7</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
+<tr><td style="text-align: right">7</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
 </tbody>
 </table>
 </div>
 <h3 id="node-name-option-0"><a class="header" href="#node-name-option-0">Node Name (option 0)</a></h3>
-<p>A UTF-8 string naming the node, typically shown in user interfaces.</p>
+<p>A UTF-8 string naming the node, typically shown in user interfaces. Max length is 24 bytes.</p>
 <h3 id="node-location-option-1"><a class="header" href="#node-location-option-1">Node Location (option 1)</a></h3>
 <p>A variable-precision grid code encoding the node’s geographic position. See <a href="#variable-precision-location-format">Variable-Precision Location Format</a>.</p>
-<h3 id="node-battery-percentage-option-2"><a class="header" href="#node-battery-percentage-option-2">Node Battery Percentage (option 2)</a></h3>
-<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
+<p>The maximum precision that can be used is 7 bytes. Implementations MUST ignore any byte data after the seventh byte and MUST NOT encode more than 7 bytes into this field.</p>
+<h3 id="altitude-in-meters-option-2"><a class="header" href="#altitude-in-meters-option-2">Altitude in Meters (option 2)</a></h3>
+<p>The node’s altitude above mean sea level, in meters. Interpreted as a big-endian signed integer with leading zero/0xFF bytes omitted (as long as signed-ness is discernable)</p>
+<p>Max length is 4 bytes.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
 <p>A freshness marker, as seconds since the Unix epoch, indicating when the identity payload was generated. It lets a consumer judge whether the identity is recent — most useful when the identity stands alone, such as in a QR code, where a stale capture could otherwise be presented indefinitely. Not interpreted by the MAC layer.</p>
-<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<p>Interpreted as a big-endian unsigned integer with leading zero bytes omitted. Max length is 4 bytes.</p>
 <h3 id="node-uptime-option-4"><a class="header" href="#node-uptime-option-4">Node Uptime (option 4)</a></h3>
 <p>Minutes since the node last booted. Primarily a health and diagnostic signal for operators.
-Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+Interpreted as a big-endian integer with leading zero bytes omitted. Max length is 4 bytes.</p>
+<p>Obviously, this makes no sense on a QR Code.</p>
 <h3 id="amateur-radio-callsign-option-5"><a class="header" href="#amateur-radio-callsign-option-5">Amateur Radio Callsign (option 5)</a></h3>
-<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length.</p>
+<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length. Max length is 8 bytes.</p>
 <h3 id="supported-regions-option-6"><a class="header" href="#supported-regions-option-6">Supported Regions (option 6)</a></h3>
-<p>For repeaters, a list of <a href="packet-options.html#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy.</p>
-<h3 id="altitude-option-7"><a class="header" href="#altitude-option-7">Altitude (option 7)</a></h3>
-<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<p>For repeaters, a list of <a href="packet-options.html#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy. Max length is 20 bytes.</p>
+<h3 id="node-battery-percentage-option-7"><a class="header" href="#node-battery-percentage-option-7">Node Battery Percentage (option 7)</a></h3>
+<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
+<p>Obviously, this makes no sense on a QR Code.
+Must be 1 byte.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
@@ -329,10 +334,15 @@ Interpreted as a big-endian integer with leading zero bytes omitted.</p>
 <tr><td style="text-align: right">3</td><td>0.0879°</td><td>0.0439°</td><td>9.8 × 4.9 km</td></tr>
 <tr><td style="text-align: right">4</td><td>0.00549°</td><td>0.00275°</td><td>610 × 305 m</td></tr>
 <tr><td style="text-align: right">5</td><td>0.000343°</td><td>0.000172°</td><td>38 × 19 m</td></tr>
+<tr><td style="text-align: right">6</td><td>2.15 × 10⁻⁵°</td><td>1.07 × 10⁻⁵°</td><td>2.4 × 1.2 m</td></tr>
+<tr><td style="text-align: right">7</td><td>1.34 × 10⁻⁶°</td><td>6.71 × 10⁻⁷°</td><td>15 × 7.5 cm</td></tr>
 </tbody>
 </table>
 </div>
 <p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
+<blockquote>
+<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes, the cell shrinks to ~9 × 5 mm, better than float32 everywhere.</p>
+</blockquote>
 <h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
 <ul>
 <li><strong>Simple encoding.</strong> Two nibble divisions per byte; no floating-point math required to decode.</li>

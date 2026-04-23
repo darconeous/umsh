@@ -99,9 +99,9 @@ backward-window disambiguation.</li>
 cached route). Looked up by hint or full key when matching inbound packets and routing
 outbound sends.</li>
 <li><a href="struct.PeerId.html" title="struct umsh_mac::PeerId"><code>PeerId</code></a> — opaque index into the peer registry.</li>
-<li><a href="enum.CachedRoute.html" title="enum umsh_mac::CachedRoute"><code>CachedRoute</code></a> — either an explicit source route or a flood-distance estimate,
-learned from successfully received packets and used to route future sends without
-flooding.</li>
+<li><a href="enum.CachedRoute.html" title="enum umsh_mac::CachedRoute"><code>CachedRoute</code></a> — a direct link, an explicit source route, or a flood-distance
+estimate, learned from successfully received packets and used to route future sends
+without unnecessary flooding.</li>
 <li><a href="struct.PeerCryptoMap.html" title="struct umsh_mac::PeerCryptoMap"><code>PeerCryptoMap</code></a> — per-identity map from <a href="struct.PeerId.html" title="struct umsh_mac::PeerId"><code>PeerId</code></a> to <a href="struct.PeerCryptoState.html" title="struct umsh_mac::PeerCryptoState"><code>PeerCryptoState</code></a>
 (established pairwise keys + replay window). One map per <a href="struct.IdentitySlot.html" title="struct umsh_mac::IdentitySlot"><code>IdentitySlot</code></a>.</li>
 <li><a href="struct.ChannelTable.html" title="struct umsh_mac::ChannelTable"><code>ChannelTable</code></a> — flat list of registered multicast channels. Each entry stores the

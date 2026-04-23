@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7188006e.js";
+            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -237,10 +237,15 @@
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
 <li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
 </ul>
-<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><code>FHOPS_ACC</code> accumulates <strong>flood</strong> hops only.
+Source routed hops do not increment this number.</p>
+</blockquote>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is <a href="routing-overview.html#bridging">bridging</a>, which can decrease <code>FHOPS_REM</code> unilaterally. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
 <p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 <h3 id="options-field"><a class="header" href="#options-field">Options Field</a></h3>
 <p>Options use the same delta-length encoding as CoAP (RFC 7252 §3.1). Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> byte if a payload is present.</p>

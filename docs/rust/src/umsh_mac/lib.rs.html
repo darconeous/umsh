@@ -113,9 +113,9 @@
 <a href=#113 id=113 data-nosnippet>113</a>//!   cached route). Looked up by hint or full key when matching inbound packets and routing
 <a href=#114 id=114 data-nosnippet>114</a>//!   outbound sends.
 <a href=#115 id=115 data-nosnippet>115</a>//! - [`PeerId`] — opaque index into the peer registry.
-<a href=#116 id=116 data-nosnippet>116</a>//! - [`CachedRoute`] — either an explicit source route or a flood-distance estimate,
-<a href=#117 id=117 data-nosnippet>117</a>//!   learned from successfully received packets and used to route future sends without
-<a href=#118 id=118 data-nosnippet>118</a>//!   flooding.
+<a href=#116 id=116 data-nosnippet>116</a>//! - [`CachedRoute`] — a direct link, an explicit source route, or a flood-distance
+<a href=#117 id=117 data-nosnippet>117</a>//!   estimate, learned from successfully received packets and used to route future sends
+<a href=#118 id=118 data-nosnippet>118</a>//!   without unnecessary flooding.
 <a href=#119 id=119 data-nosnippet>119</a>//! - [`PeerCryptoMap`] — per-identity map from [`PeerId`] to [`PeerCryptoState`]
 <a href=#120 id=120 data-nosnippet>120</a>//!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
 <a href=#121 id=121 data-nosnippet>121</a>//! - [`ChannelTable`] — flat list of registered multicast channels. Each entry stores the

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["OptionDecoder","OptionEncoder"]};
+window.SIDEBAR_ITEMS = {"fn":["parse_be_i32","parse_be_u32"],"struct":["OptionDecoder","OptionEncoder"]};

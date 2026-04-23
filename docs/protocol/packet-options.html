@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7188006e.js";
+            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -226,7 +226,7 @@
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">8</td><td>ACK Tag</td><td>Non-Critical, Static</td><td>8 bytes</td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
-<tr><td style="text-align: right">10</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Dynamic</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">10</td><td>Trace Signal</td><td>Non-Critical, Dynamic</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">11</td><td>Region Code</td><td>Critical, Dynamic</td><td>2 bytes</td></tr>
 </tbody>
 </table>
@@ -317,6 +317,9 @@
 <li>If more than one option with this number is present, the packet MUST be dropped.</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
+<h3 id="trace-signal-option-10"><a class="header" href="#trace-signal-option-10">Trace Signal (option 10)</a></h3>
+<p>This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.</p>
+<p>When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the <strong>negative</strong> RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB).</p>
 <h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>

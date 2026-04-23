@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7188006e.js";
+            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -175,7 +175,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="channels"><a class="header" href="#channels">Channels</a></h1>
-<p>A <strong>channel</strong> is a shared symmetric key that enables group communication and metadata concealment. Channels serve two distinct roles in UMSH:</p>
+<p>A <strong>channel</strong> is a named communication context defined by a shared symmetric key. Possession of the channel key grants membership and enables two distinct roles in UMSH:</p>
 <ul>
 <li><strong>Multicast</strong> — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.</li>
 <li><strong>Blind unicast</strong> — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using <a href="security.html#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See <a href="packet-types.html#blind-unicast-packet">Blind Unicast Packet</a> and <a href="security.html#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</li>

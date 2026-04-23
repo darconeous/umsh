@@ -1257,16 +1257,16 @@
 <a href=#1257 id=1257 data-nosnippet>1257</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf).mac_ack(dst, ack_tag);
 <a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.peer_registry.get(peer_id) {
 <a href=#1259 id=1259 data-nosnippet>1259</a>            <span class="kw">match </span>peer.route.as_ref() {
-<a href=#1260 id=1260 data-nosnippet>1260</a>                <span class="prelude-val">Some</span>(CachedRoute::Source(route)) =&gt; {
-<a href=#1261 id=1261 data-nosnippet>1261</a>                    builder = builder.source_route(route.as_slice());
-<a href=#1262 id=1262 data-nosnippet>1262</a>                }
-<a href=#1263 id=1263 data-nosnippet>1263</a>                <span class="prelude-val">Some</span>(CachedRoute::Flood { hops, regions }) =&gt; {
-<a href=#1264 id=1264 data-nosnippet>1264</a>                    builder = builder.flood_hops((<span class="kw-2">*</span>hops).clamp(<span class="number">1</span>, <span class="number">15</span>));
-<a href=#1265 id=1265 data-nosnippet>1265</a>                    <span class="kw">for </span>region <span class="kw">in </span>regions {
-<a href=#1266 id=1266 data-nosnippet>1266</a>                        builder = builder.region_code(<span class="kw-2">*</span>region);
-<a href=#1267 id=1267 data-nosnippet>1267</a>                    }
-<a href=#1268 id=1268 data-nosnippet>1268</a>                }
-<a href=#1269 id=1269 data-nosnippet>1269</a>                <span class="prelude-val">None </span>=&gt; {}
+<a href=#1260 id=1260 data-nosnippet>1260</a>                <span class="prelude-val">Some</span>(CachedRoute::Direct) | <span class="prelude-val">None </span>=&gt; {}
+<a href=#1261 id=1261 data-nosnippet>1261</a>                <span class="prelude-val">Some</span>(CachedRoute::Source(route)) =&gt; {
+<a href=#1262 id=1262 data-nosnippet>1262</a>                    builder = builder.source_route(route.as_slice());
+<a href=#1263 id=1263 data-nosnippet>1263</a>                }
+<a href=#1264 id=1264 data-nosnippet>1264</a>                <span class="prelude-val">Some</span>(CachedRoute::Flood { hops, regions }) =&gt; {
+<a href=#1265 id=1265 data-nosnippet>1265</a>                    builder = builder.flood_hops((<span class="kw-2">*</span>hops).clamp(<span class="number">1</span>, <span class="number">15</span>));
+<a href=#1266 id=1266 data-nosnippet>1266</a>                    <span class="kw">for </span>region <span class="kw">in </span>regions {
+<a href=#1267 id=1267 data-nosnippet>1267</a>                        builder = builder.region_code(<span class="kw-2">*</span>region);
+<a href=#1268 id=1268 data-nosnippet>1268</a>                    }
+<a href=#1269 id=1269 data-nosnippet>1269</a>                }
 <a href=#1270 id=1270 data-nosnippet>1270</a>            }
 <a href=#1271 id=1271 data-nosnippet>1271</a>        }
 <a href=#1272 id=1272 data-nosnippet>1272</a>        <span class="kw">let </span>frame = builder.build()<span class="question-mark">?</span>;

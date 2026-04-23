@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7188006e.js";
+            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6dc6667a.js"></script>
@@ -491,10 +491,15 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops permitted. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.</li>
 <li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.</li>
 </ul>
-<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and equals the original flood hop limit set by the sender. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="#routing-implications">Routing Implications</a>).</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><code>FHOPS_ACC</code> accumulates <strong>flood</strong> hops only.
+Source routed hops do not increment this number.</p>
+</blockquote>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is <a href="#bridging">bridging</a>, which can decrease <code>FHOPS_REM</code> unilaterally. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="#routing-implications">Routing Implications</a>).</p>
 <p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 <h3 id="options-field"><a class="header" href="#options-field">Options Field</a></h3>
 <p>Options use the same delta-length encoding as CoAP (RFC 7252 §3.1). Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> byte if a payload is present.</p>
@@ -713,7 +718,7 @@ unicast semantics without encryption.</p>
 <tr><td style="text-align: right">7</td><td>Station Callsign</td><td>Critical, Dynamic</td><td>ARNCE/HAM-64</td></tr>
 <tr><td style="text-align: right">8</td><td>ACK Tag</td><td>Non-Critical, Static</td><td>8 bytes</td></tr>
 <tr><td style="text-align: right">9</td><td>Minimum SNR</td><td>Critical, Static</td><td>0–1 bytes</td></tr>
-<tr><td style="text-align: right">10</td><td><em>UNASSIGNED</em></td><td>Non-Critical, Dynamic</td><td>0–1 bytes</td></tr>
+<tr><td style="text-align: right">10</td><td>Trace Signal</td><td>Non-Critical, Dynamic</td><td>0–1 bytes</td></tr>
 <tr><td style="text-align: right">11</td><td>Region Code</td><td>Critical, Dynamic</td><td>2 bytes</td></tr>
 </tbody>
 </table>
@@ -804,6 +809,9 @@ unicast semantics without encryption.</p>
 <li>If more than one option with this number is present, the packet MUST be dropped.</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
+<h3 id="trace-signal-option-10"><a class="header" href="#trace-signal-option-10">Trace Signal (option 10)</a></h3>
+<p>This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.</p>
+<p>When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the <strong>negative</strong> RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB).</p>
 <h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>
@@ -1312,7 +1320,7 @@ of packets which transit the bridge.</p>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="channels-1"><a class="header" href="#channels-1">Channels</a></h1>
-<p>A <strong>channel</strong> is a shared symmetric key that enables group communication and metadata concealment. Channels serve two distinct roles in UMSH:</p>
+<p>A <strong>channel</strong> is a named communication context defined by a shared symmetric key. Possession of the channel key grants membership and enables two distinct roles in UMSH:</p>
 <ul>
 <li><strong>Multicast</strong> — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.</li>
 <li><strong>Blind unicast</strong> — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</li>
@@ -1793,9 +1801,9 @@ delay = uniform_random(0, W)
 </code></pre>
 <ul>
 <li>bit 0 (<code>REP</code>) — Repeater</li>
-<li>bit 1 (<code>MOB</code>) — Mobile/Handheld</li>
+<li>bit 1 (<code>MOB</code>) — Mobile/Handheld (As opposed to “fixed”)</li>
 <li>bit 2 (<code>TXT</code>) — Text Messages</li>
-<li>bit 3 (<code>TLM</code>) — Telemetry</li>
+<li>bit 3 (<code>TLM</code>) — Public Telemetry</li>
 <li>bit 4 (<code>CHR</code>) — Chat Room</li>
 <li>bit 5 (<code>CoA</code>) — CoAP</li>
 <li>bits 6–7 — RESERVED (set to zero; ignore on read)</li>
@@ -1810,34 +1818,39 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
-<tr><td style="text-align: right">1</td><td>Node Location</td><td>1+ bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
-<tr><td style="text-align: right">2</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
+<tr><td style="text-align: right">1</td><td>Node Location</td><td>1-8 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
+<tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
 <tr><td style="text-align: right">4</td><td>Node Uptime</td><td>unsigned integer, minutes since boot</td></tr>
 <tr><td style="text-align: right">5</td><td>Amateur Radio Callsign</td><td>ARNCE/HAM-64 (2, 4, 6, or 8 bytes)</td></tr>
 <tr><td style="text-align: right">6</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
-<tr><td style="text-align: right">7</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
+<tr><td style="text-align: right">7</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
 </tbody>
 </table>
 </div>
 <h3 id="node-name-option-0"><a class="header" href="#node-name-option-0">Node Name (option 0)</a></h3>
-<p>A UTF-8 string naming the node, typically shown in user interfaces.</p>
+<p>A UTF-8 string naming the node, typically shown in user interfaces. Max length is 24 bytes.</p>
 <h3 id="node-location-option-1"><a class="header" href="#node-location-option-1">Node Location (option 1)</a></h3>
 <p>A variable-precision grid code encoding the node’s geographic position. See <a href="#variable-precision-location-format">Variable-Precision Location Format</a>.</p>
-<h3 id="node-battery-percentage-option-2"><a class="header" href="#node-battery-percentage-option-2">Node Battery Percentage (option 2)</a></h3>
-<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
+<p>The maximum precision that can be used is 7 bytes. Implementations MUST ignore any byte data after the seventh byte and MUST NOT encode more than 7 bytes into this field.</p>
+<h3 id="altitude-in-meters-option-2"><a class="header" href="#altitude-in-meters-option-2">Altitude in Meters (option 2)</a></h3>
+<p>The node’s altitude above mean sea level, in meters. Interpreted as a big-endian signed integer with leading zero/0xFF bytes omitted (as long as signed-ness is discernable)</p>
+<p>Max length is 4 bytes.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
 <p>A freshness marker, as seconds since the Unix epoch, indicating when the identity payload was generated. It lets a consumer judge whether the identity is recent — most useful when the identity stands alone, such as in a QR code, where a stale capture could otherwise be presented indefinitely. Not interpreted by the MAC layer.</p>
-<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<p>Interpreted as a big-endian unsigned integer with leading zero bytes omitted. Max length is 4 bytes.</p>
 <h3 id="node-uptime-option-4"><a class="header" href="#node-uptime-option-4">Node Uptime (option 4)</a></h3>
 <p>Minutes since the node last booted. Primarily a health and diagnostic signal for operators.
-Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+Interpreted as a big-endian integer with leading zero bytes omitted. Max length is 4 bytes.</p>
+<p>Obviously, this makes no sense on a QR Code.</p>
 <h3 id="amateur-radio-callsign-option-5"><a class="header" href="#amateur-radio-callsign-option-5">Amateur Radio Callsign (option 5)</a></h3>
-<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length.</p>
+<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length. Max length is 8 bytes.</p>
 <h3 id="supported-regions-option-6"><a class="header" href="#supported-regions-option-6">Supported Regions (option 6)</a></h3>
-<p>For repeaters, a list of <a href="#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy.</p>
-<h3 id="altitude-option-7"><a class="header" href="#altitude-option-7">Altitude (option 7)</a></h3>
-<p>Interpreted as a big-endian integer with leading zero bytes omitted.</p>
+<p>For repeaters, a list of <a href="#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy. Max length is 20 bytes.</p>
+<h3 id="node-battery-percentage-option-7"><a class="header" href="#node-battery-percentage-option-7">Node Battery Percentage (option 7)</a></h3>
+<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
+<p>Obviously, this makes no sense on a QR Code.
+Must be 1 byte.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
@@ -1909,10 +1922,15 @@ Interpreted as a big-endian integer with leading zero bytes omitted.</p>
 <tr><td style="text-align: right">3</td><td>0.0879°</td><td>0.0439°</td><td>9.8 × 4.9 km</td></tr>
 <tr><td style="text-align: right">4</td><td>0.00549°</td><td>0.00275°</td><td>610 × 305 m</td></tr>
 <tr><td style="text-align: right">5</td><td>0.000343°</td><td>0.000172°</td><td>38 × 19 m</td></tr>
+<tr><td style="text-align: right">6</td><td>2.15 × 10⁻⁵°</td><td>1.07 × 10⁻⁵°</td><td>2.4 × 1.2 m</td></tr>
+<tr><td style="text-align: right">7</td><td>1.34 × 10⁻⁶°</td><td>6.71 × 10⁻⁷°</td><td>15 × 7.5 cm</td></tr>
 </tbody>
 </table>
 </div>
 <p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
+<blockquote>
+<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes, the cell shrinks to ~9 × 5 mm, better than float32 everywhere.</p>
+</blockquote>
 <h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
 <ul>
 <li><strong>Simple encoding.</strong> Two nibble divisions per byte; no floating-point math required to decode.</li>

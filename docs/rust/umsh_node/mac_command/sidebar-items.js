@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CommandId","MacCommand"],"fn":["encode","parse"]};
+window.SIDEBAR_ITEMS = {"enum":["CommandId","MacCommand","OwnedMacCommand"],"fn":["encode","parse"]};
