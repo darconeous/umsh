@@ -1,30 +1,39 @@
 //! Transport-agnostic line I/O for the CLI.
+//!
+//! Split into two halves — [`CliInput`] for line-by-line reading, and
+//! [`CliOutput`] for writing + flushing. Splitting the halves lets the
+//! [`CliSession::run`](crate::CliSession::run) loop hold a long-lived
+//! read future across `select!` iterations while the session simultaneously
+//! uses the output half to service inbound events. A unified trait would
+//! force the read future to borrow the whole transport, blocking concurrent
+//! writes.
 
 use core::future::Future;
 
-/// Transport trait for the CLI. Implementations shuttle bytes between the CLI
-/// and some user-facing transport (stdio, USB serial, Bluetooth RFCOMM, TCP).
+/// Line-reading half of the CLI transport.
 ///
-/// **Cancellation safety:** `read_line` implementations MUST be cancel-safe.
-/// The CLI's inner `select!` drops the `read_line` future every time a
-/// callback-driven wake fires, so any bytes consumed from the underlying
-/// transport must be preserved across such drops — usually by owning an
-/// internal partial-line buffer and only returning a completed line atomically.
-pub trait CliIo {
+/// Read futures returned by [`CliInput::read_line`] are NOT required to be
+/// cancellation-safe. The driver keeps each read future alive across multiple
+/// wake events and only drops it when it completes, so implementations may
+/// safely park partial-line state inside the returned future.
+pub trait CliInput {
     type Error: core::fmt::Debug;
 
     /// Read one line (terminator stripped) into `buf`. `Ok(None)` on EOF.
     /// `Err` on overflow (line > buf.len()) or invalid UTF-8.
     ///
     /// The returned `&'buf str` borrows from `buf` only, not from `self`.
-    /// This lets the caller hold the line reference while `&mut self` is
-    /// available for other methods.
     fn read_line<'io, 'buf>(
         &'io mut self,
         buf: &'buf mut [u8],
     ) -> impl Future<Output = Result<Option<&'buf str>, Self::Error>> + 'io
     where
         'buf: 'io;
+}
+
+/// Line-writing half of the CLI transport.
+pub trait CliOutput {
+    type Error: core::fmt::Debug;
 
     fn write_line(&mut self, line: &str) -> impl Future<Output = Result<(), Self::Error>>;
 
@@ -32,40 +41,37 @@ pub trait CliIo {
 }
 
 #[cfg(feature = "tokio-stdio")]
-pub use stdio::StdioCliIo;
+pub use stdio::{StdioInput, StdioOutput, stdio_split};
 
 #[cfg(feature = "tokio-stdio")]
 mod stdio {
-    use super::CliIo;
+    use super::{CliInput, CliOutput};
     use std::io;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdin, Stdout};
 
-    /// Tokio-based stdio adapter for the CLI. Internally-buffered `BufReader`
-    /// makes `read_line` cancel-safe: if a pending `read_line` is dropped,
-    /// any bytes already consumed from stdin remain in the buffer.
-    pub struct StdioCliIo {
+    /// Tokio-based stdin reader.
+    pub struct StdioInput {
         reader: BufReader<Stdin>,
+    }
+
+    /// Tokio-based stdout writer.
+    pub struct StdioOutput {
         writer: Stdout,
-        partial: String,
     }
 
-    impl StdioCliIo {
-        pub fn new() -> Self {
-            StdioCliIo {
+    /// Construct the stdin/stdout halves for the CLI.
+    pub fn stdio_split() -> (StdioInput, StdioOutput) {
+        (
+            StdioInput {
                 reader: BufReader::new(tokio::io::stdin()),
+            },
+            StdioOutput {
                 writer: tokio::io::stdout(),
-                partial: String::new(),
-            }
-        }
+            },
+        )
     }
 
-    impl Default for StdioCliIo {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl CliIo for StdioCliIo {
+    impl CliInput for StdioInput {
         type Error = io::Error;
 
         async fn read_line<'io, 'buf>(
@@ -75,20 +81,17 @@ mod stdio {
         where
             'buf: 'io,
         {
-            // Cancel-safety: accumulate into `self.partial` across cancellations.
-            // `BufReader::read_line` appends until the first '\n' or EOF. If the
-            // caller drops us mid-read, the bytes we already consumed stay in
-            // `self.partial`; the next call picks up where we left off.
-            //
-            // We only clear `self.partial` after a complete line has been
-            // delivered to the caller's buffer.
-            let n = self.reader.read_line(&mut self.partial).await?;
-            if n == 0 && self.partial.is_empty() {
+            // The driver keeps this future alive across wake events, so we
+            // don't need an external partial-line accumulator — tokio's
+            // internal `Vec<u8>` inside `ReadLine` retains consumed bytes
+            // until the line is complete.
+            let mut line = String::new();
+            let n = self.reader.read_line(&mut line).await?;
+            if n == 0 && line.is_empty() {
                 return Ok(None);
             }
-            // Strip one trailing '\n' and, if present, a preceding '\r'.
             let trimmed_len = {
-                let s = self.partial.as_str();
+                let s = line.as_str();
                 let mut end = s.len();
                 if s.ends_with('\n') {
                     end -= 1;
@@ -98,9 +101,8 @@ mod stdio {
                 }
                 end
             };
-            let bytes = &self.partial.as_bytes()[..trimmed_len];
+            let bytes = &line.as_bytes()[..trimmed_len];
             if bytes.len() > buf.len() {
-                self.partial.clear();
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "input line exceeds buffer size",
@@ -108,10 +110,13 @@ mod stdio {
             }
             buf[..bytes.len()].copy_from_slice(bytes);
             let line_len = bytes.len();
-            self.partial.clear();
             let out = core::str::from_utf8(&buf[..line_len]).expect("utf8 in = utf8 out");
             Ok(Some(out))
         }
+    }
+
+    impl CliOutput for StdioOutput {
+        type Error = io::Error;
 
         async fn write_line(&mut self, line: &str) -> Result<(), Self::Error> {
             self.writer.write_all(line.as_bytes()).await?;

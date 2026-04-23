@@ -36,15 +36,15 @@ use umsh_mac::SendOptions;
 use umsh_node::{LocalNode, MacBackend, NodeError, OwnedMacCommand, Subscription};
 use umsh_text::UnicastTextChatWrapper;
 
-use umsh_sync::AsyncCondition;
-use crate::commands::{parse, Command, ParseError};
+use crate::commands::{Command, ParseError, parse};
 use crate::events::{CliEvent, EVENT_LINE_MAX};
-use crate::io::CliIo;
+use crate::io::{CliInput, CliOutput};
 use crate::logger::{CliLogger, LogLevel};
 use crate::mac_cmd::encode_mac_command;
 use crate::ping::PendingPing;
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
+use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
 #[derive(Debug)]
@@ -83,10 +83,12 @@ enum ExecOutcome {
     Quit,
 }
 
-/// The CLI driver.
+/// The CLI driver. Owns the output half of the CLI transport; the input half
+/// is passed to [`CliSession::run`] so the driver can hold a long-lived read
+/// future across wake events without blocking writes to `out`.
 pub struct CliSession<
     M,
-    IO,
+    OUT,
     LOG,
     const N_PEERS: usize,
     const N_ALIASES: usize,
@@ -98,12 +100,12 @@ pub struct CliSession<
     M: MacBackend,
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
-    IO: CliIo,
+    OUT: CliOutput,
     LOG: CliLogger,
 {
     pub(crate) node: LocalNode<M>,
     pub(crate) local_key: PublicKey,
-    pub(crate) io: IO,
+    pub(crate) out: OUT,
     pub(crate) logger: LOG,
     pub(crate) peers: FnvIndexMap<PublicKey, PeerEntry, N_PEERS>,
     pub(crate) aliases: FnvIndexMap<HString<16>, PublicKey, N_ALIASES>,
@@ -120,40 +122,29 @@ pub struct CliSession<
 }
 
 impl<
-        M,
-        IO,
-        LOG,
-        const N_PEERS: usize,
-        const N_ALIASES: usize,
-        const N_CHANNELS: usize,
-        const N_EVENTS: usize,
-        const N_PENDING_PINGS: usize,
-        const LINE_MAX: usize,
-    >
-    CliSession<
-        M,
-        IO,
-        LOG,
-        N_PEERS,
-        N_ALIASES,
-        N_CHANNELS,
-        N_EVENTS,
-        N_PENDING_PINGS,
-        LINE_MAX,
-    >
+    M,
+    OUT,
+    LOG,
+    const N_PEERS: usize,
+    const N_ALIASES: usize,
+    const N_CHANNELS: usize,
+    const N_EVENTS: usize,
+    const N_PENDING_PINGS: usize,
+    const LINE_MAX: usize,
+> CliSession<M, OUT, LOG, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
-    IO: CliIo,
+    OUT: CliOutput,
     LOG: CliLogger,
 {
     /// Construct a new session around a cloned `LocalNode<M>`. `local_key`
     /// is passed in because the caller already has it; no node-crate accessor
-    /// for the local key is added.
-    pub fn new(node: LocalNode<M>, local_key: PublicKey, io: IO, logger: LOG) -> Self {
-        let events: SharedQueue<Deque<CliEvent, N_EVENTS>> =
-            Rc::new(RefCell::new(Deque::new()));
+    /// for the local key is added. The session owns the `out` half of the
+    /// CLI transport; the input half is supplied to [`Self::run`].
+    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG) -> Self {
+        let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
         let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
         let pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>> =
             Rc::new(RefCell::new(HVec::new()));
@@ -171,7 +162,7 @@ where
         Self {
             node,
             local_key,
-            io,
+            out,
             logger,
             peers: FnvIndexMap::new(),
             aliases: FnvIndexMap::new(),
@@ -210,7 +201,17 @@ where
             return true;
         }
         let alias_heap = alias.and_then(|a| HString::<16>::try_from(a).ok());
-        if self.peers.insert(key, PeerEntry { key, alias: alias_heap.clone() }).is_err() {
+        if self
+            .peers
+            .insert(
+                key,
+                PeerEntry {
+                    key,
+                    alias: alias_heap.clone(),
+                },
+            )
+            .is_err()
+        {
             return false;
         }
         if let Some(a) = alias_heap {
@@ -240,42 +241,50 @@ where
 
     /// Drive the CLI until `/quit` or EOF.
     ///
-    /// Each iteration races the next user line against the `wake` condition
-    /// triggered by subscription callbacks. Whichever fires first, the event
-    /// queue is drained before looping — so inbound events (text from peers,
-    /// ack receipts, AFK auto-reply to `EchoRequest`) surface immediately,
-    /// without waiting for a keypress.
+    /// Each outer iteration arms one long-lived `read_line` future and races
+    /// it against `wake` in an inner loop. The read future is only dropped
+    /// when it completes — wake-driven iterations preserve it across
+    /// `select!` rearms, so implementations of [`CliInput`] do not need to
+    /// be cancel-safe.
     ///
-    /// `CliIo::read_line` is required to be cancel-safe: the read future is
-    /// dropped on every wake, and any bytes already consumed from the
-    /// underlying transport must be preserved by the implementation.
-    pub async fn run(&mut self) -> Result<(), CliError<IO::Error>> {
-        use futures::future::{select, Either};
+    /// `input` is borrowed for the duration of each read; it's a separate
+    /// parameter from `self` so the driver can continue writing to `self.out`
+    /// while a read is outstanding.
+    pub async fn run<IN>(&mut self, input: &mut IN) -> Result<(), CliError<OUT::Error>>
+    where
+        IN: CliInput<Error = OUT::Error>,
+    {
+        use futures::future::{Either, select};
 
         // Service any events that arrived before first user input
         // (e.g. from a previously started host).
         self.service_events().await?;
 
         let mut buf = [0u8; 512];
+        let wake = self.wake.clone();
         loop {
-            let line_result: Option<Result<Option<String>, IO::Error>> = {
-                let wake = self.wake.clone();
-                let read_fut = self.io.read_line(&mut buf);
+            // Arm a single read future and keep it alive across wake events.
+            let read_fut = input.read_line(&mut buf);
+            futures::pin_mut!(read_fut);
+            let owned: Option<String> = loop {
                 let wait_fut = wake.wait();
-                futures::pin_mut!(read_fut);
                 futures::pin_mut!(wait_fut);
-                match select(read_fut, wait_fut).await {
+                match select(read_fut.as_mut(), wait_fut).await {
                     Either::Left((result, _)) => match result {
-                        Ok(Some(s)) => Some(Ok(Some(String::from(s)))),
-                        Ok(None) => Some(Ok(None)),
-                        Err(e) => Some(Err(e)),
+                        Ok(Some(s)) => break Some(String::from(s)),
+                        Ok(None) => break None,
+                        Err(e) => return Err(CliError::Io(e)),
                     },
-                    Either::Right(((), _)) => None, // wake fired; drain events
+                    Either::Right(((), _)) => {
+                        // Wake fired; drain events without dropping read_fut.
+                        self.service_events().await?;
+                    }
                 }
             };
 
-            match line_result {
-                Some(Ok(Some(owned))) => match parse(&owned) {
+            match owned {
+                None => return Ok(()), // EOF
+                Some(line) => match parse(&line) {
                     Err(ParseError::Empty) => {}
                     Err(e) => {
                         let msg = format_parse_error(&e);
@@ -286,20 +295,16 @@ where
                         ExecOutcome::Quit => return Ok(()),
                     },
                 },
-                Some(Ok(None)) => return Ok(()), // EOF
-                Some(Err(e)) => return Err(CliError::Io(e)),
-                None => {} // wake-driven; just drain events below
             }
 
-            // Drain events that arrived while we were waiting or that were
-            // queued by execute() (e.g. EchoRequest auto-reply).
+            // Drain events queued by execute() (e.g. send receipts).
             self.service_events().await?;
         }
     }
 
     // ─── Event-queue drain ──────────────────────────────────────────────────
 
-    async fn service_events(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn service_events(&mut self) -> Result<(), CliError<OUT::Error>> {
         loop {
             // Take one event per iteration (avoids holding RefCell across await).
             let event = self.events.borrow_mut().pop_front();
@@ -309,9 +314,15 @@ where
         Ok(())
     }
 
-    async fn handle_event(&mut self, event: CliEvent) -> Result<(), CliError<IO::Error>> {
+    async fn handle_event(&mut self, event: CliEvent) -> Result<(), CliError<OUT::Error>> {
         match event {
-            CliEvent::Received { from, hops: _, rssi, snr, prefix } => {
+            CliEvent::Received {
+                from,
+                hops: _,
+                rssi,
+                snr,
+                prefix,
+            } => {
                 // Try to decode as text.
                 if let Some([pt, rest @ ..]) = prefix.as_slice().get(0..) {
                     if *pt == umsh_core::PayloadType::TextMessage as u8 {
@@ -319,14 +330,14 @@ where
                             let alias = self.peer_alias_display(&from);
                             let mut line: HString<EVENT_LINE_MAX> = HString::new();
                             let _ = write!(&mut line, "<{}> {}", alias, msg.body);
-                            self.io.write_line(&line).await?;
+                            self.out.write_line(&line).await?;
                             if self.settings.show_hex {
                                 let mut hex: HString<EVENT_LINE_MAX> = HString::new();
                                 let _ = write!(&mut hex, "  hex:");
                                 for b in prefix.iter() {
                                     let _ = write!(&mut hex, " {:02x}", b);
                                 }
-                                self.io.write_line(&hex).await?;
+                                self.out.write_line(&hex).await?;
                             }
                             return Ok(());
                         }
@@ -335,22 +346,26 @@ where
                 // Unknown payload — show origin + hint.
                 let alias = self.peer_alias_display(&from);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                let _ = write!(&mut line, "[pkt from {} rssi={:?} snr={:?}]", alias, rssi, snr);
-                self.io.write_line(&line).await?;
+                let _ = write!(
+                    &mut line,
+                    "[pkt from {} rssi={:?} snr={:?}]",
+                    alias, rssi, snr
+                );
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::AckReceived { peer } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[ack from {}]", alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::AckTimeout { peer } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[ack timeout → {}]", alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::NodeDiscovered { from, name } => {
@@ -362,28 +377,28 @@ where
                     alias,
                     name.as_deref().unwrap_or(""),
                 );
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::Beacon { from } => {
                 let alias = self.peer_alias_display(&from);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[beacon from {}]", alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::PfsEstablished { peer } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[pfs established with {}]", alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::PfsEnded { peer } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[pfs ended with {}]", alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::EchoResponseIn { peer, data } => {
@@ -396,8 +411,9 @@ where
                 };
                 let matched = {
                     let mut pings = self.pending_pings.borrow_mut();
-                    if let Some(idx) =
-                        pings.iter().position(|p| p.nonce == nonce && p.peer == peer)
+                    if let Some(idx) = pings
+                        .iter()
+                        .position(|p| p.nonce == nonce && p.peer == peer)
                     {
                         Some(pings.swap_remove(idx))
                     } else {
@@ -412,18 +428,18 @@ where
                 } else {
                     let _ = write!(&mut line, "pong {} (unmatched nonce {})", alias, nonce);
                 }
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::UnknownMacCmdIn { peer, cmd_id } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(&mut line, "[mac cmd 0x{:02x} from {}]", cmd_id, alias);
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             CliEvent::OutputLine { line } => {
-                self.io.write_line(&line).await?;
+                self.out.write_line(&line).await?;
             }
 
             // Outbound variants are not queued in this implementation —
@@ -441,21 +457,18 @@ where
 
     // ─── Command dispatcher ──────────────────────────────────────────────────
 
-    async fn execute(&mut self, cmd: Command<'_>) -> Result<ExecOutcome, CliError<IO::Error>> {
+    async fn execute(&mut self, cmd: Command<'_>) -> Result<ExecOutcome, CliError<OUT::Error>> {
         match cmd {
             Command::Quit => Ok(ExecOutcome::Quit),
             Command::Help(topic) => self.cmd_help(topic).await.map(|_| ExecOutcome::Continue),
             Command::WhoAmI => self.cmd_whoami().await.map(|_| ExecOutcome::Continue),
-            Command::PeerAdd { pubkey, alias } => {
-                self.cmd_peer_add(pubkey, alias).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::PeerRm { peer } => {
-                self.cmd_peer_rm(peer).await.map(|_| ExecOutcome::Continue)
-            }
+            Command::PeerAdd { pubkey, alias } => self
+                .cmd_peer_add(pubkey, alias)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::PeerRm { peer } => self.cmd_peer_rm(peer).await.map(|_| ExecOutcome::Continue),
             Command::Peers => self.cmd_peers().await.map(|_| ExecOutcome::Continue),
-            Command::Query { peer } => {
-                self.cmd_query(peer).await.map(|_| ExecOutcome::Continue)
-            }
+            Command::Query { peer } => self.cmd_query(peer).await.map(|_| ExecOutcome::Continue),
             Command::Set { var, val } => {
                 self.cmd_set(var, val).await.map(|_| ExecOutcome::Continue)
             }
@@ -463,37 +476,38 @@ where
             Command::Log { level } => self.cmd_log(level).await.map(|_| ExecOutcome::Continue),
             Command::Stats => self.cmd_stats().await.map(|_| ExecOutcome::Continue),
             Command::Channels => self.cmd_channels().await.map(|_| ExecOutcome::Continue),
-            Command::PfsStatus { peer } => {
-                self.cmd_pfs_status(peer).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::Msg { peer, text } => {
-                self.cmd_msg(peer, text).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::Text { body } => {
-                self.cmd_text(body).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::Me { action } => {
-                self.cmd_me(action).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::Ping { peer, bytes } => {
-                self.cmd_ping(peer, bytes).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::PfsStart { peer, minutes } => {
-                self.cmd_pfs_start(peer, minutes).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::PfsEnd { peer } => {
-                self.cmd_pfs_end(peer).await.map(|_| ExecOutcome::Continue)
-            }
+            Command::PfsStatus { peer } => self
+                .cmd_pfs_status(peer)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::Msg { peer, text } => self
+                .cmd_msg(peer, text)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::Text { body } => self.cmd_text(body).await.map(|_| ExecOutcome::Continue),
+            Command::Me { action } => self.cmd_me(action).await.map(|_| ExecOutcome::Continue),
+            Command::Ping { peer, bytes } => self
+                .cmd_ping(peer, bytes)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::PfsStart { peer, minutes } => self
+                .cmd_pfs_start(peer, minutes)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::PfsEnd { peer } => self.cmd_pfs_end(peer).await.map(|_| ExecOutcome::Continue),
             Command::Beacon => self.cmd_beacon().await.map(|_| ExecOutcome::Continue),
-            Command::ChannelJoin { name, key } => {
-                self.cmd_channel_join(name, key).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::ChannelLeave { name } => {
-                self.cmd_channel_leave(name).await.map(|_| ExecOutcome::Continue)
-            }
-            Command::ChannelSend { name, text } => {
-                self.cmd_channel_send(name, text).await.map(|_| ExecOutcome::Continue)
-            }
+            Command::ChannelJoin { name, key } => self
+                .cmd_channel_join(name, key)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::ChannelLeave { name } => self
+                .cmd_channel_leave(name)
+                .await
+                .map(|_| ExecOutcome::Continue),
+            Command::ChannelSend { name, text } => self
+                .cmd_channel_send(name, text)
+                .await
+                .map(|_| ExecOutcome::Continue),
             Command::Raw { peer, hex } => {
                 self.cmd_raw(peer, hex).await.map(|_| ExecOutcome::Continue)
             }
@@ -502,7 +516,7 @@ where
 
     // ─── Local-state commands ────────────────────────────────────────────────
 
-    async fn cmd_help(&mut self, topic: Option<&str>) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_help(&mut self, topic: Option<&str>) -> Result<(), CliError<OUT::Error>> {
         if let Some(t) = topic {
             return self.cmd_help_topic(t).await;
         }
@@ -546,12 +560,12 @@ where
             "  /set <var> <val>            flood_hops|ack_requested|show_hex",
         ];
         for l in lines {
-            self.io.write_line(l).await?;
+            self.out.write_line(l).await?;
         }
         Ok(())
     }
 
-    async fn cmd_help_topic(&mut self, topic: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_help_topic(&mut self, topic: &str) -> Result<(), CliError<OUT::Error>> {
         let t = topic.trim().trim_start_matches('/');
         let detail: &[&str] = match t {
             "quit" => &["/quit — exit the CLI (EOF does the same)."],
@@ -617,23 +631,27 @@ where
             ],
             other => {
                 let mut msg: HString<EVENT_LINE_MAX> = HString::new();
-                let _ = write!(&mut msg, "no help for '{}' — try /help for the full list", other);
+                let _ = write!(
+                    &mut msg,
+                    "no help for '{}' — try /help for the full list",
+                    other
+                );
                 return self.write_err(&msg).await;
             }
         };
         for l in detail {
-            self.io.write_line(l).await?;
+            self.out.write_line(l).await?;
         }
         Ok(())
     }
 
-    async fn cmd_whoami(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_whoami(&mut self) -> Result<(), CliError<OUT::Error>> {
         let mut line: HString<EVENT_LINE_MAX> = HString::new();
         let _ = write!(&mut line, "local: ");
         for b in &self.local_key.0 {
             let _ = write!(&mut line, "{:02x}", b);
         }
-        self.io.write_line(&line).await?;
+        self.out.write_line(&line).await?;
         Ok(())
     }
 
@@ -641,7 +659,7 @@ where
         &mut self,
         pubkey: &str,
         alias: Option<&str>,
-    ) -> Result<(), CliError<IO::Error>> {
+    ) -> Result<(), CliError<OUT::Error>> {
         let key = match crate::peer_ref::try_parse_pubkey(pubkey) {
             Some(k) => k,
             None => return self.write_err("invalid pubkey").await,
@@ -656,7 +674,17 @@ where
         if self.peers.contains_key(&key) {
             return self.write_err("peer already registered").await;
         }
-        if self.peers.insert(key, PeerEntry { key, alias: alias_heap.clone() }).is_err() {
+        if self
+            .peers
+            .insert(
+                key,
+                PeerEntry {
+                    key,
+                    alias: alias_heap.clone(),
+                },
+            )
+            .is_err()
+        {
             return self.write_err("peer table full").await;
         }
         if let Some(a) = alias_heap.clone() {
@@ -674,11 +702,11 @@ where
             let msg = node_err_str(&e);
             return self.write_err(&msg).await;
         }
-        self.io.write_line("ok").await?;
+        self.out.write_line("ok").await?;
         Ok(())
     }
 
-    async fn cmd_peer_rm(&mut self, peer: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_peer_rm(&mut self, peer: &str) -> Result<(), CliError<OUT::Error>> {
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
@@ -692,13 +720,13 @@ where
         if self.current_peer == Some(key) {
             self.current_peer = None;
         }
-        self.io.write_line("ok").await?;
+        self.out.write_line("ok").await?;
         Ok(())
     }
 
-    async fn cmd_peers(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_peers(&mut self) -> Result<(), CliError<OUT::Error>> {
         if self.peers.is_empty() {
-            self.io.write_line("(no peers)").await?;
+            self.out.write_line("(no peers)").await?;
             return Ok(());
         }
         let mut lines: Vec<String> = Vec::new();
@@ -712,60 +740,63 @@ where
             lines.push(String::from(line.as_str()));
         }
         for l in lines {
-            self.io.write_line(&l).await?;
+            self.out.write_line(&l).await?;
         }
         Ok(())
     }
 
-    async fn cmd_query(&mut self, peer: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_query(&mut self, peer: &str) -> Result<(), CliError<OUT::Error>> {
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
         self.current_peer = Some(key);
-        self.io.write_line("ok").await?;
+        self.out.write_line("ok").await?;
         Ok(())
     }
 
-    async fn cmd_set_show(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_set_show(&mut self) -> Result<(), CliError<OUT::Error>> {
         let mut line: HString<EVENT_LINE_MAX> = HString::new();
         let _ = write!(
             &mut line,
             "flood_hops={} ack_requested={} show_hex={}",
             self.settings.flood_hops, self.settings.ack_requested, self.settings.show_hex,
         );
-        self.io.write_line(&line).await?;
+        self.out.write_line(&line).await?;
         Ok(())
     }
 
-    async fn cmd_set(&mut self, var: &str, val: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_set(&mut self, var: &str, val: &str) -> Result<(), CliError<OUT::Error>> {
         match var {
             "flood_hops" => match val.parse::<u8>() {
                 Ok(v) if v <= 15 => {
                     self.settings.flood_hops = v;
-                    self.io.write_line("ok").await?;
+                    self.out.write_line("ok").await?;
                 }
                 _ => self.write_err("flood_hops must be 0..=15").await?,
             },
             "ack_requested" => match parse_bool(val) {
                 Some(b) => {
                     self.settings.ack_requested = b;
-                    self.io.write_line("ok").await?;
+                    self.out.write_line("ok").await?;
                 }
                 None => self.write_err("ack_requested: expected true|false").await?,
             },
             "show_hex" => match parse_bool(val) {
                 Some(b) => {
                     self.settings.show_hex = b;
-                    self.io.write_line("ok").await?;
+                    self.out.write_line("ok").await?;
                 }
                 None => self.write_err("show_hex: expected true|false").await?,
             },
-            _ => self.write_err("unknown setting (flood_hops / ack_requested / show_hex)").await?,
+            _ => {
+                self.write_err("unknown setting (flood_hops / ack_requested / show_hex)")
+                    .await?
+            }
         }
         Ok(())
     }
 
-    async fn cmd_log(&mut self, level: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_log(&mut self, level: &str) -> Result<(), CliError<OUT::Error>> {
         let lvl = match level {
             "error" => LogLevel::Error,
             "warn" => LogLevel::Warn,
@@ -775,11 +806,11 @@ where
             _ => return self.write_err("level: error|warn|info|debug|trace").await,
         };
         self.logger.set_level(lvl);
-        self.io.write_line("ok").await?;
+        self.out.write_line("ok").await?;
         Ok(())
     }
 
-    async fn cmd_stats(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_stats(&mut self) -> Result<(), CliError<OUT::Error>> {
         let s = self.stats.borrow().clone();
         let dropped = *self.events_dropped.borrow();
         let depth = self.events.borrow().len();
@@ -788,21 +819,27 @@ where
             &mut line,
             "rx={} tx={} ack_ok={} ack_timeout={} beacons={} discovered={} \
              event_depth={} dropped_events={}",
-            s.packets_rx, s.packets_tx, s.acks_ok, s.acks_timeout, s.beacons_rx,
-            s.nodes_discovered, depth, dropped,
+            s.packets_rx,
+            s.packets_tx,
+            s.acks_ok,
+            s.acks_timeout,
+            s.beacons_rx,
+            s.nodes_discovered,
+            depth,
+            dropped,
         );
-        self.io.write_line(&line).await?;
+        self.out.write_line(&line).await?;
         if let Some(rssi) = s.last_rssi {
             let mut line: HString<EVENT_LINE_MAX> = HString::new();
             let _ = write!(&mut line, "last_rssi={} last_snr={:?}", rssi, s.last_snr);
-            self.io.write_line(&line).await?;
+            self.out.write_line(&line).await?;
         }
         Ok(())
     }
 
-    async fn cmd_channels(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_channels(&mut self) -> Result<(), CliError<OUT::Error>> {
         if self.channels.is_empty() {
-            self.io.write_line("(no channels)").await?;
+            self.out.write_line("(no channels)").await?;
             return Ok(());
         }
         let mut lines: Vec<String> = Vec::new();
@@ -810,14 +847,14 @@ where
             lines.push(String::from(entry.name.as_str()));
         }
         for l in lines {
-            self.io.write_line(&l).await?;
+            self.out.write_line(&l).await?;
         }
         Ok(())
     }
 
     // ─── Async MAC-I/O commands ──────────────────────────────────────────────
 
-    async fn cmd_msg(&mut self, peer: &str, text: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_msg(&mut self, peer: &str, text: &str) -> Result<(), CliError<OUT::Error>> {
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
@@ -830,7 +867,7 @@ where
         match chat.send_text(text, &opts).await {
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;
-                self.io.write_line("ok").await?;
+                self.out.write_line("ok").await?;
             }
             Err(e) => {
                 self.write_err(&alloc::format!("{:?}", e)).await?;
@@ -839,11 +876,13 @@ where
         Ok(())
     }
 
-    async fn cmd_text(&mut self, body: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_text(&mut self, body: &str) -> Result<(), CliError<OUT::Error>> {
         let key = match self.current_peer {
             Some(k) => k,
             None => {
-                return self.write_err("no current peer — use /query <peer-ref> first").await;
+                return self
+                    .write_err("no current peer — use /query <peer-ref> first")
+                    .await;
             }
         };
         let pc = match self.node.peer(key).await {
@@ -863,7 +902,7 @@ where
         Ok(())
     }
 
-    async fn cmd_me(&mut self, action: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_me(&mut self, action: &str) -> Result<(), CliError<OUT::Error>> {
         let mut body: HString<EVENT_LINE_MAX> = HString::new();
         let _ = write!(&mut body, "* {}", action);
         let owned = String::from(body.as_str());
@@ -875,7 +914,7 @@ where
         &mut self,
         peer: &str,
         bytes: Option<u16>,
-    ) -> Result<(), CliError<IO::Error>> {
+    ) -> Result<(), CliError<OUT::Error>> {
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
@@ -920,7 +959,7 @@ where
                         let alias_str = self.peer_alias_display(&key);
                         let mut line: HString<EVENT_LINE_MAX> = HString::new();
                         let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, data.len());
-                        self.io.write_line(&line).await?;
+                        self.out.write_line(&line).await?;
                     }
                     Err(e) => {
                         // Remove the pending ping on send failure; drop borrow before write_err.
@@ -953,7 +992,7 @@ where
         &mut self,
         peer: &str,
         minutes: Option<u16>,
-    ) -> Result<(), CliError<IO::Error>> {
+    ) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let Some(key) = self.resolve_peer(peer) else {
@@ -962,19 +1001,20 @@ where
             let minutes = minutes.unwrap_or(60);
             let opts = self.send_opts();
             match self.node.request_pfs(&key, minutes, &opts).await {
-                Ok(_) => self.io.write_line("pfs request sent").await?,
+                Ok(_) => self.out.write_line("pfs request sent").await?,
                 Err(e) => self.write_err(&node_err_str(&e)).await?,
             }
         }
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = (peer, minutes);
-            self.write_err("pfs requires software-crypto feature").await?;
+            self.write_err("pfs requires software-crypto feature")
+                .await?;
         }
         Ok(())
     }
 
-    async fn cmd_pfs_end(&mut self, peer: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_pfs_end(&mut self, peer: &str) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let Some(key) = self.resolve_peer(peer) else {
@@ -982,19 +1022,20 @@ where
             };
             let opts = self.send_opts();
             match self.node.end_pfs(&key, &opts).await {
-                Ok(_) => self.io.write_line("pfs ended").await?,
+                Ok(_) => self.out.write_line("pfs ended").await?,
                 Err(e) => self.write_err(&node_err_str(&e)).await?,
             }
         }
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = peer;
-            self.write_err("pfs requires software-crypto feature").await?;
+            self.write_err("pfs requires software-crypto feature")
+                .await?;
         }
         Ok(())
     }
 
-    async fn cmd_pfs_status(&mut self, peer: Option<&str>) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_pfs_status(&mut self, peer: Option<&str>) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let targets: Vec<PublicKey> = match peer {
@@ -1012,7 +1053,7 @@ where
                     Ok(s) => {
                         let mut line: HString<EVENT_LINE_MAX> = HString::new();
                         let _ = write!(&mut line, "{}: {:?}", alias, s);
-                        self.io.write_line(&line).await?;
+                        self.out.write_line(&line).await?;
                     }
                     Err(e) => {
                         let msg = node_err_str(&e);
@@ -1024,12 +1065,13 @@ where
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = peer;
-            self.write_err("pfs requires software-crypto feature").await?;
+            self.write_err("pfs requires software-crypto feature")
+                .await?;
         }
         Ok(())
     }
 
-    async fn cmd_beacon(&mut self) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_beacon(&mut self) -> Result<(), CliError<OUT::Error>> {
         // A beacon is an empty-payload broadcast. The MAC silently ignores
         // the `encrypted` / `ack_requested` flags for broadcasts, so reusing
         // `send_opts()` is fine.
@@ -1038,7 +1080,7 @@ where
         match self.node.send_all(&[], &opts).await {
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;
-                self.io.write_line("beacon sent").await?;
+                self.out.write_line("beacon sent").await?;
             }
             Err(e) => self.write_err(&node_err_str(&e)).await?,
         }
@@ -1049,7 +1091,7 @@ where
         &mut self,
         name: &str,
         _key_b58: &str,
-    ) -> Result<(), CliError<IO::Error>> {
+    ) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let hname = match HString::<16>::try_from(name) {
@@ -1063,7 +1105,11 @@ where
             let mut key_bytes = [0u8; 32];
             match bs58::decode(_key_b58).onto(&mut key_bytes[..]) {
                 Ok(32) => {}
-                _ => return self.write_err("key must be base58-encoded 32-byte channel key").await,
+                _ => {
+                    return self
+                        .write_err("key must be base58-encoded 32-byte channel key")
+                        .await;
+                }
             }
             let channel_key = umsh_core::ChannelKey(key_bytes);
             let channel = umsh_node::Channel::private(channel_key, name);
@@ -1077,7 +1123,7 @@ where
                         let _ = self.node.leave(&channel);
                         return self.write_err("channel table full").await;
                     }
-                    self.io.write_line("joined").await?;
+                    self.out.write_line("joined").await?;
                 }
                 Err(e) => self.write_err(&node_err_str(&e)).await?,
             }
@@ -1085,12 +1131,13 @@ where
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = (name, _key_b58);
-            self.write_err("channels require software-crypto feature").await?;
+            self.write_err("channels require software-crypto feature")
+                .await?;
         }
         Ok(())
     }
 
-    async fn cmd_channel_leave(&mut self, name: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_channel_leave(&mut self, name: &str) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let hname = match HString::<16>::try_from(name) {
@@ -1104,12 +1151,13 @@ where
             let channel_key = umsh_core::ChannelKey(key_bytes);
             let channel = umsh_node::Channel::private(channel_key, name);
             let _ = self.node.leave(&channel);
-            self.io.write_line("left").await?;
+            self.out.write_line("left").await?;
         }
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = name;
-            self.write_err("channels require software-crypto feature").await?;
+            self.write_err("channels require software-crypto feature")
+                .await?;
         }
         Ok(())
     }
@@ -1118,7 +1166,7 @@ where
         &mut self,
         name: &str,
         text: &str,
-    ) -> Result<(), CliError<IO::Error>> {
+    ) -> Result<(), CliError<OUT::Error>> {
         #[cfg(feature = "software-crypto")]
         {
             let hname = match HString::<16>::try_from(name) {
@@ -1140,7 +1188,7 @@ where
             match wrapper.send_text(text, &opts).await {
                 Ok(_) => {
                     self.stats.borrow_mut().packets_tx += 1;
-                    self.io.write_line("ok").await?;
+                    self.out.write_line("ok").await?;
                 }
                 Err(e) => self.write_err(&alloc::format!("{:?}", e)).await?,
             }
@@ -1148,12 +1196,13 @@ where
         #[cfg(not(feature = "software-crypto"))]
         {
             let _ = (name, text);
-            self.write_err("channels require software-crypto feature").await?;
+            self.write_err("channels require software-crypto feature")
+                .await?;
         }
         Ok(())
     }
 
-    async fn cmd_raw(&mut self, peer: &str, hex: &str) -> Result<(), CliError<IO::Error>> {
+    async fn cmd_raw(&mut self, peer: &str, hex: &str) -> Result<(), CliError<OUT::Error>> {
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
@@ -1189,9 +1238,9 @@ where
                     for b in bytes.iter() {
                         let _ = write!(&mut line, " {:02x}", b);
                     }
-                    self.io.write_line(&line).await?;
+                    self.out.write_line(&line).await?;
                 } else {
-                    self.io.write_line("ok").await?;
+                    self.out.write_line("ok").await?;
                 }
             }
             Err(e) => self.write_err(&node_err_str(&e)).await?,
@@ -1201,10 +1250,10 @@ where
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    async fn write_err(&mut self, msg: &str) -> Result<(), CliError<IO::Error>> {
+    async fn write_err(&mut self, msg: &str) -> Result<(), CliError<OUT::Error>> {
         let mut line: HString<EVENT_LINE_MAX> = HString::new();
         let _ = write!(&mut line, "error: {}", msg);
-        self.io.write_line(&line).await?;
+        self.out.write_line(&line).await?;
         Ok(())
     }
 
@@ -1279,10 +1328,7 @@ where
             };
             let rssi = pkt.rssi().unwrap_or(0);
             let snr = pkt.snr().map(|s| s.as_centibels()).unwrap_or(0);
-            let hops = pkt
-                .flood_hops()
-                .map(|fh| fh.accumulated())
-                .unwrap_or(0);
+            let hops = pkt.flood_hops().map(|fh| fh.accumulated()).unwrap_or(0);
             {
                 let mut s = st.borrow_mut();
                 s.packets_rx += 1;
@@ -1293,7 +1339,18 @@ where
             let payload = pkt.payload_bytes();
             let n = payload.len().min(64);
             let _ = prefix.extend_from_slice(&payload[..n]);
-            push_event(&ev, &dr, &wk, CliEvent::Received { from, hops, rssi, snr, prefix });
+            push_event(
+                &ev,
+                &dr,
+                &wk,
+                CliEvent::Received {
+                    from,
+                    hops,
+                    rssi,
+                    snr,
+                    prefix,
+                },
+            );
             false // don't consume — let other handlers see it too
         }));
     }
@@ -1331,7 +1388,15 @@ where
         subs.push(node.on_node_discovered(move |peer, name| {
             st.borrow_mut().nodes_discovered += 1;
             let name_h = name.and_then(|n| HString::<32>::try_from(n).ok());
-            push_event(&ev, &dr, &wk, CliEvent::NodeDiscovered { from: peer, name: name_h });
+            push_event(
+                &ev,
+                &dr,
+                &wk,
+                CliEvent::NodeDiscovered {
+                    from: peer,
+                    name: name_h,
+                },
+            );
         }));
     }
 
@@ -1454,8 +1519,7 @@ fn hex_nib(b: u8) -> Option<u8> {
     }
 }
 
-static NONCE_COUNTER: core::sync::atomic::AtomicU16 =
-    core::sync::atomic::AtomicU16::new(1);
+static NONCE_COUNTER: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(1);
 
 fn simple_nonce() -> u16 {
     NONCE_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed)

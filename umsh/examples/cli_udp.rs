@@ -31,7 +31,7 @@ use umsh::{
 };
 use umsh_cli::{
     CliSession,
-    io::StdioCliIo,
+    io::{StdioOutput, stdio_split},
     logger::{CliLogger, LogLevel},
 };
 
@@ -54,7 +54,7 @@ type CliHost<'a, R> = Host<'a, P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAM
 
 type Session<'a, R> = CliSession<
     CliHandle<'a, R>,
-    StdioCliIo,
+    StdioOutput,
     StderrLogger,
     16, // N_PEERS
     16, // N_ALIASES
@@ -112,9 +112,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node = host.add_node(identity_id);
 
     // Build CLI session.
-    let io = StdioCliIo::new();
+    let (mut stdin_in, stdout_out) = stdio_split();
     let logger = StderrLogger::new(LogLevel::Info);
-    let mut cli: Session<'_, _> = CliSession::new(node, local_key, io, logger);
+    let mut cli: Session<'_, _> = CliSession::new(node, local_key, stdout_out, logger);
 
     // Pre-register peers from --peer args.
     for (key, alias) in cfg.peers {
@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("host error: {e:?}");
                 }
             }
-            r = cli.run() => {
+            r = cli.run(&mut stdin_in) => {
                 if let Err(e) = r {
                     eprintln!("cli error: {e:?}");
                 }

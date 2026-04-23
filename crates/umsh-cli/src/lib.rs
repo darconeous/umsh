@@ -14,6 +14,6 @@ pub mod settings;
 pub mod stats;
 
 pub use events::CliEvent;
-pub use io::CliIo;
+pub use io::{CliInput, CliOutput};
 pub use logger::{CliLogger, LogLevel, NullLogger};
 pub use session::{CliError, CliSession};

@@ -7,8 +7,12 @@ repository.workspace = true
 
 [features]
 default = ["std", "software-crypto"]
+# `alloc` pulls in software-crypto because umsh-node does not currently build in
+# alloc-only mode without it (many CLI features — PFS, text chat — require it
+# anyway). Users who want a no_std build pick `alloc`; users on a hosted target
+# pick `std` (which implies `alloc`).
 std = ["alloc", "umsh-core/std", "umsh-mac/std", "umsh-node/std", "umsh-text/std"]
-alloc = ["umsh-node/alloc"]
+alloc = ["umsh-node/alloc", "software-crypto"]
 software-crypto = ["umsh-node/software-crypto", "umsh-text/software-crypto"]
 tokio-stdio = ["std", "dep:tokio"]
 serial = ["dep:embedded-io-async"]
