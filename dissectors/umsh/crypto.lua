@@ -218,22 +218,15 @@ end
 -- ---------------------------------------------------------------------------
 -- AAD construction
 -- fcf_byte:             1-byte string (raw FCF)
--- has_opts:             boolean — true if O flag was set in FCF
 -- static_opts:          ordered list of {number=N, value=bytes_str}
 -- dst_or_chan_bytes:     2-byte channel OR 3-byte dst hint
 -- src_bytes_or_nil:     3-byte hint, 32-byte key, or nil (when encrypted)
 -- secinfo_bytes:        5-or-7 byte string
 -- ---------------------------------------------------------------------------
 
-function M.build_aad(fcf_byte, has_opts, static_opts, dst_or_chan_bytes,
+function M.build_aad(fcf_byte, static_opts, dst_or_chan_bytes,
                      src_bytes_or_nil, secinfo_bytes)
   local parts = {fcf_byte}
-  -- NOTE: The reference implementation's feed_aad early-returns when no
-  -- options field is present (O=0), producing AAD = FCF-only.  Match that
-  -- behaviour here so that MICs verify against real packets.
-  if not has_opts then
-    return table.concat(parts)
-  end
   for _, opt in ipairs(static_opts or {}) do
     parts[#parts+1] = uint16_be(opt.number)
     parts[#parts+1] = uint16_be(#opt.value)
@@ -304,8 +297,7 @@ end
 
 function M.verify_and_decrypt(keys, pkt)
   local mic_len  = #pkt.mic_bytes
-  local has_opts = (pkt.fcf_byte:byte(1) & 0x02) ~= 0
-  local aad      = M.build_aad(pkt.fcf_byte, has_opts, pkt.static_opts,
+  local aad      = M.build_aad(pkt.fcf_byte, pkt.static_opts,
                                 pkt.dst_or_chan, pkt.src_bytes_or_nil,
                                 pkt.secinfo_raw)
 

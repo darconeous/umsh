@@ -1,6 +1,6 @@
 use umsh_core::{PacketType, PayloadType};
 
-use crate::{AppParseError, MacCommand, NodeIdentityPayload, identity, mac_command};
+use crate::{AppParseError, MacCommand, NodeIdentityRef, identity, mac_command};
 
 pub fn split_payload_type(payload: &[u8]) -> Result<(PayloadType, &[u8]), AppParseError> {
     if payload.is_empty() {
@@ -45,7 +45,7 @@ pub fn parse_mac_command_payload(
 pub fn parse_node_identity_payload(
     packet_type: PacketType,
     payload: &[u8],
-) -> Result<NodeIdentityPayload<'_>, AppParseError> {
+) -> Result<NodeIdentityRef<'_>, AppParseError> {
     identity::parse(expect_payload_type(
         packet_type,
         payload,

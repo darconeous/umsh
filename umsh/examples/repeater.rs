@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use embassy_executor::Spawner;
 use rand::rngs::ThreadRng;
 use umsh::{
@@ -11,6 +9,7 @@ use umsh::{
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, test_support::SimulatedNetwork},
     uri::encode_public_key_base58,
 };
+use umsh_sync::AsyncRefCell;
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -37,14 +36,16 @@ async fn main(_spawner: Spawner) {
     let repeater_radio = network.add_radio();
     let repeater_identity = SoftwareIdentity::from_secret_bytes(&[0x22; 32]);
 
-    let repeater_mac = RefCell::new(build_mac(repeater_radio));
+    let repeater_mac = AsyncRefCell::new(build_mac(repeater_radio));
     let repeater_handle = MacHandle::new(&repeater_mac);
     let repeater_id = repeater_handle
         .add_identity(repeater_identity)
+        .await
         .expect("repeater identity should fit");
 
     let repeater_key = repeater_mac
         .borrow()
+        .await
         .identity(repeater_id)
         .expect("repeater identity should exist")
         .identity()

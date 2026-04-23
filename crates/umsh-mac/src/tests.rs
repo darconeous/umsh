@@ -172,7 +172,7 @@ fn forward_duplicate_key_exists_for_every_routable_packet_class() {
         .unwrap();
     {
         let header = multicast.header().unwrap();
-        multicast.as_bytes_mut()[header.options_range.end] = FloodHops::new(2, 0).unwrap().0;
+        multicast.as_bytes_mut()[1] = FloodHops::new(2, 0).unwrap().0;
     }
     crypto.seal_packet(&mut multicast, &pairwise).unwrap();
 
@@ -254,7 +254,7 @@ fn confirmation_identity_matches_forwarding_identity_for_every_routable_packet_c
         .unwrap();
     {
         let header = multicast.header().unwrap();
-        multicast.as_bytes_mut()[header.options_range.end] = FloodHops::new(2, 0).unwrap().0;
+        multicast.as_bytes_mut()[1] = FloodHops::new(2, 0).unwrap().0;
     }
     crypto.seal_packet(&mut multicast, &pairwise).unwrap();
 
@@ -618,34 +618,45 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
 
 #[test]
 fn mac_handle_clones_share_send_queue_state() {
-    let mac = RefCell::new(make_mac());
+    let mac = umsh_sync::AsyncRefCell::new(make_mac());
     let handle = MacHandle::new(&mac);
     let handle_clone = handle.clone();
 
-    let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
-    let peer_id = handle_clone.add_peer(peer_key).unwrap();
-    handle
-        .install_pairwise_keys(
-            local_id,
-            peer_id,
-            PairwiseKeys {
-                k_enc: [1; 16],
-                k_mic: [2; 16],
-            },
-        )
-        .unwrap();
+    let (local_id, peer_id, peer_key, receipt) = block_on(async {
+        let local_id = handle
+            .add_identity(DummyIdentity::new([0x10; 32]))
+            .await
+            .unwrap();
+        let peer_key = PublicKey([0xAB; 32]);
+        let peer_id = handle_clone.add_peer(peer_key).await.unwrap();
+        handle
+            .install_pairwise_keys(
+                local_id,
+                peer_id,
+                PairwiseKeys {
+                    k_enc: [1; 16],
+                    k_mic: [2; 16],
+                },
+            )
+            .await
+            .unwrap();
 
-    let receipt = block_on(handle_clone.send_unicast(
-        local_id,
-        &peer_key,
-        b"hello",
-        &SendOptions::default().with_ack_requested(true).no_flood(),
-    ))
-    .unwrap()
-    .unwrap();
+        let receipt = handle_clone
+            .send_unicast(
+                local_id,
+                &peer_key,
+                b"hello",
+                &SendOptions::default().with_ack_requested(true).no_flood(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        (local_id, peer_id, peer_key, receipt)
+    });
+    let _ = peer_id;
+    let _ = peer_key;
 
-    let borrowed = mac.borrow();
+    let borrowed = mac.try_borrow().expect("handle should have released cell");
     assert_eq!(borrowed.tx_queue().len(), 1);
     assert!(
         borrowed
@@ -3115,7 +3126,7 @@ fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
         .unwrap();
     {
         let header = packet.header().unwrap();
-        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 2).unwrap().0;
+        packet.as_bytes_mut()[1] = FloodHops::new(4, 2).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
         .seal_packet(&mut packet, &keys)
@@ -3572,7 +3583,7 @@ fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
         .unwrap();
     {
         let header = packet.header().unwrap();
-        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 0).unwrap().0;
+        packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
         .seal_packet(&mut packet, &keys)
@@ -3623,7 +3634,7 @@ fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options
         .unwrap();
     {
         let header = packet.header().unwrap();
-        packet.as_bytes_mut()[header.options_range.end] = FloodHops::new(4, 0).unwrap().0;
+        packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
         .seal_packet(&mut packet, &keys)
@@ -5904,7 +5915,7 @@ fn rewrite_forwarded_fixture(frame: &[u8]) -> heapless::Vec<u8, 256> {
 
     let header = PacketHeader::parse(stored.as_slice()).unwrap();
     if let Some(flood_hops) = header.flood_hops {
-        stored[header.options_range.end] = flood_hops.decremented().0;
+        stored[1] = flood_hops.decremented().0;
     }
 
     stored
@@ -5956,7 +5967,7 @@ fn build_received_unicast_frame(
     let mut packet = builder.payload(payload).build().unwrap();
     if let Some((remaining, accumulated)) = flood_hops {
         let header = packet.header().unwrap();
-        packet.as_bytes_mut()[header.options_range.end] =
+        packet.as_bytes_mut()[1] =
             FloodHops::new(remaining, accumulated).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
@@ -6256,17 +6267,16 @@ fn build_reserved5_frame(
         0
     };
 
-    let has_options = options_len > 0;
     let has_flood_hops = flood_hops.is_some();
-    frame[0] = umsh_core::Fcf::new(PacketType::Reserved5, false, has_options, has_flood_hops).0;
+    frame[0] = umsh_core::Fcf::new(PacketType::Reserved5, false, has_flood_hops).0;
     let mut cursor = 1usize;
-    if has_options {
-        frame[cursor..cursor + options_len].copy_from_slice(&options_buf[..options_len]);
-        cursor += options_len;
-    }
     if let Some((remaining, accumulated)) = flood_hops {
         frame[cursor] = FloodHops::new(remaining, accumulated).unwrap().0;
         cursor += 1;
+    }
+    if options_len > 0 {
+        frame[cursor..cursor + options_len].copy_from_slice(&options_buf[..options_len]);
+        cursor += options_len;
     }
     frame[cursor..cursor + body.len()].copy_from_slice(body);
     cursor += body.len();
@@ -6501,7 +6511,7 @@ impl DummyRadio {
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
             let header = packet.header().unwrap();
-            packet.as_bytes_mut()[header.options_range.end] =
+            packet.as_bytes_mut()[1] =
                 FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha)
@@ -6687,7 +6697,7 @@ impl DummyRadio {
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
             let header = packet.header().unwrap();
-            packet.as_bytes_mut()[header.options_range.end] =
+            packet.as_bytes_mut()[1] =
                 FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha)

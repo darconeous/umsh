@@ -2,31 +2,20 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use umsh_mac::{LocalIdentityId, MacError, MacHandle, MacHandleError, Platform, SendOptions};
+use umsh_mac::{LocalIdentityId, MacError, MacHandle, Platform, SendOptions};
 
 use crate::dispatch::EventDispatcher;
 use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 use crate::receive::ReceivedPacketRef;
-use crate::{OwnedMacCommand, OwnedNodeIdentityPayload, identity_payload, mac_command};
+use crate::{NodeIdentity, OwnedMacCommand, identity_payload, mac_command};
 use umsh_core::PayloadType;
 
 /// Error returned when a [`Host`] cannot make progress.
 ///
-/// `Busy` means some other caller already holds the underlying shared
-/// [`MacHandle`](umsh_mac::MacHandle) borrow. `Mac` wraps the underlying runtime failure.
+/// Wraps the underlying MAC runtime failure.
 #[derive(Debug)]
 pub enum HostError<E> {
-    Busy,
     Mac(E),
-}
-
-impl<E> From<MacHandleError<E>> for HostError<E> {
-    fn from(value: MacHandleError<E>) -> Self {
-        match value {
-            MacHandleError::Busy => Self::Busy,
-            MacHandleError::Inner(inner) => Self::Mac(inner),
-        }
-    }
 }
 
 /// Multi-identity orchestration layer for the node API.
@@ -214,7 +203,8 @@ impl<
                     | umsh_mac::MacEventRef::Forwarded { .. } => {}
                 }
             })
-            .await?;
+            .await
+            .map_err(HostError::Mac)?;
 
         let queued: Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)> =
             pending_pfs.borrow_mut().drain(..).collect();
@@ -224,7 +214,7 @@ impl<
 
         #[cfg(feature = "software-crypto")]
         for (_, node) in &self.nodes {
-            if let Ok(expired) = node.expire_pfs_sessions() {
+            if let Ok(expired) = node.expire_pfs_sessions().await {
                 for peer in expired {
                     node.dispatch_pfs_ended(peer);
                 }
@@ -316,7 +306,7 @@ fn dispatch_payload_callbacks<
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = identity_payload::parse(packet.payload()) {
-            let owned = OwnedNodeIdentityPayload::from(identity);
+            let owned = NodeIdentity::from(identity);
             node.dispatch_node_discovered(from, owned.name.as_deref());
         }
         return;

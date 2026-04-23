@@ -185,7 +185,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     }
 
     #[cfg(feature = "software-crypto")]
-    pub fn pfs_status(&self) -> Result<crate::node::PfsStatus, NodeError<M>> {
-        self.transport.pfs_status(&self.peer)
+    pub async fn pfs_status(&self) -> Result<crate::node::PfsStatus, NodeError<M>> {
+        self.transport.pfs_status(&self.peer).await
     }
 }

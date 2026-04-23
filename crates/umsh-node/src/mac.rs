@@ -1,7 +1,7 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_mac::{
-    CapacityError, LocalIdentityId, MacHandle, MacHandleError, PeerId, Platform, SendError,
-    SendOptions, SendReceipt,
+    CapacityError, LocalIdentityId, MacHandle, PeerId, Platform, SendError, SendOptions,
+    SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -15,17 +15,17 @@ pub trait MacBackend: Clone {
     type CapacityError;
 
     /// Add or refresh a peer.
-    fn add_peer(
+    async fn add_peer(
         &self,
         key: PublicKey,
     ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Add or refresh a private channel.
-    fn add_private_channel(
+    async fn add_private_channel(
         &self,
         key: ChannelKey,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Add or refresh a named channel.
-    fn add_named_channel(
+    async fn add_named_channel(
         &self,
         name: &str,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
@@ -62,59 +62,28 @@ pub trait MacBackend: Clone {
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>;
     /// Fill `dest` with random bytes.
-    fn fill_random(
-        &self,
-        dest: &mut [u8],
-    ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
+    async fn fill_random(&self, dest: &mut [u8]);
     /// Return the current MAC clock time.
-    fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>>;
+    async fn now_ms(&self) -> u64;
 
     #[cfg(feature = "software-crypto")]
-    fn register_ephemeral(
+    async fn register_ephemeral(
         &self,
         parent: LocalIdentityId,
         identity: umsh_crypto::software::SoftwareIdentity,
     ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>>;
 
     #[cfg(feature = "software-crypto")]
-    fn remove_ephemeral(
-        &self,
-        id: LocalIdentityId,
-    ) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>>;
+    async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
 }
 
-/// Normalized wrapper around MAC-handle failures.
+/// Normalized wrapper around MAC-backend failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MacBackendError<S, C> {
-    /// Shared MAC state was temporarily busy.
-    Busy,
     /// Send-oriented MAC failure.
     Send(S),
     /// Capacity-related MAC failure.
     Capacity(C),
-}
-
-impl<S, C> MacBackendError<S, C> {
-    fn from_send_error(error: MacHandleError<S>) -> Self {
-        match error {
-            MacHandleError::Busy => Self::Busy,
-            MacHandleError::Inner(inner) => Self::Send(inner),
-        }
-    }
-
-    fn from_capacity_error(error: MacHandleError<C>) -> Self {
-        match error {
-            MacHandleError::Busy => Self::Busy,
-            MacHandleError::Inner(inner) => Self::Capacity(inner),
-        }
-    }
-
-    fn from_infallible_error(error: MacHandleError<core::convert::Infallible>) -> Self {
-        match error {
-            MacHandleError::Busy => Self::Busy,
-            MacHandleError::Inner(inner) => match inner {},
-        }
-    }
 }
 
 impl<
@@ -132,28 +101,29 @@ impl<
     type SendError = SendError;
     type CapacityError = CapacityError;
 
-    fn add_peer(
+    async fn add_peer(
         &self,
         key: PublicKey,
     ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.add_peer(key)
-            .map_err(MacBackendError::from_capacity_error)
+        self.add_peer(key).await.map_err(MacBackendError::Capacity)
     }
 
-    fn add_private_channel(
+    async fn add_private_channel(
         &self,
         key: ChannelKey,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
         self.add_channel(key)
-            .map_err(MacBackendError::from_capacity_error)
+            .await
+            .map_err(MacBackendError::Capacity)
     }
 
-    fn add_named_channel(
+    async fn add_named_channel(
         &self,
         name: &str,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
         self.add_named_channel(name)
-            .map_err(MacBackendError::from_capacity_error)
+            .await
+            .map_err(MacBackendError::Capacity)
     }
 
     async fn send_broadcast(
@@ -164,7 +134,7 @@ impl<
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_broadcast(from, payload, options)
             .await
-            .map_err(MacBackendError::from_send_error)
+            .map_err(MacBackendError::Send)
     }
 
     async fn send_multicast(
@@ -176,7 +146,7 @@ impl<
     ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_multicast(from, channel, payload, options)
             .await
-            .map_err(MacBackendError::from_send_error)
+            .map_err(MacBackendError::Send)
     }
 
     async fn send_unicast(
@@ -188,7 +158,7 @@ impl<
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_unicast(from, dst, payload, options)
             .await
-            .map_err(MacBackendError::from_send_error)
+            .map_err(MacBackendError::Send)
     }
 
     async fn send_blind_unicast(
@@ -201,38 +171,30 @@ impl<
     ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.send_blind_unicast(from, dst, channel, payload, options)
             .await
-            .map_err(MacBackendError::from_send_error)
+            .map_err(MacBackendError::Send)
     }
 
-    fn fill_random(
-        &self,
-        dest: &mut [u8],
-    ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.fill_random(dest)
-            .map_err(MacBackendError::from_infallible_error)
+    async fn fill_random(&self, dest: &mut [u8]) {
+        self.fill_random(dest).await
     }
 
-    fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.now_ms()
-            .map_err(MacBackendError::from_infallible_error)
+    async fn now_ms(&self) -> u64 {
+        self.now_ms().await
     }
 
     #[cfg(feature = "software-crypto")]
-    fn register_ephemeral(
+    async fn register_ephemeral(
         &self,
         parent: LocalIdentityId,
         identity: umsh_crypto::software::SoftwareIdentity,
     ) -> Result<LocalIdentityId, MacBackendError<Self::SendError, Self::CapacityError>> {
         self.register_ephemeral(parent, identity)
-            .map_err(MacBackendError::from_capacity_error)
+            .await
+            .map_err(MacBackendError::Capacity)
     }
 
     #[cfg(feature = "software-crypto")]
-    fn remove_ephemeral(
-        &self,
-        id: LocalIdentityId,
-    ) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.remove_ephemeral(id)
-            .map_err(MacBackendError::from_infallible_error)
+    async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
+        self.remove_ephemeral(id).await
     }
 }

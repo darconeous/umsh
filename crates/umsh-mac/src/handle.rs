@@ -1,8 +1,10 @@
-use core::cell::RefCell;
+use core::future::poll_fn;
+use core::task::Poll;
 
 use rand::Rng;
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_hal::{Clock, CounterStore};
+use umsh_sync::AsyncRefCell;
 
 use crate::{
     CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES,
@@ -12,20 +14,12 @@ use crate::{
     send::{SendOptions, SendReceipt},
 };
 
-/// Error returned when a `MacHandle` operation cannot access the shared coordinator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MacHandleError<E> {
-    /// Another caller is already borrowing the shared coordinator.
-    Busy,
-    /// The underlying coordinator operation failed.
-    Inner(E),
-}
-
 /// Lightweight, cloneable handle for queuing MAC operations against shared state.
 ///
-/// The handle borrows a `RefCell` that owns the underlying coordinator, which
-/// keeps queuing and configuration operations lightweight while the main MAC run
-/// loop continues to own radio receive/transmit progression.
+/// The handle borrows an [`AsyncRefCell`] that owns the underlying coordinator.
+/// Every operation takes the cell asynchronously: if another caller currently
+/// holds the coordinator (for example, the long-running `run()` loop that is
+/// waiting on the radio), operations wait rather than failing.
 pub struct MacHandle<
     'a,
     P: Platform,
@@ -37,7 +31,7 @@ pub struct MacHandle<
     const FRAME: usize = DEFAULT_FRAME,
     const DUP: usize = DEFAULT_DUP,
 > {
-    mac: &'a RefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+    mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
 }
 
 impl<
@@ -85,80 +79,64 @@ impl<
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
-        mac: &'a RefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+        mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
     ) -> Self {
         Self { mac }
     }
 
     /// Registers a local identity with the shared coordinator.
-    pub fn add_identity(
+    pub async fn add_identity(
         &self,
         identity: P::Identity,
-    ) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
-        self.with_mac(|mac| mac.add_identity(identity))
+    ) -> Result<LocalIdentityId, CapacityError> {
+        self.mac.borrow_mut().await.add_identity(identity)
     }
 
     /// Load the persisted frame-counter boundary for one identity.
     pub async fn load_persisted_counter(
         &self,
         id: LocalIdentityId,
-    ) -> Result<
-        u32,
-        MacHandleError<CounterPersistenceError<<P::CounterStore as CounterStore>::Error>>,
-    > {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.load_persisted_counter(id)
-            .await
-            .map_err(MacHandleError::Inner)
+    ) -> Result<u32, CounterPersistenceError<<P::CounterStore as CounterStore>::Error>> {
+        self.mac.borrow_mut().await.load_persisted_counter(id).await
     }
 
     /// Persist all currently scheduled frame-counter reservations.
     pub async fn service_counter_persistence(
         &self,
-    ) -> Result<usize, MacHandleError<<P::CounterStore as CounterStore>::Error>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.service_counter_persistence()
+    ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        self.mac
+            .borrow_mut()
             .await
-            .map_err(MacHandleError::Inner)
+            .service_counter_persistence()
+            .await
     }
 
     /// Registers or refreshes a remote peer in the shared registry.
-    pub fn add_peer(&self, key: PublicKey) -> Result<PeerId, MacHandleError<CapacityError>> {
-        self.with_mac(|mac| mac.add_peer(key))
+    pub async fn add_peer(&self, key: PublicKey) -> Result<PeerId, CapacityError> {
+        self.mac.borrow_mut().await.add_peer(key)
     }
 
     /// Adds or updates a shared channel and derives its multicast keys.
-    pub fn add_channel(&self, key: ChannelKey) -> Result<(), MacHandleError<CapacityError>> {
-        self.with_mac(|mac| mac.add_channel(key))
+    pub async fn add_channel(&self, key: ChannelKey) -> Result<(), CapacityError> {
+        self.mac.borrow_mut().await.add_channel(key)
     }
 
     /// Adds or updates a named channel using the coordinator's channel-key derivation.
-    pub fn add_named_channel(&self, name: &str) -> Result<(), MacHandleError<CapacityError>> {
-        self.with_mac(|mac| mac.add_named_channel(name))
+    pub async fn add_named_channel(&self, name: &str) -> Result<(), CapacityError> {
+        self.mac.borrow_mut().await.add_named_channel(name)
     }
 
     /// Return whether inbound secure packets carrying a full source key may auto-register peers.
-    pub fn auto_register_full_key_peers(
-        &self,
-    ) -> Result<bool, MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| Ok(mac.auto_register_full_key_peers()))
+    pub async fn auto_register_full_key_peers(&self) -> bool {
+        self.mac.borrow_mut().await.auto_register_full_key_peers()
     }
 
     /// Enable or disable inbound full-key peer auto-registration.
-    pub fn set_auto_register_full_key_peers(
-        &self,
-        enabled: bool,
-    ) -> Result<(), MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| {
-            mac.set_auto_register_full_key_peers(enabled);
-            Ok(())
-        })
+    pub async fn set_auto_register_full_key_peers(&self, enabled: bool) {
+        self.mac
+            .borrow_mut()
+            .await
+            .set_auto_register_full_key_peers(enabled);
     }
 
     /// Installs pairwise transport keys for one local identity and remote peer.
@@ -166,13 +144,16 @@ impl<
     /// This is a crate-internal method. External callers should use the
     /// `unsafe-advanced` feature or go through the node-layer PFS session manager.
     #[cfg(any(feature = "unsafe-advanced", test))]
-    pub(crate) fn install_pairwise_keys(
+    pub(crate) async fn install_pairwise_keys(
         &self,
         identity_id: LocalIdentityId,
         peer_id: PeerId,
         pairwise_keys: umsh_crypto::PairwiseKeys,
-    ) -> Result<Option<crate::peers::PeerCryptoState>, MacHandleError<SendError>> {
-        self.with_mac(|mac| mac.install_pairwise_keys(identity_id, peer_id, pairwise_keys))
+    ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
+        self.mac
+            .borrow_mut()
+            .await
+            .install_pairwise_keys(identity_id, peer_id, pairwise_keys)
     }
 
     /// Installs pairwise transport keys for one local identity and remote peer.
@@ -182,74 +163,61 @@ impl<
     /// is deliberately gated behind the `unsafe-advanced` feature. Prefer
     /// going through the node-layer PFS session manager instead.
     #[cfg(feature = "unsafe-advanced")]
-    pub fn install_pairwise_keys_advanced(
+    pub async fn install_pairwise_keys_advanced(
         &self,
         identity_id: LocalIdentityId,
         peer_id: PeerId,
         pairwise_keys: umsh_crypto::PairwiseKeys,
-    ) -> Result<Option<crate::peers::PeerCryptoState>, MacHandleError<SendError>> {
+    ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
         self.install_pairwise_keys(identity_id, peer_id, pairwise_keys)
+            .await
     }
 
     /// Enqueues a broadcast frame for transmission.
-    ///
-    /// Returns a [`SendReceipt`] for tracking transmission progress.
     pub async fn send_broadcast(
         &self,
         from: LocalIdentityId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<SendReceipt, MacHandleError<SendError>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.send_broadcast(from, payload, options)
+    ) -> Result<SendReceipt, SendError> {
+        self.mac
+            .borrow_mut()
             .await
-            .map_err(MacHandleError::Inner)
+            .send_broadcast(from, payload, options)
+            .await
     }
 
     /// Enqueues a multicast frame for transmission.
-    ///
-    /// Returns a [`SendReceipt`] for tracking transmission progress.
     pub async fn send_multicast(
         &self,
         from: LocalIdentityId,
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<SendReceipt, MacHandleError<SendError>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.send_multicast(from, channel, payload, options)
+    ) -> Result<SendReceipt, SendError> {
+        self.mac
+            .borrow_mut()
             .await
-            .map_err(MacHandleError::Inner)
+            .send_multicast(from, channel, payload, options)
+            .await
     }
 
     /// Enqueues a unicast frame for transmission.
-    ///
-    /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
     pub async fn send_unicast(
         &self,
         from: LocalIdentityId,
         dst: &PublicKey,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, MacHandleError<SendError>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.send_unicast(from, dst, payload, options)
+    ) -> Result<Option<SendReceipt>, SendError> {
+        self.mac
+            .borrow_mut()
             .await
-            .map_err(MacHandleError::Inner)
+            .send_unicast(from, dst, payload, options)
+            .await
     }
 
     /// Enqueues a blind-unicast frame for transmission.
-    ///
-    /// Returns a [`SendReceipt`] when `options.ack_requested` is enabled.
     pub async fn send_blind_unicast(
         &self,
         from: LocalIdentityId,
@@ -257,107 +225,135 @@ impl<
         channel: &ChannelId,
         payload: &[u8],
         options: &SendOptions,
-    ) -> Result<Option<SendReceipt>, MacHandleError<SendError>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.send_blind_unicast(from, dst, channel, payload, options)
+    ) -> Result<Option<SendReceipt>, SendError> {
+        self.mac
+            .borrow_mut()
             .await
-            .map_err(MacHandleError::Inner)
+            .send_blind_unicast(from, dst, channel, payload, options)
+            .await
     }
 
     /// Drive the shared MAC until one wake cycle completes and invoke `on_event` for emitted events.
+    ///
+    /// The exclusive borrow on the shared coordinator is released between
+    /// every internal phase so that other handles (CLI sends, UI queries,
+    /// counter-persistence services) can interleave their own async work
+    /// while this driver is waiting on the radio or a timer.
     pub async fn next_event(
         &self,
-        on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        mac.next_event(on_event)
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacError<<P::Radio as umsh_hal::Radio>::Error>> {
+        loop {
+            // Phase 1: drain any ready transmit work.
+            self.mac.borrow_mut().await.drain_tx_queue(&mut on_event).await?;
+
+            // Phase 2: wait for a radio frame or timer deadline. Acquire the
+            // borrow briefly each poll so concurrent tasks can obtain it too.
+            let mut buf = [0u8; FRAME];
+            let cond = self.mac.cond();
+            let mut cond_ticket = cond.ticket();
+            let reason = poll_fn(|cx| {
+                // Always register on the cell's wake condition first so we
+                // re-poll when another handle mutates coordinator state
+                // (e.g. `cli.send_unicast` enqueues a frame and drops its
+                // borrow). Without this, we'd only wake on radio I/O or
+                // timer deadlines — TX queued by concurrent handles would
+                // sit until the next unrelated radio event.
+                if cond.is_ticket_triggered(&cond_ticket) {
+                    cond.forget_ticket(&mut cond_ticket);
+                    cond_ticket = cond.ticket();
+                }
+                let _ = cond.poll_wait(cx, &mut cond_ticket);
+
+                if let Some(mut mac) = self.mac.try_borrow_mut() {
+                    // Got the borrow: also register radio/timer wakers and
+                    // check for readiness in one shot.
+                    mac.poll_wait_for_wake(cx, &mut buf)
+                } else {
+                    // Another caller currently holds the cell. The cond
+                    // registration above will wake us when they release.
+                    Poll::Pending
+                }
+            })
             .await
-            .map_err(MacHandleError::Inner)
+            .map_err(MacError::Radio)?;
+            cond.forget_ticket(&mut cond_ticket);
+
+            // Phases 3-5: re-acquire the borrow and finish the cycle.
+            self.mac
+                .borrow_mut()
+                .await
+                .process_wake_reason(reason, &mut buf, &mut on_event)
+                .await?;
+
+            // If new transmit work appeared during processing (e.g. a
+            // retransmit was enqueued), loop back to drain it before
+            // waiting again.
+            let tx_empty = self.mac.borrow().await.tx_queue().is_empty();
+            if !tx_empty {
+                continue;
+            }
+            return Ok(());
+        }
     }
 
     /// Drive the shared MAC forever, invoking `on_event` for delivered events.
     ///
     /// This is the preferred long-lived driver API for standalone MAC-backed tasks.
-    /// It keeps the wait policy inside the coordinator instead of requiring callers to
-    /// hand-roll `poll_cycle` loops with arbitrary sleeps.
     pub async fn run(
         &self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
-    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+    ) -> Result<(), MacError<<P::Radio as umsh_hal::Radio>::Error>> {
         loop {
             self.next_event(&mut on_event).await?;
         }
     }
 
     /// Drive the shared MAC forever while ignoring emitted events.
-    pub async fn run_quiet(
-        &self,
-    ) -> Result<(), MacHandleError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+    pub async fn run_quiet(&self) -> Result<(), MacError<<P::Radio as umsh_hal::Radio>::Error>> {
         self.run(|_, _| {}).await
     }
 
     /// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
-    pub fn fill_random(
-        &self,
-        dest: &mut [u8],
-    ) -> Result<(), MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| {
-            mac.rng_mut().fill_bytes(dest);
-            Ok(())
-        })
+    pub async fn fill_random(&self, dest: &mut [u8]) {
+        self.mac.borrow_mut().await.rng_mut().fill_bytes(dest);
     }
 
     /// Returns the current coordinator clock time in milliseconds.
-    pub fn now_ms(&self) -> Result<u64, MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| Ok(mac.clock().now_ms()))
+    pub async fn now_ms(&self) -> u64 {
+        self.mac.borrow_mut().await.clock().now_ms()
     }
 
     #[cfg(feature = "software-crypto")]
     /// Registers an ephemeral software identity with the shared coordinator.
-    ///
-    /// This is primarily used by the node layer when a PFS session becomes active.
-    pub fn register_ephemeral(
+    pub async fn register_ephemeral(
         &self,
         parent: LocalIdentityId,
         identity: umsh_crypto::software::SoftwareIdentity,
-    ) -> Result<LocalIdentityId, MacHandleError<CapacityError>> {
-        self.with_mac(|mac| mac.register_ephemeral(parent, identity))
+    ) -> Result<LocalIdentityId, CapacityError> {
+        self.mac
+            .borrow_mut()
+            .await
+            .register_ephemeral(parent, identity)
     }
 
     #[cfg(feature = "software-crypto")]
     /// Removes a previously registered ephemeral identity.
-    pub fn remove_ephemeral(
-        &self,
-        id: LocalIdentityId,
-    ) -> Result<bool, MacHandleError<core::convert::Infallible>> {
-        self.with_mac(|mac| Ok(mac.remove_ephemeral(id)))
+    pub async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
+        self.mac.borrow_mut().await.remove_ephemeral(id)
     }
 
     /// Cancel a pending ACK-requested send, stopping retransmissions.
     ///
-    /// Returns `true` if the pending ACK was found and removed. Returns
-    /// `false` if the send was not found or the coordinator was busy.
-    pub fn cancel_pending_ack(&self, identity_id: LocalIdentityId, receipt: SendReceipt) -> bool {
-        self.mac
-            .try_borrow_mut()
-            .map(|mut mac| mac.cancel_pending_ack(identity_id, receipt))
-            .unwrap_or(false)
-    }
-
-    fn with_mac<T, E>(
+    /// Returns `true` if the pending ACK was found and removed.
+    pub async fn cancel_pending_ack(
         &self,
-        f: impl FnOnce(&mut Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Result<T, E>,
-    ) -> Result<T, MacHandleError<E>> {
-        let mut mac = self
-            .mac
-            .try_borrow_mut()
-            .map_err(|_| MacHandleError::Busy)?;
-        f(&mut mac).map_err(MacHandleError::Inner)
+        identity_id: LocalIdentityId,
+        receipt: SendReceipt,
+    ) -> bool {
+        self.mac
+            .borrow_mut()
+            .await
+            .cancel_pending_ack(identity_id, receipt)
     }
 }

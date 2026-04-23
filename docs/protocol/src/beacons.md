@@ -7,7 +7,7 @@ A **Beacon** is defined as either:
 - a broadcast packet with no payload, or
 - a multicast packet with no payload
 
-Beacons are used to announce the presence of a node on the network without carrying additional data.
+Beacons are used to announce the presence of a node on the network without carrying additional data. Because beacons have no payload, they omit the `0xFF` end-of-options marker; the options block is parsed until the end of the packet. The minimum beacon size is unchanged.
 
 A beacon with a trace-route option can inform listeners of both:
 

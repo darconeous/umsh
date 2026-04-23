@@ -102,9 +102,8 @@ enum SourceValue {
 pub struct Builder<'a, K, S> {
     buf: &'a mut [u8],
     packet_type: PacketType,
-    options_used: bool,
-    options_finalized: bool,
     options_len: usize,
+    options_scratch: Option<Range<usize>>,
     last_option_number: Option<u16>,
     option_error: Option<BuildError>,
     source: Option<SourceValue>,
@@ -127,9 +126,8 @@ impl<'a, K, S> Builder<'a, K, S> {
         Self {
             buf,
             packet_type,
-            options_used: false,
-            options_finalized: false,
             options_len: 0,
+            options_scratch: None,
             last_option_number: None,
             option_error: None,
             source: None,
@@ -155,9 +153,8 @@ impl<'a, K, S> Builder<'a, K, S> {
         Builder {
             buf: self.buf,
             packet_type: self.packet_type,
-            options_used: self.options_used,
-            options_finalized: self.options_finalized,
             options_len: self.options_len,
+            options_scratch: self.options_scratch,
             last_option_number: self.last_option_number,
             option_error: self.option_error,
             source: self.source,
@@ -195,42 +192,81 @@ impl<'a, K, S> Builder<'a, K, S> {
         match live.put(number, value) {
             Ok(()) => {
                 self.options_len += live.finish();
-                self.options_used = true;
                 self.last_option_number = Some(number);
             }
             Err(err) => self.option_error = Some(err.into()),
         }
     }
 
-    fn finalize_options(&mut self) -> Result<(), BuildError> {
-        if !self.options_used || self.options_finalized {
+    /// Move the options block staged at `buf[1..1 + options_len]` into a tail
+    /// scratch region so the prefix fields can overwrite its original slot.
+    fn stash_options(&mut self) -> Result<(), BuildError> {
+        if self.options_len == 0 {
             return Ok(());
         }
-        let mut encoder = OptionEncoder::new(&mut self.buf[1 + self.options_len..]);
-        encoder.end_marker()?;
-        self.options_len += encoder.finish();
-        self.options_finalized = true;
+        let payload_len = self
+            .payload
+            .as_ref()
+            .map(|p| p.end - p.start)
+            .unwrap_or(0);
+        let scratch_end = self
+            .buf
+            .len()
+            .checked_sub(payload_len)
+            .ok_or(BuildError::BufferTooSmall)?;
+        let scratch_start = scratch_end
+            .checked_sub(self.options_len)
+            .ok_or(BuildError::BufferTooSmall)?;
+        if scratch_start < 1 + self.options_len {
+            return Err(BuildError::BufferTooSmall);
+        }
+        self.buf.copy_within(1..1 + self.options_len, scratch_start);
+        self.options_scratch = Some(scratch_start..scratch_end);
         Ok(())
+    }
+
+    /// Copy the options block from tail scratch to the current cursor. If a
+    /// payload follows, append the `0xFF` end-of-options marker.
+    fn emit_options(
+        &mut self,
+        cursor: &mut usize,
+        has_payload: bool,
+    ) -> Result<Range<usize>, BuildError> {
+        let start = *cursor;
+        if let Some(scratch) = self.options_scratch.clone() {
+            let len = scratch.end - scratch.start;
+            let end = start
+                .checked_add(len)
+                .ok_or(BuildError::BufferTooSmall)?;
+            if end > self.buf.len() {
+                return Err(BuildError::BufferTooSmall);
+            }
+            self.buf.copy_within(scratch, start);
+            *cursor = end;
+        }
+        if has_payload {
+            let marker_slot = *cursor;
+            if marker_slot >= self.buf.len() {
+                return Err(BuildError::BufferTooSmall);
+            }
+            self.buf[marker_slot] = 0xFF;
+            *cursor = marker_slot + 1;
+        }
+        Ok(start..*cursor)
     }
 
     fn write_common_prefix(&mut self) -> Result<usize, BuildError> {
         if let Some(err) = self.option_error {
             return Err(err);
         }
-        self.finalize_options()?;
+        self.stash_options()?;
         let full_source = matches!(self.source, Some(SourceValue::Full(_)));
-        let fcf = Fcf::new(
-            self.packet_type,
-            full_source,
-            self.options_used,
-            self.flood_hops.is_some(),
-        );
+        let fcf = Fcf::new(self.packet_type, full_source, self.flood_hops.is_some());
         if self.buf.is_empty() {
             return Err(BuildError::BufferTooSmall);
         }
         self.buf[0] = fcf.0;
         let mut cursor = 1;
-        cursor += self.options_len;
         if let Some(fhops) = self.flood_hops {
             self.buf
                 .get_mut(cursor)
@@ -549,10 +585,14 @@ impl<'a> BroadcastBuilder<'a, state::Configuring> {
     }
 
     /// Finalize the broadcast packet and return the written frame bytes.
+    ///
+    /// Layout: `FCF [FHOPS] SRC OPTIONS [0xFF PAYLOAD]`
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
+        let has_payload = self.payload.is_some();
         let mut cursor = self.write_common_prefix()?;
         self.write_source(&mut cursor)?;
-        if self.payload.is_some() {
+        self.emit_options(&mut cursor, has_payload)?;
+        if has_payload {
             let _ = self.copy_staged_payload(&mut cursor)?;
         }
         Ok(&self.buf[..cursor])
@@ -568,6 +608,9 @@ impl<'a> BroadcastBuilder<'a, state::Complete> {
 
 impl<'a> MacAckBuilder<'a, state::Configuring> {
     /// Finalize the MAC ACK packet and return the written frame bytes.
+    ///
+    /// Layout: `FCF [FHOPS] DST OPTIONS ACK_TAG(8)`
+    /// The `0xFF` end-marker is omitted — the ACK_TAG trailer is at a fixed offset.
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let dst = self.ack_dst.ok_or(BuildError::MissingDestination)?;
@@ -576,6 +619,7 @@ impl<'a> MacAckBuilder<'a, state::Configuring> {
             .ok_or(BuildError::BufferTooSmall)?
             .copy_from_slice(&dst.0);
         cursor += 3;
+        self.emit_options(&mut cursor, false)?;
         let ack_tag = self.ack_tag.ok_or(BuildError::MissingAckTag)?;
         self.buf
             .get_mut(cursor..cursor + 8)
@@ -593,7 +637,9 @@ impl<'a> UnicastBuilder<'a, state::Complete> {
 }
 
 impl<'a> UnicastBuilder<'a, state::Configuring> {
+    /// Layout: `FCF [FHOPS] DST SRC SECINFO OPTIONS [0xFF PAYLOAD] MIC`
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
+        let has_payload = self.payload.is_some();
         let mut cursor = self.write_common_prefix()?;
         let dst = self.dst.ok_or(BuildError::MissingDestination)?;
         self.buf
@@ -614,7 +660,13 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
         )?;
-        let body_range = self.copy_staged_payload(&mut cursor)?;
+        let opts_range = self.emit_options(&mut cursor, has_payload)?;
+        let body_start = cursor;
+        let body_range = if has_payload {
+            self.copy_staged_payload(&mut cursor)?
+        } else {
+            body_start..body_start
+        };
         let mic_start = cursor;
         let mic_end = mic_start + self.mic_size.byte_len();
         self.buf
@@ -629,7 +681,7 @@ impl<'a> UnicastBuilder<'a, state::Configuring> {
             None,
             mic_start..mic_end,
             sec_start..sec_start + sec_info.wire_len(),
-            1..1 + self.options_len,
+            opts_range,
         ))
     }
 }
@@ -641,6 +693,8 @@ impl<'a> MulticastBuilder<'a, state::Complete> {
 }
 
 impl<'a> MulticastBuilder<'a, state::Configuring> {
+    /// Layout (E=1): `FCF [FHOPS] CHANNEL SECINFO OPTIONS 0xFF ENC(SRC+PAYLOAD) MIC`
+    /// Layout (E=0): `FCF [FHOPS] CHANNEL SECINFO OPTIONS 0xFF SRC [PAYLOAD] MIC`
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let channel = self.channel.ok_or(BuildError::MissingChannel)?;
@@ -661,6 +715,8 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
         )?;
+        // SRC (and optionally payload) always follow OPTIONS, so 0xFF is always emitted.
+        let opts_range = self.emit_options(&mut cursor, true)?;
         let body_start = cursor;
         self.write_source(&mut cursor)?;
         let payload_range = self.copy_staged_payload(&mut cursor)?;
@@ -683,7 +739,7 @@ impl<'a> MulticastBuilder<'a, state::Configuring> {
             None,
             mic_start..mic_end,
             sec_start..sec_start + sec_info.wire_len(),
-            1..1 + self.options_len,
+            opts_range,
         ))
     }
 }
@@ -695,6 +751,8 @@ impl<'a> BlindUnicastBuilder<'a, state::Complete> {
 }
 
 impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
+    /// Layout (E=1): `FCF [FHOPS] CHANNEL SECINFO OPTIONS 0xFF ENC_DST_SRC ENC_PAYLOAD MIC`
+    /// Layout (E=0): `FCF [FHOPS] CHANNEL SECINFO OPTIONS 0xFF DST SRC [PAYLOAD] MIC`
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
         let mut cursor = self.write_common_prefix()?;
         let channel = self.channel.ok_or(BuildError::MissingChannel)?;
@@ -715,6 +773,8 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
                 .get_mut(cursor..)
                 .ok_or(BuildError::BufferTooSmall)?,
         )?;
+        // DST+SRC (and optionally payload) always follow OPTIONS, so 0xFF is always emitted.
+        let opts_range = self.emit_options(&mut cursor, true)?;
         let blind_addr_range = self.stage_blind_addr(&mut cursor)?;
         let body_range = self.copy_staged_payload(&mut cursor)?;
         let mic_start = cursor;
@@ -731,7 +791,7 @@ impl<'a> BlindUnicastBuilder<'a, state::Configuring> {
             Some(blind_addr_range),
             mic_start..mic_end,
             sec_start..sec_start + sec_info.wire_len(),
-            1..1 + self.options_len,
+            opts_range,
         ))
     }
 }

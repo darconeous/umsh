@@ -26,6 +26,20 @@ use crate::{
     },
 };
 
+/// Why [`Mac::poll_wait_for_wake`] returned ready.
+///
+/// Returned by the sync phase-2 poll so that callers sharing a coordinator
+/// across tasks can decide when to re-acquire the exclusive borrow for
+/// [`Mac::process_wake_reason`].
+pub enum WakeReason {
+    /// A frame was received; its metadata is attached and the caller-provided
+    /// buffer has been populated with `rx.len` bytes.
+    Received(RxInfo),
+    /// At least one coordinator timer has elapsed (ACK deadline, post-TX
+    /// listen window, or a deferred transmit becoming ready).
+    TimerExpired,
+}
+
 const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
 const COUNTER_PERSIST_BLOCK_MASK: u32 = COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
@@ -603,12 +617,6 @@ pub enum SendError {
     /// The [`OperatingPolicy`] rejected this send — for example, attempting to send an
     /// encrypted frame while operating in [`AmateurRadioMode::LicensedOnly`] mode.
     PolicyViolation,
-    /// The requested packet type does not support transport ACKs (e.g., broadcast).
-    AckUnsupported,
-    /// The requested encryption mode is not valid for this packet type.
-    EncryptionUnsupported,
-    /// The requested salt option is not valid for this packet type.
-    SaltUnsupported,
     /// The low-level packet builder failed, typically because the frame buffer is too small
     /// for the requested options and payload.
     Build(BuildError),
@@ -1105,16 +1113,17 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
+        // Broadcasts are always unencrypted, never ack-requested, and never
+        // salted by the MAC. Sanitize before policy classification so a reused
+        // `SendOptions` (whose default `encrypted = true`) doesn't get rejected
+        // as a `PolicyViolation` in `LicensedOnly` mode for a send that will
+        // in fact go out unencrypted.
+        let mut options = options.clone();
+        options.encrypted = false;
+        options.ack_requested = false;
+        options.salt = false;
+        let options = &options;
         self.enforce_send_policy(None, options, false)?;
-        if options.encrypted {
-            return Err(SendError::EncryptionUnsupported);
-        }
-        if options.ack_requested {
-            return Err(SendError::AckUnsupported);
-        }
-        if options.salt {
-            return Err(SendError::SaltUnsupported);
-        }
 
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let source_key = *slot.identity().public_key();
@@ -1170,9 +1179,8 @@ impl<
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
         self.enforce_send_policy(Some(*channel_id), options, false)?;
-        if options.ack_requested {
-            return Err(SendError::AckUnsupported);
-        }
+        // Multicast has no unicast receiver to ack, so an `ack_requested`
+        // flag carried over from shared `SendOptions` is silently ignored.
 
         let derived = self
             .channels
@@ -1249,6 +1257,7 @@ impl<
         let mut builder = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag);
         if let Some(peer) = self.peer_registry.get(peer_id) {
             match peer.route.as_ref() {
+                Some(CachedRoute::Direct) | None => {}
                 Some(CachedRoute::Source(route)) => {
                     builder = builder.source_route(route.as_slice());
                 }
@@ -1258,7 +1267,6 @@ impl<
                         builder = builder.region_code(*region);
                     }
                 }
-                None => {}
             }
         }
         let frame = builder.build()?;
@@ -1698,57 +1706,13 @@ impl<
 
             // Phase 2: Wait for a radio frame or the earliest timer deadline.
             let mut buf = [0u8; FRAME];
-            enum WakeReason {
-                Received(RxInfo),
-                TimerExpired,
-            }
-            let reason = poll_fn(|cx| {
-                // Try to receive a frame (non-blocking poll).
-                match self.radio.poll_receive(cx, &mut buf) {
-                    Poll::Ready(Ok(rx)) => return Poll::Ready(Ok(WakeReason::Received(rx))),
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Pending => {}
-                }
+            let reason = poll_fn(|cx| self.poll_wait_for_wake(cx, &mut buf))
+                .await
+                .map_err(MacError::Radio)?;
 
-                // Check whether any timer has expired.
-                let now_ms = self.clock.now_ms();
-                if let Some(deadline) = self.earliest_deadline_ms() {
-                    if now_ms >= deadline {
-                        return Poll::Ready(Ok(WakeReason::TimerExpired));
-                    }
-                    // Register for wakeup at the earliest deadline.
-                    let _ = self.clock.poll_delay_until(cx, deadline);
-                }
-
-                // Check for tx_queue items that became ready.
-                if self.tx_queue.has_ready(now_ms) {
-                    return Poll::Ready(Ok(WakeReason::TimerExpired));
-                }
-
-                Poll::Pending
-            })
-            .await
-            .map_err(MacError::Radio)?;
-
-            // Phase 3: Process what woke us up.
-            match reason {
-                WakeReason::Received(rx) => {
-                    let frame_len = rx.len.min(buf.len());
-                    let _ = self
-                        .process_received_frame(&mut buf, frame_len, &rx, &mut on_event)
-                        .await;
-                }
-                WakeReason::TimerExpired => {
-                    // Timers are handled in phase 4 below.
-                }
-            }
-
-            // Phase 4: Drain any immediate ACKs generated during receive.
-            self.drain_tx_queue(&mut on_event).await?;
-
-            // Phase 5: Service pending ACK timers.
-            self.service_pending_ack_timeouts(&mut on_event)
-                .map_err(|_| MacError::QueueFull)?;
+            // Phases 3-5: process the wake, drain any follow-up sends, and run timeouts.
+            self.process_wake_reason(reason, &mut buf, &mut on_event)
+                .await?;
 
             // If the tx_queue has new work (e.g. retransmits just enqueued),
             // loop back to drain it before waiting again.
@@ -1758,6 +1722,66 @@ impl<
 
             return Ok(());
         }
+    }
+
+    /// Register radio/timer wakers and report what has become ready.
+    ///
+    /// This is Phase 2 of [`next_event`](Self::next_event) exposed as a sync
+    /// poll method so that callers sharing the coordinator through an
+    /// `AsyncRefCell` can release the exclusive borrow between polls. The
+    /// caller-provided `buf` is populated with the received frame when the
+    /// return value is [`WakeReason::Received`].
+    pub fn poll_wait_for_wake(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+        buf: &mut [u8; FRAME],
+    ) -> Poll<Result<WakeReason, <P::Radio as Radio>::Error>> {
+        match self.radio.poll_receive(cx, buf) {
+            Poll::Ready(Ok(rx)) => return Poll::Ready(Ok(WakeReason::Received(rx))),
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => {}
+        }
+
+        let now_ms = self.clock.now_ms();
+        if let Some(deadline) = self.earliest_deadline_ms() {
+            if now_ms >= deadline {
+                return Poll::Ready(Ok(WakeReason::TimerExpired));
+            }
+            let _ = self.clock.poll_delay_until(cx, deadline);
+        }
+
+        if self.tx_queue.has_ready(now_ms) {
+            return Poll::Ready(Ok(WakeReason::TimerExpired));
+        }
+
+        Poll::Pending
+    }
+
+    /// Run Phases 3-5 after [`poll_wait_for_wake`](Self::poll_wait_for_wake)
+    /// has reported a wake reason: process the received frame (if any),
+    /// drain immediate ACKs, and service pending ACK timeouts.
+    pub async fn process_wake_reason(
+        &mut self,
+        reason: WakeReason,
+        buf: &mut [u8; FRAME],
+        mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> Result<(), MacError<<P::Radio as Radio>::Error>> {
+        match reason {
+            WakeReason::Received(rx) => {
+                let frame_len = rx.len.min(buf.len());
+                let _ = self
+                    .process_received_frame(buf, frame_len, &rx, &mut on_event)
+                    .await;
+            }
+            WakeReason::TimerExpired => {}
+        }
+
+        self.drain_tx_queue(&mut on_event).await?;
+
+        self.service_pending_ack_timeouts(&mut on_event)
+            .map_err(|_| MacError::QueueFull)?;
+
+        Ok(())
     }
 
     /// Drive the coordinator forever, invoking `on_event` for each delivered event.
@@ -1790,7 +1814,7 @@ impl<
     /// This is the shared implementation used by both [`receive_one`](Self::receive_one)
     /// and [`next_event`](Self::next_event).  Returns `true` when the frame
     /// produced at least one event or side-effect.
-    async fn process_received_frame(
+    pub async fn process_received_frame(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -3717,18 +3741,16 @@ impl<
             return Err(CapacityError);
         }
 
-        let options_len =
-            self.encode_forwarded_options(src, header, options, plan, &mut dst[1..])?;
-        let mut cursor = 1 + options_len;
-        let has_options = options_len > 0;
+        // FCF (no options bit in new format)
         dst[0] = umsh_core::Fcf::new(
             header.packet_type(),
             header.fcf.full_source(),
-            has_options,
             header.flood_hops.is_some(),
         )
         .0;
+        let mut cursor = 1;
 
+        // FHOPS
         if let Some(flood_hops) = header.flood_hops {
             let next = if plan.decrement_flood_hops {
                 flood_hops.decremented().0
@@ -3739,8 +3761,34 @@ impl<
             cursor += 1;
         }
 
-        let fixed_start = header.options_range.end + usize::from(header.flood_hops.is_some());
-        let tail = src.get(fixed_start..).ok_or(CapacityError)?;
+        // Fixed core: DST/CHANNEL/SRC/SECINFO from original (between FHOPS and options)
+        let fhops_len = usize::from(header.flood_hops.is_some());
+        let fixed_core = src
+            .get(1 + fhops_len..header.options_range.start)
+            .ok_or(CapacityError)?;
+        let core_end = cursor + fixed_core.len();
+        dst.get_mut(cursor..core_end)
+            .ok_or(CapacityError)?
+            .copy_from_slice(fixed_core);
+        cursor = core_end;
+
+        // Re-encoded options (without 0xFF — caller emits marker)
+        let options_len =
+            self.encode_forwarded_options(src, header, options, plan, &mut dst[cursor..])?;
+        cursor += options_len;
+
+        // 0xFF marker when a body follows (not needed for MAC ack whose trailer is at fixed offset)
+        let needs_marker = !matches!(header.packet_type(), PacketType::MacAck)
+            && header.options_range.end < header.total_len;
+        if needs_marker {
+            *dst.get_mut(cursor).ok_or(CapacityError)? = 0xFF;
+            cursor += 1;
+        }
+
+        // Body + MIC from original (src[options_range.end] is already past the original 0xFF)
+        let tail = src
+            .get(header.options_range.end..header.total_len)
+            .ok_or(CapacityError)?;
         let end = cursor + tail.len();
         dst.get_mut(cursor..end)
             .ok_or(CapacityError)?
@@ -3760,7 +3808,6 @@ impl<
         let mut inserted_region = false;
         let mut inserted_station = false;
         let mut saw_station = false;
-        let mut wrote_any = false;
 
         if !header.options_range.is_empty() {
             for entry in umsh_core::iter_options(src, header.options_range.clone()) {
@@ -3772,7 +3819,6 @@ impl<
                                 .put(OptionNumber::RegionCode.as_u16(), &region_code)
                                 .map_err(|_| CapacityError)?;
                             inserted_region = true;
-                            wrote_any = true;
                         }
                     }
                 }
@@ -3791,14 +3837,12 @@ impl<
                         )
                         .map_err(|_| CapacityError)?;
                     inserted_station = true;
-                    wrote_any = true;
                 }
 
                 match OptionNumber::from(number) {
                     OptionNumber::RegionCode => {
                         inserted_region = true;
                         encoder.put(number, value).map_err(|_| CapacityError)?;
-                        wrote_any = true;
                     }
                     OptionNumber::TraceRoute => {
                         let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
@@ -3807,7 +3851,6 @@ impl<
                         encoder
                             .put(number, &trace[..2 + value.len()])
                             .map_err(|_| CapacityError)?;
-                        wrote_any = true;
                     }
                     OptionNumber::SourceRoute if plan.consume_source_route => {
                         if value.len() < 2 || value.len() % 2 != 0 {
@@ -3815,7 +3858,6 @@ impl<
                         }
                         let remaining = if value.len() > 2 { &value[2..] } else { &[] };
                         encoder.put(number, remaining).map_err(|_| CapacityError)?;
-                        wrote_any = true;
                     }
                     OptionNumber::StationCallsign => {
                         saw_station = true;
@@ -3833,13 +3875,11 @@ impl<
                                     )
                                     .map_err(|_| CapacityError)?;
                                 inserted_station = true;
-                                wrote_any = true;
                             }
                         }
                     }
                     _ => {
                         encoder.put(number, value).map_err(|_| CapacityError)?;
-                        wrote_any = true;
                     }
                 }
             }
@@ -3859,22 +3899,15 @@ impl<
                         .as_trimmed_slice(),
                 )
                 .map_err(|_| CapacityError)?;
-            wrote_any = true;
         }
         if let Some(region_code) = plan.insert_region_code {
             if !inserted_region {
                 encoder
                     .put(OptionNumber::RegionCode.as_u16(), &region_code)
                     .map_err(|_| CapacityError)?;
-                wrote_any = true;
             }
         }
-        if wrote_any {
-            encoder.end_marker().map_err(|_| CapacityError)?;
-            Ok(encoder.finish())
-        } else {
-            Ok(0)
-        }
+        Ok(encoder.finish())
     }
 
     fn synthesize_route_retry_resend(
@@ -3894,33 +3927,56 @@ impl<
         }
 
         let flood_hops = self.route_retry_flood_hops(peer, &header, source_route)?;
-        let mut rewritten = [0u8; FRAME];
-        let options_len = self
-            .encode_route_retry_options(
-                resend.frame.as_slice(),
-                header.options_range.clone(),
-                &options,
-                &mut rewritten[1..],
-            )
-            .ok()?;
-        let mut cursor = 1 + options_len;
-        let has_options = options_len > 0;
         let has_flood_hops = flood_hops > 0;
+        let mut rewritten = [0u8; FRAME];
+
+        // FCF
         rewritten[0] = umsh_core::Fcf::new(
             header.packet_type(),
             header.fcf.full_source(),
-            has_options,
             has_flood_hops,
         )
         .0;
+        let mut cursor = 1;
 
+        // FHOPS
         if has_flood_hops {
             *rewritten.get_mut(cursor)? = FloodHops::new(flood_hops, 0)?.0;
             cursor += 1;
         }
 
-        let fixed_start = header.options_range.end + usize::from(header.flood_hops.is_some());
-        let tail = resend.frame.get(fixed_start..)?;
+        // Fixed core: DST/CHANNEL/SRC/SECINFO from original
+        let fhops_len = usize::from(header.flood_hops.is_some());
+        let fixed_core = resend
+            .frame
+            .get(1 + fhops_len..header.options_range.start)?;
+        let core_end = cursor + fixed_core.len();
+        rewritten.get_mut(cursor..core_end)?.copy_from_slice(fixed_core);
+        cursor = core_end;
+
+        // Re-encoded options
+        let options_len = self
+            .encode_route_retry_options(
+                resend.frame.as_slice(),
+                header.options_range.clone(),
+                &options,
+                &mut rewritten[cursor..],
+            )
+            .ok()?;
+        cursor += options_len;
+
+        // 0xFF marker when body follows
+        let needs_marker = !matches!(header.packet_type(), PacketType::MacAck)
+            && header.options_range.end < header.total_len;
+        if needs_marker {
+            *rewritten.get_mut(cursor)? = 0xFF;
+            cursor += 1;
+        }
+
+        // Body + MIC from original
+        let tail = resend
+            .frame
+            .get(header.options_range.end..header.total_len)?;
         let end = cursor + tail.len();
         rewritten.get_mut(cursor..end)?.copy_from_slice(tail);
 
@@ -3935,7 +3991,6 @@ impl<
         dst: &mut [u8],
     ) -> Result<usize, CapacityError> {
         let mut encoder = OptionEncoder::new(dst);
-        let mut wrote_any = false;
         let mut inserted_trace_route = false;
         let mut inserted_route_retry = false;
 
@@ -3946,27 +4001,23 @@ impl<
                     encoder
                         .put(OptionNumber::TraceRoute.as_u16(), &[])
                         .map_err(|_| CapacityError)?;
-                    wrote_any = true;
                     inserted_trace_route = true;
                 }
                 if !inserted_route_retry && number > OptionNumber::RouteRetry.as_u16() {
                     encoder
                         .put(OptionNumber::RouteRetry.as_u16(), &[])
                         .map_err(|_| CapacityError)?;
-                    wrote_any = true;
                     inserted_route_retry = true;
                 }
                 match OptionNumber::from(number) {
                     OptionNumber::SourceRoute => {}
                     OptionNumber::TraceRoute => {
                         encoder.put(number, value).map_err(|_| CapacityError)?;
-                        wrote_any = true;
                         inserted_trace_route = true;
                     }
                     OptionNumber::RouteRetry => {}
                     _ => {
                         encoder.put(number, value).map_err(|_| CapacityError)?;
-                        wrote_any = true;
                     }
                 }
             }
@@ -3976,21 +4027,14 @@ impl<
             encoder
                 .put(OptionNumber::TraceRoute.as_u16(), &[])
                 .map_err(|_| CapacityError)?;
-            wrote_any = true;
         }
         if !inserted_route_retry {
             encoder
                 .put(OptionNumber::RouteRetry.as_u16(), &[])
                 .map_err(|_| CapacityError)?;
-            wrote_any = true;
         }
 
-        if wrote_any {
-            encoder.end_marker().map_err(|_| CapacityError)?;
-            Ok(encoder.finish())
-        } else {
-            Ok(0)
-        }
+        Ok(encoder.finish())
     }
 
     fn route_retry_flood_hops(

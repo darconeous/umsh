@@ -337,8 +337,8 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Create a peer connection (registers peer in MAC if new).
-    pub fn peer(&self, key: PublicKey) -> Result<PeerConnection<Self>, NodeError<M>> {
-        self.mac.add_peer(key)?;
+    pub async fn peer(&self, key: PublicKey) -> Result<PeerConnection<Self>, NodeError<M>> {
+        self.mac.add_peer(key).await?;
         Ok(PeerConnection::new(self.clone(), key))
     }
 
@@ -526,8 +526,8 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     #[cfg(feature = "software-crypto")]
-    pub fn pfs_status(&self, peer: &PublicKey) -> Result<PfsStatus, NodeError<M>> {
-        let now_ms = self.mac.now_ms()?;
+    pub async fn pfs_status(&self, peer: &PublicKey) -> Result<PfsStatus, NodeError<M>> {
+        let now_ms = self.mac.now_ms().await;
         let state = self.state.borrow();
         if let Some(session) = state
             .pfs
@@ -554,7 +554,7 @@ impl<M: MacBackend> LocalNode<M> {
     /// Join a channel. Registers the channel key in the MAC if this is
     /// the first node to join it. Returns the bound channel handle.
     #[cfg(feature = "software-crypto")]
-    pub fn join(&self, channel: &Channel) -> Result<BoundChannel<M>, NodeError<M>> {
+    pub async fn join(&self, channel: &Channel) -> Result<BoundChannel<M>, NodeError<M>> {
         let mut membership = self.membership.borrow_mut();
 
         // Check if already joined.
@@ -581,7 +581,9 @@ impl<M: MacBackend> LocalNode<M> {
         }
 
         // New channel — register with MAC.
-        self.mac.add_private_channel(channel.key().clone())?;
+        drop(membership);
+        self.mac.add_private_channel(channel.key().clone()).await?;
+        let mut membership = self.membership.borrow_mut();
 
         let generation = 0;
         membership.channels.push(ChannelMembershipEntry {
@@ -719,13 +721,19 @@ impl<M: MacBackend> LocalNode<M> {
                 ephemeral_key,
                 duration_minutes,
             } => {
-                if self.state.borrow_mut().pfs.accept_response(
-                    &self.mac,
-                    self.identity_id,
-                    *from,
-                    ephemeral_key,
-                    duration_minutes,
-                )? {
+                if self
+                    .state
+                    .borrow_mut()
+                    .pfs
+                    .accept_response(
+                        &self.mac,
+                        self.identity_id,
+                        *from,
+                        ephemeral_key,
+                        duration_minutes,
+                    )
+                    .await?
+                {
                     Ok(Some(PfsLifecycle::Established(*from)))
                 } else {
                     Ok(None)
@@ -850,15 +858,16 @@ impl<M: MacBackend> LocalNode<M> {
             .for_each_mut(|handler| handler(peer));
     }
 
-    pub(crate) fn expire_pfs_sessions(&self) -> Result<Vec<PublicKey>, NodeError<M>> {
+    pub(crate) async fn expire_pfs_sessions(&self) -> Result<Vec<PublicKey>, NodeError<M>> {
         #[cfg(feature = "software-crypto")]
         {
-            let now_ms = self.mac.now_ms()?;
+            let now_ms = self.mac.now_ms().await;
             return self
                 .state
                 .borrow_mut()
                 .pfs
-                .expire_sessions(&self.mac, now_ms);
+                .expire_sessions(&self.mac, now_ms)
+                .await;
         }
         #[cfg(not(feature = "software-crypto"))]
         {
@@ -893,7 +902,7 @@ impl<M: MacBackend> Transport for LocalNode<M> {
     ) -> Result<SendProgressTicket, Self::Error> {
         #[cfg(feature = "software-crypto")]
         let (send_identity_id, receipt) = {
-            let now_ms = self.mac.now_ms()?;
+            let now_ms = self.mac.now_ms().await;
             if let Some((local_id, peer_ephemeral)) =
                 self.state.borrow().pfs.active_route(to, now_ms)
             {

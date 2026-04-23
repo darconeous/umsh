@@ -46,10 +46,10 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 | 5 | Minimum RSSI | Critical, Static | 0–1 bytes |
 | 6 | Route Retry | Non-Critical, Dynamic | 0 bytes |
 | 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
-| 8 | *UNASSIGNED* | Non-Critical, Static | |
+| 8 | ACK Tag | Non-Critical, Static | 8 bytes|
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
+| 10 | Trace Signal | Non-Critical, Dynamic | 0–1 bytes |
 | 11 | Region Code | Critical, Dynamic | 2 bytes |
-
 
 ### Trace Route (option 2)
 - Semantics: if present, repeaters prepend their own repeater hint before retransmitting.
@@ -106,12 +106,24 @@ This distinction allows forwarding-related metadata (source routes, trace routes
   - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
   - in `Unlicensed` mode, repeaters remove it if present and do not add their own
 
+### ACK Tag (option 8)
+
+This option represents a piggy-backed MAC ACK that, when received, behaves as if it was an ACK for the given packet, instead of sending both a UACK and an application-level response in two separate packets. 
+
+- Type: 8-byte ACK tag.
+
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB
 - Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.
 - If present with no value (length 0), default is `-3 dB`. (THIS VALUE IS SUBJECT TO CHANGE)
 - If more than one option with this number is present, the packet MUST be dropped.
 - If a repeater has a locally configured minimum SNR, it must use the higher of the packet's minimum SNR and the repeater's configured minimum SNR.
+
+### Trace Signal (option 10)
+
+This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.
+
+When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the **negative** RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB). 
 
 ### Region Code (option 11)
 - Type: 2-byte region identifier
@@ -128,7 +140,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:
 
-**Airport-based regions.** For regions defined by proximity to an airport, encode the airport's 3-letter IATA code into a 16-bit value using ARNCE/HAM-64. Examples:
+**IATA-based regions.** For regions defined by proximity to an airport or a metro area with it's own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:
 
 | IATA Code | Region Code |
 |---|---|

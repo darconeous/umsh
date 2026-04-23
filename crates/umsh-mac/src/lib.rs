@@ -113,9 +113,9 @@
 //!   cached route). Looked up by hint or full key when matching inbound packets and routing
 //!   outbound sends.
 //! - [`PeerId`] — opaque index into the peer registry.
-//! - [`CachedRoute`] — either an explicit source route or a flood-distance estimate,
-//!   learned from successfully received packets and used to route future sends without
-//!   flooding.
+//! - [`CachedRoute`] — a direct link, an explicit source route, or a flood-distance
+//!   estimate, learned from successfully received packets and used to route future sends
+//!   without unnecessary flooding.
 //! - [`PeerCryptoMap`] — per-identity map from [`PeerId`] to [`PeerCryptoState`]
 //!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
 //! - [`ChannelTable`] — flat list of registered multicast channels. Each entry stores the
@@ -239,9 +239,9 @@ mod send;
 pub use cache::{DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow};
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError,
+    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,
 };
-pub use handle::{MacHandle, MacHandleError};
+pub use handle::MacHandle;
 pub use peers::{
     CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
     PeerId, PeerInfo, PeerRegistry,

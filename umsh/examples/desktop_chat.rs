@@ -9,6 +9,7 @@ use std::{
 
 use rand::{Rng, rng};
 use tokio::io::{self, AsyncBufReadExt, BufReader};
+use umsh_sync::AsyncRefCell;
 
 #[cfg(feature = "serial-radio")]
 #[path = "support/draft_serial_radio.rs"]
@@ -132,10 +133,11 @@ async fn run_udp_chat(
     let radio = UdpMulticastRadio::bind_v4(group, port)
         .await
         .map_err(|error| std::io::Error::other(format!("udp bind failed: {error:?}")))?;
-    let local_mac = RefCell::new(build_mac(radio, counter_root)?);
+    let local_mac = AsyncRefCell::new(build_mac(radio, counter_root)?);
     let local_handle = MacHandle::new(&local_mac);
     let local_id = local_handle
         .add_identity(local_identity)
+        .await
         .expect("local identity should fit");
     if !skip_counter_load {
         let _ = local_handle
@@ -149,6 +151,7 @@ async fn run_udp_chat(
     let node = host.add_node(local_id);
     let peer = node
         .peer(peer_key)
+        .await
         .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
     let chat = ChatText::from_peer(&peer);
     let outputs = OutputQueue::new();
@@ -158,7 +161,7 @@ async fn run_udp_chat(
     println!("group: {group}:{port}");
     println!(
         "modeled frame time: {} ms",
-        local_mac.borrow().radio().t_frame_ms()
+        local_mac.borrow().await.radio().t_frame_ms()
     );
     if skip_counter_load {
         println!("counter load: skipped (--skip-counter-load)");
@@ -214,8 +217,8 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     network.connect_bidirectional(local_radio.id(), remote_radio.id());
 
     let session_root = unique_session_root("desktop-chat-sim");
-    let local_mac = RefCell::new(build_mac(local_radio, session_root.join("local-counters"))?);
-    let remote_mac = RefCell::new(build_mac(
+    let local_mac = AsyncRefCell::new(build_mac(local_radio, session_root.join("local-counters"))?);
+    let remote_mac = AsyncRefCell::new(build_mac(
         remote_radio,
         session_root.join("remote-counters"),
     )?);
@@ -223,10 +226,12 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let local_handle = MacHandle::new(&local_mac);
     let local_id = local_handle
         .add_identity(local_identity)
+        .await
         .expect("local identity should fit");
     let remote_handle = MacHandle::new(&remote_mac);
     let remote_id = remote_handle
         .add_identity(remote_identity)
+        .await
         .expect("remote identity should fit");
 
     let mut local_host = ChatHost::new(local_handle);
@@ -235,9 +240,11 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let remote_node = remote_host.add_node(remote_id);
     let local_peer = local_node
         .peer(remote_key)
+        .await
         .map_err(|error| std::io::Error::other(format!("local peer setup failed: {error:?}")))?;
     let remote_peer = remote_node
         .peer(local_key)
+        .await
         .map_err(|error| std::io::Error::other(format!("remote peer setup failed: {error:?}")))?;
     let local_chat = ChatText::from_peer(&local_peer);
     let remote_chat = ChatText::from_peer(&remote_peer);
@@ -321,10 +328,11 @@ async fn run_serial_chat(
         let radio = DraftSerialRadio::open_tokio(serial_path, baud_rate)
             .await
             .map_err(|error| std::io::Error::other(format!("serial open failed: {error:?}")))?;
-        let local_mac = RefCell::new(build_mac(radio, counter_root)?);
+        let local_mac = AsyncRefCell::new(build_mac(radio, counter_root)?);
         let local_handle = MacHandle::new(&local_mac);
         let local_id = local_handle
             .add_identity(local_identity)
+            .await
             .expect("local identity should fit");
         if !skip_counter_load {
             let _ = local_handle
@@ -338,6 +346,7 @@ async fn run_serial_chat(
         let node = host.add_node(local_id);
         let peer = node
             .peer(peer_key)
+            .await
             .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
         let chat = ChatText::from_peer(&peer);
         let outputs = OutputQueue::new();
@@ -452,6 +461,7 @@ async fn handle_pfs_command<'a, R: Radio>(
         "status" => {
             let message = match peer
                 .pfs_status()
+                .await
                 .map_err(|error| std::io::Error::other(format!("pfs status failed: {error:?}")))?
             {
                 umsh::node::PfsStatus::Inactive => String::from("pfs inactive"),

@@ -111,7 +111,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out, "```text").unwrap();
     writeln!(&mut out, "  7   6   5   4   3   2   1   0").unwrap();
     writeln!(&mut out, "+-------+-----------+---+---+---+").unwrap();
-    writeln!(&mut out, "| VER   | PKT TYPE  | S | O | H |").unwrap();
+    writeln!(&mut out, "| VER   | PKT TYPE  | S | R | H |").unwrap();
     writeln!(&mut out, "+-------+-----------+---+---+---+").unwrap();
     writeln!(&mut out, "```").unwrap();
     writeln!(&mut out).unwrap();
@@ -131,7 +131,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=0 (broadcast), S=0, O=0, H=0",
+                "VER=3, TYPE=0 (broadcast), S=0, R=0, H=0",
                 "C0".into(),
             ),
             (
@@ -150,7 +150,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=0 (broadcast), S=1, O=0, H=0",
+                "VER=3, TYPE=0 (broadcast), S=1, R=0, H=0",
                 "C4".into(),
             ),
             (
@@ -167,7 +167,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         "Example 3: Encrypted Unicast (S=0)",
         "An encrypted unicast from Node A to Node B using source hints and frame counter 42.",
         &[
-            ("FCF", "VER=3, TYPE=2 (unicast), S=0, O=0, H=0", "D0".into()),
+            ("FCF", "VER=3, TYPE=2 (unicast), S=0, R=0, H=0", "D0".into()),
             (
                 "DST",
                 "Node B hint",
@@ -201,7 +201,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0",
+                "VER=3, TYPE=3 (unicast ack-req), S=1, R=0, H=0",
                 "DC".into(),
             ),
             (
@@ -241,7 +241,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=4 (multicast), S=0, O=0, H=0",
+                "VER=3, TYPE=4 (multicast), S=0, R=0, H=0",
                 "E0".into(),
             ),
             (
@@ -276,7 +276,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=4 (multicast), S=0, O=0, H=0",
+                "VER=3, TYPE=4 (multicast), S=0, R=0, H=0",
                 "E0".into(),
             ),
             (
@@ -336,12 +336,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     writeln!(&mut out, "|---|---|---|").unwrap();
     writeln!(
         &mut out,
-        "| FCF | VER=3, TYPE=2 (unicast), S=0, O=1, H=1 | `D3` |"
-    )
-    .unwrap();
-    writeln!(
-        &mut out,
-        "| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
+        "| FCF | VER=3, TYPE=2 (unicast), S=0, R=0, H=1 | `D1` |"
     )
     .unwrap();
     writeln!(&mut out, "| FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |").unwrap();
@@ -359,6 +354,11 @@ pub fn render_phase1_test_vectors_markdown() -> String {
     .unwrap();
     writeln!(&mut out, "| SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |").unwrap();
     writeln!(&mut out, "| Frame Counter | 10 | `00 00 00 0A` |").unwrap();
+    writeln!(
+        &mut out,
+        "| Options | Trace route + region code + end marker | `20 92 78 53 FF` |"
+    )
+    .unwrap();
     writeln!(
         &mut out,
         "| Payload | Encrypted `68 65 79` (`\"hey\"`) | `{}` |",
@@ -395,7 +395,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &[
             (
                 "FCF",
-                "VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0",
+                "VER=3, TYPE=6 (blind unicast), S=0, R=0, H=0",
                 "F0".into(),
             ),
             (
@@ -408,7 +408,7 @@ pub fn render_phase1_test_vectors_markdown() -> String {
             (
                 "ENC_DST_SRC",
                 "ENCRYPT(`DST || SRC`)",
-                hex_spaced(&vectors.blind_unicast[8..blind_unicast_header.body_range.start]),
+                hex_spaced(&vectors.blind_unicast[blind_unicast_header.options_range.end..blind_unicast_header.body_range.start]),
             ),
             (
                 "ENC_PAYLOAD",

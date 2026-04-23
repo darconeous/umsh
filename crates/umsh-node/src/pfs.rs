@@ -113,12 +113,12 @@ impl PfsSessionManager {
         duration_minutes: u16,
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, NodeError<M>> {
-        self.remove_existing(mac, peer)?;
+        self.remove_existing(mac, peer).await?;
         self.ensure_capacity()?;
         let mut secret = [0u8; 32];
-        mac.fill_random(&mut secret)?;
+        mac.fill_random(&mut secret).await;
         let local_ephemeral = SoftwareIdentity::from_secret_bytes(&secret);
-        let now_ms = mac.now_ms()?;
+        let now_ms = mac.now_ms().await;
         let receipt = send_pfs_command(
             mac,
             parent,
@@ -151,10 +151,10 @@ impl PfsSessionManager {
         duration_minutes: u16,
         options: &SendOptions,
     ) -> Result<(), NodeError<M>> {
-        self.remove_existing(mac, &peer_long_term)?;
+        self.remove_existing(mac, &peer_long_term).await?;
         self.ensure_capacity()?;
         let mut secret = [0u8; 32];
-        mac.fill_random(&mut secret)?;
+        mac.fill_random(&mut secret).await;
         let local_ephemeral = SoftwareIdentity::from_secret_bytes(&secret);
         let active = activate_identity(
             mac,
@@ -162,7 +162,8 @@ impl PfsSessionManager {
             local_ephemeral,
             peer_ephemeral,
             duration_minutes,
-        )?;
+        )
+        .await?;
         send_pfs_command(
             mac,
             parent,
@@ -186,7 +187,7 @@ impl PfsSessionManager {
     }
 
     /// Accept an inbound PFS response for an existing request.
-    pub(crate) fn accept_response<M: MacBackend>(
+    pub(crate) async fn accept_response<M: MacBackend>(
         &mut self,
         mac: &M,
         parent: LocalIdentityId,
@@ -212,7 +213,8 @@ impl PfsSessionManager {
             local_ephemeral,
             peer_ephemeral,
             duration_minutes,
-        )?;
+        )
+        .await?;
         session.local_ephemeral_id = active.local_ephemeral_id;
         session.peer_ephemeral = peer_ephemeral;
         session.expires_ms = active.expires_ms;
@@ -239,7 +241,7 @@ impl PfsSessionManager {
         };
         let session = self.sessions.swap_remove(index);
         if session.state == PfsState::Active {
-            let _ = mac.remove_ephemeral(session.local_ephemeral_id)?;
+            let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
         }
         if notify_peer {
             send_pfs_command(mac, parent, peer, &MacCommand::EndPfsSession, options).await?;
@@ -248,7 +250,7 @@ impl PfsSessionManager {
     }
 
     /// Expire any sessions whose deadlines have passed.
-    pub(crate) fn expire_sessions<M: MacBackend>(
+    pub(crate) async fn expire_sessions<M: MacBackend>(
         &mut self,
         mac: &M,
         now_ms: u64,
@@ -262,14 +264,14 @@ impl PfsSessionManager {
             }
             let session = self.sessions.swap_remove(index);
             if session.state == PfsState::Active {
-                let _ = mac.remove_ephemeral(session.local_ephemeral_id)?;
+                let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
             }
             expired.push(session.peer_long_term);
         }
         Ok(expired)
     }
 
-    fn remove_existing<M: MacBackend>(
+    async fn remove_existing<M: MacBackend>(
         &mut self,
         mac: &M,
         peer: &PublicKey,
@@ -281,7 +283,7 @@ impl PfsSessionManager {
         {
             let session = self.sessions.swap_remove(index);
             if session.state == PfsState::Active {
-                let _ = mac.remove_ephemeral(session.local_ephemeral_id)?;
+                let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
             }
         }
         Ok(())
@@ -304,17 +306,17 @@ struct ActivatedPfsIdentity {
 }
 
 #[cfg(feature = "software-crypto")]
-fn activate_identity<M: MacBackend>(
+async fn activate_identity<M: MacBackend>(
     mac: &M,
     parent: LocalIdentityId,
     local_ephemeral: SoftwareIdentity,
     peer_ephemeral: PublicKey,
     duration_minutes: u16,
 ) -> Result<ActivatedPfsIdentity, NodeError<M>> {
-    let _peer_id = mac.add_peer(peer_ephemeral)?;
+    let _peer_id = mac.add_peer(peer_ephemeral).await?;
     let peer_local_public = *local_ephemeral.public_key();
-    let local_ephemeral_id = mac.register_ephemeral(parent, local_ephemeral)?;
-    let now_ms = mac.now_ms()?;
+    let local_ephemeral_id = mac.register_ephemeral(parent, local_ephemeral).await?;
+    let now_ms = mac.now_ms().await;
     Ok(ActivatedPfsIdentity {
         local_ephemeral_id,
         peer_local_public,

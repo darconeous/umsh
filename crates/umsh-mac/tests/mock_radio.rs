@@ -2,10 +2,7 @@
 
 use core::convert::Infallible;
 use core::task::{Context, Poll};
-use std::{
-    cell::{Cell, RefCell},
-    collections::VecDeque,
-};
+use std::{cell::Cell, collections::VecDeque};
 
 use embedded_hal_async::delay::DelayNs;
 use rand::{Rng, TryCryptoRng, TryRng};
@@ -17,28 +14,36 @@ use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, 
 use umsh_mac::{
     Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions,
 };
+use umsh_sync::AsyncRefCell;
 
 #[test]
 fn mac_handle_send_unicast_queues_public_api_work() {
-    let mac = RefCell::new(make_mac());
+    let mac = AsyncRefCell::new(make_mac());
     let handle = MacHandle::new(&mac);
     let handle_clone = handle.clone();
 
-    let local_id = handle.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
-    let _peer_id = handle_clone.add_peer(peer_key).unwrap();
-
-    let receipt = block_on(handle_clone.send_unicast(
-        local_id,
-        &peer_key,
-        b"hello",
-        &SendOptions::default().with_ack_requested(true).no_flood(),
-    ))
-    .unwrap()
-    .unwrap();
+    let (receipt, local_id) = block_on(async {
+        let local_id = handle
+            .add_identity(DummyIdentity::new([0x10; 32]))
+            .await
+            .unwrap();
+        let peer_key = PublicKey([0xAB; 32]);
+        let _peer_id = handle_clone.add_peer(peer_key).await.unwrap();
+        let receipt = handle_clone
+            .send_unicast(
+                local_id,
+                &peer_key,
+                b"hello",
+                &SendOptions::default().with_ack_requested(true).no_flood(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        (receipt, local_id)
+    });
 
     {
-        let borrowed = mac.borrow();
+        let borrowed = mac.try_borrow().unwrap();
         assert_eq!(borrowed.tx_queue().len(), 1);
         assert!(
             borrowed
@@ -49,8 +54,14 @@ fn mac_handle_send_unicast_queues_public_api_work() {
         );
     }
 
-    block_on(mac.borrow_mut().drain_tx_queue(&mut |_, _| {})).unwrap();
-    assert_eq!(mac.borrow().radio().transmitted.len(), 1);
+    block_on(async {
+        mac.borrow_mut()
+            .await
+            .drain_tx_queue(&mut |_, _| {})
+            .await
+            .unwrap();
+    });
+    assert_eq!(mac.try_borrow().unwrap().radio().transmitted.len(), 1);
 }
 
 #[test]

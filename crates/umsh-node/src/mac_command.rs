@@ -1,3 +1,7 @@
+use alloc::vec::Vec;
+
+use umsh_core::PublicKey;
+
 use crate::app_util::{copy_into, fixed, push_byte};
 use crate::{AppEncodeError, AppParseError};
 
@@ -118,6 +122,68 @@ fn parse_pfs(payload: &[u8], request: bool) -> Result<MacCommand<'_>, AppParseEr
             duration_minutes,
         }
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnedMacCommand {
+    BeaconRequest {
+        nonce: Option<u32>,
+    },
+    IdentityRequest,
+    SignalReportRequest,
+    SignalReportResponse {
+        rssi: u8,
+        snr: i8,
+    },
+    EchoRequest {
+        data: Vec<u8>,
+    },
+    EchoResponse {
+        data: Vec<u8>,
+    },
+    PfsSessionRequest {
+        ephemeral_key: PublicKey,
+        duration_minutes: u16,
+    },
+    PfsSessionResponse {
+        ephemeral_key: PublicKey,
+        duration_minutes: u16,
+    },
+    EndPfsSession,
+}
+
+impl From<MacCommand<'_>> for OwnedMacCommand {
+    fn from(value: MacCommand<'_>) -> Self {
+        match value {
+            MacCommand::BeaconRequest { nonce } => Self::BeaconRequest { nonce },
+            MacCommand::IdentityRequest => Self::IdentityRequest,
+            MacCommand::SignalReportRequest => Self::SignalReportRequest,
+            MacCommand::SignalReportResponse { rssi, snr } => {
+                Self::SignalReportResponse { rssi, snr }
+            }
+            MacCommand::EchoRequest { data } => Self::EchoRequest {
+                data: Vec::from(data),
+            },
+            MacCommand::EchoResponse { data } => Self::EchoResponse {
+                data: Vec::from(data),
+            },
+            MacCommand::PfsSessionRequest {
+                ephemeral_key,
+                duration_minutes,
+            } => Self::PfsSessionRequest {
+                ephemeral_key,
+                duration_minutes,
+            },
+            MacCommand::PfsSessionResponse {
+                ephemeral_key,
+                duration_minutes,
+            } => Self::PfsSessionResponse {
+                ephemeral_key,
+                duration_minutes,
+            },
+            MacCommand::EndPfsSession => Self::EndPfsSession,
+        }
+    }
 }
 
 pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeError> {

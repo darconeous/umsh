@@ -137,7 +137,6 @@ compile_error!("umsh-node currently requires the alloc feature");
 extern crate alloc;
 
 mod app_error;
-mod app_owned;
 mod app_payload;
 mod app_util;
 #[cfg(feature = "software-crypto")]
@@ -145,6 +144,7 @@ mod channel;
 mod dispatch;
 mod host;
 mod identity;
+pub mod location;
 mod mac;
 pub mod mac_command;
 mod node;
@@ -156,15 +156,16 @@ mod ticket;
 mod transport;
 
 pub use app_error::{AppEncodeError, AppParseError};
-pub use app_owned::{OwnedMacCommand, OwnedNodeIdentityPayload};
 pub use app_payload::{
     expect_payload_type, parse_mac_command_payload, parse_node_identity_payload, split_payload_type,
 };
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
 pub use host::{Host, HostError};
-pub use identity::{Capabilities, NodeIdentityPayload, NodeRole};
+pub use identity::NodeIdentity;
+pub use identity::{Capabilities, NodeIdentityRef, NodeRole};
 pub use mac::{MacBackend, MacBackendError};
+pub use mac_command::OwnedMacCommand;
 pub use mac_command::{CommandId, MacCommand};
 #[cfg(feature = "software-crypto")]
 pub use node::BoundChannel;
@@ -224,7 +225,7 @@ mod tests {
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
         let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
         let peer = PublicKey([0x41; 32]);
-        let peer_connection = node.peer(peer).unwrap();
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
 
         let call_order = Rc::new(RefCell::new(Vec::new()));
         let peer_call_order = call_order.clone();
@@ -329,7 +330,7 @@ mod tests {
         let node = LocalNode::new(LocalIdentityId(1), mac, dispatcher, membership, state);
 
         let peer = PublicKey([0x42; 32]);
-        let peer_connection = node.peer(peer).unwrap();
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
         let node_discovery = Rc::new(RefCell::new(Vec::new()));
         let beacons = Rc::new(RefCell::new(Vec::new()));
         let commands = Rc::new(RefCell::new(Vec::new()));
@@ -400,7 +401,7 @@ mod tests {
         );
 
         let peer = PublicKey([0x55; 32]);
-        let peer_connection = node.peer(peer).unwrap();
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
         let options = SendOptions::default().with_ack_requested(true);
 
         block_on_ready(node.request_pfs(&peer, 60, &options)).unwrap();
@@ -543,7 +544,7 @@ mod tests {
     ) -> ReceivedPacketRef<'a> {
         let wire = Box::leak(payload.to_vec().into_boxed_slice());
         let header = umsh_core::PacketHeader {
-            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Unicast, false, false, false),
+            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Unicast, false, false),
             options_range: 0..0,
             flood_hops: None,
             dst: None,
@@ -619,7 +620,7 @@ mod tests {
         type SendError = SendError;
         type CapacityError = CapacityError;
 
-        fn add_peer(
+        async fn add_peer(
             &self,
             key: PublicKey,
         ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
@@ -637,14 +638,14 @@ mod tests {
             Ok(peer_id)
         }
 
-        fn add_private_channel(
+        async fn add_private_channel(
             &self,
             _key: umsh_core::ChannelKey,
         ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(())
         }
 
-        fn add_named_channel(
+        async fn add_named_channel(
             &self,
             _name: &str,
         ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
@@ -699,21 +700,17 @@ mod tests {
             self.send_unicast(from, dst, payload, options).await
         }
 
-        fn fill_random(
-            &self,
-            dest: &mut [u8],
-        ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
+        async fn fill_random(&self, dest: &mut [u8]) {
             let mut state = self.state.borrow_mut();
             let next = state.random_blocks.pop_front().expect("test rng exhausted");
             dest.copy_from_slice(&next[..dest.len()]);
-            Ok(())
         }
 
-        fn now_ms(&self) -> Result<u64, MacBackendError<Self::SendError, Self::CapacityError>> {
-            Ok(self.state.borrow().now_ms)
+        async fn now_ms(&self) -> u64 {
+            self.state.borrow().now_ms
         }
 
-        fn register_ephemeral(
+        async fn register_ephemeral(
             &self,
             _parent: LocalIdentityId,
             _identity: SoftwareIdentity,
@@ -725,12 +722,9 @@ mod tests {
             Ok(id)
         }
 
-        fn remove_ephemeral(
-            &self,
-            id: LocalIdentityId,
-        ) -> Result<bool, MacBackendError<Self::SendError, Self::CapacityError>> {
+        async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
             self.state.borrow_mut().removed_ephemerals.push(id);
-            Ok(true)
+            true
         }
     }
 

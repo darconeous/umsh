@@ -140,14 +140,12 @@ impl Fcf {
     pub const fn new(
         packet_type: PacketType,
         full_source: bool,
-        options_present: bool,
         flood_hops_present: bool,
     ) -> Self {
         Self(
             (UMSH_VERSION << 6)
                 | ((packet_type as u8) << 3)
                 | ((full_source as u8) << 2)
-                | ((options_present as u8) << 1)
                 | flood_hops_present as u8,
         )
     }
@@ -167,9 +165,9 @@ impl Fcf {
         self.0 & 0x04 != 0
     }
 
-    /// Return whether an option block is present.
-    pub const fn options_present(self) -> bool {
-        self.0 & 0x02 != 0
+    /// Return whether the reserved bit is clear as required by the spec.
+    pub const fn reserved_valid(self) -> bool {
+        self.0 & 0x02 == 0
     }
 
     /// Return whether a flood-hop byte is present.
@@ -499,17 +497,11 @@ impl PacketHeader {
         if fcf.version() != UMSH_VERSION {
             return Err(ParseError::InvalidVersion(fcf.version()));
         }
+        if !fcf.reserved_valid() {
+            return Err(ParseError::InvalidFcfReserved);
+        }
 
         let mut cursor = 1;
-        let options_range = if fcf.options_present() {
-            let len = scan_options_field(&buf[cursor..])?;
-            let range = cursor..cursor + len;
-            cursor += len;
-            range
-        } else {
-            cursor..cursor
-        };
-
         let flood_hops = if fcf.flood_hops_present() {
             if cursor >= buf.len() {
                 return Err(ParseError::Truncated);
@@ -539,6 +531,13 @@ impl PacketHeader {
                     SourceAddrRef::Hint(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]))
                 };
                 cursor += src_len;
+                let options_start = cursor;
+                let options_end = buf.len();
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..options_end])?;
+                let options_range = options_start..options_start + consumed;
+                let body_start = options_start + consumed;
+                let body_end = if has_marker { buf.len() } else { body_start };
                 Ok(Self {
                     fcf,
                     options_range,
@@ -548,7 +547,7 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    body_range: cursor..buf.len(),
+                    body_range: body_start..body_end,
                     mic_range: buf.len()..buf.len(),
                     total_len: buf.len(),
                 })
@@ -557,7 +556,18 @@ impl PacketHeader {
                 ensure_len(buf, cursor, 3)?;
                 ack_dst = Some(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]));
                 cursor += 3;
-                ensure_len(buf, cursor, 8)?;
+                let options_start = cursor;
+                let options_end = buf
+                    .len()
+                    .checked_sub(8)
+                    .ok_or(ParseError::Truncated)?;
+                if options_end < options_start {
+                    return Err(ParseError::Truncated);
+                }
+                let (consumed, _has_marker) =
+                    scan_options_bounded(&buf[options_start..options_end])?;
+                let options_range = options_start..options_start + consumed;
+                let ack_tag_start = options_end;
                 Ok(Self {
                     fcf,
                     options_range,
@@ -567,9 +577,9 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    body_range: cursor..cursor + 8,
-                    mic_range: cursor..cursor + 8,
-                    total_len: cursor + 8,
+                    body_range: ack_tag_start..ack_tag_start + 8,
+                    mic_range: ack_tag_start..ack_tag_start + 8,
+                    total_len: ack_tag_start + 8,
                 })
             }
             PacketType::Unicast | PacketType::UnicastAckReq => {
@@ -590,7 +600,6 @@ impl PacketHeader {
                 sec_info = Some(parsed_sec);
                 cursor += sec_len;
                 let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                ensure_len(buf, cursor, mic_len)?;
                 let mic_start = buf
                     .len()
                     .checked_sub(mic_len)
@@ -598,6 +607,12 @@ impl PacketHeader {
                 if mic_start < cursor {
                     return Err(ParseError::Truncated);
                 }
+                let options_start = cursor;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let options_range = options_start..options_start + consumed;
+                let body_start = options_start + consumed;
+                let body_end = if has_marker { mic_start } else { body_start };
                 Ok(Self {
                     fcf,
                     options_range,
@@ -607,7 +622,7 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    body_range: cursor..mic_start,
+                    body_range: body_start..body_end,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
                 })
@@ -628,6 +643,11 @@ impl PacketHeader {
                 if mic_start < cursor {
                     return Err(ParseError::Truncated);
                 }
+                let options_start = cursor;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let options_range = options_start..options_start + consumed;
+                cursor = options_start + consumed;
                 if parsed_sec.scf.encrypted() {
                     let src_len = source_len(fcf.full_source());
                     source = SourceAddrRef::Encrypted {
@@ -661,6 +681,8 @@ impl PacketHeader {
                         ]))
                     };
                     cursor += src_len;
+                    let body_start = cursor;
+                    let body_end = if has_marker { mic_start } else { body_start };
                     Ok(Self {
                         fcf,
                         options_range,
@@ -670,7 +692,7 @@ impl PacketHeader {
                         ack_dst,
                         source,
                         sec_info,
-                        body_range: cursor..mic_start,
+                        body_range: body_start..body_end,
                         mic_range: mic_start..buf.len(),
                         total_len: buf.len(),
                     })
@@ -684,6 +706,19 @@ impl PacketHeader {
                 let sec_len = parsed_sec.wire_len();
                 sec_info = Some(parsed_sec);
                 cursor += sec_len;
+                let mic_len = parsed_sec.scf.mic_size()?.byte_len();
+                let mic_start = buf
+                    .len()
+                    .checked_sub(mic_len)
+                    .ok_or(ParseError::Truncated)?;
+                if mic_start < cursor {
+                    return Err(ParseError::Truncated);
+                }
+                let options_start = cursor;
+                let (consumed, has_marker) =
+                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let options_range = options_start..options_start + consumed;
+                cursor = options_start + consumed;
                 let src_len = source_len(fcf.full_source());
                 ensure_len(buf, cursor, 3 + src_len)?;
                 if parsed_sec.scf.encrypted() {
@@ -708,14 +743,8 @@ impl PacketHeader {
                     };
                     cursor += src_len;
                 }
-                let mic_len = parsed_sec.scf.mic_size()?.byte_len();
-                let mic_start = buf
-                    .len()
-                    .checked_sub(mic_len)
-                    .ok_or(ParseError::Truncated)?;
-                if mic_start < cursor {
-                    return Err(ParseError::Truncated);
-                }
+                let body_start = cursor;
+                let body_end = if has_marker { mic_start } else { body_start };
                 Ok(Self {
                     fcf,
                     options_range,
@@ -725,7 +754,7 @@ impl PacketHeader {
                     ack_dst,
                     source,
                     sec_info,
-                    body_range: cursor..mic_start,
+                    body_range: body_start..body_end,
                     mic_range: mic_start..buf.len(),
                     total_len: buf.len(),
                 })
@@ -841,13 +870,56 @@ fn ensure_len(buf: &[u8], offset: usize, len: usize) -> Result<(), ParseError> {
     }
 }
 
-fn scan_options_field(data: &[u8]) -> Result<usize, ParseError> {
-    let mut decoder = OptionDecoder::new(data);
-    while let Some(result) = decoder.next() {
-        result?;
+/// Scan an options region that may end with an explicit `0xFF` marker or with
+/// the end of the bounded slice.
+///
+/// Returns the number of bytes consumed (including the terminator byte when
+/// present) and a flag indicating whether the terminator was observed. When
+/// the terminator is absent, the caller can infer that no payload follows.
+fn scan_options_bounded(data: &[u8]) -> Result<(usize, bool), ParseError> {
+    let mut pos = 0;
+    let mut last_number: u16 = 0;
+    while pos < data.len() {
+        let first = data[pos];
+        if first == 0xFF {
+            return Ok((pos + 1, true));
+        }
+        pos += 1;
+        let delta_nibble = first >> 4;
+        let len_nibble = first & 0x0F;
+        let (delta, delta_len) = read_extended(&data[pos..], delta_nibble)?;
+        pos += delta_len;
+        let (len, len_len) = read_extended(&data[pos..], len_nibble)?;
+        pos += len_len;
+        if pos + len as usize > data.len() {
+            return Err(ParseError::Truncated);
+        }
+        let number = last_number
+            .checked_add(delta)
+            .ok_or(ParseError::MalformedOption)?;
+        pos += len as usize;
+        last_number = number;
     }
+    Ok((pos, false))
+}
 
-    Ok(data.len() - decoder.remainder().len())
+fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
+    match nibble {
+        0..=12 => Ok((nibble as u16, 0)),
+        13 => {
+            if data.is_empty() {
+                return Err(ParseError::Truncated);
+            }
+            Ok((data[0] as u16 + 13, 1))
+        }
+        14 => {
+            if data.len() < 2 {
+                return Err(ParseError::Truncated);
+            }
+            Ok((u16::from_be_bytes([data[0], data[1]]) + 269, 2))
+        }
+        _ => Err(ParseError::InvalidOptionNibble),
+    }
 }
 
 pub(crate) fn source_len(full_source: bool) -> usize {

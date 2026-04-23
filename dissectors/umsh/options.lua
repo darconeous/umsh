@@ -183,7 +183,7 @@ function M.scan_length(data, offset)
     end
     pos = pos + actual_len
   end
-  error("options block missing 0xFF terminator")
+  return #data - start + 1  -- no 0xFF marker; options consumed all remaining bytes
 end
 
 -- ---------------------------------------------------------------------------

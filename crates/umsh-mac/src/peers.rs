@@ -11,7 +11,12 @@ pub struct PeerId(pub u8);
 /// Learned routing information for a remote peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CachedRoute {
-    /// Explicit source route.
+    /// Peer is directly reachable without any intermediate routers.
+    ///
+    /// Inferred when a packet arrives with no source-route or traceroute option
+    /// (or an empty traceroute) and `FHOPS_ACC == 0`.
+    Direct,
+    /// Explicit source route derived by reversing the inbound traceroute.
     Source(Vec<RouterHint, 15>),
     /// Flood-delivery parameters learned from an inbound packet.
     Flood { hops: u8, regions: Vec<[u8; 2], 8> },

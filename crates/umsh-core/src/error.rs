@@ -7,6 +7,8 @@ pub enum ParseError {
     Truncated,
     /// The frame-control version bits do not match the supported protocol.
     InvalidVersion(u8),
+    /// The reserved bit in the frame-control field was non-zero.
+    InvalidFcfReserved,
     /// Reserved bits in the security-control field were non-zero.
     InvalidScfReserved,
     /// The encoded MIC size is not assigned.
@@ -15,8 +17,6 @@ pub enum ParseError {
     InvalidFloodHops,
     /// A CoAP-style option nibble used an invalid extension marker.
     InvalidOptionNibble,
-    /// An option block was missing its terminating marker.
-    MissingOptionTerminator,
     /// Option numbers were not monotonically increasing.
     OptionOutOfOrder,
     /// The option stream was structurally malformed.

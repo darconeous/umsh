@@ -15,6 +15,7 @@ software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "u
 tokio-support = ["std", "software-crypto", "dep:rand", "dep:socket2", "dep:tokio"]
 serial-radio = ["tokio-support", "dep:tokio-serial"]
 embassy-support = ["std", "software-crypto", "dep:embassy-executor", "dep:embassy-time", "dep:rand"]
+cli = ["tokio-support", "dep:umsh-cli"]
 
 [dependencies]
 embedded-hal-async.workspace = true
@@ -26,6 +27,7 @@ umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
 umsh-mac = { path = "../crates/umsh-mac", default-features = false }
 umsh-node = { path = "../crates/umsh-node", default-features = false }
+umsh-sync = { path = "../crates/umsh-sync", default-features = false }
 umsh-text = { path = "../crates/umsh-text", default-features = false }
 umsh-uri = { path = "../crates/umsh-uri", default-features = false }
 embassy-executor = { version = "0.7", optional = true, features = ["arch-std", "executor-thread"] }
@@ -34,6 +36,11 @@ rand = { workspace = true, optional = true, features = ["std", "thread_rng", "sy
 tokio = { version = "1", optional = true, features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-serial = { version = "5", optional = true }
 socket2 = { version = "0.6", optional = true }
+umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-stdio"] }
+
+[[example]]
+name = "cli_udp"
+required-features = ["cli"]
 
 [[example]]
 name = "generate_phase1_vectors"

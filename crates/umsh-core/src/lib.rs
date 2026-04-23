@@ -187,24 +187,30 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(&packet.as_bytes()[1..6], &[0x20, 0x92, 0x78, 0x53, 0xFF]);
+        // New layout: FCF DST(3) SRC(3) SECINFO(5) OPTIONS...
+        // Options start at byte 12: trace_route(0x20) + region_code(0x92,0x78,0x53) + 0xFF
+        assert_eq!(&packet.as_bytes()[12..17], &[0x20, 0x92, 0x78, 0x53, 0xFF]);
     }
 
     #[test]
     fn aad_excludes_dynamic_options() {
+        // New layout for unicast with hint source, encrypted, MIC8, no fhops:
+        // FCF | DST(3) | SRC(3) | SECINFO(5) | OPTIONS(5) | 0xFF | payload(3) | MIC(8)
+        // Total = 1 + 3 + 3 + 5 + 4 + 1 + 3 + 8 = 28 bytes
+        // Options: trace route (2, len 0) + region code (11, len 2) — both dynamic, excluded from AAD
         let mut bytes = [0u8; 64];
-        bytes[0] = Fcf::new(PacketType::Unicast, false, true, false).0;
-        bytes[1] = 0x20;
-        bytes[2] = 0x92;
-        bytes[3] = 0x78;
-        bytes[4] = 0x53;
-        bytes[5] = 0xFF;
-        bytes[6..9].copy_from_slice(&[0xC3, 0xD4, 0x25]);
-        bytes[9..12].copy_from_slice(&[0xA1, 0xB2, 0x03]);
-        bytes[12] = Scf::new(true, MicSize::Mic8, false).0;
-        bytes[13..17].copy_from_slice(&42u32.to_be_bytes());
-        bytes[17..20].copy_from_slice(b"hey");
-        bytes[20..28].fill(0x11);
+        bytes[0] = Fcf::new(PacketType::Unicast, false, false).0;
+        bytes[1..4].copy_from_slice(&[0xC3, 0xD4, 0x25]); // DST
+        bytes[4..7].copy_from_slice(&[0xA1, 0xB2, 0x03]); // SRC hint
+        bytes[7] = Scf::new(true, MicSize::Mic8, false).0; // SCF
+        bytes[8..12].copy_from_slice(&42u32.to_be_bytes()); // frame counter
+        bytes[12] = 0x20; // trace route: delta=2, len=0
+        bytes[13] = 0x92; // region code: delta=9, len=2
+        bytes[14] = 0x78;
+        bytes[15] = 0x53;
+        bytes[16] = 0xFF; // end marker
+        bytes[17..20].copy_from_slice(b"hey"); // payload
+        bytes[20..28].fill(0x11); // MIC
         let header = PacketHeader::parse(&bytes[..28]).unwrap();
         let mut aad = [0u8; 18];
         let mut aad_len = 0usize;
@@ -260,9 +266,11 @@ mod tests {
 
     #[test]
     fn parse_blind_unicast_tracks_secinfo_range() {
+        // New layout: FCF | CHANNEL(2) | SECINFO(5) | 0xFF | ENC_DST_SRC(6) | payload(5) | MIC(4)
+        // 0xFF is required because body follows options
         let bytes = [
-            0xF0, 0x7E, 0x5F, 0x80, 0x00, 0x00, 0x00, 0x05, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03,
-            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x11, 0x22, 0x33, 0x44,
+            0xF0, 0x7E, 0x5F, 0x80, 0x00, 0x00, 0x00, 0x05, 0xFF, 0xC3, 0xD4, 0x25, 0xA1, 0xB2,
+            0x03, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x11, 0x22, 0x33, 0x44,
         ];
         let header = PacketHeader::parse(&bytes).unwrap();
         assert_eq!(header.sec_info.unwrap().wire_len(), 5);

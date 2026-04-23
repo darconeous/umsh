@@ -74,10 +74,74 @@ impl<'a> OptionEncoder<'a> {
         Ok(())
     }
 
+    /// Encode a `u32` in minimal big-endian form (leading zero bytes stripped).
+    pub fn put_u32(&mut self, number: u16, value: u32) -> Result<(), EncodeError> {
+        let (bytes, len) = minimal_u32(value);
+        self.put(number, &bytes[4 - len..])
+    }
+
+    /// Encode an `i32` in minimal big-endian form (leading sign-extension bytes stripped).
+    pub fn put_i32(&mut self, number: u16, value: i32) -> Result<(), EncodeError> {
+        let (bytes, len) = minimal_i32(value);
+        self.put(number, &bytes[4 - len..])
+    }
+
     /// Finish the encoder and return the number of bytes written.
     pub fn finish(self) -> usize {
         self.pos
     }
+}
+
+/// Parse a minimal big-endian unsigned integer (leading zero bytes stripped).
+///
+/// Returns `ParseError::MalformedOption` if `bytes.len() > 4`.
+pub fn parse_be_u32(bytes: &[u8]) -> Result<u32, ParseError> {
+    if bytes.len() > 4 {
+        return Err(ParseError::MalformedOption);
+    }
+    let mut arr = [0u8; 4];
+    arr[4 - bytes.len()..].copy_from_slice(bytes);
+    Ok(u32::from_be_bytes(arr))
+}
+
+/// Parse a minimal big-endian signed integer (leading sign-extension bytes stripped).
+///
+/// An empty slice decodes as `0`. Returns `ParseError::MalformedOption` if `bytes.len() > 4`.
+pub fn parse_be_i32(bytes: &[u8]) -> Result<i32, ParseError> {
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    if bytes.len() > 4 {
+        return Err(ParseError::MalformedOption);
+    }
+    let sign = if bytes[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+    let mut arr = [sign; 4];
+    arr[4 - bytes.len()..].copy_from_slice(bytes);
+    Ok(i32::from_be_bytes(arr))
+}
+
+fn minimal_u32(v: u32) -> ([u8; 4], usize) {
+    let bytes = v.to_be_bytes();
+    let skip = bytes.iter().position(|&b| b != 0).unwrap_or(4);
+    (bytes, 4 - skip)
+}
+
+fn minimal_i32(v: i32) -> ([u8; 4], usize) {
+    if v == 0 {
+        return ([0u8; 4], 0);
+    }
+    let bytes = v.to_be_bytes();
+    let mut skip = 0;
+    if v > 0 {
+        while skip < 3 && bytes[skip] == 0x00 && (bytes[skip + 1] & 0x80 == 0) {
+            skip += 1;
+        }
+    } else {
+        while skip < 3 && bytes[skip] == 0xFF && (bytes[skip + 1] & 0x80 != 0) {
+            skip += 1;
+        }
+    }
+    (bytes, 4 - skip)
 }
 
 /// Incremental decoder for CoAP-style delta/length option blocks.
@@ -126,8 +190,8 @@ impl<'a> Iterator for OptionDecoder<'a> {
             return None;
         }
         if self.pos >= self.data.len() {
-            self.errored = true;
-            return Some(Err(ParseError::MissingOptionTerminator));
+            self.finished = true;
+            return None;
         }
 
         let first = self.data[self.pos];
@@ -205,6 +269,57 @@ fn write_extended(buf: &mut [u8], value: u16) -> Result<u8, EncodeError> {
             let extended = value - 269;
             buf[..2].copy_from_slice(&extended.to_be_bytes());
             Ok(14)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimal_be_u32_encoding() {
+        assert_eq!(parse_be_u32(&[]).unwrap(), 0);
+        assert_eq!(parse_be_u32(&[1]).unwrap(), 1);
+        assert_eq!(parse_be_u32(&[1, 0]).unwrap(), 256);
+        assert_eq!(parse_be_u32(&[0xFF, 0xFF, 0xFF, 0xFF]).unwrap(), u32::MAX);
+        assert!(parse_be_u32(&[0; 5]).is_err());
+    }
+
+    #[test]
+    fn minimal_be_i32_encoding() {
+        assert_eq!(parse_be_i32(&[]).unwrap(), 0);
+        assert_eq!(parse_be_i32(&[0x7F]).unwrap(), 127);
+        assert_eq!(parse_be_i32(&[0x00, 0x80]).unwrap(), 128);
+        assert_eq!(parse_be_i32(&[0xFF]).unwrap(), -1);
+        assert_eq!(parse_be_i32(&[0x80]).unwrap(), -128);
+        assert_eq!(parse_be_i32(&[0xFF, 0x7F]).unwrap(), -129);
+        assert!(parse_be_i32(&[0; 5]).is_err());
+    }
+
+    #[test]
+    fn put_u32_round_trips() {
+        let cases: &[u32] = &[0, 1, 127, 128, 255, 256, u32::MAX];
+        for &v in cases {
+            let mut buf = [0u8; 16];
+            let mut enc = OptionEncoder::new(&mut buf);
+            enc.put_u32(1, v).unwrap();
+            let len = enc.finish();
+            let (_, value) = OptionDecoder::new(&buf[..len]).next().unwrap().unwrap();
+            assert_eq!(parse_be_u32(value).unwrap(), v, "failed for u32 {v}");
+        }
+    }
+
+    #[test]
+    fn put_i32_round_trips() {
+        let cases: &[i32] = &[0, 1, 127, 128, -1, -128, -129, i32::MIN, i32::MAX];
+        for &v in cases {
+            let mut buf = [0u8; 16];
+            let mut enc = OptionEncoder::new(&mut buf);
+            enc.put_i32(1, v).unwrap();
+            let len = enc.finish();
+            let (_, value) = OptionDecoder::new(&buf[..len]).next().unwrap().unwrap();
+            assert_eq!(parse_be_i32(value).unwrap(), v, "failed for i32 {v}");
         }
     }
 }

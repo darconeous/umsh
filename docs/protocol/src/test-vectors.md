@@ -22,7 +22,7 @@ The generated examples use fixed Ed25519 private keys so the appendix covers the
 ```text
   7   6   5   4   3   2   1   0
 +-------+-----------+---+---+---+
-| VER   | PKT TYPE  | S | O | H |
+| VER   | PKT TYPE  | S | R | H |
 +-------+-----------+---+---+---+
 ```
 
@@ -41,7 +41,7 @@ A minimal beacon with a 3-byte source hint and no payload.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=0 (broadcast), S=0, O=0, H=0 | `C0` |
+| FCF | VER=3, TYPE=0 (broadcast), S=0, R=0, H=0 | `C0` |
 | SRC | Node A hint | `ED 54 A5` |
 
 ```text
@@ -56,7 +56,7 @@ A first-contact beacon carrying the sender's full 32-byte public key.
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=0 (broadcast), S=1, O=0, H=0 | `C4` |
+| FCF | VER=3, TYPE=0 (broadcast), S=1, R=0, H=0 | `C4` |
 | SRC | Node A full key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
 
 ```text
@@ -73,21 +73,21 @@ An encrypted unicast from Node A to Node B using source hints and frame counter 
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=2 (unicast), S=0, O=0, H=0 | `D0` |
+| FCF | VER=3, TYPE=2 (unicast), S=0, R=0, H=0 | `D0` |
 | DST | Node B hint | `6C 28 FD` |
 | SRC | Node A hint | `ED 54 A5` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 42 | `00 00 00 2A` |
-| Payload | Encrypted `48 65 6C 6C 6F` (`"Hello"`) | `4F A0 84 B2 92` |
-| MIC | 16 bytes | `EA 32 F4 91 09 E8 D4 E6 01 16 73 C1 5B 31 84 F0` |
+| Payload | Encrypted `48 65 6C 6C 6F` (`"Hello"`) | `71 35 36 4B C1` |
+| MIC | 16 bytes | `97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49 C5 4A` |
 
 ```text
-D0 6C 28 FD ED 54 A5 E0 00 00 00 2A 4F A0 84 B2
-92 EA 32 F4 91 09 E8 D4 E6 01 16 73 C1 5B 31 84
-F0
+D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 71 35 36
+4B C1 97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49
+C5 4A
 ```
 
-Total: 33 bytes.
+Total: 34 bytes.
 
 ## Example 4: Encrypted Unicast with Ack Requested (S=1)
 
@@ -95,22 +95,22 @@ A first-contact encrypted unicast from Node A to Node B requesting a MAC acknowl
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=3 (unicast ack-req), S=1, O=0, H=0 | `DC` |
+| FCF | VER=3, TYPE=3 (unicast ack-req), S=1, R=0, H=0 | `DC` |
 | DST | Node B hint | `6C 28 FD` |
 | SRC | Node A full key | `ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 1 | `00 00 00 01` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `68 CF 7B` |
-| MIC | 16 bytes | `96 3F CE BA 86 8C 92 96 DD E2 E5 0F 5B 54 42 3F` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `9C 77 59` |
+| MIC | 16 bytes | `E9 9F 4C 5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97` |
 
 ```text
 DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
-7A 69 C2 79 E0 00 00 00 01 68 CF 7B 96 3F CE BA
-86 8C 92 96 DD E2 E5 0F 5B 54 42 3F
+7A 69 C2 79 E0 00 00 00 01 FF 9C 77 59 E9 9F 4C
+5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97
 ```
 
-Total: 60 bytes.
+Total: 61 bytes.
 
 ## Example 5: Encrypted Multicast (E=1)
 
@@ -118,19 +118,20 @@ An encrypted multicast from Node A on channel `B08D`. The encrypted body contain
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=4 (multicast), S=0, O=0, H=0 | `E0` |
+| FCF | VER=3, TYPE=4 (multicast), S=0, R=0, H=0 | `E0` |
 | CHANNEL | Derived channel identifier | `B0 8D` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 5 | `00 00 00 05` |
-| Encrypted data | ENCRYPT(`SRC || "Hello"`) | `9B B6 F2 5E C7 DA 95 D2` |
-| MIC | 16 bytes | `30 35 87 B0 01 F2 17 98 7A 08 1C F5 6E DC 85 36` |
+| Encrypted data | ENCRYPT(`SRC || "Hello"`) | `39 E5 95 FE 97 AF A8 90` |
+| MIC | 16 bytes | `30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42 D6` |
 
 ```text
-E0 B0 8D E0 00 00 00 05 9B B6 F2 5E C7 DA 95 D2
-30 35 87 B0 01 F2 17 98 7A 08 1C F5 6E DC 85 36
+E0 B0 8D E0 00 00 00 05 FF 39 E5 95 FE 97 AF A8
+90 30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42
+D6
 ```
 
-Total: 32 bytes.
+Total: 33 bytes.
 
 ## Example 6: Authenticated Multicast (E=0)
 
@@ -138,21 +139,21 @@ An authenticated but unencrypted multicast from Node A carrying payload type `03
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=4 (multicast), S=0, O=0, H=0 | `E0` |
+| FCF | VER=3, TYPE=4 (multicast), S=0, R=0, H=0 | `E0` |
 | CHANNEL | Derived channel identifier | `B0 8D` |
 | SCF | E=0, MIC=3 (16-byte), S=0 | `60` |
 | Frame Counter | 3 | `00 00 00 03` |
 | SRC | Node A hint | `ED 54 A5` |
 | Payload | `03 || "Hello"` | `03 48 65 6C 6C 6F` |
-| MIC | 16 bytes | `7C 9A 9C 4B C0 DD B4 96 65 6A 9D F1 5F 5B 9C C4` |
+| MIC | 16 bytes | `53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8 97 24` |
 
 ```text
-E0 B0 8D 60 00 00 00 03 ED 54 A5 03 48 65 6C 6C
-6F 7C 9A 9C 4B C0 DD B4 96 65 6A 9D F1 5F 5B 9C
-C4
+E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C
+6C 6F 53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8
+97 24
 ```
 
-Total: 33 bytes.
+Total: 34 bytes.
 
 ## Example 7: Encrypted Unicast with Options and Flood Hops
 
@@ -168,20 +169,20 @@ An encrypted unicast with a region code option, an empty trace-route option, and
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=2 (unicast), S=0, O=1, H=1 | `D3` |
-| Options | Trace route + region code + end marker | `20 92 78 53 FF` |
+| FCF | VER=3, TYPE=2 (unicast), S=0, R=0, H=1 | `D1` |
 | FHOPS | FHOPS_REM=4, FHOPS_ACC=0 | `40` |
 | DST | Node B hint | `6C 28 FD` |
 | SRC | Node A hint | `ED 54 A5` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 10 | `00 00 00 0A` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `AB 87 DC` |
-| MIC | 16 bytes | `83 07 00 18 AA 22 DB FC 93 86 B8 D1 F0 74 85 39` |
+| Options | Trace route + region code + end marker | `20 92 78 53 FF` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `79 F8 9D` |
+| MIC | 16 bytes | `96 91 3C 78 8E 38 5F 64 04 DA 6B 4F 90 4A 7B 38` |
 
 ```text
-D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00
-00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8
-D1 F0 74 85 39
+D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
+53 FF 79 F8 9D 96 91 3C 78 8E 38 5F 64 04 DA 6B
+4F 90 4A 7B 38
 ```
 
 Total: 37 bytes.
@@ -192,18 +193,18 @@ A blind unicast on channel `B08D`. The destination hint and source hint are encr
 
 | Field | Value | Hex |
 |---|---|---|
-| FCF | VER=3, TYPE=6 (blind unicast), S=0, O=0, H=0 | `F0` |
+| FCF | VER=3, TYPE=6 (blind unicast), S=0, R=0, H=0 | `F0` |
 | CHANNEL | Derived channel identifier | `B0 8D` |
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 7 | `00 00 00 07` |
-| ENC_DST_SRC | ENCRYPT(`DST || SRC`) | `9C A3 DF 8D F8 A6` |
-| ENC_PAYLOAD | ENCRYPT(`"Hello"`) | `1A 3B 73 CD 1B` |
-| MIC | 16 bytes | `42 9D E6 DD 47 AD 3A 6B E5 FF 89 BB 16 15 E8 7A` |
+| ENC_DST_SRC | ENCRYPT(`DST || SRC`) | `A4 FB D3 6A A0 87` |
+| ENC_PAYLOAD | ENCRYPT(`"Hello"`) | `4E 55 F2 08 51` |
+| MIC | 16 bytes | `F6 21 C9 8C 78 F7 90 92 34 0D E7 12 AA 07 AE 77` |
 
 ```text
-F0 B0 8D E0 00 00 00 07 9C A3 DF 8D F8 A6 1A 3B
-73 CD 1B 42 9D E6 DD 47 AD 3A 6B E5 FF 89 BB 16
-15 E8 7A
+F0 B0 8D E0 00 00 00 07 FF A4 FB D3 6A A0 87 4E
+55 F2 08 51 F6 21 C9 8C 78 F7 90 92 34 0D E7 12
+AA 07 AE 77
 ```
 
-Total: 35 bytes.
+Total: 36 bytes.

@@ -66,7 +66,7 @@ pub mod prelude {
     pub use umsh_mac::{LocalIdentityId, PacketFamily, RouteHops, SendOptions};
     pub use umsh_node::{
         Capabilities, ChannelInfoRef, CommandId, Host, HostError, LocalNode, MacCommand, NodeError,
-        NodeIdentityPayload, NodeRole, OwnedMacCommand, OwnedNodeIdentityPayload, PeerConnection,
+        NodeIdentity, NodeIdentityRef, NodeRole, OwnedMacCommand, PeerConnection,
         ReceivedPacketRef, RxMetadata, SendProgressTicket, SendToken, Snr, Subscription, Transport,
     };
     pub use umsh_text::{

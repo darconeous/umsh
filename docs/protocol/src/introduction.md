@@ -2,7 +2,7 @@
 
 UMSH is an experimental LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as [critical shortcomings](meshcore-comparison.md#cryptography)—shortcomings that would practically require backward-incompatible changes to properly fix. What began as a toy protocol has since developed into this comprehensive specification.
 
-Few, if any, of the ideas presented here are new or exotic. Many come directly from MeshCore — cryptographic addressing, source routing, regions, and more. The key contribution is a clean, extensible design with stronger cryptography and clear layer separation.
+Few, if any, of the ideas presented here are new or exotic. Many come directly from MeshCore — cryptographic addressing, source routing, regions, and more. The key contribution here is a clean, extensible design with stronger cryptography and clear layer separation.
 
 This specification was written with MeshCore V2 in mind, but the ideas are free for anyone to adopt. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well. Point-by-point protocol comparisons with [MeshCore](meshcore-comparison.md), [Meshtastic](meshtastic-comparison.md), and [Reticulum](reticulum-comparison.md) are available in the appendices.
 

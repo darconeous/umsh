@@ -8,6 +8,8 @@ members = [
     "crates/umsh-text",
     "crates/umsh-mac",
     "crates/umsh-node",
+    "crates/umsh-sync",
+    "crates/umsh-cli",
     "umsh",
 ]
 resolver = "2"

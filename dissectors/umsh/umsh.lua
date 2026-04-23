@@ -36,7 +36,7 @@ local VS_TYPE = {
 }
 local TYPE_SHORT = {"BCST","UACK","UNIC","UNAR","MCST","RSVD","BUNI","BUAR"}
 local VS_MIC = {[0]="4 bytes",[1]="8 bytes",[2]="12 bytes",[3]="16 bytes"}
-local VS_VER = {[3]="UMSH v3"}
+local VS_VER = {[3]="Valid (0b11)"}
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- ProtoField declarations
@@ -45,10 +45,10 @@ local f = {}
 
 -- FCF (1 byte)
 f.fcf          = ProtoField.uint8 ("umsh.fcf",         "Frame Control Field", base.HEX)
-f.fcf_version  = ProtoField.uint8 ("umsh.fcf.version", "Version",             base.DEC, VS_VER,  0xC0)
+f.fcf_version  = ProtoField.uint8 ("umsh.fcf.version", "Version",             base.HEX, VS_VER,  0xC0)
 f.fcf_type     = ProtoField.uint8 ("umsh.fcf.type",    "Packet Type",         base.DEC, VS_TYPE, 0x38)
 f.fcf_full_src = ProtoField.bool  ("umsh.fcf.s",       "Full Source Key (S)", 8, nil, 0x04)
-f.fcf_opts     = ProtoField.bool  ("umsh.fcf.o",       "Options Present (O)", 8, nil, 0x02)
+f.fcf_reserved = ProtoField.bool  ("umsh.fcf.r",       "Reserved (R)",        8, nil, 0x02)
 f.fcf_fhops    = ProtoField.bool  ("umsh.fcf.h",       "Flood Hops (H)",      8, nil, 0x01)
 
 -- FHOPS (1 byte, optional)
@@ -107,7 +107,7 @@ f.ack_rsp_time  = ProtoField.string  ("umsh.ack.response_time", "ACK Response Ti
 f.ack_expected  = ProtoField.bytes   ("umsh.ack.expected_tag",  "Expected ACK Tag")
 
 umsh.fields = {
-  f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_opts, f.fcf_fhops,
+  f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
   f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr, f.opt_unknown,
@@ -246,15 +246,14 @@ end
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- parse_options
--- Decodes the CoAP-style options block starting at `start_off`.
+-- Decodes the CoAP-style options block starting at `start_off` up to `bound`.
 -- Populates `static_opts_out` with {number, value} pairs for AAD construction.
--- Returns the new offset (after the 0xFF terminator).
+-- Returns the new offset (after the 0xFF terminator, or at `bound` if absent).
 -- ──────────────────────────────────────────────────────────────────────────
-local function parse_options(buf, start_off, tree, static_opts_out)
-  local buf_len = buf:len()
-  if start_off >= buf_len then return start_off end
+local function parse_options(buf, start_off, bound, tree, static_opts_out)
+  if start_off >= bound then return start_off end
 
-  local avail = buf_len - start_off
+  local avail = bound - start_off
   local raw   = tvb_bytes(buf, start_off, avail)
 
   local total_len
@@ -353,6 +352,9 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   end
   off = off + src_len
 
+  -- OPTIONS block (always present; 0xFF marker omitted for beacons with no payload)
+  off = parse_options(buf, off, buf_len, tree, static_opts)
+
   local payload_len = buf_len - off
   local suffix = src_name and (" from " .. src_name)
               or (" from " .. hint_hex(src_bytes:sub(1, 3)))
@@ -380,6 +382,10 @@ local function dissect_uack(buf, pinfo, tree, off)
   local dst_name = keystore.lookup_node(dst_bytes)
   if dst_name and dst_name ~= "" then tree:add(f.dst_name, buf(off, 3), dst_name) end
   off = off + 3
+
+  -- OPTIONS block (always present; no 0xFF since ACK_TAG is fixed-size trailer)
+  local dummy_opts = {}
+  off = parse_options(buf, off, buf_len - 8, tree, dummy_opts)
 
   if off + 8 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local tag_bytes = tvb_bytes(buf, off, 8)
@@ -445,6 +451,9 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
+
+  -- OPTIONS block (always present; 0xFF emitted iff payload follows)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
 
   -- Body (payload or ciphertext)
   local body_start = off
@@ -537,6 +546,9 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
+
+  -- OPTIONS block (always present; 0xFF always present since body follows)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
 
   -- For E=0: SRC is in cleartext before the body
   local src_bytes, src_name
@@ -667,6 +679,9 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
+
+  -- OPTIONS block (always present; 0xFF always present since body follows)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
 
   -- Info column base
   local chan_hex = bytes_to_hex(chan_bytes)
@@ -899,7 +914,6 @@ function umsh.dissector(buf, pinfo, tree)
   local ver       = (fcf_val >> 6) & 0x03
   local pkt_type  = (fcf_val >> 3) & 0x07
   local full_src  = (fcf_val & 0x04) ~= 0
-  local has_opts  = (fcf_val & 0x02) ~= 0
   local has_fhops = (fcf_val & 0x01) ~= 0
   local fcf_byte  = tvb_bytes(buf, 0, 1)
 
@@ -912,7 +926,7 @@ function umsh.dissector(buf, pinfo, tree)
   fcf_tree:add(f.fcf_version,  buf(0, 1))
   fcf_tree:add(f.fcf_type,     buf(0, 1))
   fcf_tree:add(f.fcf_full_src, buf(0, 1))
-  fcf_tree:add(f.fcf_opts,     buf(0, 1))
+  fcf_tree:add(f.fcf_reserved, buf(0, 1))
   fcf_tree:add(f.fcf_fhops,    buf(0, 1))
 
   -- Version check
@@ -923,11 +937,6 @@ function umsh.dissector(buf, pinfo, tree)
 
   local off = 1
   local static_opts = {}
-
-  -- OPTIONS block
-  if has_opts then
-    off = parse_options(buf, off, root, static_opts)
-  end
 
   -- FHOPS byte
   if has_fhops then
@@ -987,8 +996,6 @@ local MIN_LEN = {
 local function validate_min_length(fcf, buf_len)
   local pkt_type = (fcf >> 3) & 0x07
   local min = MIN_LEN[pkt_type] or 1
-  -- If OPTIONS present, add at least 1 byte (the 0xFF end marker)
-  if (fcf & 0x02) ~= 0 then min = min + 1 end
   -- If FHOPS present, add 1 byte
   if (fcf & 0x01) ~= 0 then min = min + 1 end
   return buf_len >= min

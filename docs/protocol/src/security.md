@@ -290,6 +290,8 @@ The AAD is constructed by concatenating the following fields in order:
 
 Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.
 
+Note that the AAD ordering above is **canonical** and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.
+
 #### Static Option Encoding in AAD
 
 Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:

@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::task::{Poll, RawWaker, RawWakerVTable, Waker};
 
 use rand::rngs::ThreadRng;
+use umsh_sync::AsyncRefCell;
 use umsh::{
     core::{PacketHeader, ParsedOptions, PublicKey},
     crypto::{
@@ -64,9 +65,9 @@ async fn async_main() {
     let alice_key = *alice_identity.public_key();
     let bob_key = *bob_identity.public_key();
 
-    let alice_mac = RefCell::new(build_mac(alice_radio, false));
-    let repeater_mac = RefCell::new(build_mac(repeater_radio, true));
-    let bob_mac = RefCell::new(build_mac(bob_radio, false));
+    let alice_mac = AsyncRefCell::new(build_mac(alice_radio, false));
+    let repeater_mac = AsyncRefCell::new(build_mac(repeater_radio, true));
+    let bob_mac = AsyncRefCell::new(build_mac(bob_radio, false));
 
     let alice_handle = MacHandle::new(&alice_mac);
     let repeater_handle = MacHandle::new(&repeater_mac);
@@ -74,21 +75,30 @@ async fn async_main() {
 
     let alice_id = alice_handle
         .add_identity(alice_identity)
+        .await
         .expect("alice identity should fit");
     let _repeater_id = repeater_handle
         .add_identity(repeater_identity)
+        .await
         .expect("repeater identity should fit");
     let bob_id = bob_handle
         .add_identity(bob_identity)
+        .await
         .expect("bob identity should fit");
 
     let mut alice_host = RepeaterHost::new(alice_handle);
     let mut bob_host = RepeaterHost::new(bob_handle);
     let alice_node = alice_host.add_node(alice_id);
     let bob_node = bob_host.add_node(bob_id);
-    let bob = bob_node.peer(alice_key).expect("alice peer should fit");
+    let bob = bob_node
+        .peer(alice_key)
+        .await
+        .expect("alice peer should fit");
     let bob_chat = UnicastTextChatWrapper::from_peer(&bob);
-    let alice = alice_node.peer(bob_key).expect("bob peer should fit");
+    let alice = alice_node
+        .peer(bob_key)
+        .await
+        .expect("bob peer should fit");
     let alice_chat = UnicastTextChatWrapper::from_peer(&alice);
     let alice_received = Rc::new(RefCell::new(0usize));
     let bob_received = Rc::new(RefCell::new(0usize));
@@ -136,6 +146,7 @@ async fn async_main() {
         .await
         .expect("alice send should queue successfully");
     let alice_first = inspect_next_queued_frame(&alice_mac, "alice queued hello")
+        .await
         .expect("alice hello should be queued");
     assert_eq!(alice_first.source_route_hops, 0);
     assert_eq!(alice_first.trace_route_hops, 0);
@@ -151,7 +162,7 @@ async fn async_main() {
 
     println!(
         "[bob:route] learned route to alice: {}",
-        cached_route_summary(&bob_mac, alice_key)
+        cached_route_summary(&bob_mac, alice_key).await
     );
 
     println!("== step 2: bob replies and should now use a cached source route ==");
@@ -161,6 +172,7 @@ async fn async_main() {
         .await
         .expect("bob reply should queue successfully");
     let bob_reply = inspect_next_queued_frame(&bob_mac, "bob queued reply")
+        .await
         .expect("bob reply should be queued");
     assert!(
         bob_reply.source_route_hops > 0,
@@ -178,7 +190,7 @@ async fn async_main() {
 
     println!(
         "[alice:route] learned route to bob: {}",
-        cached_route_summary(&alice_mac, bob_key)
+        cached_route_summary(&alice_mac, bob_key).await
     );
 
     println!(
@@ -190,6 +202,7 @@ async fn async_main() {
         .await
         .expect("alice follow-up should queue successfully");
     let alice_follow_up = inspect_next_queued_frame(&alice_mac, "alice queued follow-up")
+        .await
         .expect("alice follow-up should be queued");
     assert!(
         alice_follow_up.source_route_hops > 0,
@@ -212,6 +225,7 @@ async fn async_main() {
         .await
         .expect("alice pfs request should queue successfully");
     let pfs_request = inspect_next_queued_frame(&alice_mac, "alice queued pfs request")
+        .await
         .expect("pfs request should be queued");
     assert!(
         pfs_request.source_route_hops > 0,
@@ -239,12 +253,17 @@ async fn async_main() {
         format_pfs_status(
             alice
                 .pfs_status()
+                .await
                 .expect("alice pfs status should be readable")
         )
     );
     println!(
         "[bob:pfs] status = {}",
-        format_pfs_status(bob.pfs_status().expect("bob pfs status should be readable"))
+        format_pfs_status(
+            bob.pfs_status()
+                .await
+                .expect("bob pfs status should be readable")
+        )
     );
     if *alice_pfs.borrow() && *bob_pfs.borrow() {
         println!("[pfs] established on both sides during the simulated exchange");
@@ -405,11 +424,11 @@ struct QueuedFrameSummary {
     trace_route_hops: usize,
 }
 
-fn inspect_next_queued_frame(
-    mac: &RefCell<RepeaterMac>,
+async fn inspect_next_queued_frame(
+    mac: &AsyncRefCell<RepeaterMac>,
     label: &str,
 ) -> Option<QueuedFrameSummary> {
-    let mut mac = mac.borrow_mut();
+    let mut mac = mac.borrow_mut().await;
     let queued = mac.tx_queue_mut().pop_next()?;
     let summary = summarize_queued_frame(queued.frame.as_slice()).ok()?;
     println!("[inspect] {label}: {}", format_queued_summary(summary));
@@ -479,8 +498,8 @@ fn summarize_received_packet(packet: &umsh::node::ReceivedPacketRef<'_>) -> Stri
     )
 }
 
-fn cached_route_summary(mac: &RefCell<RepeaterMac>, peer: PublicKey) -> String {
-    let mac = mac.borrow();
+async fn cached_route_summary(mac: &AsyncRefCell<RepeaterMac>, peer: PublicKey) -> String {
+    let mac = mac.borrow().await;
     let Some((peer_id, _)) = mac.peer_registry().lookup_by_key(&peer) else {
         return "missing-peer".to_string();
     };
@@ -489,11 +508,12 @@ fn cached_route_summary(mac: &RefCell<RepeaterMac>, peer: PublicKey) -> String {
         .get(peer_id)
         .and_then(|info| info.route.as_ref())
     {
+        Some(CachedRoute::Direct) => "direct".to_string(),
         Some(CachedRoute::Source(route)) => format!(
             "source {:?}",
             route.iter().map(|hop| hop.0).collect::<std::vec::Vec<_>>()
         ),
-        Some(CachedRoute::Flood { hops }) => format!("flood hops={hops}"),
+        Some(CachedRoute::Flood { hops, .. }) => format!("flood hops={hops}"),
         None => "none".to_string(),
     }
 }

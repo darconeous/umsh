@@ -340,6 +340,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "embedded-io-async"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
+dependencies = [
+ "embedded-io",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1067,11 +1082,13 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "umsh-chat-room",
+ "umsh-cli",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
+ "umsh-sync",
  "umsh-text",
  "umsh-uri",
 ]
@@ -1081,6 +1098,22 @@ name = "umsh-chat-room"
 version = "0.1.0"
 dependencies = [
  "umsh-core",
+]
+
+[[package]]
+name = "umsh-cli"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "embedded-io-async",
+ "futures",
+ "heapless",
+ "tokio",
+ "umsh-core",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-sync",
+ "umsh-text",
 ]
 
 [[package]]
@@ -1119,6 +1152,7 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-sync",
 ]
 
 [[package]]
@@ -1133,6 +1167,14 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-text",
+]
+
+[[package]]
+name = "umsh-sync"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "slab",
 ]
 
 [[package]]
