@@ -1,0 +1,929 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Minimal Companion Radio Protocol - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-afe8cd7c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="minimal-companion-radio-protocol"><a class="header" href="#minimal-companion-radio-protocol">Minimal Companion Radio Protocol</a></h1>
+<p>The companion radio protocol is loosely based on the Spinel protocol from
+OpenThread. The protocol assumes reliable, in-order delivery of frames, as well
+as a way to assert flow control. The exact framing mechanism that can be used is
+flexible, for example:</p>
+<ul>
+<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a></li>
+<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#spi-framing-protocol">Spinel SPI</a></li>
+<li>BLE GATT</li>
+</ul>
+<p>The specific subset of the protocol documented here is the minimal set needed
+to configure and use a LoRa radio. All other concerns are left out to make it
+easier to implement this initial step.</p>
+<p>In this document, we refer to the companion radio as the “NCP” or “network
+control processor”. This is a carry-over from Thread, but it seems appropriate
+to use here.</p>
+<h2 id="data-representation"><a class="header" href="#data-representation">Data Representation</a></h2>
+<p>Spinel, being a low-level protocol between two devices which are likely to have
+a little-endian architecture, uses little-endian representations exclusively
+for all integers smaller than four bytes. For implementation convenience,
+values larger than four bytes (EUI64, IPv6 addresses, etc.) are stored as they
+are traditionally represented (typically, but not always, big-endian).</p>
+<h3 id="packed-unsigned-integer"><a class="header" href="#packed-unsigned-integer">Packed Unsigned Integers</a></h3>
+<p>Certain types of integers, such as command or property identifiers, usually
+have a value on the wire that is less than 127. However, in order to not
+preclude the use of values larger than 255, we would need to add an extra byte.
+Doing this would add an extra byte to all packets, which can add up in terms of
+bandwidth. To address this, Spinel uses Packed Unsigned Integers, or PUIs.</p>
+<p>The PUI format used in Spinel is based on the <a href="https://www.w3.org/TR/exi/#encodingUnsignedInteger">unsigned integer format in
+EXI</a>, except that we limit the maximum value to the largest value that can
+be encoded in three bytes. The maximum value that can be encoded is 2,097,151.</p>
+<p>For all values less than 127, the packed form of the number is simply a single
+byte which directly represents the number. For values larger than 127, the
+following process is used to encode the value:</p>
+<ol>
+<li>The unsigned integer is broken up into <em>n</em> 7-bit chunks and placed into <em>n</em>
+bytes, leaving the most significant bit of each byte unused.</li>
+<li>Order the bytes from least-significant to most-significant. (Little-endian)</li>
+<li>Clear the most significant bit of the most significant byte. Set the most
+significant bit on all other bytes.</li>
+</ol>
+<p>Where <em>n</em> is the smallest number of 7-bit chunks you can use to represent the
+given value.</p>
+<p>Take the value 1337, for example:</p>
+<pre><code>1337 =&gt; 0x0539
+     =&gt; [39 0A]
+     =&gt; [B9 0A]
+</code></pre>
+<p>To decode the value, you collect the 7-bit chunks until you find a byte with
+the most significant bit clear.</p>
+<h2 id="frame-format"><a class="header" href="#frame-format">Frame Format</a></h2>
+<p>A Spinel frame is the concatenation of the following elements:</p>
+<ul>
+<li>A header comprising a single byte.</li>
+<li>A command identifier.</li>
+<li>A command-defined payload, which may be empty.</li>
+</ul>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     HEADER    |  COMMAND ID   | PAYLOAD ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of a typical Spinel frame</p>
+<p>Since the size of the frame is part of the framing mechanism, it is omitted
+from the frame.</p>
+<h3 id="frame-header"><a class="header" href="#frame-header">Frame Header</a></h3>
+<p>Each frame has the following format:</p>
+<pre><code>  0   1   2   3   4   5   6   7
++---+---+---+---+---+---+---+---+
+|  FLG  |  RESERVED |    TID    |
++---+---+---+---+---+---+---+---+
+</code></pre>
+<p>Figure: Header Format</p>
+<h4 id="flg-flag"><a class="header" href="#flg-flag"><code>FLG</code>: Flag</a></h4>
+<p>The Flag (FLG) field in the two most significant bits of the header byte is
+always set to the value two (or <code>10</code> in binary). Any frame received with these
+bits set to any other value SHALL NOT be considered a companion-radio frame.</p>
+<h4 id="reserved-reserved"><a class="header" href="#reserved-reserved"><code>RESERVED</code>: Reserved</a></h4>
+<p>These bits must always be set to zero and the entire frame ignored if set to
+any other value.</p>
+<h4 id="tid-transaction-identifier"><a class="header" href="#tid-transaction-identifier"><code>TID</code>: Transaction Identifier</a></h4>
+<p>The Transaction Identifier (TID) field in the four least significant bits of
+the header is used for correlating responses to the commands which generated
+them.</p>
+<p>When a command is sent from the host, any reply to that command sent by the NCP
+will use the same value for the TID. When the host receives a frame that
+matches the TID of the command it sent, it can easily recognize that frame as
+the actual response to that command.</p>
+<p>The zero value of TID is used for commands to which a correlated response is
+not expected or needed, such as for unsolicited update commands sent to the
+host from the NCP.</p>
+<p>Note that while the frame format is symmetric between the frames being sent to
+the NCP versus frames being sent from the NCP, the behaviors are not. The NCP
+<strong>MUST NOT</strong> send a frame with a non-zero TID that is not a response to a frame
+it had recently received with that same TID. All unsolicited or asynchronous
+commands originating from the NCP <strong>MUST</strong> use TID zero (0).</p>
+<h3 id="command-id"><a class="header" href="#command-id">Command ID</a></h3>
+<p>The command identifier is a 7-bit unsigned integer encoded from 0 to 127. The
+most significant bit is not set and the frame must be ignored if it is set.</p>
+<h3 id="payload"><a class="header" href="#payload">Payload</a></h3>
+<p>The command payload follows the command identifier in a Spinel frame,
+containing the serialization of any arguments that the indicated command may
+require. The exact composition of a command payload is determined by the
+specific command identifier being used and <strong>MUST</strong> be empty if the command has
+no arguments.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<p>The following commands are initially supported:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Dir</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>CMD_NOP</code></td><td>Host-&gt;NCP</td><td>No-Operation</td></tr>
+<tr><td>1</td><td><code>CMD_RST</code></td><td>Host-&gt;NCP</td><td>Reset the NCP</td></tr>
+<tr><td>2</td><td><code>CMD_PROP_GET</code></td><td>Host-&gt;NCP</td><td>Get property value</td></tr>
+<tr><td>3</td><td><code>CMD_PROP_SET</code></td><td>Host-&gt;NCP</td><td>Set property value</td></tr>
+<tr><td>6</td><td><code>CMD_PROP_IS</code></td><td>NCP-&gt;Host</td><td>Property value notification</td></tr>
+<tr><td>9</td><td><code>CMD_STR_SEND</code></td><td>Host-&gt;NCP</td><td>Send data to a stream</td></tr>
+<tr><td>10</td><td><code>CMD_STR_RECV</code></td><td>NCP-&gt;Host</td><td>Receive data from a stream</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; NCP) <code>CMD_NOP</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |    CMD_NOP    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+^     HEADER    ^    COMMAND    ^
+</code></pre>
+<p>Figure: Structure of <code>CMD_NOP</code></p>
+<p>No-Operation. Commands the NCP to reply with a <code>STATUS_OK</code> code. This is
+primarily used for liveness checks.</p>
+<p>The command payload for this command SHOULD be empty. The receiver MUST ignore
+any non-empty command payload.</p>
+<p>There is no error condition for this command.</p>
+<h3 id="cmd-reset"><a class="header" href="#cmd-reset">CMD 1: (Host -&gt; NCP) <code>CMD_RST</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |    CMD_RST    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_RST</code></p>
+<p>Reset NCP. Commands the NCP to perform a software reset. Due to the nature of
+this command, the TID is ignored. The host should instead wait for a
+<code>CMD_PROP_IS</code> command from the NCP indicating <code>PROP_LAST_STATUS</code> has been set
+to <code>STATUS_RESET_SOFTWARE</code> (see (#status-codes)).</p>
+<p>The command payload SHOULD be empty, and it SHOULD NOT be processed.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-get"><a class="header" href="#cmd-prop-get">CMD 2: (Host -&gt; NCP) <code>CMD_PROP_GET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_GET</code></p>
+<p>Get property value. Commands the NCP to emit a <code>CMD_PROP_IS</code> command for the
+given property identifier.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer).</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-set"><a class="header" href="#cmd-prop-set">CMD 3: (Host -&gt; NCP) <code>CMD_PROP_SET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  NEW PROPERTY VALUE ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_SET</code></p>
+<p>Set property value. Commands the NCP to set the given property to the specific
+given value, replacing any previous value, and to emit a <code>CMD_PROP_IS</code> command
+for that property indicating the new authoritative value if successful.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer), followed by
+the property value. The exact format of the property value is defined by the
+property.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-is"><a class="header" href="#cmd-prop-is">CMD 6: (NCP -&gt; Host) <code>CMD_PROP_IS</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  CURRENT PROPERTY VALUE ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_IS</code></p>
+<p>Property value notification. This command can be sent by the NCP in response to
+a previous command from the host, or it can be sent by the NCP in an
+unsolicited fashion to notify the host of various state changes asynchronously.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer), followed by
+the current value of the given property.</p>
+<h3 id="cmd-str-send"><a class="header" href="#cmd-str-send">CMD 9: (Host -&gt; NCP) <code>CMD_STR_SEND</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | STREAM_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   DATA_LEN (Little endian)    | DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_STR_SEND</code></p>
+<p>Command for sending data (such as a packet) to a stream.</p>
+<p>The format of the metadata is defined by the stream, and may be absent. Since
+the framing layer provides the total frame length, <code>DATA_LEN</code> is sufficient to
+determine the length of both the data and any trailing metadata.</p>
+<p>If a non-zero TID is used, the command completes only once the frame has either
+been transmitted on air or definitively failed. Success is reported by emitting
+<code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with <code>STATUS_OK</code> and a matching TID.</p>
+<p>The NCP only attempts one confirmed transmit at a time. If a <code>CMD_STR_SEND</code>
+with a non-zero TID arrives while another confirmed transmit is in progress,
+the new command fails with <code>STATUS_BUSY</code>.</p>
+<p>The radio will never wait for duty-cycle allowance. If transmission would
+exceed the currently configured duty-cycle limit and the <code>NODUTY</code> flag is not
+set, the command fails immediately with <code>STATUS_DUTY_LIMIT</code>.</p>
+<p>Commands sent with TID zero are fire-and-forget and do not receive a correlated
+completion response.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-str-recv"><a class="header" href="#cmd-str-recv">CMD 10: (NCP -&gt; Host) <code>CMD_STR_RECV</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES |0 0 0|      CMD      | STREAM_KEY (PUI, 1-3 bytes)...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   DATA_LEN (Little endian)    | DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_STR_RECV</code></p>
+<p>Notification of incoming data received on the given stream. Because this
+command is only ever sent asynchronously, the TID is always zero.</p>
+<p>The format of the metadata is defined by the stream, and may be absent. Since
+the framing layer provides the total frame length, <code>DATA_LEN</code> is sufficient to
+determine the length of both the data and any trailing metadata.</p>
+<h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>The properties marked as supporting <code>Is</code> means that the property may be
+emitted asynchronously. All properties that support <code>Get</code> or <code>Set</code> will emit
+an <code>Is</code> to respond with the current/new value of that property.</p>
+</blockquote>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>PROP_LAST_STATUS</code></td><td>Get, Is</td><td>Last status</td></tr>
+<tr><td>1</td><td><code>PROP_PROTOCOL_VERSION</code></td><td>Get</td><td>Protocol version</td></tr>
+<tr><td>2</td><td><code>PROP_NCP_VERSION</code></td><td>Get</td><td>NCP version string</td></tr>
+<tr><td>3</td><td><code>PROP_IFACE_TYPE</code></td><td>Get</td><td>Interface type</td></tr>
+<tr><td>5</td><td><code>PROP_CAPS</code></td><td>Get</td><td>Capabilities</td></tr>
+<tr><td>32</td><td><code>PROP_PHY_ENABLED</code></td><td>Get, Set</td><td>PHY enabled</td></tr>
+<tr><td>35</td><td><code>PROP_PHY_FREQ</code></td><td>Get, Set</td><td>Frequency in kHz</td></tr>
+<tr><td>37</td><td><code>PROP_PHY_TX_POWER</code></td><td>Get, Set</td><td>TX power in dBm</td></tr>
+<tr><td>38</td><td><code>PROP_PHY_RSSI</code></td><td>Get</td><td>Current RSSI</td></tr>
+<tr><td>39</td><td><code>PROP_PHY_LORA_BW</code></td><td>Get, Set</td><td>LoRa bandwidth</td></tr>
+<tr><td>40</td><td><code>PROP_PHY_LORA_SF</code></td><td>Get, Set</td><td>LoRa spreading factor</td></tr>
+<tr><td>41</td><td><code>PROP_PHY_LORA_CR</code></td><td>Get, Set</td><td>LoRa coding rate</td></tr>
+<tr><td>42</td><td><code>PROP_PHY_MTU</code></td><td>Get</td><td>Max size of a frame</td></tr>
+<tr><td>113</td><td><code>STR_PHY_RAW</code></td><td>Send, Recv</td><td>Raw radio frame stream</td></tr>
+<tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
+<tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="prop-last-status"><a class="header" href="#prop-last-status">PROP 0: <code>PROP_LAST_STATUS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Value Type: PUI + STRING(opt.)</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Reset Reason Code</li>
+</ul>
+<p>This property describes the status code of the last NCP operation. For many
+commands, failure is indicated by emitting <code>CMD_PROP_IS</code> for this property with
+a TID matching the failing command. It is generally not necessary to ever fetch
+the value of this property explicitly, as it is often emitted directly as an
+error response. It is also occasionally emitted as a success response with a
+value of <code>STATUS_OK</code>.</p>
+<p>Upon NCP reset, this property <strong>MUST</strong> be emitted with a status code indicating
+the reset reason.</p>
+<p>Upon receiving an asynchronous update to <code>PROP_LAST_STATUS</code> with a status code
+that indicates a reset, the host SHALL assume that the NCP has been reset and
+that all properties have reverted to their defined after-reset values.</p>
+<p>See (#status-codes) for the complete list of status codes.</p>
+<h3 id="prop-protocol-version"><a class="header" href="#prop-protocol-version">PROP 1: <code>PROP_PROTOCOL_VERSION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NCP</li>
+<li>Value Type: UINT8, UINT8</li>
+<li>Post-Reset Value: 6, 0</li>
+</ul>
+<p>Describes the Spinel protocol version information. This property contains two
+fields:</p>
+<pre><code>  0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| MAJOR_VERSION | MINOR_VERSION |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: <code>PROP_PROTOCOL_VERSION</code> Value Format</p>
+<dl>
+<dt id="major_version"><a class="header" href="#major_version"><code>MAJOR_VERSION</code></a></dt>
+<dd>The major version number is used to identify backward incompatible
+differences between protocol versions.</dd>
+<dt id="minor_version"><a class="header" href="#minor_version"><code>MINOR_VERSION</code></a></dt>
+<dd>The minor version number is used to identify backward-compatible differences
+between protocol versions. A mismatch between the advertised minor version
+number and the minor version that is supported by the host <strong>SHOULD NOT</strong> be
+fatal to the operation of the host.</dd>
+</dl>
+<p>This document describes major version 6, minor version 0 of this protocol.</p>
+<h3 id="prop-ncp-version"><a class="header" href="#prop-ncp-version">PROP 2: <code>PROP_NCP_VERSION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NCP</li>
+<li>Value Type: STRING</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Contains a zero-terminated ASCII string which describes the firmware currently
+running on the NCP.</p>
+<p>The value of this string <strong>MUST</strong> be different for every firmware release.</p>
+<p>The format of the string is not strictly defined, but it is intended to present
+similarly to the “User-Agent” string from HTTP. The following format is
+<strong>RECOMMENDED</strong>:</p>
+<p><code>STACK-NAME/STACK-VERSION[BUILD-INFO][; OTHER-INFO][; BUILD-DATE]</code></p>
+<h3 id="prop-interface-type"><a class="header" href="#prop-interface-type">PROP 3: <code>PROP_INTERFACE_TYPE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: PUI</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>This unsigned packed integer identifies the network protocol implemented by
+this NCP. It must return the value 8.</p>
+<h3 id="prop-caps"><a class="header" href="#prop-caps">PROP 5: <code>PROP_CAPS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Constant</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Item Type: PUI</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Describes the supported capabilities of this NCP. Encoded as a list of packed
+unsigned integers. See (#capabilities) for a list of values.</p>
+<h3 id="prop-phy-enabled"><a class="header" href="#prop-phy-enabled">PROP 32: <code>PROP_PHY_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read/Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required:
+<ul>
+<li><code>CMD_PROP_GET</code>: <strong>REQUIRED</strong></li>
+<li><code>CMD_PROP_SET</code>: <strong>REQUIRED</strong></li>
+</ul>
+</li>
+<li>Scope: NLI</li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false)</li>
+</ul>
+<p>Set to 1 if the PHY is enabled, set to 0 otherwise. May be directly enabled to
+bypass higher-level packet processing in order to implement things like packet
+sniffers.</p>
+<h3 id="prop-phy-freq"><a class="header" href="#prop-phy-freq">PROP 35: <code>PROP_PHY_FREQ</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT32_LE</li>
+<li>Units: kHz</li>
+<li>Post-Reset Value: Unspecified</li>
+</ul>
+<p>Value is the radio frequency (in kilohertz) of the current channel.</p>
+<h3 id="prop-phy-tx-power"><a class="header" href="#prop-phy-tx-power">PROP 37: <code>PROP_PHY_TX_POWER</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: INT8</li>
+<li>Units: dBm</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the radio transmit power in dBm.</p>
+<h3 id="prop-phy-rssi"><a class="header" href="#prop-phy-rssi">PROP 38: <code>PROP_PHY_RSSI</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Value Type: INT8</li>
+<li>Unit: dBm (RF Power)</li>
+<li>Post-Reset Value: Unspecified</li>
+</ul>
+<p>Value is the current RSSI (Received Signal Strength Indication) from the radio.
+This value can be used in energy scans and for determining the ambient noise
+floor for the operating environment.</p>
+<p>Zero dBm represents one milliwatt of power.</p>
+<h3 id="prop-phy-lora-bw"><a class="header" href="#prop-phy-lora-bw">PROP 39: <code>PROP_PHY_LORA_BW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT32_LE</li>
+<li>Units: Hz</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa bandwidth.</p>
+<h3 id="prop-phy-lora-sf"><a class="header" href="#prop-phy-lora-sf">PROP 40: <code>PROP_PHY_LORA_SF</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa spreading factor.</p>
+<h3 id="prop-phy-lora-cr"><a class="header" href="#prop-phy-lora-cr">PROP 41: <code>PROP_PHY_LORA_CR</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa coding rate.</p>
+<h3 id="prop-phy-mtu"><a class="header" href="#prop-phy-mtu">PROP 42: <code>PROP_PHY_MTU</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT16_LE</li>
+<li>Units: octets</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Maximum size of the <code>DATA</code> field that may be supplied to <code>STR_PHY_RAW</code>.</p>
+<h3 id="str-radio-raw"><a class="header" href="#str-radio-raw">STREAM 113: <code>STR_PHY_RAW</code></a></h3>
+<ul>
+<li>Type: Packet-Stream, Input/Output</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Supported Commands: Send, Recv</li>
+<li>Scope: NLI</li>
+<li>Value Type: Structure</li>
+</ul>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   PACKET_LEN (Little endian)  | PACKET_DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   PACKET_METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>This stream provides the capability of sending and receiving raw packets to and
+from the radio.</p>
+<p>The packet metadata is optional, but if present will be after the packet data
+and will have the following format:</p>
+<h4 id="metadata-for-send"><a class="header" href="#metadata-for-send">Metadata for Send</a></h4>
+<p>The <code>Send</code> metadata is the following fields in order:</p>
+<ul>
+<li><code>TX_POWER</code> (<code>i8</code>): Transmit power override (<code>0x7F</code> indicates to use the radio
+default, <code>0x7E</code> indicates to transmit at maximum power)</li>
+<li><code>TX_FLAGS</code> (<code>u8</code>): Transmit flags
+<ul>
+<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent
+mechanism)</li>
+<li><code>TX_FLAG_NODUTY</code> Bit 1: If set, send the packet even if it would push us
+over the duty-cycle limit</li>
+<li>All other bits: <em>RESERVED</em></li>
+</ul>
+</li>
+</ul>
+<h4 id="metadata-for-recv"><a class="header" href="#metadata-for-recv">Metadata for Recv</a></h4>
+<p>The <code>Recv</code> metadata is the following fields in order:</p>
+<ul>
+<li><code>RX_RSSI</code> (<code>u8</code>): This is the negative RSSI that this packet was received
+with. So if the RSSI was -91, the value of this field would be 91.
+<ul>
+<li>If <code>0xFF</code>, no RSSI is supported.</li>
+</ul>
+</li>
+<li><code>RX_LQI</code> (<code>u8</code>): This is the link-quality indicator, which is a metric of
+link quality between 1 and 255 with 1 being the worst possible quality that
+still decodes and 255 is perfect reception.
+<ul>
+<li>If <code>0x00</code>, LQI is not supported.</li>
+</ul>
+</li>
+<li><code>RX_SNR</code> (<code>i16</code>): Signal-to-noise ratio in centibels, or 1/10 of a decibel.
+<ul>
+<li>If <code>0xFFFF</code>, SNR is not supported.</li>
+</ul>
+</li>
+</ul>
+<h3 id="prop-phy-duty-now"><a class="header" href="#prop-phy-duty-now">PROP 4820: <code>PROP_PHY_DUTY_NOW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Value Type: <code>u16</code></li>
+<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
+<li>Post-Reset Value: 0%</li>
+<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
+</ul>
+<p>The radio transmit duty cycle over the past hour, updated in 4-minute
+intervals.</p>
+<p>Under the hood, this is represented as 15 16-bit bins, one for each 4-minute
+interval. An increment of 1 represents 5ms. For each 5ms of transmission time,
+the current bin is incremented by 1. So a 20ms transmission would increment
+the current bin by 4, but a 22ms transmission would increment the bin by 5. At
+the transition between intervals, the new current bin is reset to zero.</p>
+<p>To calculate the current duty cycle, all of the bins are added together,
+multiplied by 65535, and then divided by 720000.</p>
+<h3 id="prop-phy-duty-limit"><a class="header" href="#prop-phy-duty-limit">PROP 4822: <code>PROP_PHY_DUTY_LIMIT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Value Type: <code>u16</code></li>
+<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
+<li>Post-Reset Value: Settings-dependent</li>
+<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
+</ul>
+<p>The value for <code>PROP_PHY_DUTY_NOW</code> above which sending additional packets will
+be prevented. Packets that are prevented from being sent will be dropped with
+<code>STATUS_DUTY_LIMIT</code>.</p>
+<p>Set to 0xFFFF to disable duty-cycle limiting. Note that <code>PROP_PHY_DUTY_NOW</code> will continue to be updated even if duty-cycle limiting is disabled.</p>
+<p>Values for common duty cycles:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Percentage</th></tr>
+</thead>
+<tbody>
+<tr><td>13107</td><td>20%</td></tr>
+<tr><td>6553</td><td>10%</td></tr>
+<tr><td>655</td><td>1%</td></tr>
+<tr><td>65</td><td>0.1%</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="status-codes"><a class="header" href="#status-codes">Status Codes</a></h2>
+<p>Status codes are used for <code>PROP_LAST_STATUS</code>. When a command generates a status
+code, it is returned via a <code>CMD_PROP_IS</code> with a property of <code>PROP_LAST_STATUS</code>
+and the <code>TID</code> of command it is referring to.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>STATUS_OK</code></td></tr>
+<tr><td>1</td><td><code>STATUS_FAILURE</code></td></tr>
+<tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td></tr>
+<tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td></tr>
+<tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td></tr>
+<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td></tr>
+<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td></tr>
+<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td></tr>
+<tr><td>11</td><td><code>STATUS_NOMEM</code></td></tr>
+<tr><td>12</td><td><code>STATUS_BUSY</code></td></tr>
+<tr><td>13</td><td><code>STATUS_PROP_NOT_FOUND</code></td></tr>
+<tr><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
+<tr><td>19</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="status_ok"><a class="header" href="#status_ok"><code>STATUS_OK</code></a></dt>
+<dd>Indicates that the operation has completed successfully.</dd>
+<dt id="status_failure"><a class="header" href="#status_failure"><code>STATUS_FAILURE</code></a></dt>
+<dd>Indicates that the operation has failed for an unspecified reason. The use of
+this status code <strong>SHOULD</strong> be avoided. If a more specific status code exists
+that better explains the failure, then that status code <strong>MUST</strong> be used
+instead.</dd>
+<dt id="status_unimplemented"><a class="header" href="#status_unimplemented"><code>STATUS_UNIMPLEMENTED</code></a></dt>
+<dd>Indicates that the given operation has not been implemented.</dd>
+<dt id="status_invalid_argument"><a class="header" href="#status_invalid_argument"><code>STATUS_INVALID_ARGUMENT</code></a></dt>
+<dd>Indicates that an argument to the given operation is invalid. The value may
+be out of range or improperly formatted. This status code is also returned
+when setting an invalid value to a property.</dd>
+<dt id="status_invalid_state"><a class="header" href="#status_invalid_state"><code>STATUS_INVALID_STATE</code></a></dt>
+<dd>Indicates that the given operation is invalid for the current state of the
+device.</dd>
+<dt id="status_invalid_command"><a class="header" href="#status_invalid_command"><code>STATUS_INVALID_COMMAND</code></a></dt>
+<dd>The given command id is not recognized.</dd>
+<dt id="status_internal_error"><a class="header" href="#status_internal_error"><code>STATUS_INTERNAL_ERROR</code></a></dt>
+<dd>An internal runtime error has occurred.</dd>
+<dt id="status_parse_error"><a class="header" href="#status_parse_error"><code>STATUS_PARSE_ERROR</code></a></dt>
+<dd>An error has occurred while parsing the command.</dd>
+<dt id="status_nomem"><a class="header" href="#status_nomem"><code>STATUS_NOMEM</code></a></dt>
+<dd>The operation has been prevented due to memory pressure.</dd>
+<dt id="status_busy"><a class="header" href="#status_busy"><code>STATUS_BUSY</code></a></dt>
+<dd>The device is currently performing a mutually exclusive operation. This status
+differs from <code>STATUS_INVALID_STATE</code> in that it will resolve spontaneously.</dd>
+<dt id="status_prop_not_found"><a class="header" href="#status_prop_not_found"><code>STATUS_PROP_NOT_FOUND</code></a></dt>
+<dd>The given property key is not recognized.</dd>
+<dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
+<dd>The packet was not sent due to a CCA failure. This status code is only
+emitted when sending data to a packet stream with a TID other than zero.</dd>
+<dt id="status_duty_limit"><a class="header" href="#status_duty_limit"><code>STATUS_DUTY_LIMIT</code></a></dt>
+<dd>The packet cannot be sent because it would exceed the currently set
+duty-cycle limit.</dd>
+</dl>
+<h2 id="reset-codes"><a class="header" href="#reset-codes">Reset Codes</a></h2>
+<p>All status codes which fall into the inclusive range of 112-127 are considered
+<em>reset codes</em>. These codes are emitted asynchronously after an NCP reset and
+provide a way to differentiate different causes of resets. If the first command
+the host sends to the NCP after a reset is to fetch <code>PROP_LAST_STATUS</code>, then
+the reset code <strong>MUST</strong> be returned.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>112</td><td><code>STATUS_RESET_POWER_ON</code></td></tr>
+<tr><td>113</td><td><code>STATUS_RESET_EXTERNAL</code></td></tr>
+<tr><td>114</td><td><code>STATUS_RESET_SOFTWARE</code></td></tr>
+<tr><td>116</td><td><code>STATUS_RESET_CRASH</code></td></tr>
+<tr><td>117</td><td><code>STATUS_RESET_ASSERT</code></td></tr>
+<tr><td>118</td><td><code>STATUS_RESET_OTHER</code></td></tr>
+<tr><td>119</td><td><code>STATUS_RESET_UNKNOWN</code></td></tr>
+<tr><td>120</td><td><code>STATUS_RESET_WATCHDOG</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Of these defined reset codes, only <code>STATUS_RESET_POWER_ON</code>,
+<code>STATUS_RESET_EXTERNAL</code>, and <code>STATUS_RESET_SOFTWARE</code> are emitted during normal
+operation. All other reset codes generally indicate some sort of software bug
+or hardware failure.</p>
+<p>Unexpected or unrequested resets are always an indication of a problem, no
+matter what the code value is.</p>
+<dl>
+<dt id="status_reset_power_on"><a class="header" href="#status_reset_power_on"><code>STATUS_RESET_POWER_ON</code></a></dt>
+<dd>Cold power-on start.</dd>
+<dt id="status_reset_external"><a class="header" href="#status_reset_external"><code>STATUS_RESET_EXTERNAL</code></a></dt>
+<dd>External device reset. This is generally caused by RESET pin on the NCP being
+asserted.</dd>
+<dt id="status_reset_software"><a class="header" href="#status_reset_software"><code>STATUS_RESET_SOFTWARE</code></a></dt>
+<dd>Software-requested orderly reset. This is generally caused by the host
+sending the NCP <code>CMD_RST</code>.</dd>
+<dt id="status_reset_crash"><a class="header" href="#status_reset_crash"><code>STATUS_RESET_CRASH</code></a></dt>
+<dd>Unrecoverable software execution failure, like a segmentation fault or a
+stack overflow.</dd>
+<dt id="status_reset_assert"><a class="header" href="#status_reset_assert"><code>STATUS_RESET_ASSERT</code></a></dt>
+<dd>Software invariant property not respected.</dd>
+<dt id="status_reset_other"><a class="header" href="#status_reset_other"><code>STATUS_RESET_OTHER</code></a></dt>
+<dd>Unspecified cause.</dd>
+<dt id="status_reset_unknown"><a class="header" href="#status_reset_unknown"><code>STATUS_RESET_UNKNOWN</code></a></dt>
+<dd>Failure while recovering cause of reset.</dd>
+<dt id="status_reset_watchdog"><a class="header" href="#status_reset_watchdog"><code>STATUS_RESET_WATCHDOG</code></a></dt>
+<dd>Watchdog timer expired, forcing a reset.</dd>
+</dl>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<p>Capabilities are how an NCP can advertise support for specific behaviors and
+functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p>
+<p>See (#prop-caps) for more information on <code>PROP_CAPS</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td></tr>
+<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
+<tr><td>515</td><td><code>CAP_PHY_LORA</code></td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="companion-radio.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="security-considerations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="companion-radio.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="security-considerations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

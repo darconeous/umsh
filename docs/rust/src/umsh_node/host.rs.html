@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::dispatch::EventDispatcher;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::receive::ReceivedPacketRef;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>crate::{NodeIdentity, OwnedMacCommand, identity_payload, mac_command};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>umsh_core::PayloadType;
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// Error returned when a [`Host`] cannot make progress.
@@ -305,28 +305,27 @@
 <a href=#305 id=305 data-nosnippet>305</a>    pending_pfs: <span class="kw-2">&amp;</span>Rc&lt;RefCell&lt;Vec&lt;(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)&gt;&gt;&gt;,
 <a href=#306 id=306 data-nosnippet>306</a>) {
 <a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">if </span>packet.payload_type() == PayloadType::NodeIdentity {
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(identity) = identity_payload::parse(packet.payload()) {
-<a href=#309 id=309 data-nosnippet>309</a>            <span class="kw">let </span>owned = NodeIdentity::from(identity);
-<a href=#310 id=310 data-nosnippet>310</a>            node.dispatch_node_discovered(from, owned.name.as_deref());
-<a href=#311 id=311 data-nosnippet>311</a>        }
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">return</span>;
-<a href=#313 id=313 data-nosnippet>313</a>    }
-<a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">if </span>packet.payload_type() == PayloadType::MacCommand {
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(command) = mac_command::parse(packet.payload()) {
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw">let </span>owned = OwnedMacCommand::from(command);
-<a href=#318 id=318 data-nosnippet>318</a>            node.dispatch_mac_command(from, <span class="kw-2">&amp;</span>owned);
-<a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#320 id=320 data-nosnippet>320</a>                owned,
-<a href=#321 id=321 data-nosnippet>321</a>                OwnedMacCommand::PfsSessionRequest { .. }
-<a href=#322 id=322 data-nosnippet>322</a>                    | OwnedMacCommand::PfsSessionResponse { .. }
-<a href=#323 id=323 data-nosnippet>323</a>                    | OwnedMacCommand::EndPfsSession
-<a href=#324 id=324 data-nosnippet>324</a>            ) {
-<a href=#325 id=325 data-nosnippet>325</a>                pending_pfs
-<a href=#326 id=326 data-nosnippet>326</a>                    .borrow_mut()
-<a href=#327 id=327 data-nosnippet>327</a>                    .push((node.identity_id(), from, owned));
-<a href=#328 id=328 data-nosnippet>328</a>            }
-<a href=#329 id=329 data-nosnippet>329</a>        }
-<a href=#330 id=330 data-nosnippet>330</a>    }
-<a href=#331 id=331 data-nosnippet>331</a>}
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
+<a href=#309 id=309 data-nosnippet>309</a>            node.dispatch_node_discovered(from, identity.name.as_deref());
+<a href=#310 id=310 data-nosnippet>310</a>        }
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">return</span>;
+<a href=#312 id=312 data-nosnippet>312</a>    }
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">if </span>packet.payload_type() == PayloadType::MacCommand {
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(command) = mac_command::parse(packet.payload()) {
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">let </span>owned = OwnedMacCommand::from(command);
+<a href=#317 id=317 data-nosnippet>317</a>            node.dispatch_mac_command(from, <span class="kw-2">&amp;</span>owned);
+<a href=#318 id=318 data-nosnippet>318</a>            <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#319 id=319 data-nosnippet>319</a>                owned,
+<a href=#320 id=320 data-nosnippet>320</a>                OwnedMacCommand::PfsSessionRequest { .. }
+<a href=#321 id=321 data-nosnippet>321</a>                    | OwnedMacCommand::PfsSessionResponse { .. }
+<a href=#322 id=322 data-nosnippet>322</a>                    | OwnedMacCommand::EndPfsSession
+<a href=#323 id=323 data-nosnippet>323</a>            ) {
+<a href=#324 id=324 data-nosnippet>324</a>                pending_pfs
+<a href=#325 id=325 data-nosnippet>325</a>                    .borrow_mut()
+<a href=#326 id=326 data-nosnippet>326</a>                    .push((node.identity_id(), from, owned));
+<a href=#327 id=327 data-nosnippet>327</a>            }
+<a href=#328 id=328 data-nosnippet>328</a>        }
+<a href=#329 id=329 data-nosnippet>329</a>    }
+<a href=#330 id=330 data-nosnippet>330</a>}
 </code></pre></div></section></main></body></html>

@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
+            window.path_to_searchindex_js = "searchindex-a4398d13.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6dc6667a.js"></script>
+        <script src="toc-afe8cd7c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1821,36 +1821,20 @@ delay = uniform_random(0, W)
 <tr><td style="text-align: right">1</td><td>Node Location</td><td>1-8 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
-<tr><td style="text-align: right">4</td><td>Node Uptime</td><td>unsigned integer, minutes since boot</td></tr>
-<tr><td style="text-align: right">5</td><td>Amateur Radio Callsign</td><td>ARNCE/HAM-64 (2, 4, 6, or 8 bytes)</td></tr>
-<tr><td style="text-align: right">6</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
-<tr><td style="text-align: right">7</td><td>Node Battery Percentage</td><td>1 byte</td></tr>
+<tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
 </tbody>
 </table>
 </div>
 <h3 id="node-name-option-0"><a class="header" href="#node-name-option-0">Node Name (option 0)</a></h3>
-<p>A UTF-8 string naming the node, typically shown in user interfaces. Max length is 24 bytes.</p>
+<p>A UTF-8 display name for the node, typically shown in user interfaces. Max length: 24 bytes.</p>
 <h3 id="node-location-option-1"><a class="header" href="#node-location-option-1">Node Location (option 1)</a></h3>
-<p>A variable-precision grid code encoding the node’s geographic position. See <a href="#variable-precision-location-format">Variable-Precision Location Format</a>.</p>
-<p>The maximum precision that can be used is 7 bytes. Implementations MUST ignore any byte data after the seventh byte and MUST NOT encode more than 7 bytes into this field.</p>
+<p>The node’s geographic position, encoded as a variable-precision grid code. See <a href="#variable-precision-location-format">Variable-Precision Location Format</a>. Max precision: 7 bytes. Implementations MUST ignore bytes beyond the seventh and MUST NOT encode more than 7 bytes.</p>
 <h3 id="altitude-in-meters-option-2"><a class="header" href="#altitude-in-meters-option-2">Altitude in Meters (option 2)</a></h3>
-<p>The node’s altitude above mean sea level, in meters. Interpreted as a big-endian signed integer with leading zero/0xFF bytes omitted (as long as signed-ness is discernable)</p>
-<p>Max length is 4 bytes.</p>
+<p>The node’s altitude above mean sea level in meters, encoded as a minimal big-endian signed integer (leading <code>0x00</code> and <code>0xFF</code> sign-extension bytes omitted, provided the sign bit of the remaining value is unambiguous). Max length: 4 bytes.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
-<p>A freshness marker, as seconds since the Unix epoch, indicating when the identity payload was generated. It lets a consumer judge whether the identity is recent — most useful when the identity stands alone, such as in a QR code, where a stale capture could otherwise be presented indefinitely. Not interpreted by the MAC layer.</p>
-<p>Interpreted as a big-endian unsigned integer with leading zero bytes omitted. Max length is 4 bytes.</p>
-<h3 id="node-uptime-option-4"><a class="header" href="#node-uptime-option-4">Node Uptime (option 4)</a></h3>
-<p>Minutes since the node last booted. Primarily a health and diagnostic signal for operators.
-Interpreted as a big-endian integer with leading zero bytes omitted. Max length is 4 bytes.</p>
-<p>Obviously, this makes no sense on a QR Code.</p>
-<h3 id="amateur-radio-callsign-option-5"><a class="header" href="#amateur-radio-callsign-option-5">Amateur Radio Callsign (option 5)</a></h3>
-<p>The node operator’s amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length. Max length is 8 bytes.</p>
-<h3 id="supported-regions-option-6"><a class="header" href="#supported-regions-option-6">Supported Regions (option 6)</a></h3>
-<p>For repeaters, a list of <a href="#region-code-encoding">region codes</a> that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy. Max length is 20 bytes.</p>
-<h3 id="node-battery-percentage-option-7"><a class="header" href="#node-battery-percentage-option-7">Node Battery Percentage (option 7)</a></h3>
-<p>A single unsigned byte whose value <code>0..=255</code> maps linearly to <code>0%..=100%</code>. Absence of this option means the node has not reported a battery level — not that the battery is empty.</p>
-<p>Obviously, this makes no sense on a QR Code.
-Must be 1 byte.</p>
+<p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
+<h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
+<p>For repeaters, the list of <a href="#region-code-encoding">region codes</a> the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
@@ -1969,6 +1953,7 @@ Must be 1 byte.</p>
 <tr><td style="text-align: right">6</td><td>PFS Session Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">7</td><td>PFS Session Response</td><td>Response</td></tr>
 <tr><td style="text-align: right">8</td><td>End PFS Session</td><td>Either</td></tr>
+<tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
 </tbody>
 </table>
 </div>
@@ -1990,7 +1975,7 @@ Must be 1 byte.</p>
 <li>frame-counter synchronization</li>
 </ul>
 <h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
-<p>Requests that the destination respond with its <a href="#node-identity">node identity</a> payload.</p>
+<p>Requests that the destination respond with its <a href="#node-identity">node identity</a>.</p>
 <p>No command-specific payload.</p>
 <h2 id="signal-report-request-2"><a class="header" href="#signal-report-request-2">Signal Report Request (2)</a></h2>
 <p>Requests that the destination respond with signal quality information about the link.</p>
@@ -2067,6 +2052,9 @@ Must be 1 byte.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
+<h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
+<p>This command does nothing, however it will produce an UACK when sent via a packet
+type that requests an ACK.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-manament-protocol"><a class="header" href="#node-manament-protocol">Node Manament Protocol</a></h1>
 <p>TBD</p>
@@ -2677,7 +2665,7 @@ companion-link frame should have the following structure:</p>
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>P</code> is a 2-bit protocol-pattern / version field
+<li><code>P</code> is a 2-bit protocol-pattern, a <code>10</code> in binary.
 <ul>
 <li>the initial value should be fixed so receivers can quickly reject garbage
 or incompatible major revisions</li>
@@ -3217,6 +3205,702 @@ host keeps authority over long-term identity, while the radio contributes:</p>
 </ul>
 <p>That split preserves UMSH’s cryptographic model while still making small,
 low-power, phone-connected radios practical.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="minimal-companion-radio-protocol"><a class="header" href="#minimal-companion-radio-protocol">Minimal Companion Radio Protocol</a></h1>
+<p>The companion radio protocol is loosely based on the Spinel protocol from
+OpenThread. The protocol assumes reliable, in-order delivery of frames, as well
+as a way to assert flow control. The exact framing mechanism that can be used is
+flexible, for example:</p>
+<ul>
+<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a></li>
+<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#spi-framing-protocol">Spinel SPI</a></li>
+<li>BLE GATT</li>
+</ul>
+<p>The specific subset of the protocol documented here is the minimal set needed
+to configure and use a LoRa radio. All other concerns are left out to make it
+easier to implement this initial step.</p>
+<p>In this document, we refer to the companion radio as the “NCP” or “network
+control processor”. This is a carry-over from Thread, but it seems appropriate
+to use here.</p>
+<h2 id="data-representation"><a class="header" href="#data-representation">Data Representation</a></h2>
+<p>Spinel, being a low-level protocol between two devices which are likely to have
+a little-endian architecture, uses little-endian representations exclusively
+for all integers smaller than four bytes. For implementation convenience,
+values larger than four bytes (EUI64, IPv6 addresses, etc.) are stored as they
+are traditionally represented (typically, but not always, big-endian).</p>
+<h3 id="packed-unsigned-integer"><a class="header" href="#packed-unsigned-integer">Packed Unsigned Integers</a></h3>
+<p>Certain types of integers, such as command or property identifiers, usually
+have a value on the wire that is less than 127. However, in order to not
+preclude the use of values larger than 255, we would need to add an extra byte.
+Doing this would add an extra byte to all packets, which can add up in terms of
+bandwidth. To address this, Spinel uses Packed Unsigned Integers, or PUIs.</p>
+<p>The PUI format used in Spinel is based on the <a href="https://www.w3.org/TR/exi/#encodingUnsignedInteger">unsigned integer format in
+EXI</a>, except that we limit the maximum value to the largest value that can
+be encoded in three bytes. The maximum value that can be encoded is 2,097,151.</p>
+<p>For all values less than 127, the packed form of the number is simply a single
+byte which directly represents the number. For values larger than 127, the
+following process is used to encode the value:</p>
+<ol>
+<li>The unsigned integer is broken up into <em>n</em> 7-bit chunks and placed into <em>n</em>
+bytes, leaving the most significant bit of each byte unused.</li>
+<li>Order the bytes from least-significant to most-significant. (Little-endian)</li>
+<li>Clear the most significant bit of the most significant byte. Set the most
+significant bit on all other bytes.</li>
+</ol>
+<p>Where <em>n</em> is the smallest number of 7-bit chunks you can use to represent the
+given value.</p>
+<p>Take the value 1337, for example:</p>
+<pre><code>1337 =&gt; 0x0539
+     =&gt; [39 0A]
+     =&gt; [B9 0A]
+</code></pre>
+<p>To decode the value, you collect the 7-bit chunks until you find a byte with
+the most significant bit clear.</p>
+<h2 id="frame-format"><a class="header" href="#frame-format">Frame Format</a></h2>
+<p>A Spinel frame is the concatenation of the following elements:</p>
+<ul>
+<li>A header comprising a single byte.</li>
+<li>A command identifier.</li>
+<li>A command-defined payload, which may be empty.</li>
+</ul>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     HEADER    |  COMMAND ID   | PAYLOAD ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of a typical Spinel frame</p>
+<p>Since the size of the frame is part of the framing mechanism, it is omitted
+from the frame.</p>
+<h3 id="frame-header"><a class="header" href="#frame-header">Frame Header</a></h3>
+<p>Each frame has the following format:</p>
+<pre><code>  0   1   2   3   4   5   6   7
++---+---+---+---+---+---+---+---+
+|  FLG  |  RESERVED |    TID    |
++---+---+---+---+---+---+---+---+
+</code></pre>
+<p>Figure: Header Format</p>
+<h4 id="flg-flag"><a class="header" href="#flg-flag"><code>FLG</code>: Flag</a></h4>
+<p>The Flag (FLG) field in the two most significant bits of the header byte is
+always set to the value two (or <code>10</code> in binary). Any frame received with these
+bits set to any other value SHALL NOT be considered a companion-radio frame.</p>
+<h4 id="reserved-reserved"><a class="header" href="#reserved-reserved"><code>RESERVED</code>: Reserved</a></h4>
+<p>These bits must always be set to zero and the entire frame ignored if set to
+any other value.</p>
+<h4 id="tid-transaction-identifier"><a class="header" href="#tid-transaction-identifier"><code>TID</code>: Transaction Identifier</a></h4>
+<p>The Transaction Identifier (TID) field in the four least significant bits of
+the header is used for correlating responses to the commands which generated
+them.</p>
+<p>When a command is sent from the host, any reply to that command sent by the NCP
+will use the same value for the TID. When the host receives a frame that
+matches the TID of the command it sent, it can easily recognize that frame as
+the actual response to that command.</p>
+<p>The zero value of TID is used for commands to which a correlated response is
+not expected or needed, such as for unsolicited update commands sent to the
+host from the NCP.</p>
+<p>Note that while the frame format is symmetric between the frames being sent to
+the NCP versus frames being sent from the NCP, the behaviors are not. The NCP
+<strong>MUST NOT</strong> send a frame with a non-zero TID that is not a response to a frame
+it had recently received with that same TID. All unsolicited or asynchronous
+commands originating from the NCP <strong>MUST</strong> use TID zero (0).</p>
+<h3 id="command-id"><a class="header" href="#command-id">Command ID</a></h3>
+<p>The command identifier is a 7-bit unsigned integer encoded from 0 to 127. The
+most significant bit is not set and the frame must be ignored if it is set.</p>
+<h3 id="payload"><a class="header" href="#payload">Payload</a></h3>
+<p>The command payload follows the command identifier in a Spinel frame,
+containing the serialization of any arguments that the indicated command may
+require. The exact composition of a command payload is determined by the
+specific command identifier being used and <strong>MUST</strong> be empty if the command has
+no arguments.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<p>The following commands are initially supported:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Dir</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>CMD_NOP</code></td><td>Host-&gt;NCP</td><td>No-Operation</td></tr>
+<tr><td>1</td><td><code>CMD_RST</code></td><td>Host-&gt;NCP</td><td>Reset the NCP</td></tr>
+<tr><td>2</td><td><code>CMD_PROP_GET</code></td><td>Host-&gt;NCP</td><td>Get property value</td></tr>
+<tr><td>3</td><td><code>CMD_PROP_SET</code></td><td>Host-&gt;NCP</td><td>Set property value</td></tr>
+<tr><td>6</td><td><code>CMD_PROP_IS</code></td><td>NCP-&gt;Host</td><td>Property value notification</td></tr>
+<tr><td>9</td><td><code>CMD_STR_SEND</code></td><td>Host-&gt;NCP</td><td>Send data to a stream</td></tr>
+<tr><td>10</td><td><code>CMD_STR_RECV</code></td><td>NCP-&gt;Host</td><td>Receive data from a stream</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; NCP) <code>CMD_NOP</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |    CMD_NOP    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+^     HEADER    ^    COMMAND    ^
+</code></pre>
+<p>Figure: Structure of <code>CMD_NOP</code></p>
+<p>No-Operation. Commands the NCP to reply with a <code>STATUS_OK</code> code. This is
+primarily used for liveness checks.</p>
+<p>The command payload for this command SHOULD be empty. The receiver MUST ignore
+any non-empty command payload.</p>
+<p>There is no error condition for this command.</p>
+<h3 id="cmd-reset"><a class="header" href="#cmd-reset">CMD 1: (Host -&gt; NCP) <code>CMD_RST</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |    CMD_RST    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_RST</code></p>
+<p>Reset NCP. Commands the NCP to perform a software reset. Due to the nature of
+this command, the TID is ignored. The host should instead wait for a
+<code>CMD_PROP_IS</code> command from the NCP indicating <code>PROP_LAST_STATUS</code> has been set
+to <code>STATUS_RESET_SOFTWARE</code> (see (#status-codes)).</p>
+<p>The command payload SHOULD be empty, and it SHOULD NOT be processed.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-get"><a class="header" href="#cmd-prop-get">CMD 2: (Host -&gt; NCP) <code>CMD_PROP_GET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_GET</code></p>
+<p>Get property value. Commands the NCP to emit a <code>CMD_PROP_IS</code> command for the
+given property identifier.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer).</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-set"><a class="header" href="#cmd-prop-set">CMD 3: (Host -&gt; NCP) <code>CMD_PROP_SET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  NEW PROPERTY VALUE ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_SET</code></p>
+<p>Set property value. Commands the NCP to set the given property to the specific
+given value, replacing any previous value, and to emit a <code>CMD_PROP_IS</code> command
+for that property indicating the new authoritative value if successful.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer), followed by
+the property value. The exact format of the property value is defined by the
+property.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-is"><a class="header" href="#cmd-prop-is">CMD 6: (NCP -&gt; Host) <code>CMD_PROP_IS</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  CURRENT PROPERTY VALUE ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_IS</code></p>
+<p>Property value notification. This command can be sent by the NCP in response to
+a previous command from the host, or it can be sent by the NCP in an
+unsolicited fashion to notify the host of various state changes asynchronously.</p>
+<p>The payload for this command is the property identifier encoded in the packed
+unsigned integer format described in (#packed-unsigned-integer), followed by
+the current value of the given property.</p>
+<h3 id="cmd-str-send"><a class="header" href="#cmd-str-send">CMD 9: (Host -&gt; NCP) <code>CMD_STR_SEND</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | STREAM_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   DATA_LEN (Little endian)    | DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_STR_SEND</code></p>
+<p>Command for sending data (such as a packet) to a stream.</p>
+<p>The format of the metadata is defined by the stream, and may be absent. Since
+the framing layer provides the total frame length, <code>DATA_LEN</code> is sufficient to
+determine the length of both the data and any trailing metadata.</p>
+<p>If a non-zero TID is used, the command completes only once the frame has either
+been transmitted on air or definitively failed. Success is reported by emitting
+<code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with <code>STATUS_OK</code> and a matching TID.</p>
+<p>The NCP only attempts one confirmed transmit at a time. If a <code>CMD_STR_SEND</code>
+with a non-zero TID arrives while another confirmed transmit is in progress,
+the new command fails with <code>STATUS_BUSY</code>.</p>
+<p>The radio will never wait for duty-cycle allowance. If transmission would
+exceed the currently configured duty-cycle limit and the <code>NODUTY</code> flag is not
+set, the command fails immediately with <code>STATUS_DUTY_LIMIT</code>.</p>
+<p>Commands sent with TID zero are fire-and-forget and do not receive a correlated
+completion response.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-str-recv"><a class="header" href="#cmd-str-recv">CMD 10: (NCP -&gt; Host) <code>CMD_STR_RECV</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES |0 0 0|      CMD      | STREAM_KEY (PUI, 1-3 bytes)...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   DATA_LEN (Little endian)    | DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_STR_RECV</code></p>
+<p>Notification of incoming data received on the given stream. Because this
+command is only ever sent asynchronously, the TID is always zero.</p>
+<p>The format of the metadata is defined by the stream, and may be absent. Since
+the framing layer provides the total frame length, <code>DATA_LEN</code> is sufficient to
+determine the length of both the data and any trailing metadata.</p>
+<h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>The properties marked as supporting <code>Is</code> means that the property may be
+emitted asynchronously. All properties that support <code>Get</code> or <code>Set</code> will emit
+an <code>Is</code> to respond with the current/new value of that property.</p>
+</blockquote>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>PROP_LAST_STATUS</code></td><td>Get, Is</td><td>Last status</td></tr>
+<tr><td>1</td><td><code>PROP_PROTOCOL_VERSION</code></td><td>Get</td><td>Protocol version</td></tr>
+<tr><td>2</td><td><code>PROP_NCP_VERSION</code></td><td>Get</td><td>NCP version string</td></tr>
+<tr><td>3</td><td><code>PROP_IFACE_TYPE</code></td><td>Get</td><td>Interface type</td></tr>
+<tr><td>5</td><td><code>PROP_CAPS</code></td><td>Get</td><td>Capabilities</td></tr>
+<tr><td>32</td><td><code>PROP_PHY_ENABLED</code></td><td>Get, Set</td><td>PHY enabled</td></tr>
+<tr><td>35</td><td><code>PROP_PHY_FREQ</code></td><td>Get, Set</td><td>Frequency in kHz</td></tr>
+<tr><td>37</td><td><code>PROP_PHY_TX_POWER</code></td><td>Get, Set</td><td>TX power in dBm</td></tr>
+<tr><td>38</td><td><code>PROP_PHY_RSSI</code></td><td>Get</td><td>Current RSSI</td></tr>
+<tr><td>39</td><td><code>PROP_PHY_LORA_BW</code></td><td>Get, Set</td><td>LoRa bandwidth</td></tr>
+<tr><td>40</td><td><code>PROP_PHY_LORA_SF</code></td><td>Get, Set</td><td>LoRa spreading factor</td></tr>
+<tr><td>41</td><td><code>PROP_PHY_LORA_CR</code></td><td>Get, Set</td><td>LoRa coding rate</td></tr>
+<tr><td>42</td><td><code>PROP_PHY_MTU</code></td><td>Get</td><td>Max size of a frame</td></tr>
+<tr><td>113</td><td><code>STR_PHY_RAW</code></td><td>Send, Recv</td><td>Raw radio frame stream</td></tr>
+<tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
+<tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="prop-last-status"><a class="header" href="#prop-last-status">PROP 0: <code>PROP_LAST_STATUS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Value Type: PUI + STRING(opt.)</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Reset Reason Code</li>
+</ul>
+<p>This property describes the status code of the last NCP operation. For many
+commands, failure is indicated by emitting <code>CMD_PROP_IS</code> for this property with
+a TID matching the failing command. It is generally not necessary to ever fetch
+the value of this property explicitly, as it is often emitted directly as an
+error response. It is also occasionally emitted as a success response with a
+value of <code>STATUS_OK</code>.</p>
+<p>Upon NCP reset, this property <strong>MUST</strong> be emitted with a status code indicating
+the reset reason.</p>
+<p>Upon receiving an asynchronous update to <code>PROP_LAST_STATUS</code> with a status code
+that indicates a reset, the host SHALL assume that the NCP has been reset and
+that all properties have reverted to their defined after-reset values.</p>
+<p>See (#status-codes) for the complete list of status codes.</p>
+<h3 id="prop-protocol-version"><a class="header" href="#prop-protocol-version">PROP 1: <code>PROP_PROTOCOL_VERSION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NCP</li>
+<li>Value Type: UINT8, UINT8</li>
+<li>Post-Reset Value: 6, 0</li>
+</ul>
+<p>Describes the Spinel protocol version information. This property contains two
+fields:</p>
+<pre><code>  0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| MAJOR_VERSION | MINOR_VERSION |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: <code>PROP_PROTOCOL_VERSION</code> Value Format</p>
+<dl>
+<dt id="major_version"><a class="header" href="#major_version"><code>MAJOR_VERSION</code></a></dt>
+<dd>The major version number is used to identify backward incompatible
+differences between protocol versions.</dd>
+<dt id="minor_version"><a class="header" href="#minor_version"><code>MINOR_VERSION</code></a></dt>
+<dd>The minor version number is used to identify backward-compatible differences
+between protocol versions. A mismatch between the advertised minor version
+number and the minor version that is supported by the host <strong>SHOULD NOT</strong> be
+fatal to the operation of the host.</dd>
+</dl>
+<p>This document describes major version 6, minor version 0 of this protocol.</p>
+<h3 id="prop-ncp-version"><a class="header" href="#prop-ncp-version">PROP 2: <code>PROP_NCP_VERSION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NCP</li>
+<li>Value Type: STRING</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Contains a zero-terminated ASCII string which describes the firmware currently
+running on the NCP.</p>
+<p>The value of this string <strong>MUST</strong> be different for every firmware release.</p>
+<p>The format of the string is not strictly defined, but it is intended to present
+similarly to the “User-Agent” string from HTTP. The following format is
+<strong>RECOMMENDED</strong>:</p>
+<p><code>STACK-NAME/STACK-VERSION[BUILD-INFO][; OTHER-INFO][; BUILD-DATE]</code></p>
+<h3 id="prop-interface-type"><a class="header" href="#prop-interface-type">PROP 3: <code>PROP_INTERFACE_TYPE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: PUI</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>This unsigned packed integer identifies the network protocol implemented by
+this NCP. It must return the value 8.</p>
+<h3 id="prop-caps"><a class="header" href="#prop-caps">PROP 5: <code>PROP_CAPS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Constant</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Item Type: PUI</li>
+<li>Units: Enumeration</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Describes the supported capabilities of this NCP. Encoded as a list of packed
+unsigned integers. See (#capabilities) for a list of values.</p>
+<h3 id="prop-phy-enabled"><a class="header" href="#prop-phy-enabled">PROP 32: <code>PROP_PHY_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read/Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required:
+<ul>
+<li><code>CMD_PROP_GET</code>: <strong>REQUIRED</strong></li>
+<li><code>CMD_PROP_SET</code>: <strong>REQUIRED</strong></li>
+</ul>
+</li>
+<li>Scope: NLI</li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false)</li>
+</ul>
+<p>Set to 1 if the PHY is enabled, set to 0 otherwise. May be directly enabled to
+bypass higher-level packet processing in order to implement things like packet
+sniffers.</p>
+<h3 id="prop-phy-freq"><a class="header" href="#prop-phy-freq">PROP 35: <code>PROP_PHY_FREQ</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT32_LE</li>
+<li>Units: kHz</li>
+<li>Post-Reset Value: Unspecified</li>
+</ul>
+<p>Value is the radio frequency (in kilohertz) of the current channel.</p>
+<h3 id="prop-phy-tx-power"><a class="header" href="#prop-phy-tx-power">PROP 37: <code>PROP_PHY_TX_POWER</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: INT8</li>
+<li>Units: dBm</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the radio transmit power in dBm.</p>
+<h3 id="prop-phy-rssi"><a class="header" href="#prop-phy-rssi">PROP 38: <code>PROP_PHY_RSSI</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Value Type: INT8</li>
+<li>Unit: dBm (RF Power)</li>
+<li>Post-Reset Value: Unspecified</li>
+</ul>
+<p>Value is the current RSSI (Received Signal Strength Indication) from the radio.
+This value can be used in energy scans and for determining the ambient noise
+floor for the operating environment.</p>
+<p>Zero dBm represents one milliwatt of power.</p>
+<h3 id="prop-phy-lora-bw"><a class="header" href="#prop-phy-lora-bw">PROP 39: <code>PROP_PHY_LORA_BW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT32_LE</li>
+<li>Units: Hz</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa bandwidth.</p>
+<h3 id="prop-phy-lora-sf"><a class="header" href="#prop-phy-lora-sf">PROP 40: <code>PROP_PHY_LORA_SF</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa spreading factor.</p>
+<h3 id="prop-phy-lora-cr"><a class="header" href="#prop-phy-lora-cr">PROP 41: <code>PROP_PHY_LORA_CR</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Value is the configured LoRa coding rate.</p>
+<h3 id="prop-phy-mtu"><a class="header" href="#prop-phy-mtu">PROP 42: <code>PROP_PHY_MTU</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT16_LE</li>
+<li>Units: octets</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Maximum size of the <code>DATA</code> field that may be supplied to <code>STR_PHY_RAW</code>.</p>
+<h3 id="str-radio-raw"><a class="header" href="#str-radio-raw">STREAM 113: <code>STR_PHY_RAW</code></a></h3>
+<ul>
+<li>Type: Packet-Stream, Input/Output</li>
+<li>Required: <strong>REQUIRED</strong></li>
+<li>Supported Commands: Send, Recv</li>
+<li>Scope: NLI</li>
+<li>Value Type: Structure</li>
+</ul>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   PACKET_LEN (Little endian)  | PACKET_DATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   PACKET_METADATA ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>This stream provides the capability of sending and receiving raw packets to and
+from the radio.</p>
+<p>The packet metadata is optional, but if present will be after the packet data
+and will have the following format:</p>
+<h4 id="metadata-for-send"><a class="header" href="#metadata-for-send">Metadata for Send</a></h4>
+<p>The <code>Send</code> metadata is the following fields in order:</p>
+<ul>
+<li><code>TX_POWER</code> (<code>i8</code>): Transmit power override (<code>0x7F</code> indicates to use the radio
+default, <code>0x7E</code> indicates to transmit at maximum power)</li>
+<li><code>TX_FLAGS</code> (<code>u8</code>): Transmit flags
+<ul>
+<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent
+mechanism)</li>
+<li><code>TX_FLAG_NODUTY</code> Bit 1: If set, send the packet even if it would push us
+over the duty-cycle limit</li>
+<li>All other bits: <em>RESERVED</em></li>
+</ul>
+</li>
+</ul>
+<h4 id="metadata-for-recv"><a class="header" href="#metadata-for-recv">Metadata for Recv</a></h4>
+<p>The <code>Recv</code> metadata is the following fields in order:</p>
+<ul>
+<li><code>RX_RSSI</code> (<code>u8</code>): This is the negative RSSI that this packet was received
+with. So if the RSSI was -91, the value of this field would be 91.
+<ul>
+<li>If <code>0xFF</code>, no RSSI is supported.</li>
+</ul>
+</li>
+<li><code>RX_LQI</code> (<code>u8</code>): This is the link-quality indicator, which is a metric of
+link quality between 1 and 255 with 1 being the worst possible quality that
+still decodes and 255 is perfect reception.
+<ul>
+<li>If <code>0x00</code>, LQI is not supported.</li>
+</ul>
+</li>
+<li><code>RX_SNR</code> (<code>i16</code>): Signal-to-noise ratio in centibels, or 1/10 of a decibel.
+<ul>
+<li>If <code>0xFFFF</code>, SNR is not supported.</li>
+</ul>
+</li>
+</ul>
+<h3 id="prop-phy-duty-now"><a class="header" href="#prop-phy-duty-now">PROP 4820: <code>PROP_PHY_DUTY_NOW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Value Type: <code>u16</code></li>
+<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
+<li>Post-Reset Value: 0%</li>
+<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
+</ul>
+<p>The radio transmit duty cycle over the past hour, updated in 4-minute
+intervals.</p>
+<p>Under the hood, this is represented as 15 16-bit bins, one for each 4-minute
+interval. An increment of 1 represents 5ms. For each 5ms of transmission time,
+the current bin is incremented by 1. So a 20ms transmission would increment
+the current bin by 4, but a 22ms transmission would increment the bin by 5. At
+the transition between intervals, the new current bin is reset to zero.</p>
+<p>To calculate the current duty cycle, all of the bins are added together,
+multiplied by 65535, and then divided by 720000.</p>
+<h3 id="prop-phy-duty-limit"><a class="header" href="#prop-phy-duty-limit">PROP 4822: <code>PROP_PHY_DUTY_LIMIT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Value Type: <code>u16</code></li>
+<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
+<li>Post-Reset Value: Settings-dependent</li>
+<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
+</ul>
+<p>The value for <code>PROP_PHY_DUTY_NOW</code> above which sending additional packets will
+be prevented. Packets that are prevented from being sent will be dropped with
+<code>STATUS_DUTY_LIMIT</code>.</p>
+<p>Set to 0xFFFF to disable duty-cycle limiting. Note that <code>PROP_PHY_DUTY_NOW</code> will continue to be updated even if duty-cycle limiting is disabled.</p>
+<p>Values for common duty cycles:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Percentage</th></tr>
+</thead>
+<tbody>
+<tr><td>13107</td><td>20%</td></tr>
+<tr><td>6553</td><td>10%</td></tr>
+<tr><td>655</td><td>1%</td></tr>
+<tr><td>65</td><td>0.1%</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="status-codes"><a class="header" href="#status-codes">Status Codes</a></h2>
+<p>Status codes are used for <code>PROP_LAST_STATUS</code>. When a command generates a status
+code, it is returned via a <code>CMD_PROP_IS</code> with a property of <code>PROP_LAST_STATUS</code>
+and the <code>TID</code> of command it is referring to.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>STATUS_OK</code></td></tr>
+<tr><td>1</td><td><code>STATUS_FAILURE</code></td></tr>
+<tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td></tr>
+<tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td></tr>
+<tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td></tr>
+<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td></tr>
+<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td></tr>
+<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td></tr>
+<tr><td>11</td><td><code>STATUS_NOMEM</code></td></tr>
+<tr><td>12</td><td><code>STATUS_BUSY</code></td></tr>
+<tr><td>13</td><td><code>STATUS_PROP_NOT_FOUND</code></td></tr>
+<tr><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
+<tr><td>19</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="status_ok"><a class="header" href="#status_ok"><code>STATUS_OK</code></a></dt>
+<dd>Indicates that the operation has completed successfully.</dd>
+<dt id="status_failure"><a class="header" href="#status_failure"><code>STATUS_FAILURE</code></a></dt>
+<dd>Indicates that the operation has failed for an unspecified reason. The use of
+this status code <strong>SHOULD</strong> be avoided. If a more specific status code exists
+that better explains the failure, then that status code <strong>MUST</strong> be used
+instead.</dd>
+<dt id="status_unimplemented"><a class="header" href="#status_unimplemented"><code>STATUS_UNIMPLEMENTED</code></a></dt>
+<dd>Indicates that the given operation has not been implemented.</dd>
+<dt id="status_invalid_argument"><a class="header" href="#status_invalid_argument"><code>STATUS_INVALID_ARGUMENT</code></a></dt>
+<dd>Indicates that an argument to the given operation is invalid. The value may
+be out of range or improperly formatted. This status code is also returned
+when setting an invalid value to a property.</dd>
+<dt id="status_invalid_state"><a class="header" href="#status_invalid_state"><code>STATUS_INVALID_STATE</code></a></dt>
+<dd>Indicates that the given operation is invalid for the current state of the
+device.</dd>
+<dt id="status_invalid_command"><a class="header" href="#status_invalid_command"><code>STATUS_INVALID_COMMAND</code></a></dt>
+<dd>The given command id is not recognized.</dd>
+<dt id="status_internal_error"><a class="header" href="#status_internal_error"><code>STATUS_INTERNAL_ERROR</code></a></dt>
+<dd>An internal runtime error has occurred.</dd>
+<dt id="status_parse_error"><a class="header" href="#status_parse_error"><code>STATUS_PARSE_ERROR</code></a></dt>
+<dd>An error has occurred while parsing the command.</dd>
+<dt id="status_nomem"><a class="header" href="#status_nomem"><code>STATUS_NOMEM</code></a></dt>
+<dd>The operation has been prevented due to memory pressure.</dd>
+<dt id="status_busy"><a class="header" href="#status_busy"><code>STATUS_BUSY</code></a></dt>
+<dd>The device is currently performing a mutually exclusive operation. This status
+differs from <code>STATUS_INVALID_STATE</code> in that it will resolve spontaneously.</dd>
+<dt id="status_prop_not_found"><a class="header" href="#status_prop_not_found"><code>STATUS_PROP_NOT_FOUND</code></a></dt>
+<dd>The given property key is not recognized.</dd>
+<dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
+<dd>The packet was not sent due to a CCA failure. This status code is only
+emitted when sending data to a packet stream with a TID other than zero.</dd>
+<dt id="status_duty_limit"><a class="header" href="#status_duty_limit"><code>STATUS_DUTY_LIMIT</code></a></dt>
+<dd>The packet cannot be sent because it would exceed the currently set
+duty-cycle limit.</dd>
+</dl>
+<h2 id="reset-codes"><a class="header" href="#reset-codes">Reset Codes</a></h2>
+<p>All status codes which fall into the inclusive range of 112-127 are considered
+<em>reset codes</em>. These codes are emitted asynchronously after an NCP reset and
+provide a way to differentiate different causes of resets. If the first command
+the host sends to the NCP after a reset is to fetch <code>PROP_LAST_STATUS</code>, then
+the reset code <strong>MUST</strong> be returned.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>112</td><td><code>STATUS_RESET_POWER_ON</code></td></tr>
+<tr><td>113</td><td><code>STATUS_RESET_EXTERNAL</code></td></tr>
+<tr><td>114</td><td><code>STATUS_RESET_SOFTWARE</code></td></tr>
+<tr><td>116</td><td><code>STATUS_RESET_CRASH</code></td></tr>
+<tr><td>117</td><td><code>STATUS_RESET_ASSERT</code></td></tr>
+<tr><td>118</td><td><code>STATUS_RESET_OTHER</code></td></tr>
+<tr><td>119</td><td><code>STATUS_RESET_UNKNOWN</code></td></tr>
+<tr><td>120</td><td><code>STATUS_RESET_WATCHDOG</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Of these defined reset codes, only <code>STATUS_RESET_POWER_ON</code>,
+<code>STATUS_RESET_EXTERNAL</code>, and <code>STATUS_RESET_SOFTWARE</code> are emitted during normal
+operation. All other reset codes generally indicate some sort of software bug
+or hardware failure.</p>
+<p>Unexpected or unrequested resets are always an indication of a problem, no
+matter what the code value is.</p>
+<dl>
+<dt id="status_reset_power_on"><a class="header" href="#status_reset_power_on"><code>STATUS_RESET_POWER_ON</code></a></dt>
+<dd>Cold power-on start.</dd>
+<dt id="status_reset_external"><a class="header" href="#status_reset_external"><code>STATUS_RESET_EXTERNAL</code></a></dt>
+<dd>External device reset. This is generally caused by RESET pin on the NCP being
+asserted.</dd>
+<dt id="status_reset_software"><a class="header" href="#status_reset_software"><code>STATUS_RESET_SOFTWARE</code></a></dt>
+<dd>Software-requested orderly reset. This is generally caused by the host
+sending the NCP <code>CMD_RST</code>.</dd>
+<dt id="status_reset_crash"><a class="header" href="#status_reset_crash"><code>STATUS_RESET_CRASH</code></a></dt>
+<dd>Unrecoverable software execution failure, like a segmentation fault or a
+stack overflow.</dd>
+<dt id="status_reset_assert"><a class="header" href="#status_reset_assert"><code>STATUS_RESET_ASSERT</code></a></dt>
+<dd>Software invariant property not respected.</dd>
+<dt id="status_reset_other"><a class="header" href="#status_reset_other"><code>STATUS_RESET_OTHER</code></a></dt>
+<dd>Unspecified cause.</dd>
+<dt id="status_reset_unknown"><a class="header" href="#status_reset_unknown"><code>STATUS_RESET_UNKNOWN</code></a></dt>
+<dd>Failure while recovering cause of reset.</dd>
+<dt id="status_reset_watchdog"><a class="header" href="#status_reset_watchdog"><code>STATUS_RESET_WATCHDOG</code></a></dt>
+<dd>Watchdog timer expired, forcing a reset.</dd>
+</dl>
+<h2 id="capabilities-1"><a class="header" href="#capabilities-1">Capabilities</a></h2>
+<p>Capabilities are how an NCP can advertise support for specific behaviors and
+functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p>
+<p>See (#prop-caps) for more information on <code>PROP_CAPS</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td></tr>
+<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
+<tr><td>515</td><td><code>CAP_PHY_LORA</code></td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h1>
 <p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>

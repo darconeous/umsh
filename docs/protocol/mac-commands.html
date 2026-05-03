@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9ccf343c.js";
+            window.path_to_searchindex_js = "searchindex-a4398d13.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6dc6667a.js"></script>
+        <script src="toc-afe8cd7c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,6 +197,7 @@
 <tr><td style="text-align: right">6</td><td>PFS Session Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">7</td><td>PFS Session Response</td><td>Response</td></tr>
 <tr><td style="text-align: right">8</td><td>End PFS Session</td><td>Either</td></tr>
+<tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
 </tbody>
 </table>
 </div>
@@ -218,7 +219,7 @@
 <li>frame-counter synchronization</li>
 </ul>
 <h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
-<p>Requests that the destination respond with its <a href="node-identity.html">node identity</a> payload.</p>
+<p>Requests that the destination respond with its <a href="node-identity.html">node identity</a>.</p>
 <p>No command-specific payload.</p>
 <h2 id="signal-report-request-2"><a class="header" href="#signal-report-request-2">Signal Report Request (2)</a></h2>
 <p>Requests that the destination respond with signal quality information about the link.</p>
@@ -295,6 +296,9 @@
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
+<h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
+<p>This command does nothing, however it will produce an UACK when sent via a packet
+type that requests an ACK.</p>
 
                     </main>
 
