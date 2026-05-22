@@ -1,0 +1,22 @@
+[package]
+name = "umsh-bsp-t1000e"
+description = "Board support for the Seeed Studio SenseCAP T1000-E tracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-level BSP for the Seeed Studio SenseCAP T1000-E. Composes
+# umsh-bsp-nrf52840 with T1000-E pinout, on-board peripherals (LR1110 LoRa,
+# AG3335 GNSS, QMA6100P accelerometer, buzzer, LED, button, battery ADC,
+# switched power rails), and implements the `umsh::Platform` trait plus
+# board-capability traits.
+#
+# See docs/firmware-plan-t1000e.md for the safety contract and phasing,
+# and docs/t1000e-hardware.md for the firmware-derived hardware reference.
+
+[features]
+default = []
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }

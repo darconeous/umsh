@@ -1,0 +1,21 @@
+[package]
+name = "umsh-bsp-nrf52840"
+description = "Chip-level board support for nRF52840-based UMSH boards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Chip-level BSP for the Nordic nRF52840. Owns chip-wide concerns shared by
+# every nRF52840-based board: USB peripheral setup, GPREGRET-driven DFU
+# entry, System OFF + button wake, retained-RAM helpers, flash-backed
+# storage backends. Board-level BSPs (e.g. umsh-bsp-t1000e) compose this
+# crate with their own pinout and on-board peripherals.
+#
+# See docs/firmware-architecture.md for the BSP / App / Binary triad and
+# docs/firmware-plan-t1000e.md for the first concrete board using it.
+
+[features]
+default = []
+
+[dependencies]
