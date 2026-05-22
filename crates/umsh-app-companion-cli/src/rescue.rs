@@ -10,8 +10,17 @@
 //!   `adafruit-nrfutil --touch 1200` trigger DFU. The Adafruit nRF52
 //!   bootloader does **not** implement this; firmware is responsible.
 //!
+//! - [`EscapeWatcher`] — observes the inbound byte stream and fires
+//!   when the magic sequence `Ctrl-C Ctrl-C Ctrl-C dfu\r` appears.
+//!   Used when the CLI parser is wedged (panicked task, deadlocked
+//!   channel, mis-parsed mode) so a human at a terminal can still
+//!   force DFU.
+//!
 //! Both mechanisms run *below* the CLI parser so a hung or
-//! mis-configured CLI can't block them.
+//! mis-configured CLI can't block them. The escape watcher
+//! deliberately observes without consuming, so the CLI parser still
+//! sees all bytes — Ctrl-C continues to mean "abort" to the CLI even
+//! while the rescue prefix accumulates.
 
 /// What a watcher decided to do as a result of an input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +96,103 @@ impl TouchlessResetWatcher {
     }
 
     pub fn reset(&mut self) {
+        self.fired = false;
+    }
+}
+
+/// Observes inbound CDC bytes for the rescue prefix
+/// `Ctrl-C Ctrl-C Ctrl-C dfu` followed by `\r` or `\n`. On match,
+/// returns [`RescueAction::TriggerDfuSerial`] so the caller can put the
+/// device into serial DFU mode independent of the CLI session.
+///
+/// The watcher is *non-consuming*: callers should hand each received
+/// byte to [`EscapeWatcher::observe`] before passing it to the CLI
+/// parser, not instead of. This preserves Ctrl-C's "abort" semantics
+/// inside the CLI.
+#[derive(Debug)]
+pub struct EscapeWatcher {
+    state: EscapeState,
+    fired: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscapeState {
+    Idle,
+    Ctrl1,
+    Ctrl2,
+    Armed,
+    GotD,
+    GotDf,
+    GotDfu,
+}
+
+const CTRL_C: u8 = 0x03;
+
+impl Default for EscapeWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EscapeWatcher {
+    pub const fn new() -> Self {
+        Self {
+            state: EscapeState::Idle,
+            fired: false,
+        }
+    }
+
+    /// Feed one received byte. Returns `TriggerDfuSerial` exactly once
+    /// on completion of the magic sequence; further bytes return `None`
+    /// until [`reset`](Self::reset) is called.
+    pub fn observe(&mut self, byte: u8) -> RescueAction {
+        if self.fired {
+            return RescueAction::None;
+        }
+
+        self.state = match (self.state, byte) {
+            // Building up the Ctrl-C prefix.
+            (EscapeState::Idle, CTRL_C) => EscapeState::Ctrl1,
+            (EscapeState::Ctrl1, CTRL_C) => EscapeState::Ctrl2,
+            (EscapeState::Ctrl2, CTRL_C) => EscapeState::Armed,
+
+            // Armed: matching "dfu".
+            (EscapeState::Armed, b'd') => EscapeState::GotD,
+            (EscapeState::GotD, b'f') => EscapeState::GotDf,
+            (EscapeState::GotDf, b'u') => EscapeState::GotDfu,
+
+            // Terminator after "dfu" — fire.
+            (EscapeState::GotDfu, b'\r') | (EscapeState::GotDfu, b'\n') => {
+                self.fired = true;
+                self.state = EscapeState::Idle;
+                return RescueAction::TriggerDfuSerial;
+            }
+
+            // Anything else in a Ctrl-prefix or armed sub-state resets,
+            // but a Ctrl-C in those positions restarts the prefix
+            // (so e.g. four Ctrl-Cs still arms after the third).
+            (_, CTRL_C) => EscapeState::Ctrl1,
+            _ => EscapeState::Idle,
+        };
+        RescueAction::None
+    }
+
+    /// Convenience: observe every byte in a slice.
+    pub fn observe_slice(&mut self, bytes: &[u8]) -> RescueAction {
+        for &b in bytes {
+            if let RescueAction::TriggerDfuSerial = self.observe(b) {
+                return RescueAction::TriggerDfuSerial;
+            }
+        }
+        RescueAction::None
+    }
+
+    pub fn fired(&self) -> bool {
+        self.fired
+    }
+
+    pub fn reset(&mut self) {
+        self.state = EscapeState::Idle;
         self.fired = false;
     }
 }
@@ -188,5 +294,105 @@ mod tests {
         w.on_control_line_state(true, false);
         assert_eq!(w.on_control_line_state(true, true), RescueAction::None);
         assert_eq!(w.on_control_line_state(true, false), RescueAction::None);
+    }
+
+    // ---------- EscapeWatcher tests ----------
+
+    const MAGIC: &[u8] = b"\x03\x03\x03dfu\r";
+
+    #[test]
+    fn escape_default_does_not_fire() {
+        let w = EscapeWatcher::new();
+        assert!(!w.fired());
+    }
+
+    #[test]
+    fn escape_magic_sequence_fires() {
+        let mut w = EscapeWatcher::new();
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert!(w.fired());
+    }
+
+    #[test]
+    fn escape_magic_sequence_with_lf_fires() {
+        let mut w = EscapeWatcher::new();
+        assert_eq!(
+            w.observe_slice(b"\x03\x03\x03dfu\n"),
+            RescueAction::TriggerDfuSerial
+        );
+    }
+
+    #[test]
+    fn escape_random_bytes_do_not_fire() {
+        let mut w = EscapeWatcher::new();
+        assert_eq!(w.observe_slice(b"hello world\r\n"), RescueAction::None);
+        assert!(!w.fired());
+    }
+
+    #[test]
+    fn escape_two_ctrl_c_then_other_resets() {
+        let mut w = EscapeWatcher::new();
+        w.observe_slice(b"\x03\x03x");
+        // Now the full magic sequence should still work afterwards.
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+    }
+
+    #[test]
+    fn escape_three_ctrl_c_then_wrong_command_resets() {
+        let mut w = EscapeWatcher::new();
+        assert_eq!(w.observe_slice(b"\x03\x03\x03nope\r"), RescueAction::None);
+        // Re-attempt with the right sequence should still work.
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+    }
+
+    #[test]
+    fn escape_is_case_sensitive() {
+        // Uppercase DFU should NOT trigger.
+        let mut w = EscapeWatcher::new();
+        assert_eq!(w.observe_slice(b"\x03\x03\x03DFU\r"), RescueAction::None);
+    }
+
+    #[test]
+    fn escape_extra_ctrl_c_after_arm_restarts_prefix() {
+        // Four Ctrl-Cs in a row: the fourth lands us back in Ctrl1
+        // (so the prefix is partially re-built rather than completely
+        // lost), then we still need two more Ctrl-Cs to re-arm.
+        let mut w = EscapeWatcher::new();
+        w.observe_slice(b"\x03\x03\x03\x03"); // 4 Ctrl-Cs
+        // Currently in Ctrl1 (4th Ctrl-C reset from Armed back to Ctrl1).
+        // Need two more Ctrl-Cs to re-arm.
+        assert_eq!(
+            w.observe_slice(b"\x03\x03dfu\r"),
+            RescueAction::TriggerDfuSerial
+        );
+    }
+
+    #[test]
+    fn escape_magic_in_middle_of_stream_fires() {
+        let mut w = EscapeWatcher::new();
+        let stream = b"some other text\x03\x03\x03dfu\r more stuff";
+        assert_eq!(w.observe_slice(stream), RescueAction::TriggerDfuSerial);
+    }
+
+    #[test]
+    fn escape_fires_only_once_until_reset() {
+        let mut w = EscapeWatcher::new();
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::None);
+
+        w.reset();
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+    }
+
+    #[test]
+    fn escape_observes_individual_bytes() {
+        let mut w = EscapeWatcher::new();
+        let mut fired = false;
+        for &b in MAGIC {
+            if let RescueAction::TriggerDfuSerial = w.observe(b) {
+                fired = true;
+            }
+        }
+        assert!(fired);
     }
 }
