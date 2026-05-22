@@ -22,9 +22,9 @@
 pub mod button;
 pub mod led;
 pub mod power;
+pub mod rescue;
 
 // TODO: implement remaining modules (see docs/firmware-plan-t1000e.md):
 //   pub mod buzzer;          // rising/falling melody sequencer (stub for now).
 //   pub mod cli_io;          // USB-CDC adapter to CliInput / CliOutput.
-//   pub mod rescue;          // 1200-baud touchless reset + serial escape.
 //   pub mod app;              // `run<B>(spawner, board) -> !` entry point.
