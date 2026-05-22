@@ -20,6 +20,7 @@ Support for MAC commands is optional.
 | 6 | PFS Session Request | Request |
 | 7 | PFS Session Response | Response |
 | 8 | End PFS Session | Either |
+| 9 | No-op | Request | 
 
 ## Beacon Request (0)
 
@@ -36,7 +37,7 @@ Beacon requests may be used for:
 
 ## Identity Request (1)
 
-Requests that the destination respond with its [node identity](node-identity.md) payload.
+Requests that the destination respond with its [node identity](node-identity.md).
 
 No command-specific payload.
 
@@ -100,3 +101,8 @@ Sent in response to a PFS Session Request. The responder generates its own ephem
 Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See [Session Lifetime](security.md#session-lifetime) for all conditions under which a session ends.
 
 No command-specific payload. The sender and recipient are identified by the packet's addressing fields.
+
+## No-Op (9)
+
+This command does nothing, however it will produce an UACK when sent via a packet
+type that requests an ACK.
