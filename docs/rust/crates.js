@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["umsh","umsh_chat_room","umsh_cli","umsh_core","umsh_crypto","umsh_hal","umsh_mac","umsh_node","umsh_sync","umsh_text","umsh_uri"];
-//{"start":21,"fragment_lengths":[6,17,11,12,14,11,11,12,12,12,11]}
+window.ALL_CRATES = ["firmware_companion_cli_t1000e","firmware_hello_techo","umsh","umsh_app_companion_cli","umsh_bsp_nrf52840","umsh_bsp_t1000e","umsh_bsp_techo","umsh_chat_room","umsh_cli","umsh_core","umsh_crypto","umsh_hal","umsh_mac","umsh_node","umsh_sync","umsh_text","umsh_uri","umsh_ux_tracker"];
+//{"start":21,"fragment_lengths":[31,23,7,25,20,18,17,17,11,12,14,11,11,12,12,12,11,18]}
