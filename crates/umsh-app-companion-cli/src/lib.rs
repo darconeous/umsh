@@ -21,6 +21,7 @@
 
 pub mod button;
 pub mod led;
+pub mod panic_persist;
 pub mod power;
 pub mod rescue;
 
