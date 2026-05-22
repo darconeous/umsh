@@ -156,15 +156,34 @@ USB is connected; that's fine for a bringup target.
 Smaller than the T1000-E phasing because the scope is smaller. Each
 phase ends in a flashable, demonstrable artifact.
 
-### Phase 0 — Bootloader reconnaissance
+### Phase 0 — Bootloader reconnaissance ✅
 
-Trigger UF2 mode on a stock T-Echo (double-tap reset). Read
-`INFO_UF2.TXT`; record the bootloader name + version, UF2 family ID,
-and app flash range. Verify that a known UF2 (e.g. a MeshCore release
-build for T-Echo) flashes successfully and the device runs from it.
+Triggered UF2 mode on a stock T-Echo, read `INFO_UF2.TXT` from the
+mounted bootloader volume. Findings:
 
-**Gate:** known UF2 builds flash and run; we know the exact flash
-window to put our app in.
+| Fact | Value |
+|---|---|
+| Bootloader | UF2 Bootloader 0.6.1-2-g1224915 (Adafruit nRF52 UF2) |
+| Build date | Oct 13 2021 |
+| Model | LilyGo T-Echo |
+| Board-ID | `nRF52840-TEcho-v1` |
+| SoftDevice | S140 version 6.1.1 (present in flash, not enabled by us) |
+| UF2 family ID | `0xADA52840` (Adafruit nRF52840) |
+| App flash start | `0x00026000` (after S140) |
+| App flash end | `0x000F4000` (start of bootloader) |
+| App flash size | 824 KiB |
+
+The Adafruit bootloader + S140 v6 layout matches the assumption baked
+into `firmware/hello-techo/memory.x`. We do **not** intend to enable
+the SoftDevice; as long as `sd_softdevice_enable()` is never called,
+S140 sits dormant and `embassy-nrf` retains full peripheral ownership.
+This matches MeshCore's posture on T-Echo when it doesn't need BLE.
+
+The UF2 family ID `0xADA52840` is what the UF2 conversion step in the
+`just flash` recipe will embed.
+
+**Gate:** ✅ assumptions confirmed; flash window matches `memory.x`;
+proceed to Phase 1.
 
 ### Phase 1 — "Hello USB-CDC"
 
