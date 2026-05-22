@@ -19,3 +19,10 @@ repository.workspace = true
 default = []
 
 [dependencies]
+
+# Embedded-only deps. Gated on `target_os = "none"` so this crate still
+# parses and unit-tests cleanly on host (the rescue watchers are pure
+# logic and don't need any of this). When a firmware binary depends on
+# this crate and is built for a bare-metal target, these come along.
+[target.'cfg(target_os = "none")'.dependencies]
+embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }

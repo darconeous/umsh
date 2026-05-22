@@ -14,10 +14,12 @@
 
 pub mod rescue;
 
+#[cfg(target_os = "none")]
+pub mod clocks;
+
 // TODO: implement.
 //
 // Planned modules (see docs/firmware-plan-t1000e.md):
-//   pub mod clocks;        // HFXO start, LF source select.
 //   pub mod usb;           // embassy-nrf USB driver wrapper.
 //   pub mod gpregret;      // GPREGRET helpers for DFU entry.
 //   pub mod system_off;    // Configure DETECT and enter System OFF.
