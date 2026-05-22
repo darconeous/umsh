@@ -7,7 +7,7 @@ use umsh_mac::{LocalIdentityId, MacError, MacHandle, Platform, SendOptions};
 use crate::dispatch::EventDispatcher;
 use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 use crate::receive::ReceivedPacketRef;
-use crate::{NodeIdentity, OwnedMacCommand, identity_payload, mac_command};
+use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
 use umsh_core::PayloadType;
 
 /// Error returned when a [`Host`] cannot make progress.
@@ -305,9 +305,8 @@ fn dispatch_payload_callbacks<
     pending_pfs: &Rc<RefCell<Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>>>,
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
-        if let Ok(identity) = identity_payload::parse(packet.payload()) {
-            let owned = NodeIdentity::from(identity);
-            node.dispatch_node_discovered(from, owned.name.as_deref());
+        if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
+            node.dispatch_node_discovered(from, identity.name.as_deref());
         }
         return;
     }

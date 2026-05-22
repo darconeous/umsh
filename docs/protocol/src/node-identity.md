@@ -66,46 +66,22 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | 1 | Node Location | 1-8 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
 | 2 | Altitude in Meters | The altitude in meters. | 
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
-| 4 | Node Uptime | unsigned integer, minutes since boot |
-| 5 | Amateur Radio Callsign | ARNCE/HAM-64 (2, 4, 6, or 8 bytes) |
-| 6 | Supported Regions | one or more concatenated 2-byte region codes |
-| 7 | Node Battery Percentage | 1 byte |
+| 4 | Supported Regions | one or more concatenated 2-byte region codes |
 
 ### Node Name (option 0)
-A UTF-8 string naming the node, typically shown in user interfaces. Max length is 24 bytes.
+A UTF-8 display name for the node, typically shown in user interfaces. Max length: 24 bytes.
 
 ### Node Location (option 1)
-A variable-precision grid code encoding the node's geographic position. See [Variable-Precision Location Format](#variable-precision-location-format).
-
-The maximum precision that can be used is 7 bytes. Implementations MUST ignore any byte data after the seventh byte and MUST NOT encode more than 7 bytes into this field.
+The node's geographic position, encoded as a variable-precision grid code. See [Variable-Precision Location Format](#variable-precision-location-format). Max precision: 7 bytes. Implementations MUST ignore bytes beyond the seventh and MUST NOT encode more than 7 bytes.
 
 ### Altitude in Meters (option 2)
-The node's altitude above mean sea level, in meters. Interpreted as a big-endian signed integer with leading zero/0xFF bytes omitted (as long as signed-ness is discernable)
-
-Max length is 4 bytes.
+The node's altitude above mean sea level in meters, encoded as a minimal big-endian signed integer (leading `0x00` and `0xFF` sign-extension bytes omitted, provided the sign bit of the remaining value is unambiguous). Max length: 4 bytes.
 
 ### Unix Timestamp (option 3)
-A freshness marker, as seconds since the Unix epoch, indicating when the identity payload was generated. It lets a consumer judge whether the identity is recent — most useful when the identity stands alone, such as in a QR code, where a stale capture could otherwise be presented indefinitely. Not interpreted by the MAC layer.
+Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.
 
-Interpreted as a big-endian unsigned integer with leading zero bytes omitted. Max length is 4 bytes. 
-
-### Node Uptime (option 4)
-Minutes since the node last booted. Primarily a health and diagnostic signal for operators.
-Interpreted as a big-endian integer with leading zero bytes omitted. Max length is 4 bytes.
-
-Obviously, this makes no sense on a QR Code.
-
-### Amateur Radio Callsign (option 5)
-The node operator's amateur radio callsign in ARNCE/HAM-64 encoding, in 2, 4, 6, or 8 bytes depending on callsign length. Max length is 8 bytes.
-
-### Supported Regions (option 6)
-For repeaters, a list of [region codes](packet-options.md#region-code-encoding) that this repeater will flood-forward for. Each entry is exactly 2 bytes and entries are concatenated with no delimiter. A node that does not advertise this option makes no claim about its regional policy. Max length is 20 bytes.
-
-### Node Battery Percentage (option 7)
-A single unsigned byte whose value `0..=255` maps linearly to `0%..=100%`. Absence of this option means the node has not reported a battery level — not that the battery is empty.
-
-Obviously, this makes no sense on a QR Code.
-Must be 1 byte.
+### Supported Regions (option 4)
+For repeaters, the list of [region codes](packet-options.md#region-code-encoding) the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.
 
 ### Variable-Precision Location Format
 
