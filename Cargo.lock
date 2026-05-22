@@ -425,6 +425,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-hello-techo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "panic-halt",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-techo",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1197,6 +1209,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-bsp-techo"
+version = "0.1.0"
+dependencies = [
+ "umsh-bsp-nrf52840",
+]
+
+[[package]]
 name = "umsh-chat-room"
 version = "0.1.0"
 dependencies = [
@@ -1297,6 +1316,10 @@ dependencies = [
  "lwuri",
  "umsh-core",
 ]
+
+[[package]]
+name = "umsh-ux-tracker"
+version = "0.1.0"
 
 [[package]]
 name = "unescaper"
