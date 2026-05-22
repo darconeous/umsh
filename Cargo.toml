@@ -10,6 +10,30 @@ members = [
     "crates/umsh-node",
     "crates/umsh-sync",
     "crates/umsh-cli",
+    "crates/umsh-bsp-nrf52840",
+    "crates/umsh-bsp-t1000e",
+    "crates/umsh-app-companion-cli",
+    "firmware/companion-cli-t1000e",
+    "umsh",
+]
+# Root `cargo build` / `cargo check` skips firmware/* so we don't try to
+# cross-compile every binary on the developer's host. Firmware crates are
+# explicitly built with `cargo build -p firmware-companion-cli-t1000e`
+# (or by running cargo from inside the firmware directory).
+default-members = [
+    "crates/umsh-core",
+    "crates/umsh-crypto",
+    "crates/umsh-hal",
+    "crates/umsh-uri",
+    "crates/umsh-chat-room",
+    "crates/umsh-text",
+    "crates/umsh-mac",
+    "crates/umsh-node",
+    "crates/umsh-sync",
+    "crates/umsh-cli",
+    "crates/umsh-bsp-nrf52840",
+    "crates/umsh-bsp-t1000e",
+    "crates/umsh-app-companion-cli",
     "umsh",
 ]
 resolver = "2"

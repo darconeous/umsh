@@ -1,0 +1,44 @@
+[package]
+name = "firmware-companion-cli-t1000e"
+description = "T1000-E companion-radio CLI firmware binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Binary glue crate: composes umsh-bsp-t1000e + umsh-app-companion-cli.
+#
+# This crate pins the embedded target via .cargo/config.toml and owns
+# memory.x. It is intentionally excluded from the workspace's
+# `default-members` so root-level `cargo check` / `cargo build` does not
+# try to cross-compile it on the developer's host.
+#
+# Build:    cd firmware/companion-cli-t1000e && cargo build --release
+#           (or `cargo build -p firmware-companion-cli-t1000e` from anywhere,
+#            but then the firmware's .cargo/config.toml is not consulted and
+#            you must supply --target).
+#
+# See docs/firmware-architecture.md and docs/firmware-plan-t1000e.md.
+
+[[bin]]
+name = "firmware-companion-cli-t1000e"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = false }
+umsh-app-companion-cli = { path = "../../crates/umsh-app-companion-cli", default-features = false }
+
+# Embedded-only deps. Gated on `target_os = "none"` so this crate still
+# parses and trivially compiles on host (as an empty `fn main()`),
+# letting `cargo check --workspace` succeed without the bare-metal target
+# installed. Real firmware builds use the embedded target via the
+# .cargo/config.toml in this directory.
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "1"
+
+# Note: cargo only honors `[profile.*]` at the workspace root. When we want
+# size-optimized firmware builds, add `[profile.release]` (and any
+# per-firmware profile tweaks via `[profile.release.package.<name>]`) to
+# the root Cargo.toml rather than this manifest.

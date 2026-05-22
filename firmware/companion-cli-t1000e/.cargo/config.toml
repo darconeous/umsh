@@ -1,0 +1,23 @@
+# Per-firmware cargo config. Only applied when cargo is invoked from within
+# this directory (or a subdirectory). Workspace-root `cargo check` does not
+# inherit this — that's intentional and is why the firmware crate is
+# excluded from `default-members`.
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Probe-rs is the standard SWD runner, but the T1000-E is factory-sealed
+# with no SWD access. The actual flashing flow is build → UF2 convert →
+# copy to UF2 mass-storage drive. A `just flash` recipe (TBD) wraps that.
+#
+# This runner stays defined for nRF52840-DK development (same target
+# triple), where probe-rs *is* usable.
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+]
+
+[unstable]
+# (Reserved for future use; nothing required yet.)

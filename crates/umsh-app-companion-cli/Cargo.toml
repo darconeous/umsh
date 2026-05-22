@@ -1,0 +1,25 @@
+[package]
+name = "umsh-app-companion-cli"
+description = "UMSH companion-radio CLI firmware logic, generic over a Platform / Board"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Hardware-agnostic firmware logic for the companion-radio CLI:
+#   * embassy task topology (cli / mac / button / power / led / gnss)
+#   * USB-CDC ↔ umsh-cli adapter
+#   * button event recognition (single / double / triple / long)
+#   * power-intent channel (PowerOff / EnterDfu / Reboot)
+#   * LED heartbeat + power-on/off sequences
+#
+# Generic over a `Board: Platform + HasButton + HasLed + HasBuzzer + ...`
+# bound; concrete board types live in the board-BSP crates.
+#
+# See docs/firmware-architecture.md for app/platform composition rules
+# and docs/firmware-plan-t1000e.md for the first concrete deployment.
+
+[features]
+default = []
+
+[dependencies]
