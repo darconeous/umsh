@@ -27,10 +27,15 @@
 pub enum RescueAction {
     /// No action this event.
     None,
-    /// Caller should immediately invoke `bsp::enter_dfu_serial()`
-    /// (GPREGRET = `0x4e`). The web flasher requires serial DFU mode
-    /// because WebSerial cannot speak to a mass-storage device.
-    TriggerDfuSerial,
+    /// Caller should immediately enter DFU mode. The watcher does not
+    /// pick a mode — the caller decides between
+    /// [`bsp::enter_dfu_uf2()`] (GPREGRET=0x57, exposes CDC + UF2 mass
+    /// storage; what the MeshCore / Adafruit web flashers expect and
+    /// what `adafruit-nrfutil --touch 1200` triggers in the Adafruit
+    /// Arduino reference) and [`bsp::enter_dfu_serial()`]
+    /// (GPREGRET=0x4e, CDC-only; for `adafruit-nrfutil` / `nrfutil`
+    /// users who explicitly want the slimmer interface).
+    TriggerDfu,
 }
 
 /// Watcher for the 1200-baud touchless reset.
@@ -38,7 +43,7 @@ pub enum RescueAction {
 /// Track CDC `SET_LINE_CODING` (baud rate) and
 /// `SET_CONTROL_LINE_STATE` (DTR / RTS) events. When the host opens
 /// the port at 1200 baud and then drops DTR, return
-/// [`RescueAction::TriggerDfuSerial`] so the caller can put the
+/// [`RescueAction::TriggerDfu`] so the caller can put the
 /// device into serial DFU mode.
 ///
 /// The watcher self-suppresses after firing — once
@@ -86,7 +91,7 @@ impl TouchlessResetWatcher {
         self.dtr = dtr;
         if was_high && !dtr && self.baud == 1_200 && !self.fired {
             self.fired = true;
-            return RescueAction::TriggerDfuSerial;
+            return RescueAction::TriggerDfu;
         }
         RescueAction::None
     }
@@ -102,7 +107,7 @@ impl TouchlessResetWatcher {
 
 /// Observes inbound CDC bytes for the rescue prefix
 /// `Ctrl-C Ctrl-C Ctrl-C dfu` followed by `\r` or `\n`. On match,
-/// returns [`RescueAction::TriggerDfuSerial`] so the caller can put the
+/// returns [`RescueAction::TriggerDfu`] so the caller can put the
 /// device into serial DFU mode independent of the CLI session.
 ///
 /// The watcher is *non-consuming*: callers should hand each received
@@ -142,7 +147,7 @@ impl EscapeWatcher {
         }
     }
 
-    /// Feed one received byte. Returns `TriggerDfuSerial` exactly once
+    /// Feed one received byte. Returns `TriggerDfu` exactly once
     /// on completion of the magic sequence; further bytes return `None`
     /// until [`reset`](Self::reset) is called.
     pub fn observe(&mut self, byte: u8) -> RescueAction {
@@ -165,7 +170,7 @@ impl EscapeWatcher {
             (EscapeState::GotDfu, b'\r') | (EscapeState::GotDfu, b'\n') => {
                 self.fired = true;
                 self.state = EscapeState::Idle;
-                return RescueAction::TriggerDfuSerial;
+                return RescueAction::TriggerDfu;
             }
 
             // Anything else in a Ctrl-prefix or armed sub-state resets,
@@ -180,8 +185,8 @@ impl EscapeWatcher {
     /// Convenience: observe every byte in a slice.
     pub fn observe_slice(&mut self, bytes: &[u8]) -> RescueAction {
         for &b in bytes {
-            if let RescueAction::TriggerDfuSerial = self.observe(b) {
-                return RescueAction::TriggerDfuSerial;
+            if let RescueAction::TriggerDfu = self.observe(b) {
+                return RescueAction::TriggerDfu;
             }
         }
         RescueAction::None
@@ -228,7 +233,7 @@ mod tests {
     fn open_at_1200_then_close_fires() {
         let mut w = TouchlessResetWatcher::new();
         open(&mut w, 1_200);
-        assert_eq!(close(&mut w), RescueAction::TriggerDfuSerial);
+        assert_eq!(close(&mut w), RescueAction::TriggerDfu);
         assert!(w.fired());
     }
 
@@ -238,7 +243,7 @@ mod tests {
         let mut w = TouchlessResetWatcher::new();
         open(&mut w, 115_200);
         w.on_line_coding(1_200);
-        assert_eq!(close(&mut w), RescueAction::TriggerDfuSerial);
+        assert_eq!(close(&mut w), RescueAction::TriggerDfu);
     }
 
     #[test]
@@ -265,14 +270,14 @@ mod tests {
     fn fires_only_once_until_reset() {
         let mut w = TouchlessResetWatcher::new();
         open(&mut w, 1_200);
-        assert_eq!(close(&mut w), RescueAction::TriggerDfuSerial);
+        assert_eq!(close(&mut w), RescueAction::TriggerDfu);
         // Reopen at 1200 and reclose; should NOT fire again until reset.
         open(&mut w, 1_200);
         assert_eq!(close(&mut w), RescueAction::None);
 
         w.reset();
         open(&mut w, 1_200);
-        assert_eq!(close(&mut w), RescueAction::TriggerDfuSerial);
+        assert_eq!(close(&mut w), RescueAction::TriggerDfu);
     }
 
     #[test]
@@ -309,7 +314,7 @@ mod tests {
     #[test]
     fn escape_magic_sequence_fires() {
         let mut w = EscapeWatcher::new();
-        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfu);
         assert!(w.fired());
     }
 
@@ -318,7 +323,7 @@ mod tests {
         let mut w = EscapeWatcher::new();
         assert_eq!(
             w.observe_slice(b"\x03\x03\x03dfu\n"),
-            RescueAction::TriggerDfuSerial
+            RescueAction::TriggerDfu
         );
     }
 
@@ -334,7 +339,7 @@ mod tests {
         let mut w = EscapeWatcher::new();
         w.observe_slice(b"\x03\x03x");
         // Now the full magic sequence should still work afterwards.
-        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfu);
     }
 
     #[test]
@@ -342,7 +347,7 @@ mod tests {
         let mut w = EscapeWatcher::new();
         assert_eq!(w.observe_slice(b"\x03\x03\x03nope\r"), RescueAction::None);
         // Re-attempt with the right sequence should still work.
-        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfu);
     }
 
     #[test]
@@ -363,7 +368,7 @@ mod tests {
         // Need two more Ctrl-Cs to re-arm.
         assert_eq!(
             w.observe_slice(b"\x03\x03dfu\r"),
-            RescueAction::TriggerDfuSerial
+            RescueAction::TriggerDfu
         );
     }
 
@@ -371,17 +376,17 @@ mod tests {
     fn escape_magic_in_middle_of_stream_fires() {
         let mut w = EscapeWatcher::new();
         let stream = b"some other text\x03\x03\x03dfu\r more stuff";
-        assert_eq!(w.observe_slice(stream), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(stream), RescueAction::TriggerDfu);
     }
 
     #[test]
     fn escape_fires_only_once_until_reset() {
         let mut w = EscapeWatcher::new();
-        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfu);
         assert_eq!(w.observe_slice(MAGIC), RescueAction::None);
 
         w.reset();
-        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfuSerial);
+        assert_eq!(w.observe_slice(MAGIC), RescueAction::TriggerDfu);
     }
 
     #[test]
@@ -389,7 +394,7 @@ mod tests {
         let mut w = EscapeWatcher::new();
         let mut fired = false;
         for &b in MAGIC {
-            if let RescueAction::TriggerDfuSerial = w.observe(b) {
+            if let RescueAction::TriggerDfu = w.observe(b) {
                 fired = true;
             }
         }

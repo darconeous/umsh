@@ -2,18 +2,15 @@
 //!
 //! On nRF52840 a region of RAM can be marked as `noinit` so its
 //! contents survive a soft reset (warm boot, watchdog, panic-driven
-//! `SCB::sys_reset()`). This module provides both the framing layer
-//! and (eventually) the actual `static mut PANIC_REGION: [u8; N]`
-//! placement for the T1000-E.
-//!
-//! Lives in `umsh-bsp-t1000e` rather than a more generic crate
-//! because the T1000-E is currently the only consumer. If Solar P1
-//! or another nRF52840-based board ends up needing the same pattern,
-//! this module can be promoted to `umsh-bsp-nrf52840` (or a dedicated
-//! crate) without changing the API.
+//! `SCB::sys_reset()`). This module provides the framing layer for
+//! that region — it lives here in `umsh-bsp-nrf52840` because every
+//! nRF52840-based board (T1000-E, T-Echo, …) shares this mechanism.
 //!
 //! The [`PanicSlot`] API operates on a borrowed `&'static mut [u8]`,
 //! so the framing is purely portable and unit-testable on the host.
+//! The caller is responsible for declaring the `.noinit` static and
+//! passing a mutable slice of it; see `umsh-bsp-nrf52840::gpregret`
+//! and the board BSPs for the typical integration pattern.
 //!
 //! # On-region layout
 //!
@@ -29,6 +26,55 @@
 //! ```
 //!
 //! Total header = 8 bytes. Maximum payload = `region.len() - 8`.
+
+/// A `Sync` wrapper around `UnsafeCell<MaybeUninit<T>>` for use with
+/// `#[link_section = ".uninit"]` statics.
+///
+/// Rust 2024 made `&mut static_mut` a hard error (`static_mut_refs` lint).
+/// `UnsafeCell` is the correct escape hatch: it opts into interior
+/// mutability, so a raw pointer obtained via `UnsafeCell::get()` is not a
+/// reference to a mutable static. The `unsafe impl Sync` is sound on a
+/// single-core target where no thread can race on the cell.
+pub struct SyncNoinit<T>(pub core::cell::UnsafeCell<core::mem::MaybeUninit<T>>);
+
+// Safety: nRF52840 is a single-core device; concurrent access is impossible.
+unsafe impl<T> Sync for SyncNoinit<T> {}
+
+impl<T> SyncNoinit<T> {
+    pub const fn uninit() -> Self {
+        Self(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()))
+    }
+
+    /// Return a `&'static mut [u8]` slice over the inner value.
+    ///
+    /// # Safety
+    /// The caller must ensure no other live reference to this cell exists.
+    pub unsafe fn as_bytes_mut(&self) -> &'static mut [u8] {
+        let ptr: *mut u8 = self.0.get().cast::<u8>();
+        // SAFETY: caller ensures no other live reference; ptr is non-null and aligned.
+        unsafe { core::slice::from_raw_parts_mut(ptr, core::mem::size_of::<T>()) }
+    }
+}
+
+/// A `core::fmt::Write` sink over a fixed-size byte slice.
+///
+/// Used to format a `core::panic::PanicInfo` into a stack buffer without
+/// heap allocation. Truncates silently when the buffer fills — acceptable
+/// for a best-effort panic message capture.
+pub struct SliceWriter<'a> {
+    pub buf: &'a mut [u8],
+    pub pos: usize,
+}
+
+impl<'a> core::fmt::Write for SliceWriter<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let avail = self.buf.len().saturating_sub(self.pos);
+        let n = s.len().min(avail);
+        self.buf[self.pos..self.pos + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.pos += n;
+        Ok(())
+    }
+}
 
 const PANIC_MAGIC: u32 = 0x554D_5350; // "UMSP" — UMSH Panic
 const HEADER_LEN: usize = 8;

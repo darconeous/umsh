@@ -26,3 +26,6 @@ default = []
 # this crate and is built for a bare-metal target, these come along.
 [target.'cfg(target_os = "none")'.dependencies]
 embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+cortex-m = { version = "0.7" }
