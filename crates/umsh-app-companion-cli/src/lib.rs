@@ -19,10 +19,9 @@
 //!
 //! See `docs/firmware-plan-t1000e.md` for the full design.
 
-// TODO: implement.
-//
-// Planned modules (see docs/firmware-plan-t1000e.md):
-//   pub mod button;          // press FSM (single/double/triple/long).
+pub mod button;
+
+// TODO: implement remaining modules (see docs/firmware-plan-t1000e.md):
 //   pub mod led;              // heartbeat + power-on/off + event sequences.
 //   pub mod buzzer;          // rising/falling melody sequencer (stub for now).
 //   pub mod power;            // PowerIntent channel + power_task.
