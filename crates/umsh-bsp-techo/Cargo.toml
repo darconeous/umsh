@@ -1,0 +1,36 @@
+[package]
+name = "umsh-bsp-techo"
+description = "Board support for the LilyGO T-Echo (nRF52840)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-level BSP for the LilyGO T-Echo. Composes umsh-bsp-nrf52840
+# with T-Echo pinout and on-board peripherals.
+#
+# Initial scope is intentionally minimal — only what is needed for the
+# bringup firmware (see docs/firmware-plan-techo.md). Future expansion
+# is welcome but not on the immediate path.
+#
+# In scope for bringup:
+#   * peripheral-power-enable (P0.12)
+#   * USB-CDC over the nRF native USB peripheral
+#   * blue LED (P0.14) for heartbeat
+#   * e-paper SPI bus + control pins (SSD1681)
+#
+# Out of scope for bringup (planned but not yet):
+#   * SX1262 LoRa radio
+#   * Quectel L76K GNSS UART
+#   * I²C peripherals (PCF8563 RTC, BME280)
+#   * QSPI external flash
+#   * Buttons (user, touch, reset)
+#   * Plus-only back-panel peripherals (DRV2605, BHI260, buzzer)
+#
+# See docs/firmware-plan-techo.md and docs/lilygo-techo-hardware.md.
+
+[features]
+default = []
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
