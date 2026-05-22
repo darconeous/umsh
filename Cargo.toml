@@ -12,6 +12,7 @@ members = [
     "crates/umsh-cli",
     "crates/umsh-bsp-nrf52840",
     "crates/umsh-bsp-t1000e",
+    "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "firmware/companion-cli-t1000e",
     "umsh",
@@ -33,6 +34,7 @@ default-members = [
     "crates/umsh-cli",
     "crates/umsh-bsp-nrf52840",
     "crates/umsh-bsp-t1000e",
+    "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "umsh",
 ]

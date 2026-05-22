@@ -1,11 +1,15 @@
 #![no_std]
 
-//! UMSH companion-radio CLI firmware logic.
+//! Companion-radio CLI app for tracker-class UMSH boards.
 //!
-//! This crate is hardware-agnostic. It defines the embassy task topology,
-//! the USB-CDC ↔ `umsh-cli` adapter, the button event FSM, the power-intent
-//! channel, and the LED sequence engine. Concrete boards are passed in via
-//! a `Board: Platform + HasButton + HasLed + ...` bound.
+//! This crate is **app-specific policy**: it decides which button
+//! event maps to which action, which CLI commands exist, and how the
+//! MAC layer integrates with the user-facing surface. Mechanism
+//! (button gesture FSM, LED heartbeat, buzzer melodies, low-battery
+//! detection, power intents) lives in
+//! [`umsh-ux-tracker`](../umsh_ux_tracker/index.html) and is shared
+//! with any other tracker-class app (e.g. a future repeater
+//! firmware).
 //!
 //! Typical use from a `firmware/<app>-<board>` binary crate:
 //!
@@ -17,15 +21,14 @@
 //! }
 //! ```
 //!
-//! See `docs/firmware-plan-t1000e.md` for the full design.
+//! See `docs/firmware-architecture.md` for the BSP / UX / App /
+//! Binary layering, and `docs/firmware-plan-t1000e.md` for the full
+//! design of the first concrete deployment.
 
-pub mod button;
-pub mod buzzer;
-pub mod led;
-pub mod panic_persist;
-pub mod power;
-pub mod rescue;
-
-// TODO: implement remaining modules (see docs/firmware-plan-t1000e.md):
+// TODO: implement.
+//
+// Planned modules (see docs/firmware-plan-t1000e.md):
+//   pub mod actions;          // button-event → action mapping.
 //   pub mod cli_io;          // USB-CDC adapter to CliInput / CliOutput.
+//   pub mod commands;        // CLI command dispatch (`dfu`, `poweroff`, …).
 //   pub mod app;              // `run<B>(spawner, board) -> !` entry point.

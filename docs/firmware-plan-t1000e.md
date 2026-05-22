@@ -35,24 +35,44 @@ anything.**
 
 ## Workspace shape (additions only)
 
-This firmware follows the BSP / App / Binary triad documented in
-[firmware-architecture.md](firmware-architecture.md). For T1000E specifically
-we add:
+This firmware follows the BSP / UX / App / Binary layering documented in
+[firmware-architecture.md](firmware-architecture.md). For T1000E
+specifically we add:
 
 ```
 crates/
-  umsh-bsp-nrf52840/        # chip-BSP (USB clock, GPREGRET, sys_off, flash storage)
-  umsh-bsp-t1000e/          # board-BSP (pinout, LR1110 wiring, AG3335, QMA6100P, …)
-  umsh-app-companion-cli/   # app: button FSM, power, USB-CDC ↔ umsh-cli wiring
+  umsh-bsp-nrf52840/        # chip-BSP (USB clock, GPREGRET, sys_off,
+                            #   1200-baud + escape rescue watchers)
+  umsh-bsp-t1000e/          # board-BSP (pinout, LR1110 wiring, AG3335,
+                            #   QMA6100P, panic-persist for now)
+  umsh-ux-tracker/          # UX mechanism for tracker-class boards:
+                            #   button FSM, LED heartbeat, buzzer
+                            #   melodies, power intents, low-battery
+  umsh-app-companion-cli/   # app-specific policy: button-event ↔ action
+                            #   mapping, CLI commands, MAC integration
 firmware/
   companion-cli-t1000e/     # binary glue
 ```
 
-The chip-BSP layer exists because Solar P1 is also nRF52840 — both boards
-will share `umsh-bsp-nrf52840` for the chip-level concerns and only differ
-at the board-BSP layer. See
-[Adding a new board](firmware-architecture.md#adding-a-new-board) for the
-generalized recipe.
+Why the layers split this way:
+
+- **`umsh-ux-tracker`** is the mechanism layer for any board in the
+  tracker class (single-button + single-LED + piezo buzzer + USB-CDC +
+  battery). A future T1000-E repeater firmware would use the same
+  `ButtonFsm`, `LedEngine`, and `BuzzerEngine` — only the *mapping* of
+  button events to actions would differ.
+- **The chip-BSP layer** exists because Solar P1 is also nRF52840 — both
+  boards will share `umsh-bsp-nrf52840` for chip-level concerns
+  (including the USB-CDC rescue watchers, which are tied to the Adafruit
+  nRF52 bootloader) and only differ at the board-BSP layer.
+- **`PanicSlot` lives in `umsh-bsp-t1000e` for now**, even though the
+  framing itself is chip-agnostic. It'll get promoted to
+  `umsh-bsp-nrf52840` or a dedicated crate when Solar P1 (or another
+  consumer) appears.
+
+See [Adding a new board](firmware-architecture.md#adding-a-new-board) and
+[Adding a new firmware type](firmware-architecture.md#adding-a-new-firmware-type)
+for the generalized recipes.
 
 ## Crate responsibilities
 

@@ -1,0 +1,35 @@
+[package]
+name = "umsh-ux-tracker"
+description = "User-experience mechanism for tracker-class UMSH boards (single button, single LED, piezo buzzer)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Mechanism-only UX layer for "tracker-class" UMSH devices:
+#
+#   * single user button
+#   * single status LED
+#   * piezo buzzer
+#   * battery powered, no display, no speaker, no keyboard
+#
+# Consumed by any app targeting this device class (companion-radio CLI,
+# repeater, debug CLI, ...). Boards in this class (T1000-E, SenseCap
+# Solar P1, ...) provide the GPIO / PWM / ADC handles via their
+# board-BSP; this crate provides the pure-logic engines that interpret
+# inputs and arbitrate outputs.
+#
+# Devices in a different class — handheld with screen + speaker +
+# keyboard, headless mesh nodes with just radios — get their own
+# `umsh-ux-<class>` crate. They do not share this one because the
+# abstractions (heartbeat LED, melody sequencer, single-button gesture
+# FSM) do not generalize meaningfully across classes.
+#
+# See docs/firmware-architecture.md for the BSP / UX / App / Binary
+# layering, and docs/firmware-plan-t1000e.md for the first concrete
+# tracker-class deployment.
+
+[features]
+default = []
+
+[dependencies]
