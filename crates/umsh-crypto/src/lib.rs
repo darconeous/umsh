@@ -1045,6 +1045,216 @@ mod tests {
         assert_eq!(ab.0, ba.0);
     }
 
+    // ── derive_named_channel_key ──────────────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn derive_named_channel_key_is_deterministic() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let k1 = engine.derive_named_channel_key("lobby");
+        let k2 = engine.derive_named_channel_key("lobby");
+        let k3 = engine.derive_named_channel_key("other");
+        assert_eq!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k1, ChannelKey([0u8; 32]));
+    }
+
+    // ── SoftwareIdentity::generate ────────────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn software_identity_generate_produces_valid_key() {
+        use rand_core::{CryptoRng, RngCore};
+
+        // Minimal deterministic RNG for testing — counter-based, not cryptographically
+        // strong, but sufficient to exercise the generate() code path.
+        struct CounterRng(u64);
+        impl RngCore for CounterRng {
+            fn next_u32(&mut self) -> u32 { self.next_u64() as u32 }
+            fn next_u64(&mut self) -> u64 { self.0 = self.0.wrapping_add(1); self.0 }
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                for chunk in dest.chunks_mut(8) {
+                    let bytes = self.next_u64().to_le_bytes();
+                    chunk.copy_from_slice(&bytes[..chunk.len()]);
+                }
+            }
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+                self.fill_bytes(dest);
+                Ok(())
+            }
+        }
+        impl CryptoRng for CounterRng {}
+
+        let mut rng1 = CounterRng(0);
+        let mut rng2 = CounterRng(1000);
+        let id1 = SoftwareIdentity::generate(&mut rng1);
+        let id2 = SoftwareIdentity::generate(&mut rng2);
+        assert_ne!(id1.public_key(), id2.public_key());
+        let ss1 = id1.shared_secret_with(id2.public_key()).unwrap();
+        let ss2 = id2.shared_secret_with(id1.public_key()).unwrap();
+        assert_eq!(ss1.0, ss2.0);
+    }
+
+    // ── seal_blind_packet wrong packet type ───────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn seal_blind_packet_rejects_non_blind_packet() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let shared = SharedSecret([0x11u8; 32]);
+        let pairwise = engine.derive_pairwise_keys(&shared);
+        let channel_key = ChannelKey([0x5Au8; 32]);
+        let channel = engine.derive_channel_keys(&channel_key);
+        let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
+        let src = PublicKey([0xA1u8; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let mut buf = [0u8; 128];
+        // Build a regular unicast packet (not a blind unicast).
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(dst)
+            .source_full(&src)
+            .frame_counter(1)
+            .encrypted()
+            .mic_size(MicSize::Mic16)
+            .payload(b"test")
+            .build()
+            .unwrap();
+        assert!(matches!(
+            engine.seal_blind_packet(&mut packet, &blind_keys, &channel),
+            Err(CryptoError::InvalidPacket)
+        ));
+    }
+
+    // ── open_packet authentication failure ────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn open_packet_fails_on_tampered_ciphertext() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = engine.derive_pairwise_keys(&SharedSecret([9u8; 32]));
+        let src = PublicKey([0xA1; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let mut buf = [0u8; 128];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(dst)
+            .source_full(&src)
+            .frame_counter(1)
+            .encrypted()
+            .mic_size(MicSize::Mic16)
+            .payload(b"hello")
+            .build()
+            .unwrap();
+        engine.seal_packet(&mut packet, &keys).unwrap();
+
+        // Flip a bit in the sealed packet body.
+        let mut wire = packet.as_bytes().to_vec();
+        let header = PacketHeader::parse(&wire).unwrap();
+        wire[header.body_range.start] ^= 0x01;
+
+        assert!(matches!(
+            engine.open_packet(&mut wire, &header, &keys),
+            Err(CryptoError::AuthenticationFailed)
+        ));
+    }
+
+    // ── decrypt_blind_addr: encrypted hint source (len == 3) ─────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn decrypt_blind_addr_encrypted_hint_source() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let shared = SharedSecret([0x33u8; 32]);
+        let pairwise = engine.derive_pairwise_keys(&shared);
+        let channel_key = ChannelKey([0x5Au8; 32]);
+        let channel = engine.derive_channel_keys(&channel_key);
+        let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
+        let src = PublicKey([0xA1u8; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let mut buf = [0u8; 128];
+        // Use source_hint → produces Encrypted { len: 3 } in blind unicast.
+        let mut packet = PacketBuilder::new(&mut buf)
+            .blind_unicast(channel.channel_id, dst)
+            .source_hint(src.hint())
+            .frame_counter(5)
+            .encrypted()
+            .mic_size(MicSize::Mic16)
+            .payload(b"hi")
+            .build()
+            .unwrap();
+        engine.seal_blind_packet(&mut packet, &blind_keys, &channel).unwrap();
+        let mut wire = packet.as_bytes().to_vec();
+        let header = PacketHeader::parse(&wire).unwrap();
+        let (decoded_dst, decoded_src) =
+            engine.decrypt_blind_addr(&mut wire, &header, &channel).unwrap();
+        assert_eq!(decoded_dst, dst);
+        assert_eq!(decoded_src, SourceAddrRef::Hint(src.hint()));
+    }
+
+    // ── SoftwareAes::decrypt_block ────────────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn aes_decrypt_block_inverts_encrypt_block() {
+        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let cipher = SoftwareAes.new_cipher(&key);
+        let original = hex_16("6bc1bee22e409f96e93d7e117393172a");
+        let mut block = original;
+        cipher.encrypt_block(&mut block);
+        assert_ne!(block, original);
+        cipher.decrypt_block(&mut block);
+        assert_eq!(block, original);
+    }
+
+    // ── NodeIdentity trait: sign and agree ────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn sign_and_agree_via_trait() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+        fn block_on<F: Future>(future: F) -> F::Output {
+            let raw = RawWaker::new(
+                core::ptr::null(),
+                &RawWakerVTable::new(|_| panic!(), |_| {}, |_| {}, |_| {}),
+            );
+            let waker = unsafe { Waker::from_raw(raw) };
+            let mut ctx = Context::from_waker(&waker);
+            match pin!(future).poll(&mut ctx) {
+                Poll::Ready(v) => v,
+                Poll::Pending => panic!("future unexpectedly pending"),
+            }
+        }
+
+        let alice = SoftwareIdentity::from_secret_bytes(&[0x11u8; 32]);
+        let bob = SoftwareIdentity::from_secret_bytes(&[0x22u8; 32]);
+
+        let sig = block_on(alice.sign(b"test message")).unwrap();
+        assert_eq!(sig.len(), 64);
+
+        let shared = block_on(alice.agree(bob.public_key())).unwrap();
+        assert_ne!(shared.0, [0u8; 32]);
+    }
+
+    // ── NodeIdentity::hint default impl ───────────────────────────────────────
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn node_identity_hint_matches_public_key_hint() {
+        let id = SoftwareIdentity::from_secret_bytes(&[0x11u8; 32]);
+        // Calls the NodeIdentity::hint() default impl, which derives from public_key().
+        assert_eq!(NodeIdentity::hint(&id), id.public_key().hint());
+    }
+
+    // ── uppercase hex in decode_hex ───────────────────────────────────────────
+
+    #[test]
+    fn hex_vec_accepts_uppercase() {
+        assert_eq!(hex_vec("DEADBEEF"), hex_vec("deadbeef"));
+        assert_eq!(hex_vec("0A1B2C3D"), hex_vec("0a1b2c3d"));
+    }
+
     fn hex_vec(input: &str) -> std::vec::Vec<u8> {
         assert_eq!(input.len() % 2, 0);
         let mut out = std::vec::Vec::with_capacity(input.len() / 2);

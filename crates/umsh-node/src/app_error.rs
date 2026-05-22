@@ -56,3 +56,30 @@ impl std::error::Error for AppParseError {}
 
 #[cfg(feature = "std")]
 impl std::error::Error for AppEncodeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use umsh_core::{EncodeError, ParseError};
+
+    #[test]
+    fn app_parse_error_from_core() {
+        let e = AppParseError::from(ParseError::Truncated);
+        assert_eq!(e, AppParseError::Core(ParseError::Truncated));
+    }
+
+    #[test]
+    fn app_encode_error_from_core() {
+        let e = AppEncodeError::from(EncodeError::BufferTooSmall);
+        assert_eq!(e, AppEncodeError::Core(EncodeError::BufferTooSmall));
+    }
+
+    #[test]
+    fn display_delegates_to_debug() {
+        let e = AppParseError::InvalidUtf8;
+        assert_eq!(alloc::format!("{e}"), alloc::format!("{e:?}"));
+
+        let e = AppEncodeError::BufferTooSmall;
+        assert_eq!(alloc::format!("{e}"), alloc::format!("{e:?}"));
+    }
+}
