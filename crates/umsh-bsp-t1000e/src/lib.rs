@@ -11,7 +11,7 @@
 //! See `docs/firmware-plan-t1000e.md` for the safety contract and phasing,
 //! and `docs/t1000e-hardware.md` for the firmware-derived hardware reference.
 
-pub mod panic_persist;
+pub use umsh_bsp_nrf52840::panic_persist;
 
 // TODO: implement.
 //

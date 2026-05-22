@@ -12,16 +12,21 @@
 //!
 //! See `docs/firmware-architecture.md` for the BSP / UX / App / Binary triad.
 
+pub mod panic_persist;
 pub mod rescue;
 
 #[cfg(target_os = "none")]
+pub mod cdc_rescue;
+
+#[cfg(target_os = "none")]
 pub mod clocks;
+
+#[cfg(target_os = "none")]
+pub mod gpregret;
 
 // TODO: implement.
 //
 // Planned modules (see docs/firmware-plan-t1000e.md):
 //   pub mod usb;           // embassy-nrf USB driver wrapper.
-//   pub mod gpregret;      // GPREGRET helpers for DFU entry.
 //   pub mod system_off;    // Configure DETECT and enter System OFF.
-//   pub mod retained_ram;  // Retained-RAM section for panic capture.
 //   pub mod flash_store;   // CounterStore / KeyValueStore over NVMC.

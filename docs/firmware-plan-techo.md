@@ -139,11 +139,13 @@ Invariants:
 1. Firmware **never writes the bootloader region** (`0xF4000`+) or
    the MBR.
 2. Firmware **never disables the WDT** once started.
-3. `bsp::enter_dfu_serial()` and `bsp::enter_dfu_uf2()` are the only
-   functions that touch GPREGRET.
+3. `bsp::enter_dfu_uf2()` (and its siblings) are the only functions
+   that touch GPREGRET.
 4. The 1200-baud `SET_LINE_CODING` + DTR drop path triggers
-   `enter_dfu_serial()` from the USB-CDC handler, *below* any CLI
-   parser. Same for the Ctrl-C-x3 + `dfu\r` escape.
+   `enter_dfu_uf2()` from the USB-CDC handler, *below* any CLI
+   parser. Same for the Ctrl-C-x3 + `dfu\r` escape. Both paths are
+   structurally enforced by `CdcAcmRescue` — they cannot be bypassed
+   by application code.
 5. Panics route to `PanicSlot::capture` and to `SCB::sys_reset()`;
    the next boot reads the slot and prints the previous panic over
    USB-CDC before clearing it.
@@ -228,20 +230,76 @@ End-to-end verified:
 
 **Gate:** ✅ achieved.
 
-### Phase 2 — Safety primitives
+### Phase 2 — Safety primitives ✅
 
-Add: WDT, retained-RAM `PanicSlot` capture and next-boot report,
-`TouchlessResetWatcher` driving `enter_dfu_serial()`, `EscapeWatcher`
-for `\x03\x03\x03dfu\r`. The `PanicSlot` module gets promoted from
-`umsh-bsp-t1000e` to `umsh-bsp-nrf52840` in this phase (T-Echo is the
-second consumer).
+Added: WDT (8-second timeout, petted in heartbeat every ~2 s),
+retained-RAM `PanicSlot` capture and next-boot USB-CDC report,
+`EscapeWatcher` for `\x03\x03\x03dfu\r`, and 1200-baud touchless
+reset detection. `PanicSlot` promoted from `umsh-bsp-t1000e` to
+`umsh-bsp-nrf52840` (T-Echo is the second consumer, per the plan).
+`gpregret` module added to `umsh-bsp-nrf52840` using the embassy-nrf
+PAC (`pac::POWER.gpregret()`) and `cortex_m::peripheral::SCB::sys_reset()`.
 
-**Gate:** force a panic (via a debug CLI command or compile-time
-trigger); on reboot the firmware prints the previous panic message
-over USB-CDC. Trigger DFU via 1200-baud touch (`adafruit-nrfutil
---touch 1200`) — device drops into serial DFU. Trigger DFU via
-`\x03\x03\x03dfu\r` — same. The device is recoverable via at least
-three independent software paths plus bootloader double-reset.
+All four hardware gates verified on device:
+
+- `!panic\r` trigger → next boot printed `[PREV PANIC]: ...` and
+  cleared the slot.
+- 1200-baud touchless reset (`screen /dev/cu... 1200`, close) →
+  TECHOBOOT drive mounted.
+- Escape-sequence DFU (`\x03\x03\x03dfu\r`) → TECHOBOOT drive mounted.
+- Web flasher DFU round-trip → new firmware running after flash.
+
+Implementation notes:
+
+1. **GPREGRET register address bug.** The first implementation used
+   the raw address `0x40000508`, which is `GPREGRET2` (not
+   `GPREGRET`). The correct offset for `GPREGRET` is `0x4000051C`.
+   The bug was caught diagnostically: a read-back command showed only
+   bit 0 ever set regardless of the value written, because a different
+   register was being written. Fixed by switching to the PAC:
+   `pac::POWER.gpregret().write(|w| w.set_gpregret(value))`, which
+   encodes the correct offset automatically. Lesson: never hard-code
+   peripheral register addresses when a vendor PAC exists.
+2. **NVIC quiesce before GPREGRET write.** Without `cortex_m::interrupt::disable()`
+   (CPSID I), an in-flight USB, RTC, or WDT interrupt could steal AHB
+   bus cycles between the GPREGRET store and SYSRESETREQ, leaving the
+   bootloader to see a stale value. `dsb` alone was not sufficient;
+   masking all maskable interrupts is required. Verified empirically.
+3. **UF2 mode for all rescue paths.** Both the 1200-baud path and the
+   escape-sequence path call `enter_dfu_uf2()` (GPREGRET = 0x57),
+   which exposes TECHOBOOT mass-storage *and* a CDC DFU port. Using
+   serial-only mode (0x4e) would break the MeshCore web flasher and
+   UF2 file drop. There is no reason to offer serial-only as a rescue
+   path — it is only exported for completeness.
+4. **`CdcAcmRescue<'d, D>` wrapper.** The rescue checks are baked into
+   a `Receiver`+`ControlChanged` wrapper in `umsh-bsp-nrf52840` so
+   they cannot be bypassed by application code. The application only
+   receives a `Sender` (writes) and a `CdcAcmRescue` (reads); the
+   inner `Receiver` and `ControlChanged` are not exposed. A future
+   developer adding a CLI on top of this cannot accidentally skip the
+   1200-baud or escape checks — they fire on every byte by construction.
+5. **Rust 2024 `static_mut_refs` hard error.** `&mut *static_mut_ptr`
+   is forbidden in edition 2024. `PANIC_REGION` is wrapped in
+   `SyncNoinit<T>` (a `UnsafeCell<MaybeUninit<T>>` newtype) and the
+   `&mut [u8]` is obtained via `UnsafeCell::get().cast::<u8>()` +
+   `slice::from_raw_parts_mut`. This is the intended escape hatch.
+6. **`.uninit` section name.** `cortex-m-rt` 0.7.x names the no-load
+   retained-RAM section `.uninit` (not `.noinit`). Using `.noinit`
+   produces a section with the LOAD flag set, which causes
+   `cargo-binutils` to span a ~1 GB gap between flash and RAM when
+   converting to UF2. The correct attribute is
+   `#[unsafe(link_section = ".uninit")]` (Rust 2024 syntax).
+7. **`split_with_control()` for touchless reset.** `CdcAcmClass` has
+   no event callback for line-coding changes. `split_with_control()`
+   gives a `ControlChanged` future that wakes on any DTR/RTS/baud
+   event. A `select` between `read_packet` and `control_changed()`
+   detects DTR drop while a read is in flight.
+8. **WDT across soft resets.** The nRF52840 WDT keeps running across
+   SYSRESETREQ. `embassy_nrf::wdt::Watchdog::try_new` recovers the
+   same handles if the config matches, so no re-initialization is
+   needed on reboot.
+
+**Gate:** ✅ builds clean; all four hardware rescue paths verified on device.
 
 ### Phase 3 — LED heartbeat
 

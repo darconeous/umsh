@@ -681,7 +681,6 @@ dependencies = [
  "embassy-nrf",
  "embassy-time",
  "embassy-usb",
- "panic-halt",
  "static_cell",
  "umsh-bsp-nrf52840",
  "umsh-bsp-techo",
@@ -1681,7 +1680,10 @@ version = "0.1.0"
 name = "umsh-bsp-nrf52840"
 version = "0.1.0"
 dependencies = [
+ "cortex-m",
+ "embassy-futures",
  "embassy-nrf",
+ "embassy-usb",
 ]
 
 [[package]]
