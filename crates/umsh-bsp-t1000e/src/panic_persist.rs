@@ -2,14 +2,18 @@
 //!
 //! On nRF52840 a region of RAM can be marked as `noinit` so its
 //! contents survive a soft reset (warm boot, watchdog, panic-driven
-//! `SCB::sys_reset()`). This module is the *framing* layer that turns
-//! such a region into "write a panic message during panic, read it
-//! back from the next boot's main()" semantics.
+//! `SCB::sys_reset()`). This module provides both the framing layer
+//! and (eventually) the actual `static mut PANIC_REGION: [u8; N]`
+//! placement for the T1000-E.
 //!
-//! The actual `static mut PANIC_REGION: [u8; N]` placement lives in
-//! `umsh-bsp-nrf52840`; this crate operates on a borrowed
-//! `&'static mut [u8]` so it stays purely portable and unit-testable
-//! on the host.
+//! Lives in `umsh-bsp-t1000e` rather than a more generic crate
+//! because the T1000-E is currently the only consumer. If Solar P1
+//! or another nRF52840-based board ends up needing the same pattern,
+//! this module can be promoted to `umsh-bsp-nrf52840` (or a dedicated
+//! crate) without changing the API.
+//!
+//! The [`PanicSlot`] API operates on a borrowed `&'static mut [u8]`,
+//! so the framing is purely portable and unit-testable on the host.
 //!
 //! # On-region layout
 //!

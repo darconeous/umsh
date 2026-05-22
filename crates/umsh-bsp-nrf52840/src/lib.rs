@@ -10,7 +10,9 @@
 //! Board-level BSPs (e.g. [`umsh-bsp-t1000e`](../umsh_bsp_t1000e/index.html))
 //! compose this crate with their own pinout and on-board peripherals.
 //!
-//! See `docs/firmware-architecture.md` for the BSP / App / Binary triad.
+//! See `docs/firmware-architecture.md` for the BSP / UX / App / Binary triad.
+
+pub mod rescue;
 
 // TODO: implement.
 //
