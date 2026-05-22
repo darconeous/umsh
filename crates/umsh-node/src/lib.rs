@@ -162,8 +162,7 @@ pub use app_payload::{
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
 pub use host::{Host, HostError};
-pub use identity::NodeIdentity;
-pub use identity::{Capabilities, NodeIdentityRef, NodeRole};
+pub use identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 pub use mac::{MacBackend, MacBackendError};
 pub use mac_command::OwnedMacCommand;
 pub use mac_command::{CommandId, MacCommand};
@@ -176,10 +175,6 @@ pub use peer::PeerConnection;
 pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};
 pub use transport::Transport;
-
-pub mod identity_payload {
-    pub use crate::identity::{encode, parse};
-}
 
 #[cfg(test)]
 mod tests {
