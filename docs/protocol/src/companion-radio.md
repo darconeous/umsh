@@ -396,7 +396,7 @@ The first octet is the **link header**:
 
 Where:
 
-- `P` is a 2-bit protocol-pattern / version field
+- `P` is a 2-bit protocol-pattern, a `10` in binary.
   - the initial value should be fixed so receivers can quickly reject garbage
     or incompatible major revisions
 - `IID` is a 3-bit interface identifier

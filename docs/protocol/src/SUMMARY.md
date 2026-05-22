@@ -34,6 +34,7 @@
 # Appendices
 
 - [Companion Radios](companion-radio.md)
+- [Minimal Companion Radio Protocol](companion-radio-minimal.md)
 - [Security Considerations](security-considerations.md)
 - [Amateur Radio Operation](amateur-radio.md)
 - [Limitations & Open Items](limitations.md)
