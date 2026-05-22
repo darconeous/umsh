@@ -118,24 +118,91 @@ Then, in two separate terminals, start each node with the other's public key:
 ```sh
 # Terminal 1 (Alice)
 cargo run --example desktop_chat --features tokio-support -- \
-    --identity .umsh/alice.identity \
-    --udp 239.255.42.42:4242 --peer <BOB_PUBLIC_KEY>
+    --identity .umsh/alice.identity --peer <BOB_PUBLIC_KEY>
 
 # Terminal 2 (Bob)
 cargo run --example desktop_chat --features tokio-support -- \
-    --identity .umsh/bob.identity \
-    --udp 239.255.42.42:4242 --peer <ALICE_PUBLIC_KEY>
+    --identity .umsh/bob.identity --peer <ALICE_PUBLIC_KEY>
 ```
 
 Type a message and press enter to send. The chat also supports `/pfs <minutes>`
 to start a perfect forward secrecy session, `/pfs status` to check PFS state,
 and `/pfs end` to tear it down.
 
+### Use the interactive CLI
+
+The `cli_udp` example provides a full-featured REPL over a UDP multicast fake-radio. It
+supports every operation a developer would want to exercise: unicast messaging, pings, PFS
+sessions, channel join/send/leave, statistics, and live log-level changes.
+
+Start two nodes, each with its own identity file. The identity is created automatically on
+first run; the local public key is printed in the banner:
+
+```sh
+# Terminal 1 (Alice)
+cargo run --example cli_udp --features cli -- \
+    --identity .umsh/alice.identity
+
+# Terminal 2 (Bob)
+cargo run --example cli_udp --features cli -- \
+    --identity .umsh/bob.identity
+```
+
+Both nodes join the same multicast group (`239.255.42.42:7373` by default) and will hear each
+other's traffic automatically. Copy Alice's hex public key from her banner and register it
+on Bob's side:
+
+```
+/peer add <ALICE_HEX_KEY> alice
+```
+
+Then send a message:
+
+```
+/msg alice hello from Bob
+```
+
+Or set Alice as the current peer and send bare text:
+
+```
+/query alice
+hello from Bob
+```
+
+**Commonly used commands:**
+
+| Command | Description |
+|---|---|
+| `/help [cmd]` | List all commands, or show help for one |
+| `/whoami` | Print the local public key |
+| `/peer add <key> [alias]` | Register a peer; key can be hex, base58, or base64 |
+| `/peer rm <peer>` | Remove a peer |
+| `/peers` | List known peers and their status |
+| `/query <peer>` | Set the default peer for bare-text sends |
+| `/msg <peer> <text>` | Send a unicast text message |
+| `/ping <peer> [bytes]` | Send an echo request and print round-trip time |
+| `/pfs start <peer> [minutes]` | Initiate a perfect forward secrecy session |
+| `/pfs end <peer>` | Tear down a PFS session |
+| `/pfs status [peer]` | Show PFS state |
+| `/beacon` | Broadcast a beacon |
+| `/channel join <name> <key>` | Join a multicast channel |
+| `/channel send <name> <text>` | Send to a channel |
+| `/channel leave <name>` | Leave a channel |
+| `/stats` | Show TX/RX counters, RSSI, pending pings, and event queue depth |
+| `/log <level>` | Change log verbosity (`error`, `warn`, `info`, `debug`, `trace`) |
+| `/set [var [val]]` | Show or mutate per-session settings (`flood_hops`, `ack_requested`, `show_hex`) |
+| `/raw <peer> <hex>` | Send raw payload bytes |
+| `/quit` | Exit |
+
+Peers can also be pre-registered on the command line with `--peer <key>[:alias]`, which
+accepts the same key formats as `/peer add`. The `--group` and `--port` flags override the
+default multicast address and port if you need to run isolated sessions on the same machine.
+
 ### Inspecting packets with Wireshark
 
 Since the desktop chat uses UDP multicast, you can capture traffic in real time
 with Wireshark. Start a capture on the loopback interface with the display filter
-`udp.port == 4242`, and the UMSH dissector will automatically detect and decode
+`udp.port == 7373`, and the UMSH dissector will automatically detect and decode
 packets. To decrypt payloads, extract both identity files as hex keys:
 
 ```sh
