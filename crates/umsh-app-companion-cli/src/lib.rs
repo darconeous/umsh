@@ -20,9 +20,9 @@
 //! See `docs/firmware-plan-t1000e.md` for the full design.
 
 pub mod button;
+pub mod led;
 
 // TODO: implement remaining modules (see docs/firmware-plan-t1000e.md):
-//   pub mod led;              // heartbeat + power-on/off + event sequences.
 //   pub mod buzzer;          // rising/falling melody sequencer (stub for now).
 //   pub mod power;            // PowerIntent channel + power_task.
 //   pub mod cli_io;          // USB-CDC adapter to CliInput / CliOutput.
