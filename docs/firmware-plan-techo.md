@@ -185,14 +185,48 @@ The UF2 family ID `0xADA52840` is what the UF2 conversion step in the
 **Gate:** ✅ assumptions confirmed; flash window matches `memory.x`;
 proceed to Phase 1.
 
-### Phase 1 — "Hello USB-CDC"
+### Phase 1 — "Hello USB-CDC" ✅
 
-Minimal embassy main: bring up clocks, enumerate USB-CDC, echo
-received bytes back. No e-paper, no LED. Establishes the embassy /
-embassy-usb / build / UF2 / flash loop.
+Minimal embassy main bringing up clocks, USB-CDC echo, and (because
+it was useful for diagnostics) a heartbeat LED. Hit a series of
+non-obvious gotchas on the way; all four are now codified in commit
+3b98bf13 and worth recording here so the T1000-E side avoids them:
 
-**Gate:** USB CDC enumerates on host; bytes typed into a terminal are
-echoed back.
+1. **Embassy version unification.** Mixing `embassy-time 0.4` and
+   `embassy-time 0.5` in the same binary (transitively via
+   `embassy-nrf 0.5` + `embassy-usb 0.6`) put two tick-base
+   constants in the link; the registered time driver matched one
+   side but `Timer::after` read the other, and `Timer` hung
+   forever. Bumping everything to current versions
+   (`embassy-nrf 0.10`, `embassy-executor 0.10`, `embassy-usb 0.6`,
+   `embassy-time 0.5` with `tick-hz-32_768`) put a single
+   `embassy-time` in the tree and fixed it.
+2. **`embassy-executor` `embassy-time-driver` feature.** The
+   executor needs this to participate in the timer queue protocol;
+   without it `Timer::after` is a no-op.
+3. **`cortex-m-rt` `set-vtor` feature.** The Adafruit nRF52 UF2
+   bootloader hands off via the MBR, which does not reliably leave
+   VTOR pointing at the application's vector table. Without
+   `set-vtor`, the first interrupt that fires (USBD on
+   enumeration, or RTC1's compare match driving `Timer::after`)
+   dispatches to the wrong handler and the chip resets in a loop.
+   With `set-vtor` cortex-m-rt fixes VTOR at startup and
+   interrupts go where they should.
+4. **PIN_POWER_EN (P0.12) drive.** The T-Echo schematic ORs
+   VBUS-present with PIN_POWER_EN-high to enable the peripheral
+   rail. Without driving it explicitly, the LED only works on USB;
+   with it high, the LED (and later e-paper / GNSS / LoRa /
+   sensors) works on battery too.
+
+End-to-end verified:
+
+- `/dev/cu.usbmodemhello_techo1` enumerates.
+- `ioreg` shows `UMSH` / "T-Echo Bringup" / VID `0x16c0` / PID `0x27dd`.
+- Boot banner: `UMSH hello-techo: USB-CDC echo ready.`
+- Bytes round-trip byte-perfect.
+- Heartbeat LED keeps blinking throughout.
+
+**Gate:** ✅ achieved.
 
 ### Phase 2 — Safety primitives
 
