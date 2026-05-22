@@ -749,7 +749,11 @@ impl CliConfig {
     fn parse(args: Vec<String>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut identity_path = PathBuf::from(".umsh/desktop-chat.identity");
         let mut skip_counter_load = false;
-        let mut mode = Mode::Simulated;
+        let mut mode = Mode::Udp {
+            group: Ipv4Addr::new(239, 255, 42, 42),
+            port: 7373,
+            peer: PublicKey([0u8; 32]),
+        };
         let mut peer = None;
         let mut baud = 115_200u32;
         let mut index = 0usize;

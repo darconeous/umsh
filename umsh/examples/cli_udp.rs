@@ -161,7 +161,7 @@ struct Config {
 
 fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn std::error::Error>> {
     let mut identity: Option<PathBuf> = None;
-    let mut group = Ipv4Addr::new(239, 0, 0, 1);
+    let mut group = Ipv4Addr::new(239, 255, 42, 42);
     let mut port: u16 = 7373;
     let mut peers = Vec::new();
 
