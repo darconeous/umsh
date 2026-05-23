@@ -1,0 +1,42 @@
+[package]
+name = "umsh-radio-sx126x"
+description = "SX1262 LoRa radio driver implementing umsh-hal::Radio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Wraps lora-phy's SX126x driver and exposes a umsh_hal::Radio
+# implementation backed by an Embassy async task and a pair of channels.
+#
+# The caller is responsible for:
+#   - Creating the lora_phy::LoRa instance (SPI, InterfaceVariant, Config)
+#   - Spawning the `runner` task with that instance + the shared Channels
+#   - Passing Channels to Sx1262Radio for use by the MAC coordinator
+#
+# All embassy-sync generic parameters are exposed so the caller can choose
+# the mutex raw type (e.g. CriticalSectionRawMutex for no_std with critical
+# sections, NoopRawMutex for single-core Embassy tasks, ThreadModeRawMutex
+# for Embassy on Cortex-M with no IRQ sharing).
+
+[features]
+default = []
+
+[dependencies]
+umsh-hal = { path = "../umsh-hal", default-features = false }
+
+# lora-phy: we only need the sx126x module.
+lora-phy = { version = "3", default-features = false }
+
+# Needed for the DelayNs bound on the runner's DLY type parameter.
+embedded-hal-async = { version = "1", default-features = false }
+
+# embassy-sync: channels, signals, and AtomicWaker for poll_receive.
+# Version pinned to what embassy-nrf 0.10 pulls in transitively.
+embassy-sync = { version = "0.6", default-features = false }
+
+# embassy-futures: select! for the TX/RX interleaving in the runner task.
+embassy-futures = { version = "0.1", default-features = false }
+
+# heapless: Vec for frame buffers that live without heap.
+heapless = { version = "0.8", default-features = false }
