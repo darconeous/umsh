@@ -322,6 +322,41 @@ The WDT pet remains at the top of the loop; it fires on every wake-up
 (hardware-verified there). Hardware re-flash pending user confirmation
 before proceeding to Phase 4.
 
+### Phase 5 — SX1262 LoRa radio ✅
+
+New crate `crates/umsh-radio-sx126x` wraps `lora-phy` 3.0.1 and exposes
+`Sx1262Radio` which implements `umsh_hal::Radio`. The MAC coordinator can
+call `transmit()` and `poll_receive()` without knowing the radio details.
+
+Architecture:
+- **`runner()` task** owns the `lora_phy::LoRa<Sx1262>` instance. It
+  loops between continuous RX (`RxMode::Continuous`) and TX using
+  `embassy_futures::select`. Received frames go into a static `Channel`;
+  an `AtomicWaker` fires so `poll_receive` callers wake immediately.
+- **`Sx1262Radio`** is a lightweight `&'static Channels` handle that
+  implements `umsh_hal::Radio`. `transmit()` sends to the TX channel and
+  awaits a `Signal` for the result. `poll_receive()` uses the
+  double-check / AtomicWaker pattern to avoid the TOCTOU race.
+
+T-Echo hardware wiring:
+- TWISPI1 (SPIM1) at 16 MHz, SPI Mode 0 — per SX1262 datasheet §8.2
+- CS=P0.24, SCK=P0.19, MOSI=P0.22, MISO=P0.23
+- RST=P0.25, BUSY=P0.17, DIO1=P0.20
+- `tcxo_ctrl = Ctrl1V8` (DIO3 → 1.8 V TCXO on the T-Echo module)
+- `use_dcdc = true` (T-Echo module has DC-DC converter)
+- DIO2 as RF switch is configured internally by lora-phy via
+  `SetDIO2AsRfSwitchCtrl` — no CPU GPIO needed
+- `lora-phy` unconditionally depends on `defmt 0.3`; a zero-overhead
+  noop global logger (`defmt::global_logger` with empty trait impl) is
+  defined in `hello-techo/src/main.rs` so the firmware links without
+  a debug transport
+
+Default modulation: SF7 / BW125 / CR4-5 at 915 MHz.
+
+**Gate:** ✅ boots without panic; radio init (HW reset + full SX1262
+calibration via lora-phy) completes successfully on every boot.
+The runner task is spinning in continuous RX, ready for the MAC.
+
 ### Phase 4 — E-paper "hello world" ✅
 
 Drive peripheral-power-enable high, initialize the e-paper bus (SPI
