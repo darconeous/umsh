@@ -1,12 +1,21 @@
 // LilyGO T-Echo bringup firmware.
 //
 // Boot sequence:
-//   1. Bring up peripheral rail (P0.12 HIGH).
+//   1. Bring up the peripheral rail (P0.12 HIGH).
 //   2. Arm the watchdog (8 s timeout, petted by the heartbeat task).
-//   3. Render the e-paper boot screen — "UMSH bringup" + git short SHA —
-//      and put the panel in deep sleep.
-//   4. Run USB-CDC echo and the heartbeat LED concurrently for the rest
-//      of the session.
+//   3. Spawn the display task — initial boot screen ("UMSH bringup" + git
+//      short SHA + "RX: 0") plus subsequent count-update refreshes.
+//   4. Initialize the SX1262 LoRa radio (MeshCore US settings) and spawn
+//      the radio runner task.
+//   5. Spawn the packet handler task (drains the radio RX channel, updates
+//      the count, queues print lines).
+//   6. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
+//
+// Task layout (steady state):
+//   - main():               joins usb.run / run_echo / heartbeat
+//   - display_task:         renders the e-paper on count changes
+//   - radio_runner_task:    owns lora_phy::LoRa, RX/TX state machine
+//   - packet_handler_task:  drains radio RX, updates count, queues prints
 //
 // Safety primitives inherited from the BSP (see umsh-bsp-nrf52840):
 //   * Panic capture into reserved RAM, dumped over USB on the next boot.
@@ -25,6 +34,12 @@ fn main() {
 // The #[panic_handler] must live in the binary crate.
 #[cfg(target_os = "none")]
 mod panic;
+
+// Low-level SSD1681 / GDEH0154D67 driver, used by display_task below.
+// Sibling of mod firmware so it can live at src/display.rs without
+// awkward #[path] gymnastics.
+#[cfg(target_os = "none")]
+mod display;
 
 // lora-phy 3.x unconditionally depends on defmt. Provide a zero-overhead
 // no-op global logger so this binary links without any debug transport.
@@ -45,65 +60,108 @@ mod defmt_logger {
 
 #[cfg(target_os = "none")]
 mod firmware {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    use super::display;
+
     use embassy_executor::Spawner;
     use embassy_futures::join::join3;
+    use embassy_futures::select::{select, Either};
     use embassy_nrf::bind_interrupts;
-    use embassy_nrf::gpio::{Level, Output, OutputDrive};
+    use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::peripherals;
+    use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::usb::Driver;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
-    use embassy_time::{Instant, Timer};
+    use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+    use embassy_sync::channel::Channel;
+    use embassy_sync::signal::Signal;
+    use embassy_time::{Delay, Duration, Instant, Timer};
     use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
     use embassy_usb::{Builder, Config};
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use lora_phy::iv::GenericSx126xInterfaceVariant;
+    use lora_phy::mod_params::{ModulationParams, PacketParams};
+    use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
+    use lora_phy::LoRa;
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
-        USBD                    => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
-        CLOCK_POWER             => embassy_nrf::usb::vbus_detect::InterruptHandler;
-        SPI2                    => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
-        // TWISPI1 is SPIM1 on nRF52840 (shared TWIM1/SPIM1 peripheral block).
-        // Used for the SX1262 LoRa radio.
-        TWISPI1                 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
+        USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
+        CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
+        // SPIM2 → e-paper SPI bus. embassy-nrf names this interrupt SPI2.
+        SPI2        => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
+        // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
+        // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
+        TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
     });
 
-    // ─── SX1262 radio task ────────────────────────────────────────────────────
+    // ─── Configuration constants ─────────────────────────────────────────────
+
+    /// Display refresh throttle: do not refresh more than once per this
+    /// interval. Each full refresh is ~2 s of panel flashing, so spamming
+    /// updates would be both ugly and bad for the panel.
+    const DISPLAY_THROTTLE: Duration = Duration::from_secs(5);
+
+    /// FONT_10X20 character width in pixels — used for centering text.
+    const FONT_W: i32 = 10;
+
+    /// Vertical positions of the three boot-screen text lines, in pixels.
+    const TITLE_Y: i32 =  70;
+    const SHA_Y:   i32 = 100;
+    const COUNT_Y: i32 = 130;
+
+    /// Bound on the per-packet print line. Worst case: ~30 byte header +
+    /// 2 × 255 bytes of hex-encoded payload + CRLF = ~542 bytes; 640 leaves
+    /// headroom.
+    const PRINT_LINE_CAP: usize = 640;
+
+    /// Per-frame TX power in dBm. SX1262 PA range is roughly -9..+22.
+    /// 14 dBm is the conservative bringup default.
+    const TX_POWER_DBM: i32 = 14;
+
+    // ─── Concrete types for the radio task ───────────────────────────────────
     //
-    // The #[embassy_executor::task] macro needs a concrete type, so we define
-    // the full type alias here at module level and create the task function
-    // with those exact types.
-    //
-    // The T-Echo uses TWISPI1 (SPIM1) for the radio SPI bus:
-    //   SCK=P0.19, MOSI=P0.22, MISO=P0.23, CS=P0.24
-    //   RESET=P0.25, BUSY=P0.17, DIO1=P0.20
-    // DIO2 is handled internally by the SX1262 module's RF switch.
-    // DIO3 drives the 1.8V TCXO — configured via SetDIO3AsTcxoCtrl (lora-phy).
+    // `#[embassy_executor::task]` requires concrete types in the task
+    // signature, so we name them once here.
 
-    use embassy_nrf::gpio::{Input, Pull};
-    use embassy_nrf::spim::Spim;
-    use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-    use embedded_hal_bus::spi::ExclusiveDevice;
-    use embassy_time::Delay;
-    use lora_phy::LoRa;
-    use lora_phy::iv::GenericSx126xInterfaceVariant;
-    use lora_phy::mod_params::{ModulationParams, PacketParams};
-    use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
+    type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
+    type RadioIv     = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
+    type RadioKind   = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
+    type LoraRadio   = LoRa<RadioKind, Delay>;
 
-    type RadioSpi   = ExclusiveDevice<Spim<'static>, embassy_nrf::gpio::Output<'static>, Delay>;
-    type RadioIv    = GenericSx126xInterfaceVariant<
-                          embassy_nrf::gpio::Output<'static>,
-                          embassy_nrf::gpio::Input<'static>,
-                      >;
-    // Sx126x takes 3 type params: SPI bus, InterfaceVariant, and chip variant (Sx1262).
-    type RadioKind  = Sx126x<RadioSpi, RadioIv, Sx1262>;
-    type LoraRadio  = LoRa<RadioKind, Delay>;
+    // ─── Static shared state ─────────────────────────────────────────────────
 
+    /// Channels shared between the radio runner and Sx1262Radio / packet
+    /// handler. Capacity: 4 inbound frames, 2 pending TX requests.
     type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
+    /// Running count of received packets, monotonically incremented by
+    /// `packet_handler_task` once per received frame.
+    static PACKET_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    /// Fires whenever the count changes. The display task wakes on this
+    /// signal and reads the current `PACKET_COUNT` to render. Coalesces:
+    /// rapid bursts produce one refresh per throttle window, not one per
+    /// packet.
+    static DISPLAY_COUNT_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Pre-formatted per-packet print lines waiting to be drained to USB
+    /// by `run_echo`. If USB isn't draining (no serial connection), the
+    /// queue fills and subsequent lines are dropped silently — the count
+    /// still increments and the display still updates.
+    type PrintLine = heapless::String<PRINT_LINE_CAP>;
+    static PRINT_CH: Channel<ThreadModeRawMutex, PrintLine, 2> = Channel::new();
+
+    // ─── Tasks ───────────────────────────────────────────────────────────────
+
+    /// Owns the `lora_phy::LoRa` instance. Switches between continuous RX
+    /// and TX as TX requests arrive on `RADIO_CH.tx`.
     #[embassy_executor::task]
     async fn radio_runner_task(
         lora: LoraRadio,
@@ -111,194 +169,107 @@ mod firmware {
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
-        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, 14).await;
+        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
-    // ─── E-paper (SSD1681 / GDEH0154D67) ──────────────────────────────────
-    //
-    // Init sequence matches GxEPD2_154_D67 byte-for-byte. Three things that
-    // cost us a session to find:
-    //   - Cmd 0x01 third byte must be 0x00 (GD=0). 0x01 mirrors the panel.
-    //   - Cmd 0x11 (data entry) must be 0x03 (X+, Y+). 0x01 walks the wrong
-    //     direction off the first row.
-    //   - No pre-RAM load cycle. Activating with 0xB1 before writing RAM
-    //     ends in "disable clock" and silently kills subsequent 0x24 data.
-    //     The only activation is the post-RAM 0xF7 refresh.
-    mod display {
-        use embassy_nrf::gpio::{Input, Output};
-        use embassy_nrf::spim::Spim;
-        use embassy_time::{Duration, Timer};
-        use embedded_graphics::draw_target::DrawTarget;
-        use embedded_graphics::geometry::{OriginDimensions, Point, Size};
-        use embedded_graphics::pixelcolor::BinaryColor;
-        use embedded_graphics::prelude::Pixel;
+    /// Always-on consumer of `RADIO_CH.rx`. Runs independently of USB so
+    /// the counter and display update even without a serial connection.
+    ///
+    /// For each received frame: increments PACKET_COUNT, signals the
+    /// display, formats a print line, and pushes it to PRINT_CH (drop if
+    /// full).
+    #[embassy_executor::task]
+    async fn packet_handler_task() {
+        use core::fmt::Write as _;
 
-        pub const WIDTH:  usize = 200;
-        pub const HEIGHT: usize = 200;
-        pub const BYTES_PER_ROW: usize = WIDTH / 8;
-        pub const BUF_SIZE: usize = BYTES_PER_ROW * HEIGHT;
+        loop {
+            let frame = RADIO_CH.rx.receive().await;
 
-        /// Hardware-reset, software-reset, and load all SSD1681 control
-        /// registers. After this returns the panel is ready to accept RAM
-        /// writes via `render()`.
-        pub async fn init(
-            spi:  &mut Spim<'_>,
-            cs:   &mut Output<'_>,
-            dc:   &mut Output<'_>,
-            rst:  &mut Output<'_>,
-            busy: &mut Input<'_>,
-        ) {
-            Timer::after(Duration::from_millis(10)).await;
-            rst.set_low();
-            Timer::after(Duration::from_millis(10)).await;
-            rst.set_high();
-            wait_idle(busy).await;
+            PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
+            DISPLAY_COUNT_SIGNAL.signal(());
 
-            cmd(spi, cs, dc, 0x12, &[]).await;          // SW reset
-            wait_idle(busy).await;
-
-            cmd(spi, cs, dc, 0x01, &[0xC7, 0x00, 0x00]).await;        // driver output: MUX=199
-            cmd(spi, cs, dc, 0x3C, &[0x05]).await;                    // border = VSS
-            cmd(spi, cs, dc, 0x18, &[0x80]).await;                    // built-in temp sensor
-            cmd(spi, cs, dc, 0x11, &[0x03]).await;                    // data entry: X+, Y+
-            cmd(spi, cs, dc, 0x44, &[0x00, 0x18]).await;              // X window 0..24
-            cmd(spi, cs, dc, 0x45, &[0x00, 0x00, 0xC7, 0x00]).await;  // Y window 0..199
-        }
-
-        /// Write `pixels` into both B/W RAM and RED RAM, trigger a full
-        /// refresh, and wait for the panel to complete (~2 s).
-        ///
-        /// RED RAM is cleared with the same buffer because Meshtastic (or
-        /// any prior firmware) may have left content in it that would
-        /// otherwise combine with our B/W frame.
-        pub async fn render(
-            spi:    &mut Spim<'_>,
-            cs:     &mut Output<'_>,
-            dc:     &mut Output<'_>,
-            busy:   &mut Input<'_>,
-            pixels: &[u8],
-        ) {
-            cmd(spi, cs, dc, 0x4E, &[0x00]).await;
-            cmd(spi, cs, dc, 0x4F, &[0x00, 0x00]).await;
-            write_ram(spi, cs, dc, 0x24, pixels).await;
-            cmd(spi, cs, dc, 0x4E, &[0x00]).await;
-            cmd(spi, cs, dc, 0x4F, &[0x00, 0x00]).await;
-            write_ram(spi, cs, dc, 0x26, pixels).await;
-            cmd(spi, cs, dc, 0x22, &[0xF7]).await;
-            cmd(spi, cs, dc, 0x20, &[]).await;
-            wait_idle(busy).await;
-        }
-
-        /// Deep Sleep Mode 1: lowest power, RAM retained, hardware reset
-        /// required to wake. Use this once the boot frame is on the glass.
-        pub async fn sleep(spi: &mut Spim<'_>, cs: &mut Output<'_>, dc: &mut Output<'_>) {
-            cmd(spi, cs, dc, 0x10, &[0x01]).await;
-        }
-
-        /// Wait, suspended via GPIOTE, until BUSY goes low (panel idle).
-        async fn wait_idle(busy: &mut Input<'_>) {
-            busy.wait_for_low().await;
-        }
-
-        /// Send one SSD1681 command byte plus optional small data payload.
-        /// All buffers are copied to the stack first — nRF52840 EasyDMA can
-        /// only read SRAM, and `&[...]` literals in release builds may live
-        /// in flash.
-        async fn cmd(
-            spi:     &mut Spim<'_>,
-            cs:      &mut Output<'_>,
-            dc:      &mut Output<'_>,
-            command: u8,
-            data:    &[u8],
-        ) {
-            let cmd_buf = [command];
-            let mut data_buf = [0u8; 8];
-            let n = data.len().min(data_buf.len());
-            data_buf[..n].copy_from_slice(&data[..n]);
-
-            cs.set_low();
-            dc.set_low();
-            let _ = spi.write(&cmd_buf).await;
-            if n > 0 {
-                dc.set_high();
-                let _ = spi.write(&data_buf[..n]).await;
+            let mut line: PrintLine = heapless::String::new();
+            let snr_db = frame.info.snr.as_centibels() / 10;
+            let _ = write!(
+                line,
+                "\r\n[RX] rssi={} snr={} len={} data=",
+                frame.info.rssi, snr_db, frame.info.len,
+            );
+            for &b in &frame.data[..frame.info.len.min(frame.data.len())] {
+                let _ = write!(line, "{:02x}", b);
             }
-            cs.set_high();
-        }
-
-        /// Write a large pixel payload to the addressed RAM (`cmd_byte` =
-        /// 0x24 for B/W, 0x26 for RED). Single DMA burst — SPIM2's TXD
-        /// MAXCNT comfortably covers 5000 bytes despite the misleading
-        /// 8-bit-only rumor for SPIM0/1.
-        async fn write_ram(
-            spi: &mut Spim<'_>,
-            cs:  &mut Output<'_>,
-            dc:  &mut Output<'_>,
-            cmd_byte: u8,
-            pixels: &[u8],
-        ) {
-            let cmd_buf = [cmd_byte];
-            cs.set_low();
-            dc.set_low();
-            let _ = spi.write(&cmd_buf).await;
-            dc.set_high();
-            let _ = spi.write(pixels).await;
-            cs.set_high();
-        }
-
-        /// `embedded-graphics::DrawTarget` over a packed-MSB B/W frame buffer.
-        ///
-        /// Layout: bit 7 of byte 0 is pixel (0,0). 1 = white paper, 0 = black
-        /// ink. `BinaryColor::On` is treated as ink (clears the bit), which
-        /// matches the e-paper convention used by `epd-waveshare` and friends.
-        pub struct EpdFb<'a>(pub &'a mut [u8]);
-
-        impl DrawTarget for EpdFb<'_> {
-            type Color = BinaryColor;
-            type Error = core::convert::Infallible;
-
-            fn draw_iter<I>(&mut self, pixels: I) -> Result<(), core::convert::Infallible>
-            where
-                I: IntoIterator<Item = Pixel<BinaryColor>>,
-            {
-                for Pixel(Point { x, y }, color) in pixels {
-                    if (0..WIDTH as i32).contains(&x) && (0..HEIGHT as i32).contains(&y) {
-                        // T-Echo mounts the panel 90° CCW from the chip's
-                        // natural scan order. GxEPD2 corrects this with
-                        // rotation-3: swap axes, then flip the new y.
-                        // chip_x = logical_y,  chip_y = (HEIGHT-1) - logical_x
-                        let cx = y as usize;
-                        let cy = HEIGHT - 1 - x as usize;
-                        let idx = cy * BYTES_PER_ROW + cx / 8;
-                        let bit = 7 - (cx % 8);
-                        if color.is_on() {
-                            self.0[idx] &= !(1 << bit);
-                        } else {
-                            self.0[idx] |=  1 << bit;
-                        }
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        impl OriginDimensions for EpdFb<'_> {
-            fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
+            let _ = line.push_str("\r\n");
+            let _ = PRINT_CH.try_send(line);
         }
     }
 
-    // ─── Main ─────────────────────────────────────────────────────────────
-
-    #[embassy_executor::main]
-    async fn main(spawner: Spawner) {
-        use embassy_nrf::spim::{Config as SpimConfig, Frequency};
+    /// Owns the e-paper SPI bus and pins. Renders the boot screen on
+    /// startup, then waits for `DISPLAY_COUNT_SIGNAL` and re-renders with
+    /// the latest count.
+    ///
+    /// Full refresh (with flashing) per update; partial refresh on this
+    /// panel requires RED-RAM previous-frame tracking which is a separate
+    /// change. `DISPLAY_THROTTLE` caps the visible refresh rate.
+    #[embassy_executor::task]
+    async fn display_task(
+        mut spi:  Spim<'static>,
+        mut cs:   Output<'static>,
+        mut dc:   Output<'static>,
+        mut rst:  Output<'static>,
+        mut busy: Input<'static>,
+    ) {
+        use core::fmt::Write as _;
         use embedded_graphics::geometry::Point;
         use embedded_graphics::mono_font::ascii::FONT_10X20;
         use embedded_graphics::mono_font::MonoTextStyle;
         use embedded_graphics::pixelcolor::BinaryColor;
         use embedded_graphics::text::{Baseline, Text};
         use embedded_graphics::Drawable;
+        use heapless::String;
 
+        let sha   = env!("GIT_SHORT_SHA");
+        let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+
+        // Fill `buf` with a frame containing the boot text and the supplied count.
+        let mut buf = [0xFFu8; display::BUF_SIZE];
+        let render = |buf: &mut [u8; display::BUF_SIZE], count: u32| {
+            buf.fill(0xFF);  // all-white background
+            let mut fb = display::EpdFb(buf);
+
+            // Center each line by its glyph count.
+            let center_x = |text: &str| (display::WIDTH as i32 - text.len() as i32 * FONT_W) / 2;
+
+            let title = "UMSH bringup";
+            let _ = Text::with_baseline(title, Point::new(center_x(title), TITLE_Y), style, Baseline::Top).draw(&mut fb);
+            let _ = Text::with_baseline(sha,   Point::new(center_x(sha),   SHA_Y),   style, Baseline::Top).draw(&mut fb);
+
+            let mut count_str: String<16> = String::new();
+            let _ = write!(count_str, "RX: {}", count);
+            let _ = Text::with_baseline(&count_str, Point::new(center_x(&count_str), COUNT_Y), style, Baseline::Top).draw(&mut fb);
+        };
+
+        // Initial boot screen (count = 0).
+        render(&mut buf, 0);
+        display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
+        display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
+
+        // Update loop. We deliberately do NOT reset the signal after the
+        // throttle: any packet that fired during render+throttle stays
+        // pending, so the next iteration starts immediately with the
+        // newest count. Throttle still caps the refresh rate.
+        loop {
+            DISPLAY_COUNT_SIGNAL.wait().await;
+            let count = PACKET_COUNT.load(Ordering::Relaxed);
+            render(&mut buf, count);
+            display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
+            Timer::after(DISPLAY_THROTTLE).await;
+        }
+    }
+
+    // ─── Main ────────────────────────────────────────────────────────────────
+
+    #[embassy_executor::main]
+    async fn main(spawner: Spawner) {
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
         // Peripheral power enable (P0.12). Must be high before display, LoRa,
@@ -325,61 +296,37 @@ mod firmware {
             }
         };
 
-        // ── E-paper boot screen ───────────────────────────────────────────
-        // Runs synchronously before USB so the ~2-second refresh doesn't
-        // drop the host connection mid-handshake.
-        //
-        // P1.11 is the e-paper backlight on this module; we drive it LOW
+        // ── E-paper display task ──────────────────────────────────────────────
+        // P1.11 is the e-paper backlight on this module; drive it LOW
         // explicitly so leakage / external pullups can't turn it on.
         let _backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
         {
-            let mut spi_config = SpimConfig::default();
-            spi_config.frequency = Frequency::M4;
-            let mut spi = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, spi_config);
-            let mut cs   = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
-            let mut dc   = Output::new(p.P0_28, Level::Low,  OutputDrive::Standard);
-            let mut rst  = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
-            let mut busy = Input::new(p.P0_03, Pull::None);
-
-            // White frame, draw black text on top.
-            let mut buf = [0xFFu8; display::BUF_SIZE];
-            {
-                let mut fb = display::EpdFb(&mut buf);
-                let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-                let title = "UMSH bringup";
-                let sha   = env!("GIT_SHORT_SHA");
-                // FONT_10X20 is 10 px wide per glyph.
-                let title_x = (display::WIDTH as i32 - title.len() as i32 * 10) / 2;
-                let sha_x   = (display::WIDTH as i32 - sha.len()   as i32 * 10) / 2;
-                let _ = Text::with_baseline(title, Point::new(title_x, 80),  style, Baseline::Top).draw(&mut fb);
-                let _ = Text::with_baseline(sha,   Point::new(sha_x,   110), style, Baseline::Top).draw(&mut fb);
-            }
-
-            display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
-            display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
-            display::sleep(&mut spi, &mut cs, &mut dc).await;
+            let mut cfg = SpimConfig::default();
+            cfg.frequency = Frequency::M4;
+            let disp_spi  = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, cfg);
+            let disp_cs   = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
+            let disp_dc   = Output::new(p.P0_28, Level::Low,  OutputDrive::Standard);
+            let disp_rst  = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
+            let disp_busy = Input::new(p.P0_03, Pull::None);
+            spawner.spawn(display_task(disp_spi, disp_cs, disp_dc, disp_rst, disp_busy).unwrap());
         }
 
-        // ── SX1262 LoRa radio ────────────────────────────────────────────
-        // Initializes the radio and spawns a background task that handles
-        // TX/RX using the lora-phy driver. The RADIO_CH static channels are
-        // then used by Sx1262Radio (implements umsh_hal::Radio) in the MAC.
-        //
-        // Pins (T-Echo hardware):
+        // ── SX1262 LoRa radio ────────────────────────────────────────────────
+        // Pin assignment (T-Echo hardware, firmware-confirmed):
         //   SPI bus: SCK=P0.19, MOSI=P0.22, MISO=P0.23 (TWISPI1)
         //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
-        //   DIO2: internal RF switch (configured by lora-phy via SetDIO2AsRfSwitchCtrl)
-        //   DIO3: 1.8V TCXO (configured by lora-phy via SetDIO3AsTcxoCtrl)
+        //   DIO2: internal RF switch (lora-phy sends SetDIO2AsRfSwitchCtrl).
+        //   DIO3: 1.8 V TCXO (lora-phy sends SetDIO3AsTcxoCtrl).
         {
-            let mut radio_spi_config = SpimConfig::default();
+            let mut cfg = SpimConfig::default();
             // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0 (CPOL=0, CPHA=0).
-            radio_spi_config.frequency = Frequency::M16;
+            cfg.frequency = Frequency::M16;
             let radio_bus = Spim::new(
                 p.TWISPI1, Irqs,
                 p.P0_19,  // SCK
                 p.P0_23,  // MISO
                 p.P0_22,  // MOSI
-                radio_spi_config,
+                cfg,
             );
             let radio_cs  = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
             let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
@@ -392,36 +339,43 @@ mod firmware {
                 radio_rst,
                 radio_dio1,
                 radio_busy,
-                None,   // rf_switch_rx: DIO2 is wired internally on the T-Echo module
+                None,   // rf_switch_rx: DIO2 wired internally on the T-Echo module
                 None,   // rf_switch_tx: same
             ).unwrap();
 
             let lora_config = LoraConfig {
                 chip: Sx1262,
-                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),  // DIO3 → 1.8V TCXO
-                use_dcdc: true,   // T-Echo SX1262 module uses DC-DC converter
-                rx_boost: false,
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),  // DIO3 → 1.8 V TCXO
+                use_dcdc: true,   // T-Echo SX1262 module has DC-DC converter
+                rx_boost: true,   // boosted LNA gain per MeshCore SX126X_RX_BOOSTED_GAIN=1
             };
 
+            // enable_public_network=false → sync word 0x1424 (private),
+            // matching MeshCore's RADIOLIB_SX126X_SYNC_WORD_PRIVATE = 0x12.
             let mut lora = LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay)
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::default_params(&mut lora)
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::meshcore_us_params(&mut lora)
                 .unwrap_or_else(|_| panic!("radio params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
-        // ── Steady-state services ────────────────────────────────────────
+        // Drains RADIO_CH.rx, updates the count, signals the display, queues
+        // print lines for USB. Runs independent of USB so the counter updates
+        // even with no serial connected.
+        spawner.spawn(packet_handler_task().unwrap());
+
+        // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 
         let mut config = Config::new(0x16c0, 0x27dd);
-        config.manufacturer     = Some("UMSH");
-        config.product          = Some("T-Echo Bringup");
-        config.serial_number    = Some("hello-techo");
-        config.max_power        = 100;
+        config.manufacturer      = Some("UMSH");
+        config.product           = Some("T-Echo Bringup");
+        config.serial_number     = Some("hello-techo");
+        config.max_power         = 100;
         config.max_packet_size_0 = 64;
 
         static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
@@ -452,7 +406,7 @@ mod firmware {
         ).await;
     }
 
-    // ─── Heartbeat + WDT pet ──────────────────────────────────────────────
+    // ─── Heartbeat + WDT pet ─────────────────────────────────────────────────
 
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
@@ -465,24 +419,27 @@ mod firmware {
         }
     }
 
-    // ─── USB-CDC echo ─────────────────────────────────────────────────────
+    // ─── USB-CDC: echo input, drain queued radio print lines ─────────────────
     //
-    // 1200-baud touchless reset and Ctrl-C × 3 + "dfu" escape are baked
-    // into CdcAcmRescue::read_packet and fire automatically on every read.
+    // 1200-baud touchless reset and Ctrl-C × 3 + "dfu" escape are baked into
+    // CdcAcmRescue::read_packet and fire automatically on every read.
+    //
+    // Selects between (a) bytes from the host (echoed back) and (b) lines
+    // from PRINT_CH (forwarded to host). Lines arrive pre-formatted from
+    // packet_handler_task.
 
     async fn run_echo<'d, D: embassy_usb::driver::Driver<'d>>(
         mut tx: Sender<'d, D>,
         mut rx: CdcAcmRescue<'d, D>,
         prev_panic: &[u8],
     ) -> ! {
-        let mut buf = [0u8; 64];
+        let mut usb_buf = [0u8; 64];
 
         loop {
             rx.wait_connection().await;
 
-            let _ = tx
-                .write_packet(b"\r\nUMSH hello-techo: USB-CDC echo ready.\r\n")
-                .await;
+            let _ = tx.write_packet(b"\r\nUMSH hello-techo ready.\r\n").await;
+            let _ = tx.write_packet(b"Listening: MeshCore US 910.525MHz SF7 BW62.5\r\n").await;
 
             if !prev_panic.is_empty() {
                 let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
@@ -494,12 +451,19 @@ mod firmware {
                 let _ = tx.write_packet(b"\r\n").await;
             }
 
-            'echo: loop {
-                match rx.read_packet(&mut buf).await {
-                    Ok(0) | Err(_) => break 'echo,
-                    Ok(n) => {
-                        if tx.write_packet(&buf[..n]).await.is_err() {
-                            break 'echo;
+            'session: loop {
+                match select(rx.read_packet(&mut usb_buf), PRINT_CH.receive()).await {
+                    Either::First(Ok(0)) | Either::First(Err(_)) => break 'session,
+                    Either::First(Ok(n)) => {
+                        if tx.write_packet(&usb_buf[..n]).await.is_err() {
+                            break 'session;
+                        }
+                    }
+                    Either::Second(line) => {
+                        for chunk in line.as_bytes().chunks(64) {
+                            if tx.write_packet(chunk).await.is_err() {
+                                break 'session;
+                            }
                         }
                     }
                 }

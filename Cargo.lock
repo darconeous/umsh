@@ -774,6 +774,7 @@ dependencies = [
  "embassy-usb",
  "embedded-graphics",
  "embedded-hal-bus",
+ "heapless 0.8.0",
  "lora-phy",
  "static_cell",
  "umsh-bsp-nrf52840",

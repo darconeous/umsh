@@ -27,6 +27,7 @@ path = "src/main.rs"
 umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
 umsh-radio-sx126x = { path = "../../crates/umsh-radio-sx126x", default-features = false }
+heapless = { version = "0.8", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 
