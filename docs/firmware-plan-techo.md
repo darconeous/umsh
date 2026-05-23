@@ -303,24 +303,72 @@ Implementation notes:
 
 ### Phase 3 — LED heartbeat
 
-Wire `umsh_ux_tracker::led::LedEngine` to the blue LED (P0.14,
-active-low). A heartbeat task drives `tick()` and toggles the GPIO
-accordingly.
+Replaced the hand-rolled `Timer::after` timing loop in the heartbeat
+task with `LedEngine::tick()` from `umsh-ux-tracker`. The engine
+computes the LED state and the absolute next-deadline from a
+monotonic millisecond clock (`embassy_time::Instant::now().as_millis()`);
+the task sleeps to that deadline with `Timer::at(Instant::from_millis(...))`.
 
-**Gate:** blue LED blinks ~50 ms every 2 s while the firmware is
-running. If the heartbeat stops, we know the runtime has wedged.
+The observable behavior (50 ms ON / 2 s period) is identical to Phase 2.
+The difference is that `LedEngine` owns the cadence and exposes
+`play(LedSequence, now_ms)` for one-shot overlays — future application
+code (power-on flash, location-advert double-blink) can call `play()`
+without touching the heartbeat timing.
 
-### Phase 4 — E-paper "hello world"
+The WDT pet remains at the top of the loop; it fires on every wake-up
+(at most every ~2050 ms), well within the 8 s timeout.
+
+**Gate:** builds clean; observable behavior identical to Phase 2
+(hardware-verified there). Hardware re-flash pending user confirmation
+before proceeding to Phase 4.
+
+### Phase 4 — E-paper "hello world" ✅
 
 Drive peripheral-power-enable high, initialize the e-paper bus (SPI
-+ control pins), use `epd-waveshare` to write a fixed image (text
-saying "UMSH bringup" + git short SHA, plus a recognizable visual
-pattern so we can confirm "this is the firmware we just flashed" at
-a glance).
++ control pins), write a frame buffer using `embedded-graphics` (text
+"UMSH bringup" + git short SHA), push it to the SSD1681, and put the
+panel in deep sleep. No third-party e-paper crate was used; the driver
+is a thin inline module in `main.rs`.
 
-**Gate:** powering up the device with the bringup firmware shows
-the boot message on the e-paper, visible without any further host
-interaction. This is the milestone the user asked for explicitly.
+Implementation notes (these cost roughly a full debugging session):
+
+1. **SPIM2 not SPIM3.** SPIM3 on nRF52840 produced a total SPI
+   failure — no SCK, no MOSI — on the T-Echo pin assignment. SPIM2
+   with the `SPI2` interrupt works. Root cause of SPIM3 failure not
+   fully diagnosed (suspected errata or pin-mux conflict with another
+   peripheral).
+2. **Exact init sequence matters.** The only known-good reference for
+   the GDEH0154D67 is `GxEPD2_154_D67` (the library Meshtastic uses).
+   Three specific mistakes that each silently broke RAM writes:
+   - Cmd `0x01` third byte must be `0x00` (GD=0). Setting GD=1
+     mirrored the display scan and confused our own analysis.
+   - Cmd `0x11` (data entry mode) must be `0x03` (X+, Y+). Using
+     `0x01` (X+, Y−) walked the address counter off the first row
+     into undefined rows; the full 5000-byte write appeared to
+     "succeed" (BUSY pulsed, no SPI error) but nothing landed.
+   - No pre-RAM load cycle. Adding `0x22 [0xB1]` + `0x20` before the
+     first RAM write causes the chip to finish in a "disable clock"
+     state that silently swallows all subsequent `0x24` (Write B/W
+     RAM) data. The only activation step is the post-RAM `0x22 [0xF7]`
+     + `0x20` full-refresh trigger.
+3. **RED RAM must be cleared.** Prior firmware (Meshtastic) left pixel
+   data in the RED RAM. Without explicitly writing the same frame to
+   both `0x24` (B/W) and `0x26` (RED), residual red-channel content
+   combined with our new B/W frame and old data remained visible.
+4. **EasyDMA reads SRAM only.** `&[...]` byte-slice literals in
+   release builds may be in `.rodata` (flash). Every short data payload
+   (command arguments) is copied to a stack buffer before the
+   `spi.write()` call.
+5. **Panel is mounted 90° CCW from the chip's scan order.** The
+   T-Echo schematic places the flex cable at an edge that rotates the
+   natural scan 90° from what a user holding the device expects.
+   GxEPD2 compensates with rotation-3: logical pixel `(x, y)` maps to
+   chip pixel `(chip_x, chip_y) = (y, HEIGHT−1−x)`. Applied in the
+   `EpdFb` `DrawTarget` implementation.
+
+**Gate:** ✅ powering up the device with the bringup firmware shows
+"UMSH bringup" and the git short SHA on the e-paper in the correct
+orientation, visible without any host interaction.
 
 ## Build / flash recipe
 
