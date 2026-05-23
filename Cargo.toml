@@ -13,6 +13,7 @@ members = [
     "crates/umsh-bsp-nrf52840",
     "crates/umsh-bsp-t1000e",
     "crates/umsh-bsp-techo",
+    "crates/umsh-radio-sx126x",
     "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "firmware/companion-cli-t1000e",

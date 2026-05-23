@@ -26,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-radio-sx126x = { path = "../../crates/umsh-radio-sx126x", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 
@@ -42,3 +43,11 @@ embassy-nrf = { version = "0.10", default-features = false, features = ["nrf5284
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 static_cell = "2"
+# SX1262 LoRa radio driver and supporting crates.
+lora-phy = { version = "3", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# embassy-sync for the static radio channels.
+embassy-sync = { version = "0.6", default-features = false }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
+# no-op global logger so the firmware links without a debug transport.
+defmt = "0.3"

@@ -26,6 +26,23 @@ fn main() {
 #[cfg(target_os = "none")]
 mod panic;
 
+// lora-phy 3.x unconditionally depends on defmt. Provide a zero-overhead
+// no-op global logger so this binary links without any debug transport.
+// All defmt log calls compile out in release mode; this just provides the
+// required linker symbols.
+#[cfg(target_os = "none")]
+mod defmt_logger {
+    #[defmt::global_logger]
+    struct Logger;
+    unsafe impl defmt::Logger for Logger {
+        fn acquire() {}
+        unsafe fn flush() {}
+        unsafe fn release() {}
+        unsafe fn write(_: &[u8]) {}
+    }
+    defmt::timestamp!("{=u32}", 0u32);
+}
+
 #[cfg(target_os = "none")]
 mod firmware {
     use embassy_executor::Spawner;
@@ -48,7 +65,54 @@ mod firmware {
         USBD                    => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
         CLOCK_POWER             => embassy_nrf::usb::vbus_detect::InterruptHandler;
         SPI2                    => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
+        // TWISPI1 is SPIM1 on nRF52840 (shared TWIM1/SPIM1 peripheral block).
+        // Used for the SX1262 LoRa radio.
+        TWISPI1                 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
     });
+
+    // ─── SX1262 radio task ────────────────────────────────────────────────────
+    //
+    // The #[embassy_executor::task] macro needs a concrete type, so we define
+    // the full type alias here at module level and create the task function
+    // with those exact types.
+    //
+    // The T-Echo uses TWISPI1 (SPIM1) for the radio SPI bus:
+    //   SCK=P0.19, MOSI=P0.22, MISO=P0.23, CS=P0.24
+    //   RESET=P0.25, BUSY=P0.17, DIO1=P0.20
+    // DIO2 is handled internally by the SX1262 module's RF switch.
+    // DIO3 drives the 1.8V TCXO — configured via SetDIO3AsTcxoCtrl (lora-phy).
+
+    use embassy_nrf::gpio::{Input, Pull};
+    use embassy_nrf::spim::Spim;
+    use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use embassy_time::Delay;
+    use lora_phy::LoRa;
+    use lora_phy::iv::GenericSx126xInterfaceVariant;
+    use lora_phy::mod_params::{ModulationParams, PacketParams};
+    use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
+
+    type RadioSpi   = ExclusiveDevice<Spim<'static>, embassy_nrf::gpio::Output<'static>, Delay>;
+    type RadioIv    = GenericSx126xInterfaceVariant<
+                          embassy_nrf::gpio::Output<'static>,
+                          embassy_nrf::gpio::Input<'static>,
+                      >;
+    // Sx126x takes 3 type params: SPI bus, InterfaceVariant, and chip variant (Sx1262).
+    type RadioKind  = Sx126x<RadioSpi, RadioIv, Sx1262>;
+    type LoraRadio  = LoRa<RadioKind, Delay>;
+
+    type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
+    static RADIO_CH: RadioCh = RadioCh::new();
+
+    #[embassy_executor::task]
+    async fn radio_runner_task(
+        lora: LoraRadio,
+        mdltn: ModulationParams,
+        rx_pkt: PacketParams,
+        tx_pkt: PacketParams,
+    ) {
+        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, 14).await;
+    }
 
     // ─── E-paper (SSD1681 / GDEH0154D67) ──────────────────────────────────
     //
@@ -226,9 +290,8 @@ mod firmware {
     // ─── Main ─────────────────────────────────────────────────────────────
 
     #[embassy_executor::main]
-    async fn main(_spawner: Spawner) {
-        use embassy_nrf::gpio::{Input, Pull};
-        use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
+    async fn main(spawner: Spawner) {
+        use embassy_nrf::spim::{Config as SpimConfig, Frequency};
         use embedded_graphics::geometry::Point;
         use embedded_graphics::mono_font::ascii::FONT_10X20;
         use embedded_graphics::mono_font::MonoTextStyle;
@@ -295,6 +358,59 @@ mod firmware {
             display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
             display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
             display::sleep(&mut spi, &mut cs, &mut dc).await;
+        }
+
+        // ── SX1262 LoRa radio ────────────────────────────────────────────
+        // Initializes the radio and spawns a background task that handles
+        // TX/RX using the lora-phy driver. The RADIO_CH static channels are
+        // then used by Sx1262Radio (implements umsh_hal::Radio) in the MAC.
+        //
+        // Pins (T-Echo hardware):
+        //   SPI bus: SCK=P0.19, MOSI=P0.22, MISO=P0.23 (TWISPI1)
+        //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
+        //   DIO2: internal RF switch (configured by lora-phy via SetDIO2AsRfSwitchCtrl)
+        //   DIO3: 1.8V TCXO (configured by lora-phy via SetDIO3AsTcxoCtrl)
+        {
+            let mut radio_spi_config = SpimConfig::default();
+            // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0 (CPOL=0, CPHA=0).
+            radio_spi_config.frequency = Frequency::M16;
+            let radio_bus = Spim::new(
+                p.TWISPI1, Irqs,
+                p.P0_19,  // SCK
+                p.P0_23,  // MISO
+                p.P0_22,  // MOSI
+                radio_spi_config,
+            );
+            let radio_cs  = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
+            let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
+
+            let radio_rst  = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
+            let radio_dio1 = Input::new(p.P0_20, Pull::None);
+            let radio_busy = Input::new(p.P0_17, Pull::None);
+
+            let iv = GenericSx126xInterfaceVariant::new(
+                radio_rst,
+                radio_dio1,
+                radio_busy,
+                None,   // rf_switch_rx: DIO2 is wired internally on the T-Echo module
+                None,   // rf_switch_tx: same
+            ).unwrap();
+
+            let lora_config = LoraConfig {
+                chip: Sx1262,
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),  // DIO3 → 1.8V TCXO
+                use_dcdc: true,   // T-Echo SX1262 module uses DC-DC converter
+                rx_boost: false,
+            };
+
+            let mut lora = LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay)
+                .await
+                .unwrap_or_else(|_| panic!("radio init"));
+
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::default_params(&mut lora)
+                .unwrap_or_else(|_| panic!("radio params"));
+
+            spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
         // ── Steady-state services ────────────────────────────────────────
