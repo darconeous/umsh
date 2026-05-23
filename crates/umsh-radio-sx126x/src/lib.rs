@@ -90,18 +90,21 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
 // ─── Sx1262Radio ─────────────────────────────────────────────────────────────
 
 /// Implements `umsh_hal::Radio` over the shared [`Channels`].
+///
+/// The actual TX power and modulation params live on the `runner` side (it
+/// owns the `LoRa` driver). This handle only carries:
+///   - the channel pair used to talk to the runner,
+///   - a precomputed worst-case airtime so the MAC's scheduler doesn't have
+///     to recompute it.
 pub struct Sx1262Radio<M: RawMutex + 'static, const RX: usize, const TX: usize> {
     ch: &'static Channels<M, RX, TX>,
-    #[allow(dead_code)]
-    power_dbm: i32,
-    /// Precomputed worst-case frame airtime in ms, used by the MAC scheduler.
     t_frame_ms: u32,
 }
 
 impl<M: RawMutex + 'static, const RX: usize, const TX: usize> Sx1262Radio<M, RX, TX> {
-    /// `t_frame_ms_approx`: call [`airtime_ms`] with your modulation settings.
-    pub fn new(ch: &'static Channels<M, RX, TX>, power_dbm: i32, t_frame_ms: u32) -> Self {
-        Self { ch, power_dbm, t_frame_ms }
+    /// Use [`airtime_ms`] with your modulation settings to compute `t_frame_ms`.
+    pub fn new(ch: &'static Channels<M, RX, TX>, t_frame_ms: u32) -> Self {
+        Self { ch, t_frame_ms }
     }
 }
 
@@ -130,13 +133,13 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
     ) -> Poll<Result<RxInfo, Self::Error>> {
         // Fast path: frame already in queue.
         if let Ok(frame) = self.ch.rx.try_receive() {
-            return Poll::Ready(copy_frame(frame, buf));
+            return Poll::Ready(Ok(copy_frame(frame, buf)));
         }
         // Register waker then double-check to close the TOCTOU race between
         // the try_receive above and the runner pushing a frame.
         self.ch.rx_waker.register(cx.waker());
         if let Ok(frame) = self.ch.rx.try_receive() {
-            return Poll::Ready(copy_frame(frame, buf));
+            return Poll::Ready(Ok(copy_frame(frame, buf)));
         }
         Poll::Pending
     }
@@ -150,10 +153,12 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
     }
 }
 
-fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> Result<RxInfo, RadioError> {
+/// Copy a received frame into a caller-provided buffer, truncating if the
+/// caller's buffer is smaller than the frame.
+fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> RxInfo {
     let n = frame.data.len().min(buf.len());
     buf[..n].copy_from_slice(&frame.data[..n]);
-    Ok(frame.info)
+    frame.info
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
@@ -228,8 +233,7 @@ pub const UMSH_FREQUENCY_HZ: u32 = 915_000_000;
 
 /// Build the default modulation and packet parameters for UMSH bringup.
 ///
-/// SF7 / BW125 / CR4-5 at 915 MHz: reasonable range, ~125 ms airtime for
-/// a max-length frame, 5.47 kbps physical data rate.
+/// SF7 / BW125 / CR4-5 at 915 MHz.
 ///
 /// Returns `(ModulationParams, rx_PacketParams, tx_PacketParams)`.
 pub fn default_params<RK, DLY>(
@@ -239,24 +243,63 @@ where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
 {
-    let mdltn = lora.create_modulation_params(
-        SpreadingFactor::_7,
-        Bandwidth::_125KHz,
-        CodingRate::_4_5,
-        UMSH_FREQUENCY_HZ,
-    )?;
+    build_params(lora, SpreadingFactor::_7, Bandwidth::_125KHz, UMSH_FREQUENCY_HZ, 8, 8)
+}
+
+/// MeshCore US band frequency (confirmed from MeshCore source).
+pub const MESHCORE_US_FREQUENCY_HZ: u32 = 910_525_000;
+
+/// Build modulation + packet parameters matching MeshCore US (915 MHz band).
+///
+/// Sourced from MeshCore's `CustomSX1262.h` and `platformio.ini`:
+///   - 910.525 MHz / SF7 / BW62.5 kHz / CR4/5
+///   - 16-symbol TX preamble (matched against MeshCore nodes in the field)
+///   - Private sync word 0x1424 (via `enable_public_network = false` in LoRa::new)
+///   - CRC enabled, IQ normal
+///
+/// Returns `(ModulationParams, rx_PacketParams, tx_PacketParams)`.
+pub fn meshcore_us_params<RK, DLY>(
+    lora: &mut LoRa<RK, DLY>,
+) -> Result<(ModulationParams, PacketParams, PacketParams), RadioError>
+where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+{
+    // RX preamble detection uses 8 symbols (MeshCore TX sends 16; the SX1262
+    // starts decoding after detecting the minimum threshold, so setting 8 here
+    // is correct and robust against slight timing variations).
+    build_params(lora, SpreadingFactor::_7, Bandwidth::_62KHz, MESHCORE_US_FREQUENCY_HZ, 8, 16)
+}
+
+/// Shared helper: build modulation + RX/TX packet params.
+///
+/// `rx_preamble`: minimum preamble symbols for RX detection.
+/// `tx_preamble`: preamble symbols emitted on TX.
+fn build_params<RK, DLY>(
+    lora: &mut LoRa<RK, DLY>,
+    sf: SpreadingFactor,
+    bw: Bandwidth,
+    frequency_hz: u32,
+    rx_preamble: u16,
+    tx_preamble: u16,
+) -> Result<(ModulationParams, PacketParams, PacketParams), RadioError>
+where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+{
+    let mdltn = lora.create_modulation_params(sf, bw, CodingRate::_4_5, frequency_hz)?;
 
     let rx_pkt = lora.create_rx_packet_params(
-        8,             // 8 preamble symbols
+        rx_preamble,
         false,         // explicit (variable-length) header
         MAX_PAYLOAD as u8,
         true,          // CRC on
-        false,         // IQ normal (not inverted)
+        false,         // IQ normal
         &mdltn,
     )?;
 
     let tx_pkt = lora.create_tx_packet_params(
-        8,     // 8 preamble symbols
+        tx_preamble,
         false, // explicit header
         true,  // CRC on
         false, // IQ normal
