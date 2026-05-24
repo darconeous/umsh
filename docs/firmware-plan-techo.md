@@ -351,11 +351,30 @@ T-Echo hardware wiring:
   defined in `hello-techo/src/main.rs` so the firmware links without
   a debug transport
 
-Default modulation: SF7 / BW125 / CR4-5 at 915 MHz.
+Default modulation parameters available via the radio crate:
+- `default_params()` — SF7 / BW125 / CR4-5 at 915 MHz (generic UMSH default).
+- `meshcore_us_params()` — 910.525 MHz / SF7 / BW62.5 / CR4-5 / 16-symbol
+  TX preamble / private sync word 0x1424, sourced from MeshCore's
+  `CustomSX1262.h` and `platformio.ini`. Used by hello-techo so a T-Echo
+  on the bench can hear nearby MeshCore traffic.
 
 **Gate:** ✅ boots without panic; radio init (HW reset + full SX1262
-calibration via lora-phy) completes successfully on every boot.
-The runner task is spinning in continuous RX, ready for the MAC.
+calibration via lora-phy) completes successfully on every boot. The
+runner task spins in continuous RX, and the firmware drains received
+frames via:
+
+- **`packet_handler_task`** — always-on consumer of `RADIO_CH.rx`.
+  Increments a static packet counter, signals the display, and queues a
+  pre-formatted `[RX] rssi=… snr=… len=… data=…` print line to a static
+  print channel.
+- **`run_echo`** — drains the print channel to USB-CDC. When no serial
+  client is connected, the print channel fills and oldest lines are
+  dropped silently; the counter and display still advance.
+- **`display_task`** — re-renders the boot screen with the latest count
+  whenever the count-changed signal fires. 5 s throttle caps the visible
+  refresh rate (full refresh, ~2 s of flashing per update; proper
+  partial refresh on this panel needs RED-RAM previous-frame tracking
+  which is deferred).
 
 ### Phase 4 — E-paper "hello world" ✅
 
