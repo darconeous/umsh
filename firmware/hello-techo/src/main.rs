@@ -4,18 +4,18 @@
 //   1. Bring up the peripheral rail (P0.12 HIGH).
 //   2. Arm the watchdog (8 s timeout, petted by the heartbeat task).
 //   3. Spawn the display task — initial boot screen ("UMSH bringup" + git
-//      short SHA + "RX: 0") plus subsequent count-update refreshes.
+//      short SHA + "MAC: 0") plus subsequent count-update refreshes.
 //   4. Initialize the SX1262 LoRa radio (MeshCore US settings) and spawn
 //      the radio runner task.
-//   5. Spawn the packet handler task (drains the radio RX channel, updates
-//      the count, queues print lines).
+//   5. Build a `Mac<TechoPlatform>` and spawn the mac_task, which drives
+//      the full MAC coordinator and counts UMSH-authenticated packets.
 //   6. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
 //
 // Task layout (steady state):
 //   - main():               joins usb.run / run_echo / heartbeat
 //   - display_task:         renders the e-paper on count changes
 //   - radio_runner_task:    owns lora_phy::LoRa, RX/TX state machine
-//   - packet_handler_task:  drains radio RX, updates count, queues prints
+//   - mac_task:             drives Mac<TechoPlatform>, authenticates frames
 //
 // Safety primitives inherited from the BSP (see umsh-bsp-nrf52840):
 //   * Panic capture into reserved RAM, dumped over USB on the next boot.
@@ -58,6 +58,13 @@ mod defmt_logger {
     defmt::timestamp!("{=u32}", 0u32);
 }
 
+// Global heap allocator. umsh-mac → umsh-sync → alloc; a tiny static heap
+// satisfies the linker. Actual runtime alloc usage is near-zero since we drive
+// the MAC with `Mac::run` directly rather than through MacHandle.
+#[cfg(target_os = "none")]
+#[global_allocator]
+static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
+
 #[cfg(target_os = "none")]
 mod firmware {
     use core::sync::atomic::{AtomicU32, Ordering};
@@ -66,7 +73,7 @@ mod firmware {
 
     use embassy_executor::Spawner;
     use embassy_futures::join::join3;
-    use embassy_futures::select::{select, Either};
+    use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::peripherals;
@@ -82,12 +89,18 @@ mod firmware {
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
     use lora_phy::iv::GenericSx126xInterfaceVariant;
-    use lora_phy::mod_params::{ModulationParams, PacketParams};
+    use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use lora_phy::LoRa;
+    use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    use umsh_crypto::{
+        CryptoEngine,
+        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
+    };
+    use umsh_mac::{MacEventRef, OperatingPolicy, Platform, RepeaterConfig};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -115,10 +128,8 @@ mod firmware {
     const SHA_Y:   i32 = 100;
     const COUNT_Y: i32 = 130;
 
-    /// Bound on the per-packet print line. Worst case: ~30 byte header +
-    /// 2 × 255 bytes of hex-encoded payload + CRLF = ~542 bytes; 640 leaves
-    /// headroom.
-    const PRINT_LINE_CAP: usize = 640;
+    /// Bound on the per-packet print line.
+    const PRINT_LINE_CAP: usize = 128;
 
     /// Per-frame TX power in dBm. SX1262 PA range is roughly -9..+22.
     /// 14 dBm is the conservative bringup default.
@@ -136,19 +147,18 @@ mod firmware {
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
-    /// Channels shared between the radio runner and Sx1262Radio / packet
-    /// handler. Capacity: 4 inbound frames, 2 pending TX requests.
+    /// Channels shared between the radio runner and Sx1262Radio / MAC.
+    /// Capacity: 4 inbound frames, 2 pending TX requests.
     type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
-    /// Running count of received packets, monotonically incremented by
-    /// `packet_handler_task` once per received frame.
+    /// Count of UMSH-authenticated packets received by the MAC coordinator.
+    /// Incremented in the mac_task on_event callback; read by display_task.
     static PACKET_COUNT: AtomicU32 = AtomicU32::new(0);
 
-    /// Fires whenever the count changes. The display task wakes on this
-    /// signal and reads the current `PACKET_COUNT` to render. Coalesces:
-    /// rapid bursts produce one refresh per throttle window, not one per
-    /// packet.
+    /// Fires whenever the MAC delivers a new authenticated packet. The display
+    /// task wakes on this signal and reads PACKET_COUNT to render. Coalesces:
+    /// rapid bursts produce one refresh per throttle window, not one per packet.
     static DISPLAY_COUNT_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Pre-formatted per-packet print lines waiting to be drained to USB
@@ -157,6 +167,138 @@ mod firmware {
     /// still increments and the display still updates.
     type PrintLine = heapless::String<PRINT_LINE_CAP>;
     static PRINT_CH: Channel<ThreadModeRawMutex, PrintLine, 2> = Channel::new();
+
+    // ─── Platform types ───────────────────────────────────────────────────────
+    //
+    // TechoPlatform bundles the concrete driver types for Mac<P>. All
+    // implementations live here so the MAC type is fully concrete.
+
+    /// Embassy monotonic clock implementing `umsh_hal::Clock`.
+    struct EmbassyClock;
+
+    impl umsh_hal::Clock for EmbassyClock {
+        fn now_ms(&self) -> u64 {
+            Instant::now().as_millis()
+        }
+
+        fn poll_delay_until(
+            &self,
+            cx: &mut core::task::Context<'_>,
+            deadline_ms: u64,
+        ) -> core::task::Poll<()> {
+            let target = Instant::from_millis(deadline_ms);
+            if Instant::now() >= target {
+                return core::task::Poll::Ready(());
+            }
+            // Poll a freshly-pinned timer once to register `cx.waker()` with
+            // embassy's global timer queue. The waker registration outlives the
+            // future itself, so dropping the timer here is safe.
+            let mut timer = core::pin::pin!(Timer::at(target));
+            timer.as_mut().poll(cx)
+        }
+    }
+
+    /// XorShift64 PRNG seeded from the nRF52840 FICR device ID.
+    ///
+    /// The FICR DEVICEID registers hold a 64-bit unique identifier burned
+    /// into the chip at the factory, giving different seeds per device. This
+    /// is NOT a cryptographic RNG — it is sufficient for MAC backoff
+    /// randomization in Phase 6 bringup. Replace with a proper CSPRNG
+    /// (e.g. seeded from the hardware RNG peripheral) before deployment.
+    struct TeChoRng {
+        state: u64,
+    }
+
+    impl TeChoRng {
+        fn from_ficr() -> Self {
+            // FICR DEVICEID[0] at 0x10000060, DEVICEID[1] at 0x10000064.
+            // Addresses are fixed per nRF52840 Product Specification §5.1.3.
+            // SAFETY: FICR is a read-only, always-mapped peripheral region.
+            let lo = unsafe { core::ptr::read_volatile(0x1000_0060u32 as *const u32) } as u64;
+            let hi = unsafe { core::ptr::read_volatile(0x1000_0064u32 as *const u32) } as u64;
+            Self { state: ((hi << 32) | lo).max(1) }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.state = x;
+            x
+        }
+    }
+
+    impl TryRng for TeChoRng {
+        type Error = core::convert::Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(self.next_u64() as u32)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(self.next_u64())
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+            for chunk in dest.chunks_mut(8) {
+                let val = self.next_u64().to_le_bytes();
+                chunk.copy_from_slice(&val[..chunk.len()]);
+            }
+            Ok(())
+        }
+    }
+
+    impl TryCryptoRng for TeChoRng {}
+
+    /// No-op counter store.
+    ///
+    /// Returns 0 on every load (counter starts fresh each boot). Replay
+    /// protection is session-scoped only. Acceptable for Phase 6 bringup
+    /// with a SoftwareIdentity; replace with flash-backed storage before
+    /// deploying long-term identities.
+    struct RamCounterStore;
+
+    impl umsh_hal::CounterStore for RamCounterStore {
+        type Error = core::convert::Infallible;
+
+        async fn load(&self, _context: &[u8]) -> Result<u32, Self::Error> { Ok(0) }
+        async fn store(&self, _context: &[u8], _value: u32) -> Result<(), Self::Error> { Ok(()) }
+        async fn flush(&self) -> Result<(), Self::Error> { Ok(()) }
+    }
+
+    /// No-op key-value store. Always returns `None` for reads.
+    struct NullKeyValueStore;
+
+    impl umsh_hal::KeyValueStore for NullKeyValueStore {
+        type Error = core::convert::Infallible;
+
+        async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> { Ok(None) }
+        async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> { Ok(()) }
+        async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> { Ok(()) }
+    }
+
+    /// Platform bundle wiring the T-Echo hardware into `Mac<P>`.
+    struct TechoPlatform;
+
+    impl Platform for TechoPlatform {
+        type Identity     = SoftwareIdentity;
+        type Aes          = SoftwareAes;
+        type Sha          = SoftwareSha256;
+        type Radio        = umsh_radio_sx126x::Sx1262Radio<ThreadModeRawMutex, 4, 2>;
+        type Delay        = Delay;
+        type Clock        = EmbassyClock;
+        type Rng          = TeChoRng;
+        type CounterStore = RamCounterStore;
+        type KeyValueStore = NullKeyValueStore;
+    }
+
+    /// Fully-typed MAC coordinator for the T-Echo.
+    ///
+    /// Capacity is deliberately minimal for Phase 6 bringup: 1 identity,
+    /// 8 peers, 4 channels, 4 pending ACKs, 8 TX queue slots, 255-byte frame
+    /// buffer, 32-entry dup cache. Total static footprint ≈ 6 KiB.
+    type TechoMac = umsh_mac::Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>;
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -172,35 +314,36 @@ mod firmware {
         umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
-    /// Always-on consumer of `RADIO_CH.rx`. Runs independently of USB so
-    /// the counter and display update even without a serial connection.
+    /// Drives the UMSH MAC coordinator forever.
     ///
-    /// For each received frame: increments PACKET_COUNT, signals the
-    /// display, formats a print line, and pushes it to PRINT_CH (drop if
-    /// full).
+    /// Only `MacEventRef::Received` packets are counted and printed — other
+    /// event types (ACK tracking, forwarding) are silently ignored for now.
+    /// The display shows "MAC: N" where N is UMSH-authenticated packets only;
+    /// raw MeshCore frames on the same frequency are dropped by the parser.
     #[embassy_executor::task]
-    async fn packet_handler_task() {
+    async fn mac_task(mut mac: TechoMac) {
         use core::fmt::Write as _;
 
-        loop {
-            let frame = RADIO_CH.rx.receive().await;
+        mac.run(|_id, event| {
+            let MacEventRef::Received(pkt) = event else { return };
 
             PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
             DISPLAY_COUNT_SIGNAL.signal(());
 
             let mut line: PrintLine = heapless::String::new();
-            let snr_db = frame.info.snr.as_centibels() / 10;
+            let rssi   = pkt.rssi().unwrap_or(0);
+            let snr_db = pkt.snr().map_or(0, |s| s.as_centibels() / 10);
             let _ = write!(
                 line,
-                "\r\n[RX] rssi={} snr={} len={} data=",
-                frame.info.rssi, snr_db, frame.info.len,
+                "\r\n[MAC] rssi={} snr={} auth={} {:?}\r\n",
+                rssi, snr_db,
+                pkt.source_authenticated(),
+                pkt.packet_family(),
             );
-            for &b in &frame.data[..frame.info.len.min(frame.data.len())] {
-                let _ = write!(line, "{:02x}", b);
-            }
-            let _ = line.push_str("\r\n");
             let _ = PRINT_CH.try_send(line);
-        }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("mac"));
     }
 
     /// Owns the e-paper SPI bus and pins. Renders the boot screen on
@@ -244,7 +387,7 @@ mod firmware {
             let _ = Text::with_baseline(sha,   Point::new(center_x(sha),   SHA_Y),   style, Baseline::Top).draw(&mut fb);
 
             let mut count_str: String<16> = String::new();
-            let _ = write!(count_str, "RX: {}", count);
+            let _ = write!(count_str, "MAC: {}", count);
             let _ = Text::with_baseline(&count_str, Point::new(center_x(&count_str), COUNT_Y), style, Baseline::Top).draw(&mut fb);
         };
 
@@ -270,6 +413,16 @@ mod firmware {
 
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
+        // Initialize the heap allocator before any alloc-using code runs.
+        // 4 KiB is negligible on nRF52840 (256 KiB RAM); actual runtime
+        // alloc usage is near-zero since we don't create a MacHandle.
+        {
+            use core::mem::MaybeUninit;
+            const HEAP_SIZE: usize = 4096;
+            static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+            unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
+        }
+
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
         // Peripheral power enable (P0.12). Must be high before display, LoRa,
@@ -317,6 +470,11 @@ mod firmware {
         //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
         //   DIO2: internal RF switch (lora-phy sends SetDIO2AsRfSwitchCtrl).
         //   DIO3: 1.8 V TCXO (lora-phy sends SetDIO3AsTcxoCtrl).
+        let t_frame_ms = umsh_radio_sx126x::airtime_ms(
+            SpreadingFactor::_7,
+            Bandwidth::_62KHz,
+            umsh_radio_sx126x::MAX_PAYLOAD,
+        );
         {
             let mut cfg = SpimConfig::default();
             // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0 (CPOL=0, CPHA=0).
@@ -362,10 +520,29 @@ mod firmware {
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
-        // Drains RADIO_CH.rx, updates the count, signals the display, queues
-        // print lines for USB. Runs independent of USB so the counter updates
-        // even with no serial connected.
-        spawner.spawn(packet_handler_task().unwrap());
+        // ── MAC coordinator ───────────────────────────────────────────────────
+        // Generate a software identity from the FICR-seeded RNG. The identity
+        // is ephemeral (new key on every boot) which is acceptable for Phase 6
+        // bringup; swap in a persistent identity for production.
+        let mut rng = TeChoRng::from_ficr();
+        let mut id_seed = [0u8; 32];
+        rng.try_fill_bytes(&mut id_seed).ok();
+        let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
+
+        let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
+        let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let mut mac = TechoMac::new(
+            radio_handle,
+            crypto,
+            EmbassyClock,
+            rng,
+            RamCounterStore,
+            RepeaterConfig::default(),
+            OperatingPolicy::default(),
+        );
+        mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+
+        spawner.spawn(mac_task(mac).unwrap());
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
@@ -426,7 +603,7 @@ mod firmware {
     //
     // Selects between (a) bytes from the host (echoed back) and (b) lines
     // from PRINT_CH (forwarded to host). Lines arrive pre-formatted from
-    // packet_handler_task.
+    // mac_task.
 
     async fn run_echo<'d, D: embassy_usb::driver::Driver<'d>>(
         mut tx: Sender<'d, D>,
@@ -440,6 +617,7 @@ mod firmware {
 
             let _ = tx.write_packet(b"\r\nUMSH hello-techo ready.\r\n").await;
             let _ = tx.write_packet(b"Listening: MeshCore US 910.525MHz SF7 BW62.5\r\n").await;
+            let _ = tx.write_packet(b"MAC: awaiting UMSH packets (MeshCore frames are dropped)\r\n").await;
 
             if !prev_panic.is_empty() {
                 let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
