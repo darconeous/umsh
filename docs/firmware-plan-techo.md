@@ -376,6 +376,49 @@ frames via:
   partial refresh on this panel needs RED-RAM previous-frame tracking
   which is deferred).
 
+### Phase 6 — MAC coordinator integration ✅
+
+Wires `Mac<TechoPlatform>` into the firmware. `packet_handler_task` is
+replaced by `mac_task`, which drives `mac.run(on_event)` and counts only
+UMSH-authenticated packets. Display shows "MAC: N"; raw MeshCore frames
+on the same frequency are received and silently dropped by the parser.
+
+**`TechoPlatform` associated types:**
+
+| Type | Impl |
+|------|------|
+| `Identity` | `SoftwareIdentity` (ephemeral, regenerated on boot) |
+| `Aes` / `Sha` | `SoftwareAes` / `SoftwareSha256` |
+| `Radio` | `Sx1262Radio<ThreadModeRawMutex, 4, 2>` |
+| `Clock` | `EmbassyClock` — `Instant::now()` + `pin!(Timer::at())` for `poll_delay_until` |
+| `Rng` | `TeChoRng` — XorShift64 seeded from nRF52840 FICR DEVICEID (chip-unique; not crypto-grade) |
+| `CounterStore` | `RamCounterStore` — no-op (session-scoped replay protection only) |
+| `KeyValueStore` | `NullKeyValueStore` — always-None |
+| `Delay` | `embassy_time::Delay` |
+
+**Capacity:** `Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>` — 1 identity,
+8 peers, 4 channels, 4 pending ACKs, 8 TX slots, 255 B frame buffer,
+32-entry dup cache. Static footprint ≈ 6 KiB; fits comfortably in the
+nRF52840's 256 KiB RAM (total BSS ≈ 107 KiB after Phase 6 additions).
+
+**Non-obvious integration facts:**
+- `embedded-alloc` (4 KiB heap) is required even with no runtime alloc:
+  `umsh-mac` → `umsh-sync` → `extern crate alloc` forces the linker
+  to require a `#[global_allocator]`.
+- Default MAC capacity (`IDENTITIES=4`, `PEERS=16`, …) overflows RAM by
+  ~52 KiB; minimal const generics are essential on embedded.
+- The `static_mut_refs` lint requires `core::ptr::addr_of!(HEAP)` for
+  the heap init pointer — `HEAP.as_ptr()` is now denied.
+- `umsh-hal` must be a direct firmware dep; `umsh-mac` does not
+  re-export `Clock`, `CounterStore`, or `KeyValueStore`.
+- Build with `cargo build` from the firmware directory, not with
+  `--manifest-path` from the workspace root — the linker flags in
+  `.cargo/config.toml` are only picked up from the CWD hierarchy.
+
+**Gate:** ✅ boots, displays "MAC: 0", USB serial shows startup banner.
+Count stays at 0 because no second UMSH node is available for packet
+generation; parser correctly drops all MeshCore frames on the channel.
+
 ### Phase 4 — E-paper "hello world" ✅
 
 Drive peripheral-power-enable high, initialize the e-paper bus (SPI
