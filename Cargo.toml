@@ -13,11 +13,13 @@ members = [
     "crates/umsh-bsp-nrf52840",
     "crates/umsh-bsp-t1000e",
     "crates/umsh-bsp-techo",
+    "crates/umsh-bsp-wio-tracker-l1",
     "crates/umsh-radio-sx126x",
     "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "firmware/companion-cli-t1000e",
     "firmware/hello-techo",
+    "firmware/hello-wio-tracker-l1",
     "umsh",
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
@@ -38,6 +40,7 @@ default-members = [
     "crates/umsh-bsp-nrf52840",
     "crates/umsh-bsp-t1000e",
     "crates/umsh-bsp-techo",
+    "crates/umsh-bsp-wio-tracker-l1",
     "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "umsh",

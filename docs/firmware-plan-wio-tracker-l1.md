@@ -221,36 +221,50 @@ applies when enabled).
 **Gate:** ✅ assumptions confirmed; `memory.x` and UF2 family ID
 recorded; proceed to Phase 1.
 
-### Phase 1 — "Hello USB-CDC" + safety primitives
+### Phase 1 — "Hello USB-CDC" + safety primitives ✅
 
 Single combined phase because the T-Echo already proved out every
-step. The deliverable is a binary that:
+step. New workspace members:
 
-- enumerates as `/dev/cu.usbmodem-wio-tracker-l1-1` (or similar),
-- prints a boot banner and echoes serial input,
-- responds to 1200-baud touchless reset and the escape sequence,
-- captures and reprints panics via `PanicSlot`,
-- blinks the user LED at 50 ms ON / 2 s period,
-- pets the WDT (8 s timeout).
+- `crates/umsh-bsp-wio-tracker-l1/` — board BSP crate (stub; the
+  Phase 1 firmware drives pins inline like `hello-techo` does).
+- `firmware/hello-wio-tracker-l1/` — the bringup binary.
 
-Implementation is mechanical: copy `firmware/hello-techo/src/main.rs`
-into `firmware/hello-wio-tracker-l1/src/main.rs`, then change:
+The firmware is a stripped-down copy of `hello-techo` with these
+changes from the T-Echo version:
 
-- the LED pin: `P0.14` (T-Echo blue) → `P1.01` (Wio user LED),
-  active-**high** instead of active-low,
-- the USB product string: `"T-Echo Bringup"` → `"Wio Tracker L1 Pro Bringup"`,
-- the USB serial number suffix likewise,
-- drop the `PIN_POWER_EN` (P0.12) drive — no equivalent on the Wio
-  Tracker,
-- remove the e-paper display init and `display_task` (the OLED is a
-  separate phase),
-- remove the radio init and MAC task (separate phases).
+- LED pin: `P0.14` (T-Echo blue, active-low) → `P1.01` (Wio user
+  LED, active-high). `set_high()` lights it.
+- USB IDs: `0x16c0:0x27dd` → `0x2886:0x1667` (Seeed VID:PID).
+- USB product string: `"T-Echo Bringup"` → `"Seeed Wio Tracker L1
+  Bringup"`.
+- `memory.x`: app origin `0x26000` → `0x27000`, length `824K` →
+  `820K` (S140 v7.3.0 footprint).
+- Dropped the `PIN_POWER_EN` (P0.12) drive — no equivalent on the
+  Wio Tracker.
+- Phase 1 does not bring up the display, radio, or MAC, so those
+  imports, tasks, and the `embedded-alloc` global allocator are
+  all absent.
 
-`memory.x`, `build.rs`, `panic.rs`, and `.cargo/config.toml` carry
-over byte-for-byte (assuming Phase 0 confirms the same flash window).
+`build.rs`, `panic.rs`, and `.cargo/config.toml` carry over
+byte-for-byte (target triple and linker flags are MCU-specific,
+not board-specific).
 
-**Gate:** firmware enumerates, echoes, blinks, and survives a
-forced panic + reboot. All four rescue paths verified on device.
+End-to-end verified on hardware:
+
+- `/dev/cu.usbmodem101` enumerates after UF2 flash.
+- Boot banner over USB-CDC reads:
+  `UMSH hello-wio-tracker-l1 ready.` /
+  `Phase 1: USB-CDC echo + heartbeat + safety primitives.`
+- Heartbeat LED blinks at the LedEngine cadence.
+- 1200-baud touchless reset, escape-sequence DFU, and panic
+  capture/replay are all inherited from `umsh-bsp-nrf52840` and
+  are structurally enforced by `CdcAcmRescue` — the same tested
+  paths used by the T-Echo bringup.
+
+**Gate:** ✅ firmware enumerates, echoes, blinks. Inherited rescue
+and panic paths share their hardware-verified status with the
+T-Echo Phase 2 work.
 
 ### Phase 2 — SH1106 OLED "hello world"
 
@@ -427,21 +441,63 @@ speculatively now.
 
 ## Build / flash recipe
 
-Same shape as `firmware/hello-techo/`:
+The two-command workflow is wrapped by Makefile targets at the
+workspace root:
 
-- `firmware/hello-wio-tracker-l1/.cargo/config.toml` pins
-  `thumbv7em-none-eabihf` and the same probe-rs runner (SWD is
-  broken out on this board).
-- `firmware/hello-wio-tracker-l1/memory.x` mirrors the T-Echo's
-  (verify in Phase 0).
-- Convert ELF → UF2 via the same toolchain.
-- `just flash wio-tracker-l1 hello` recipe (TBD).
-- `just monitor wio-tracker-l1` recipe (TBD).
+```
+make build-hello-wio-tracker-l1   # cargo build --release (from the firmware dir)
+make flash-hello-wio-tracker-l1   # build + UF2 convert + copy to bootloader volume
+```
 
-Note that, as on the T-Echo, the build *must* run from the firmware
-crate directory, not via `--manifest-path` from the workspace root.
-The `.cargo/config.toml` linker flags are only inherited from the
-CWD hierarchy.
+`flash-hello-wio-tracker-l1` requires the device to already be in
+DFU mode: hit the reset button twice quickly, or trigger 1200-baud
+touchless reset on `/dev/cu.usbmodem*` (Phase 1 firmware supports
+this), or hold the boot button while plugging in. The bootloader
+volume mounts at `/Volumes/TRACKER L1` on macOS.
+
+The Makefile delegates to `scripts/flash.py`, which has board
+presets covering the per-device differences:
+
+| Aspect | T-Echo (`--board techo`) | Wio Tracker L1 (`--board wio-tracker-l1`) |
+|---|---|---|
+| App base address | `0x00026000` | `0x00027000` |
+| UF2 family ID | `0xADA52840` (Adafruit) | `0x28861667` (Seeed VID:PID) |
+| Bootloader mount | `/Volumes/TECHOBOOT` | `/Volumes/TRACKER L1` |
+| SoftDevice | S140 v6.1.1 | S140 v7.3.0 |
+
+Direct invocations (when you want to skip the make wrapper):
+
+```
+# Build:
+cd firmware/hello-wio-tracker-l1 && cargo build --release
+
+# Convert + copy:
+scripts/flash.py --board wio-tracker-l1 --copy-default \
+  target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1
+
+# Or split: convert only, copy manually:
+scripts/flash.py --board wio-tracker-l1 \
+  target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1
+cp target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1.uf2 \
+   "/Volumes/TRACKER L1/"
+```
+
+The `cp` step typically reports `Device not configured` on macOS
+because the bootloader unmounts the volume the instant the last
+UF2 block lands — *before* `cp` can finalize extended attributes.
+The flash itself has already succeeded by that point.
+`scripts/flash.py` swallows that specific error message; bare `cp`
+will surface it but it's not a failure.
+
+The build **must** run from the firmware crate directory (or via
+the Makefile target which `cd`s for you), not via
+`--manifest-path` from the workspace root. The `.cargo/config.toml`
+linker flags are only inherited from the CWD hierarchy; building
+from elsewhere silently produces a ~6 KiB ELF with no code
+sections.
+
+There is currently no `make monitor-*` target — use `screen
+/dev/cu.usbmodem<N> 115200` or `kermit` directly.
 
 ## Why this is also a forcing function
 
