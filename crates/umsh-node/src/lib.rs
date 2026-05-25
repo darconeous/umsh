@@ -64,7 +64,7 @@
 //!
 //! # Control payload types
 //!
-//! [`umsh_text::OwnedTextMessage`], [`OwnedNodeIdentityPayload`], and [`OwnedMacCommand`] are
+//! [`umsh_text::OwnedTextMessage`], [`NodeIdentityPayload`], and [`OwnedMacCommand`] are
 //! optional heap-allocated conveniences for callers that need
 //! to retain parsed payloads across task boundaries. Most receive-side code should prefer the
 //! borrowed views from the payload crates and [`ReceivedPacketRef`].

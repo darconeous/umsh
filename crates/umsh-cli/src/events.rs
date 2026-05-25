@@ -51,7 +51,13 @@ pub enum CliEvent {
         cmd_id: u8,
     },
 
-    // ─── Outbound (deposited by the input branch in `run()`) ────────────────
+    // ─── Outbound ────────────────────────────────────────────────────────────
+    // TODO: these variants were designed for a model where `execute()` pushes
+    // outbound work onto the event queue and `service_events()` drains it.
+    // The current implementation calls MAC I/O directly from `execute()` and
+    // none of these variants are ever pushed. Either wire them up (enables
+    // rate-limiting and cancel hooks) or remove them and the dead arms in
+    // `handle_event` to clean up the mismatch.
     OutputLine {
         line: String<EVENT_LINE_MAX>,
     },

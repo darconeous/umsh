@@ -87,6 +87,13 @@ pub struct NodeIdentityPayload {
     /// Option 4 — concatenated 2-byte region codes this repeater serves.
     pub supported_regions: Option<Vec<u8>>,
     /// EdDSA signature over ROLE..=0xFF, present when the identity stands alone.
+    ///
+    /// TODO: signing and verification belong outside `NodeIdentityPayload`
+    /// (the way the source-address routing hint lives outside the payload).
+    /// The eventual rework should remove this field and move the
+    /// signed-identity wrapper to a separate type that owns both the encoded
+    /// payload bytes and the signature, so the signed-byte range is never
+    /// reconstructed at the call site.
     pub signature: Option<[u8; 64]>,
 }
 

@@ -564,8 +564,18 @@ impl PacketHeader {
                 if options_end < options_start {
                     return Err(ParseError::Truncated);
                 }
-                let (consumed, _has_marker) =
-                    scan_options_bounded(&buf[options_start..options_end])?;
+                // MAC ACK has no payload — the options region is bounded by
+                // the fixed 8-byte ACK_TAG trailer. The scan must consume
+                // the entire region: either the marker is absent (and the
+                // scan exhausts the region), or the marker is the last byte
+                // (and `consumed` includes it). Any other case means there
+                // are bytes between an end-of-options marker and ACK_TAG,
+                // which the wire format does not assign meaning to.
+                let region = &buf[options_start..options_end];
+                let (consumed, _has_marker) = scan_options_bounded(region)?;
+                if consumed != region.len() {
+                    return Err(ParseError::MalformedOption);
+                }
                 let options_range = options_start..options_start + consumed;
                 let ack_tag_start = options_end;
                 Ok(Self {

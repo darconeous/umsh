@@ -237,15 +237,6 @@ pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeEr
 mod tests {
     use super::*;
 
-    fn round_trip(cmd: MacCommand<'_>) -> MacCommand<'_> {
-        let mut buf = [0u8; 64];
-        let len = encode(&cmd, &mut buf).expect("encode failed");
-        // Re-borrow from local buf isn't possible across the function boundary,
-        // so we verify the owned form round-trips correctly instead.
-        let _ = len;
-        cmd
-    }
-
     fn encode_decode(cmd: MacCommand<'_>) {
         let mut buf = [0u8; 64];
         let len = encode(&cmd, &mut buf).expect("encode failed");

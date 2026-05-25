@@ -19,7 +19,7 @@ This encoding appears in:
 - **MAC-layer packet options** — routing, signal-quality thresholds, callsigns (see [Packet Options](packet-options.md))
 - **Text message options** — message type, sender handle, fragmentation, colors (see [Text Messages](app-text-messages.md))
 - **Chat room payloads** — room info responses, login parameters (see [Chat Rooms](app-chat-rooms.md))
-- **Node identity metadata** — location, battery, uptime (see [Node Identity](node-identity.md))
+- **Node identity metadata** — name, location, altitude, timestamp, supported regions (see [Node Identity](node-identity.md))
 
 The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in [Packet Structure](packet-structure.md#option-encoding). Application-layer uses follow the same wire format.
 
@@ -39,7 +39,6 @@ All human-readable text in UMSH — message bodies, node names, sender handles, 
 
 - Inside a CoAP-style option, the option's length field defines the string boundary.
 - As trailing data after a `0xFF` marker, the string extends to the end of the payload (or to the start of a trailing signature).
-- In node identity payloads, the node name is NUL-terminated (`0x00`).
 
 ## Base58 Encoding
 

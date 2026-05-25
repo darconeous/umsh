@@ -30,7 +30,7 @@ use umsh::{
     tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio},
 };
 use umsh_cli::{
-    CliSession,
+    DefaultCliSession,
     io::{StdioOutput, stdio_split},
     logger::{CliLogger, LogLevel},
 };
@@ -52,17 +52,7 @@ type CliHost<'a, R> = Host<'a, P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAM
 
 // ─── Session type alias ───────────────────────────────────────────────────────
 
-type Session<'a, R> = CliSession<
-    CliHandle<'a, R>,
-    StdioOutput,
-    StderrLogger,
-    16, // N_PEERS
-    16, // N_ALIASES
-    8,  // N_CHANNELS
-    64, // N_EVENTS
-    8,  // N_PENDING_PINGS
-    256, // LINE_MAX
->;
+type Session<'a, R> = DefaultCliSession<CliHandle<'a, R>, StdioOutput, StderrLogger>;
 
 // ─── StderrLogger ─────────────────────────────────────────────────────────────
 
