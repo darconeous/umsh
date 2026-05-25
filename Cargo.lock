@@ -799,6 +799,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-hello-wio-tracker-l1"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-time",
+ "embassy-usb",
+ "heapless 0.8.0",
+ "static_cell",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-wio-tracker-l1",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "fixed"
 version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1868,6 +1886,13 @@ dependencies = [
 
 [[package]]
 name = "umsh-bsp-techo"
+version = "0.1.0"
+dependencies = [
+ "umsh-bsp-nrf52840",
+]
+
+[[package]]
+name = "umsh-bsp-wio-tracker-l1"
 version = "0.1.0"
 dependencies = [
  "umsh-bsp-nrf52840",

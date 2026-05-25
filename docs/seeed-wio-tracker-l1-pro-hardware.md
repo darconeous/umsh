@@ -4,9 +4,9 @@ This document summarizes what can be inferred about the Seeed Wio Tracker L1 fam
 
 The most important naming detail is that **“L1 Pro” appears to be the OLED L1 packaged with a case and integrated battery**, while **“L1 e-ink” is a separate display variant**. The pinout and firmware support overlap substantially, so this document covers the L1 Pro/OLED board and notes the e-ink variant where relevant.
 
-## Schematic status
+## Schematic
 
-I did **not** find a confirmed public schematic PDF for the Wio Tracker L1 / L1 Pro during this pass.
+- Schematic: <https://files.seeedstudio.com/wiki/SenseCAP/Meshtastic/Wio_Tracker_L1_Pro_SCH_PDF.pdf>
 
 Known official/resource links:
 
@@ -15,8 +15,6 @@ Known official/resource links:
 - Seeed wiki link referenced by Meshtastic: <https://wiki.seeedstudio.com/get_started_with_meshtastic_wio_tracker_l1/>
 - Seeed wiki link referenced by MeshCore board metadata: <https://wiki.seeedstudio.com/wio_tracker_l1_node/>
 - Seeed product link referenced by Meshtastic board metadata: <https://www.seeedstudio.com/Wio-Tracker-L1-p-6477.html>
-
-Because I could not confirm a schematic, the details below should be treated as a **firmware-level reconstruction**, with special attention paid to the pin maps in Meshtastic and MeshCore.
 
 ## Bootloader, SoftDevice, and flash layout
 

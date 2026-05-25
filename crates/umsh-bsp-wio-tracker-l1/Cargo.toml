@@ -1,0 +1,41 @@
+[package]
+name = "umsh-bsp-wio-tracker-l1"
+description = "Board support for the Seeed Wio Tracker L1 / L1 Pro (nRF52840)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-level BSP for the Seeed Wio Tracker L1 family (L1, L1 Pro,
+# L1 Lite). Composes umsh-bsp-nrf52840 with the L1 pinout and on-board
+# peripherals.
+#
+# The same crate covers L1, L1 Pro, and L1 Lite because they share a
+# pin map. The L1 e-ink variant uses a different display path on SPI1
+# and would warrant a separate BSP (or a feature flag).
+#
+# Initial scope is intentionally minimal — only what is needed for
+# the bringup firmware. See docs/firmware-plan-wio-tracker-l1.md.
+#
+# In scope for bringup:
+#   * USB-CDC over the nRF native USB peripheral
+#   * user LED (P1.01, active-high) for heartbeat
+#   * SH1106 OLED I²C bus (Phase 2)
+#   * SX1262 LoRa radio + RXEN pin (Phase 3)
+#
+# Out of scope for bringup (planned but not yet):
+#   * Quectel L76K GNSS UART
+#   * Joystick / trackball + user button
+#   * Grove / expansion I²C bus
+#   * QSPI external flash
+#   * Buzzer (D12 / P1.00)
+#   * Battery measurement (D16 / P0.31 + D30 / P0.04 enable)
+#
+# See docs/firmware-plan-wio-tracker-l1.md and
+# docs/seeed-wio-tracker-l1-pro-hardware.md.
+
+[features]
+default = []
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
