@@ -100,7 +100,7 @@ mod firmware {
         CryptoEngine,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_mac::{MacEventRef, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_mac::{LocalIdentityId, MacEventRef, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -321,15 +321,17 @@ mod firmware {
     /// The display shows "MAC: N" where N is UMSH-authenticated packets only;
     /// raw MeshCore frames on the same frequency are dropped by the parser.
     #[embassy_executor::task]
-    async fn mac_task(mut mac: TechoMac) {
+    async fn mac_task(mut mac: TechoMac, identity_id: LocalIdentityId) {
         use core::fmt::Write as _;
 
-        mac.run(|_id, event| {
-            let MacEventRef::Received(pkt) = event else { return };
+        const BEACON_INTERVAL: Duration = Duration::from_secs(10);
+        let opts = SendOptions::default();
+        let mut next_beacon = Instant::now() + BEACON_INTERVAL;
 
+        let mut on_event = |_id: LocalIdentityId, event: MacEventRef<'_>| {
+            let MacEventRef::Received(pkt) = event else { return };
             PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
             DISPLAY_COUNT_SIGNAL.signal(());
-
             let mut line: PrintLine = heapless::String::new();
             let rssi   = pkt.rssi().unwrap_or(0);
             let snr_db = pkt.snr().map_or(0, |s| s.as_centibels() / 10);
@@ -341,9 +343,18 @@ mod firmware {
                 pkt.packet_family(),
             );
             let _ = PRINT_CH.try_send(line);
-        })
-        .await
-        .unwrap_or_else(|_| panic!("mac"));
+        };
+
+        loop {
+            match select(mac.next_event(&mut on_event), Timer::at(next_beacon)).await {
+                Either::First(Ok(())) => {}
+                Either::First(Err(_)) => panic!("mac"),
+                Either::Second(()) => {
+                    mac.queue_broadcast(identity_id, b"", &opts).ok();
+                    next_beacon = Instant::now() + BEACON_INTERVAL;
+                }
+            }
+        }
     }
 
     /// Owns the e-paper SPI bus and pins. Renders the boot screen on
@@ -540,9 +551,8 @@ mod firmware {
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         );
-        mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
-
-        spawner.spawn(mac_task(mac).unwrap());
+        let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        spawner.spawn(mac_task(mac, identity_id).unwrap());
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
@@ -616,8 +626,9 @@ mod firmware {
             rx.wait_connection().await;
 
             let _ = tx.write_packet(b"\r\nUMSH hello-techo ready.\r\n").await;
-            let _ = tx.write_packet(b"Listening: MeshCore US 910.525MHz SF7 BW62.5\r\n").await;
-            let _ = tx.write_packet(b"MAC: awaiting UMSH packets (MeshCore frames are dropped)\r\n").await;
+            let _ = tx.write_packet(b"RF: 910.525 MHz SF7 BW62.5 (MeshCore US)\r\n").await;
+            let _ = tx.write_packet(b"TX: broadcast beacon every 10 s\r\n").await;
+            let _ = tx.write_packet(b"RX: counting UMSH frames (MeshCore dropped)\r\n").await;
 
             if !prev_panic.is_empty() {
                 let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;

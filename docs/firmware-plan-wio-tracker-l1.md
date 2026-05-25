@@ -448,18 +448,31 @@ Non-obvious integration facts carry over verbatim from T-Echo Phase 6:
 **Gate:** ✅ boots, displays "MAC: 0", USB banner confirms MAC is
 running. Counter stays at 0 pending Phase 5 packet generation.
 
-### Phase 5+ (future, not part of this bringup)
+### Phase 5 — Periodic broadcast beacon (TX path) ✅
 
-The real follow-up after Phase 4 is **`umsh-app-companion-cli`**
+Both `hello-wio-tracker-l1` and `hello-techo` now transmit a
+UMSH broadcast frame every 10 seconds. The `mac_task` now uses a
+`select(mac.next_event(&mut on_event), Timer::at(next_beacon))`
+loop instead of `mac.run(on_event)`:
+
+- When the beacon timer fires, `mac.queue_broadcast(identity_id, b"", &opts)` enqueues an empty broadcast (no payload type byte → `PayloadType::Empty`).
+- When `next_event` returns (one MAC wake cycle), the loop immediately restarts the select with the same beacon deadline.
+- Both counters advance: the Wio Tracker's "MAC: N" increments as it receives T-Echo beacons, and vice versa.
+- `source_authenticated()` is `false` on received broadcasts (no SECINFO / MIC for broadcast); that is correct and expected.
+- `LocalIdentityId` is `Copy`; it is passed alongside `Mac<P>` to the task.
+- `SendOptions::default()` is correct for broadcast: the coordinator sanitizes `encrypted = false`, `ack_requested = false`, `salt = false` automatically.
+
+**Gate:** ✅ hardware-verified on both devices; both MAC counters
+advance. End-to-end UMSH frame exchange proven on real radios.
+
+### Phase 6+ (future, not part of this bringup)
+
+The real follow-up after Phase 5 is **`umsh-app-companion-cli`**
 on this hardware — the first time the companion CLI runs on a real
 radio rather than over loopback / desktop transports. That work
 needs several pieces that are deliberately stubbed in this bringup:
 
-1. **Packet generation / TX path exercised.** Until something
-   actually transmits, neither device's counter moves. The
-   companion-CLI command surface (send text, beacon location,
-   etc.) is the natural driver, but a periodic beacon could land
-   earlier as a standalone verification.
+1. **Packet generation / TX path exercised.** ✅ Done in Phase 5.
 2. **Persistent identity.** Replace ephemeral
    `SoftwareIdentity::from_secret_bytes(rng)` with a QSPI-backed
    identity. Forces `KeyValueStore` to be real, not `Null`.
