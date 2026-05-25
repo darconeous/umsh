@@ -41,3 +41,10 @@ embedded-hal-bus = { version = "0.3", default-features = false, features = ["asy
 # lora-phy 3.0.x unconditionally depends on defmt 0.3; provide a no-op
 # global logger so the firmware links without a debug transport.
 defmt = "0.3"
+# UMSH MAC coordinator and software crypto (Phase 4: MAC integration).
+# embedded-alloc provides the global heap required by umsh-sync (alloc).
+embedded-alloc = { version = "0.5", default-features = false }
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+rand = { workspace = true }

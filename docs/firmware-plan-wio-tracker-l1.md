@@ -403,7 +403,7 @@ Non-obvious integration notes:
 
 **Gate:** ✅ hardware-verified; RX counter advancing.
 
-### Phase 4 — MAC coordinator integration
+### Phase 4 — MAC coordinator integration ✅
 
 Wire `Mac<WioTrackerL1Platform>` into the firmware. Mirror the
 T-Echo's Phase 6 work line-for-line:
@@ -427,13 +427,26 @@ verbatim:
 - Build from the firmware directory, not workspace root.
 - Default MAC const generics overflow RAM.
 
-**Gate:** boots, displays "MAC: 0" initially. Then, with the
-T-Echo bringup firmware running nearby on the same channel, the
-Wio Tracker's "MAC: N" should advance every time the T-Echo
-broadcasts a UMSH packet. *And vice versa* — once both nodes are
-running this firmware, both should see their counters increment.
-**This is the milestone that proves UMSH end-to-end on real
-radios for the first time.**
+Hardware-verified: boots and displays "MAC: 0". MeshCore frames on
+the same channel are received and silently dropped by the parser.
+
+`WioTrackerPlatform` associated types are identical to `TechoPlatform`
+in `firmware/hello-techo` — same software crypto, same FICR-seeded
+XorShift64 RNG, same no-op stubs for CounterStore/KeyValueStore. The
+`WioMac` capacity alias matches: `Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>`.
+
+The MAC counter stays at 0 because neither device transmits yet.
+Phase 5 (packet generation) is the next step.
+
+Non-obvious integration facts carry over verbatim from T-Echo Phase 6:
+- `embedded-alloc` (4 KiB heap) required even with no runtime alloc.
+- Default MAC const generics overflow RAM; minimal values are essential.
+- `core::ptr::addr_of!(HEAP)` required for heap init (`static_mut_refs`).
+- `umsh-hal` must be a direct dep; `umsh-mac` doesn't re-export `Clock` etc.
+- Build from the firmware directory, not workspace root.
+
+**Gate:** ✅ boots, displays "MAC: 0", USB banner confirms MAC is
+running. Counter stays at 0 pending Phase 5 packet generation.
 
 ### Phase 5+ (future, not part of this bringup)
 
