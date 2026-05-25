@@ -1,20 +1,12 @@
 [package]
 name = "firmware-hello-wio-tracker-l1"
-description = "Seeed Wio Tracker L1 / L1 Pro bringup firmware (USB-CDC + heartbeat + safety primitives)"
+description = "Seeed Wio Tracker L1 / L1 Pro bringup firmware (USB-CDC + OLED + LoRa + MAC)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Minimal bringup firmware for the Seeed Wio Tracker L1 family.
-# Same role as firmware/hello-techo: validate the embassy / UF2 / flash
-# workflow and prove out the safety primitives (1200-baud reset, escape
-# rescue, panic-persist, WDT) before adding display, radio, and MAC.
-#
-# Phase 1 scope only. The display (SH1106), SX1262 LoRa radio, and MAC
-# coordinator will arrive in subsequent phases — dependencies for those
-# will be added then, not speculatively now.
-#
+# Bringup firmware for the Seeed Wio Tracker L1 family.
 # See docs/firmware-plan-wio-tracker-l1.md for the full plan.
 #
 # Like the other firmware crates, this is in `workspace.members` but
@@ -28,14 +20,11 @@ path = "src/main.rs"
 [dependencies]
 umsh-bsp-wio-tracker-l1 = { path = "../../crates/umsh-bsp-wio-tracker-l1", default-features = false }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-radio-sx126x = { path = "../../crates/umsh-radio-sx126x", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 
-# Embedded-only deps. Gated on `target_os = "none"` so this crate still
-# parses and trivially compiles on host as an empty `fn main()`. The
-# real firmware build uses the embedded target via the .cargo/config.toml
-# in this directory.
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
@@ -46,3 +35,9 @@ embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.6", default-features = false }
 static_cell = "2"
+# SX1262 LoRa radio driver and supporting crates.
+lora-phy = { version = "3", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3; provide a no-op
+# global logger so the firmware links without a debug transport.
+defmt = "0.3"
