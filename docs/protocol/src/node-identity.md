@@ -63,7 +63,7 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | Number | Name | Value |
 |---:|---|---|
 | 0 | Node Name | UTF-8 string |
-| 1 | Node Location | 1-8 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
+| 1 | Node Location | 1-7 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
 | 2 | Altitude in Meters | The altitude in meters. | 
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
 | 4 | Supported Regions | one or more concatenated 2-byte region codes |

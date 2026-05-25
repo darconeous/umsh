@@ -171,7 +171,7 @@ fn forward_duplicate_key_exists_for_every_routable_packet_class() {
         .build()
         .unwrap();
     {
-        let header = multicast.header().unwrap();
+        multicast.header().unwrap();
         multicast.as_bytes_mut()[1] = FloodHops::new(2, 0).unwrap().0;
     }
     crypto.seal_packet(&mut multicast, &pairwise).unwrap();
@@ -253,7 +253,7 @@ fn confirmation_identity_matches_forwarding_identity_for_every_routable_packet_c
         .build()
         .unwrap();
     {
-        let header = multicast.header().unwrap();
+        multicast.header().unwrap();
         multicast.as_bytes_mut()[1] = FloodHops::new(2, 0).unwrap().0;
     }
     crypto.seal_packet(&mut multicast, &pairwise).unwrap();
@@ -3125,7 +3125,7 @@ fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
         .build()
         .unwrap();
     {
-        let header = packet.header().unwrap();
+        packet.header().unwrap();
         packet.as_bytes_mut()[1] = FloodHops::new(4, 2).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
@@ -3582,7 +3582,7 @@ fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
         .build()
         .unwrap();
     {
-        let header = packet.header().unwrap();
+        packet.header().unwrap();
         packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
@@ -3633,7 +3633,7 @@ fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options
         .build()
         .unwrap();
     {
-        let header = packet.header().unwrap();
+        packet.header().unwrap();
         packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
@@ -5966,7 +5966,7 @@ fn build_received_unicast_frame(
 
     let mut packet = builder.payload(payload).build().unwrap();
     if let Some((remaining, accumulated)) = flood_hops {
-        let header = packet.header().unwrap();
+        packet.header().unwrap();
         packet.as_bytes_mut()[1] =
             FloodHops::new(remaining, accumulated).unwrap().0;
     }
@@ -6510,7 +6510,7 @@ impl DummyRadio {
         };
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
-            let header = packet.header().unwrap();
+            packet.header().unwrap();
             packet.as_bytes_mut()[1] =
                 FloodHops::new(remaining, accumulated).unwrap().0;
         }
@@ -6696,7 +6696,7 @@ impl DummyRadio {
         };
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
-            let header = packet.header().unwrap();
+            packet.header().unwrap();
             packet.as_bytes_mut()[1] =
                 FloodHops::new(remaining, accumulated).unwrap().0;
         }

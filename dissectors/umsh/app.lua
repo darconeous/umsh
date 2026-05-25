@@ -26,7 +26,6 @@ local f = {}
 f.type_byte    = ProtoField.uint8  ("umsh.app.type",        "Payload Type",   base.HEX, PAYLOAD_TYPES)
 
 -- Node Identity
-f.ni_timestamp = ProtoField.uint32 ("umsh.app.ni.timestamp","Timestamp",      base.DEC)
 f.ni_role      = ProtoField.uint8  ("umsh.app.ni.role",     "Role",           base.DEC, {
   [0]="Unspecified", [1]="Repeater", [2]="Chat", [3]="Tracker",
   [4]="Sensor",      [5]="Bridge",  [6]="Chat Room", [7]="Temporary Session",
@@ -38,11 +37,14 @@ f.ni_caps_txt  = ProtoField.bool   ("umsh.app.ni.caps.txt", "Text Messages",  8,
 f.ni_caps_tel  = ProtoField.bool   ("umsh.app.ni.caps.tel", "Telemetry",      8, nil, 0x08)
 f.ni_caps_room = ProtoField.bool   ("umsh.app.ni.caps.rm",  "Chat Room",      8, nil, 0x10)
 f.ni_caps_coap = ProtoField.bool   ("umsh.app.ni.caps.coap","CoAP",           8, nil, 0x20)
-f.ni_caps_name = ProtoField.bool   ("umsh.app.ni.caps.name","Name Included",  8, nil, 0x40)
-f.ni_caps_opts = ProtoField.bool   ("umsh.app.ni.caps.opts","Options Included",8, nil, 0x80)
-f.ni_name      = ProtoField.string ("umsh.app.ni.name",     "Node Name")
-f.ni_sig       = ProtoField.bytes  ("umsh.app.ni.sig",      "EdDSA Signature")
 f.ni_options   = ProtoField.bytes  ("umsh.app.ni.options",  "Identity Options")
+f.ni_name      = ProtoField.string ("umsh.app.ni.name",     "Node Name")
+f.ni_location  = ProtoField.bytes  ("umsh.app.ni.location", "Node Location")
+f.ni_altitude  = ProtoField.int32  ("umsh.app.ni.altitude", "Altitude (m)",   base.DEC)
+f.ni_timestamp = ProtoField.uint32 ("umsh.app.ni.timestamp","Unix Timestamp", base.DEC)
+f.ni_regions   = ProtoField.bytes  ("umsh.app.ni.regions",  "Supported Regions")
+f.ni_unknown   = ProtoField.bytes  ("umsh.app.ni.unk",      "Unknown Option")
+f.ni_sig       = ProtoField.bytes  ("umsh.app.ni.sig",      "EdDSA Signature")
 
 -- MAC Command
 f.mac_cmd_id   = ProtoField.uint8  ("umsh.app.mac.cmd",     "Command",        base.HEX, {
@@ -75,10 +77,11 @@ f.txt_body     = ProtoField.string ("umsh.app.txt.body",    "Message Body")
 
 proto.fields = {
   f.type_byte,
-  f.ni_timestamp, f.ni_role, f.ni_caps,
+  f.ni_role, f.ni_caps,
   f.ni_caps_rep, f.ni_caps_mob, f.ni_caps_txt, f.ni_caps_tel,
-  f.ni_caps_room, f.ni_caps_coap, f.ni_caps_name, f.ni_caps_opts,
-  f.ni_name, f.ni_sig, f.ni_options,
+  f.ni_caps_room, f.ni_caps_coap,
+  f.ni_options, f.ni_name, f.ni_location, f.ni_altitude,
+  f.ni_timestamp, f.ni_regions, f.ni_unknown, f.ni_sig,
   f.mac_cmd_id, f.mac_nonce, f.mac_rssi, f.mac_snr,
   f.mac_echo, f.mac_pfs_key, f.mac_duration,
   f.txt_opts, f.txt_opt_type, f.txt_handle, f.txt_seq,
@@ -93,10 +96,6 @@ proto.fields = {
 local function byte_at(s, i)   return s:byte(i) end
 local function sub(s, i, j)    return s:sub(i, j) end
 local function uint16_be(s, i) return s:byte(i) * 256 + s:byte(i+1) end
-local function uint32_be(s, i)
-  return ((s:byte(i) * 0x1000000) + (s:byte(i+1) * 0x10000)
-        + (s:byte(i+2) * 0x100)   +  s:byte(i+3))
-end
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- ByteArray builder: assembles a fake Tvb from raw bytes so we can pass
@@ -113,15 +112,17 @@ end
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Node Identity dissector (called with raw payload starting after type byte)
+--
+-- Wire layout (see docs/protocol/src/node-identity.md):
+--   [ROLE:1] [CAPS:1] [CoAP options...] [0xFF]? [SIG:64]?
+--
+-- Bits 6-7 of CAPS are reserved and have no field. The 0xFF marker is
+-- required when a signature follows, omitted otherwise. Option numbers:
+-- 0=Name, 1=Location, 2=Altitude, 3=Timestamp, 4=Supported Regions.
 -- ──────────────────────────────────────────────────────────────────────────
 local function dissect_node_identity(payload, subtree, tvb)
   local len = #payload
   local off = 1  -- 1-indexed in Lua string
-
-  -- Timestamp (4 bytes)
-  if off + 3 > len then return end
-  subtree:add(f.ni_timestamp, tvb(off - 1, 4), uint32_be(payload, off))
-  off = off + 4
 
   -- Role (1 byte)
   if off > len then return end
@@ -132,8 +133,6 @@ local function dissect_node_identity(payload, subtree, tvb)
   if off > len then return end
   local caps = byte_at(payload, off)
   local caps_tree = subtree:add(f.ni_caps, tvb(off - 1, 1), caps)
-  caps_tree:add(f.ni_caps_opts, tvb(off - 1, 1))
-  caps_tree:add(f.ni_caps_name, tvb(off - 1, 1))
   caps_tree:add(f.ni_caps_coap, tvb(off - 1, 1))
   caps_tree:add(f.ni_caps_room, tvb(off - 1, 1))
   caps_tree:add(f.ni_caps_tel,  tvb(off - 1, 1))
@@ -142,36 +141,75 @@ local function dissect_node_identity(payload, subtree, tvb)
   caps_tree:add(f.ni_caps_rep,  tvb(off - 1, 1))
   off = off + 1
 
-  -- Optional NUL-terminated name (bit 6 of caps)
-  if (caps & 0x40) ~= 0 then
-    local name_start = off
-    while off <= len and byte_at(payload, off) ~= 0 do off = off + 1 end
-    local name_len = off - name_start
-    if name_len > 0 then
-      subtree:add(f.ni_name, tvb(name_start - 1, name_len),
-                  sub(payload, name_start, name_start + name_len - 1))
-    end
-    if off <= len then off = off + 1 end  -- skip NUL
+  -- CoAP options block.
+  local opts_module
+  pcall(function() opts_module = require("options") end)
+
+  local opts_start = off
+  local opts_end = off
+  if opts_module and off <= len then
+    local scan_ok = pcall(function()
+      local total = opts_module.scan_length(payload, off)
+      opts_end = off + total  -- first byte after the 0xFF (or end of region)
+    end)
+    if not scan_ok then opts_end = off end
   end
 
-  -- Optional CoAP options block (bit 7 of caps)
-  if (caps & 0x80) ~= 0 and off <= len then
-    -- Find the 0xFF terminator
-    local opts_start = off
-    while off <= len and byte_at(payload, off) ~= 0xFF do
-      off = off + 1
-    end
-    if off <= len and byte_at(payload, off) == 0xFF then
-      off = off + 1  -- consume 0xFF
-    end
-    local opts_len = off - opts_start
-    if opts_len > 0 then
-      subtree:add(f.ni_options, tvb(opts_start - 1, opts_len))
-        :set_text("Identity Options (" .. opts_len .. " bytes)")
-    end
+  local opts_len = opts_end - opts_start
+  local opts_tree
+  if opts_len > 0 then
+    opts_tree = subtree:add(f.ni_options, tvb(opts_start - 1, opts_len))
+    opts_tree:set_text("Identity Options (" .. opts_len .. " bytes)")
   end
 
-  -- Optional EdDSA signature (64 bytes, only if enough bytes remain)
+  if opts_module and opts_tree and opts_len > 0 then
+    pcall(function()
+      local raw_pos = 1
+      for num, val, consumed in opts_module.decode(payload, opts_start) do
+        local v_len   = #val
+        local opt_tvb = tvb(opts_start - 1 + raw_pos - 1, consumed)
+
+        if num == 0 then
+          opts_tree:add(f.ni_name, opt_tvb, val)
+        elseif num == 1 then
+          opts_tree:add(f.ni_location, opt_tvb)
+            :set_text(string.format("Node Location (%d bytes)", v_len))
+        elseif num == 2 then
+          if v_len == 0 then
+            opts_tree:add(f.ni_altitude, opt_tvb, 0)
+          else
+            -- Minimal big-endian signed integer (up to 4 bytes)
+            local first = byte_at(val, 1)
+            local v = 0
+            if (first & 0x80) ~= 0 then v = -1 end
+            for i = 1, v_len do
+              v = ((v * 256) + byte_at(val, i)) & 0xFFFFFFFF
+              if v >= 0x80000000 then v = v - 0x100000000 end
+            end
+            opts_tree:add(f.ni_altitude, opt_tvb, v)
+          end
+        elseif num == 3 then
+          -- Minimal big-endian unsigned integer (up to 4 bytes)
+          local v = 0
+          for i = 1, v_len do v = v * 256 + byte_at(val, i) end
+          opts_tree:add(f.ni_timestamp, opt_tvb, v)
+        elseif num == 4 then
+          opts_tree:add(f.ni_regions, opt_tvb)
+            :set_text(string.format("Supported Regions (%d region%s)",
+                                     v_len / 2,
+                                     (v_len == 2) and "" or "s"))
+        else
+          opts_tree:add(f.ni_unknown, opt_tvb)
+            :set_text(string.format("Unknown Option %d (%d bytes)", num, v_len))
+        end
+        raw_pos = raw_pos + consumed
+      end
+    end)
+  end
+
+  off = opts_end
+
+  -- Optional EdDSA signature (64 bytes after the options block).
   if len - off + 1 == 64 then
     subtree:add(f.ni_sig, tvb(off - 1, 64))
   end

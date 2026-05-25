@@ -1107,6 +1107,16 @@ impl<
     }
 
     /// Enqueues a broadcast frame for transmission.
+    ///
+    /// Note: the `encrypted`, `ack_requested`, and `salt` flags on `options`
+    /// are silently forced to `false` because broadcasts cannot carry any of
+    /// them on the wire.
+    ///
+    /// TODO: this sanitization is silent — a caller that explicitly set
+    /// `ack_requested = true` for a broadcast will get a successful
+    /// `SendReceipt` and never learn the flag was dropped. Surface this as a
+    /// debug-level event (or split `SendOptions` into kind-specific
+    /// builders) so the loss is observable.
     pub fn queue_broadcast(
         &mut self,
         from: LocalIdentityId,
@@ -1181,6 +1191,9 @@ impl<
         self.enforce_send_policy(Some(*channel_id), options, false)?;
         // Multicast has no unicast receiver to ack, so an `ack_requested`
         // flag carried over from shared `SendOptions` is silently ignored.
+        // TODO: surface this drop as a debug-level event (see the matching
+        // TODO on `queue_broadcast`) so callers can detect when their
+        // requested flags were not applied.
 
         let derived = self
             .channels
@@ -1760,6 +1773,21 @@ impl<
     /// Run Phases 3-5 after [`poll_wait_for_wake`](Self::poll_wait_for_wake)
     /// has reported a wake reason: process the received frame (if any),
     /// drain immediate ACKs, and service pending ACK timeouts.
+    ///
+    /// # Precondition
+    ///
+    /// When `reason` is [`WakeReason::Received`], `buf` **must** be the same
+    /// buffer — containing the same bytes — that was passed to the matching
+    /// [`poll_wait_for_wake`](Self::poll_wait_for_wake) call. The received
+    /// frame bytes live in `buf[..rx.len]`; `reason` only carries the
+    /// accompanying metadata (`RxInfo`). Passing a different or reinitialized
+    /// buffer will cause the received frame to be silently discarded and the
+    /// contents of `buf` to be misinterpreted as a MAC frame.
+    ///
+    /// This precondition only matters when using the split-phase API for
+    /// [`AsyncRefCell`](umsh_sync::AsyncRefCell) sharing. When driving the
+    /// coordinator through [`next_event`](Self::next_event) the buffer is a
+    /// local stack variable and the pairing is guaranteed automatically.
     pub async fn process_wake_reason(
         &mut self,
         reason: WakeReason,

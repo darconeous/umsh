@@ -47,6 +47,17 @@ use crate::stats::Stats;
 use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
+///
+/// `Node` flattens any `NodeError<…>` to a `String` via `format!("{:?}", e)`
+/// because the underlying error is generic over the `MacBackend`'s send and
+/// capacity error types and exposing it would force the CLI's error type to
+/// inherit those generics. Callers can read the message but cannot react
+/// programmatically to specific node-layer failure modes.
+///
+/// TODO: revisit this if a CLI consumer needs to branch on node errors.
+/// Options include adding a second generic parameter that carries the
+/// underlying `NodeError<E, C>`, or replacing the loss with a richer
+/// enum that mirrors the variants we actually care about at this layer.
 #[derive(Debug)]
 pub enum CliError<IoErr: core::fmt::Debug> {
     Io(IoErr),
@@ -260,7 +271,7 @@ where
         // (e.g. from a previously started host).
         self.service_events().await?;
 
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; LINE_MAX];
         let wake = self.wake.clone();
         loop {
             // Arm a single read future and keep it alive across wake events.
@@ -442,8 +453,9 @@ where
                 self.out.write_line(&line).await?;
             }
 
-            // Outbound variants are not queued in this implementation —
-            // outbound commands call MAC I/O directly in execute().
+            // Outbound variants are dead in this implementation — `execute()`
+            // calls MAC I/O directly and never pushes these. See the TODO in
+            // `events.rs` for context on the intended future model.
             CliEvent::SendText { .. }
             | CliEvent::SendPing { .. }
             | CliEvent::StartPfs { .. }

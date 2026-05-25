@@ -35,7 +35,7 @@ Because the ack tag requires knowledge of the pairwise `K_enc`, it cannot be for
 
 The ack is routed back to the original sender using whatever routing state is available — a cached source route, a cached flood response scoped by `FHOPS_ACC` and any learned region-code options, or both. See [Route Learning](beacons.md#route-learning) for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.
 
-Because the ACK TAG is a known length, the options field may omit the 0xFF terminator.
+Because the ACK TAG is a known length and no payload follows, the options field MUST be followed immediately by the ACK TAG with no intervening bytes. The `0xFF` end-of-options marker MAY be omitted (the trailer length is what bounds the options region). If the marker is present it MUST be the last byte of the options region — receivers MUST reject packets that carry trailing bytes between the marker and the ACK TAG.
 
 ## Unicast Packet
 

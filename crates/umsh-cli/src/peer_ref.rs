@@ -14,26 +14,17 @@ use umsh_core::PublicKey;
 /// Decode a `<peer-ref>` token into a `PublicKey`. Alias lookup is the
 /// caller's concern; this helper only handles the encoded forms.
 ///
+/// Tried in order: hex (only matches 64-char tokens), then base58, then
+/// base64. Each decoder rejects anything that doesn't produce exactly 32
+/// bytes, so a token that happens to be valid in two alphabets will be
+/// resolved by the first one whose length check passes.
+///
 /// Returns `None` if the token doesn't decode to a full 32-byte key in any
 /// of the supported encodings.
 pub fn try_parse_pubkey(token: &str) -> Option<PublicKey> {
-    if let Some(key) = try_hex(token) {
-        return Some(key);
-    }
-    // Base64 vs base58: base58 alphabet excludes `0OIl+/=`. If the token
-    // contains any of those, it can't be base58. Try base64 first in that
-    // case; otherwise try base58 first.
-    let looks_b64 = token.bytes().any(|b| matches!(b, b'0' | b'O' | b'I' | b'l' | b'+' | b'/' | b'=' | b'-' | b'_'));
-    if looks_b64 {
-        if let Some(key) = try_b64(token) {
-            return Some(key);
-        }
-        return try_b58(token);
-    }
-    if let Some(key) = try_b58(token) {
-        return Some(key);
-    }
-    try_b64(token)
+    try_hex(token)
+        .or_else(|| try_b58(token))
+        .or_else(|| try_b64(token))
 }
 
 fn try_hex(token: &str) -> Option<PublicKey> {
