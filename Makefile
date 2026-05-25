@@ -1,4 +1,38 @@
-.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages
+.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages \
+	build-hello-techo flash-hello-techo \
+	build-hello-wio-tracker-l1 flash-hello-wio-tracker-l1
+
+# ─── Firmware build / flash ──────────────────────────────────────────────────
+#
+# Each firmware target is built from inside its own directory so the
+# per-firmware `.cargo/config.toml` (target triple + linker flags) is
+# picked up. Running cargo with `--manifest-path` from the workspace
+# root silently skips those flags and produces a broken ELF.
+#
+# `flash-*` targets convert the ELF to UF2 with the board-specific
+# base address and family ID (see scripts/flash.py BOARDS dict) and
+# copy it to the default bootloader mount path. The device must be in
+# DFU mode first (1200-baud touch, double-tap reset, or hold the boot
+# button while plugging in).
+
+TARGET_DIR := target/thumbv7em-none-eabihf/release
+
+build-hello-techo:
+	cd firmware/hello-techo && cargo build --release
+
+flash-hello-techo: build-hello-techo
+	scripts/flash.py --board techo --copy-default \
+		$(TARGET_DIR)/firmware-hello-techo
+
+build-hello-wio-tracker-l1:
+	cd firmware/hello-wio-tracker-l1 && cargo build --release
+
+flash-hello-wio-tracker-l1: build-hello-wio-tracker-l1
+	scripts/flash.py --board wio-tracker-l1 --copy-default \
+		$(TARGET_DIR)/firmware-hello-wio-tracker-l1
+
+# ─── Docs ────────────────────────────────────────────────────────────────────
+
 
 RUSTDOC_CRATES := \
 	umsh \

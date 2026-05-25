@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert an embedded ELF to the Microsoft UF2 file format and
-optionally drop it onto a mounted UF2-bootloader mass-storage volume
-(e.g. /Volumes/TECHOBOOT for the LilyGO T-Echo).
+optionally drop it onto a mounted UF2-bootloader mass-storage volume.
 
 This is intentionally a single self-contained script with no
 third-party Python dependencies: it shells out to a host
@@ -10,19 +9,36 @@ third-party Python dependencies: it shells out to a host
 step and then packs the bin into UF2 blocks in pure Python.
 
 The UF2 layout is documented at https://github.com/microsoft/uf2.
-For nRF52840 with the Adafruit UF2 bootloader, the family ID is
-0xADA52840 and the application flash region begins at 0x00026000
-(after the reserved S140 SoftDevice slot).
+
+Each supported board has different SoftDevice / bootloader layout
+and family-ID conventions; pick one via `--board`. The board preset
+sets the flash base address, family ID, and a sensible default
+`--copy-to` mount path. Individual flags still override the preset.
+
+Boards
+------
+
+  techo            LilyGO T-Echo (Adafruit family 0xADA52840,
+                   S140 v6.1.1, app @ 0x26000, /Volumes/TECHOBOOT).
+  wio-tracker-l1   Seeed Wio Tracker L1 / L1 Pro
+                   (Seeed family 0x28861667, S140 v7.3.0,
+                   app @ 0x27000, /Volumes/TRACKER L1).
 
 Examples
 --------
 
   # Convert only:
-  scripts/flash.py target/thumbv7em-none-eabihf/release/firmware-hello-techo
+  scripts/flash.py --board techo \\
+      target/thumbv7em-none-eabihf/release/firmware-hello-techo
 
   # Convert and copy to a mounted bootloader drive:
-  scripts/flash.py target/thumbv7em-none-eabihf/release/firmware-hello-techo \\
-      --copy-to /Volumes/TECHOBOOT
+  scripts/flash.py --board wio-tracker-l1 \\
+      target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1 \\
+      --copy-to "/Volumes/TRACKER L1"
+
+  # Same as above with the board's default mount path picked up:
+  scripts/flash.py --board wio-tracker-l1 --copy-default \\
+      target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1
 """
 
 from __future__ import annotations
@@ -43,8 +59,28 @@ UF2_PAYLOAD_BYTES = 256
 UF2_BLOCK_BYTES = 512
 
 DEFAULT_OBJCOPY = "arm-none-eabi-objcopy"
-DEFAULT_BASE_ADDR = 0x00026000        # nRF52840 with S140 reserved
-DEFAULT_FAMILY_ID = 0xADA52840        # Adafruit nRF52840
+
+# Board presets. Each entry has the flash base address (where the app
+# starts, after MBR + SoftDevice), the UF2 family ID the bootloader
+# accepts, and the typical macOS mount path for the bootloader volume.
+#
+# When changing these, also update:
+#   * docs/firmware-plan-<board>.md (Phase 0 section)
+#   * docs/<vendor>-<board>-hardware.md (bootloader / flash layout section)
+BOARDS = {
+    "techo": {
+        "base":   0x00026000,        # S140 v6.1.1 reserves 152 KiB
+        "family": 0xADA52840,        # Adafruit nRF52840 family
+        "mount":  "/Volumes/TECHOBOOT",
+        "description": "LilyGO T-Echo",
+    },
+    "wio-tracker-l1": {
+        "base":   0x00027000,        # S140 v7.3.0 reserves 156 KiB
+        "family": 0x28861667,        # Seeed family (VID 0x2886 | PID 0x1667)
+        "mount":  "/Volumes/TRACKER L1",
+        "description": "Seeed Wio Tracker L1 / L1 Pro",
+    },
+}
 
 
 def pack_uf2(data: bytes, base_addr: int, family_id: int) -> bytes:
@@ -108,21 +144,27 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Convert an ELF to UF2 and optionally drop on a bootloader volume.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
     )
     parser.add_argument("elf", help="path to the input ELF binary")
     parser.add_argument(
+        "--board",
+        choices=sorted(BOARDS.keys()),
+        metavar="NAME",
+        help="board preset name. Sets --base, --family, and the default "
+        "--copy-to path. Supported: " + ", ".join(sorted(BOARDS.keys())),
+    )
+    parser.add_argument(
         "--base",
         type=parse_int,
-        default=DEFAULT_BASE_ADDR,
         metavar="ADDR",
-        help=f"flash base address (default: 0x{DEFAULT_BASE_ADDR:08X})",
+        help="flash base address (overrides --board, required if no --board)",
     )
     parser.add_argument(
         "--family",
         type=parse_int,
-        default=DEFAULT_FAMILY_ID,
         metavar="ID",
-        help=f"UF2 family ID (default: 0x{DEFAULT_FAMILY_ID:08X})",
+        help="UF2 family ID (overrides --board, required if no --board)",
     )
     parser.add_argument(
         "--out",
@@ -136,12 +178,31 @@ def main(argv: list[str]) -> int:
         "mounted bootloader drive, e.g. /Volumes/TECHOBOOT)",
     )
     parser.add_argument(
+        "--copy-default",
+        action="store_true",
+        help="copy to the board preset's default mount path; ignored if "
+        "--copy-to is also given",
+    )
+    parser.add_argument(
         "--objcopy",
         default=DEFAULT_OBJCOPY,
         metavar="CMD",
         help=f"objcopy binary to invoke (default: {DEFAULT_OBJCOPY})",
     )
     args = parser.parse_args(argv)
+
+    # Resolve board preset → base, family, default mount.
+    preset = BOARDS.get(args.board) if args.board else None
+    base = args.base if args.base is not None else (preset["base"] if preset else None)
+    family = args.family if args.family is not None else (preset["family"] if preset else None)
+    if base is None or family is None:
+        parser.error("must specify --board, or both --base and --family")
+
+    copy_to = args.copy_to
+    if copy_to is None and args.copy_default:
+        if preset is None:
+            parser.error("--copy-default requires --board")
+        copy_to = preset["mount"]
 
     if not os.path.isfile(args.elf):
         print(f"flash.py: not a file: {args.elf}", file=sys.stderr)
@@ -154,21 +215,42 @@ def main(argv: list[str]) -> int:
     print(f"flash.py: flash image = {len(bin_bytes)} bytes "
           f"({len(bin_bytes) / 1024:.1f} KiB)")
 
-    uf2 = pack_uf2(bin_bytes, args.base, args.family)
+    uf2 = pack_uf2(bin_bytes, base, family)
     n_blocks = len(uf2) // UF2_BLOCK_BYTES
+    label = f" ({preset['description']})" if preset else ""
     print(f"flash.py: packed {n_blocks} UF2 blocks "
-          f"(base = 0x{args.base:08X}, family = 0x{args.family:08X})")
+          f"(base = 0x{base:08X}, family = 0x{family:08X}){label}")
 
     with open(out_path, "wb") as fh:
         fh.write(uf2)
     print(f"flash.py: wrote {out_path}")
 
-    if args.copy_to:
-        dest = args.copy_to
+    if copy_to:
+        dest = copy_to
+        if not os.path.exists(dest):
+            print(f"flash.py: bootloader volume not mounted: {dest}", file=sys.stderr)
+            print(f"flash.py: put the device in DFU mode (1200-baud reset, "
+                  f"double-tap reset, or hold boot button while plugging in) "
+                  f"and rerun.", file=sys.stderr)
+            return 1
         if os.path.isdir(dest):
             dest = os.path.join(dest, os.path.basename(out_path))
-        shutil.copyfile(out_path, dest)
-        print(f"flash.py: copied to {dest}")
+        # The bootloader unmounts the volume as soon as the last block lands,
+        # so copyfile() may finish (or appear to fail) before final metadata
+        # syncs. Treat "device disappeared mid-copy" as success.
+        try:
+            shutil.copyfile(out_path, dest)
+            print(f"flash.py: copied to {dest}")
+        except OSError as exc:
+            # macOS reports "Device not configured" when the UF2 bootloader
+            # disconnects USB mid-copy after the final block. The flash
+            # itself has already succeeded by that point.
+            msg = str(exc).lower()
+            if "device not configured" in msg or "no such file" in msg:
+                print(f"flash.py: copied to {dest} (bootloader unmounted "
+                      f"mid-copy; this is normal — flash succeeded)")
+            else:
+                raise
 
     return 0
 
