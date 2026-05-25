@@ -266,7 +266,7 @@ End-to-end verified on hardware:
 and panic paths share their hardware-verified status with the
 T-Echo Phase 2 work.
 
-### Phase 2 — SH1106 OLED "hello world"
+### Phase 2 — SH1106 OLED "hello world" ✅
 
 Bring up the OLED display over I²C. The OLED is materially easier
 than the T-Echo's e-paper: no busy line, no ~2 s refresh, no
@@ -294,9 +294,25 @@ redraw on the signal. Adding a small (~50 ms) debounce would still
 be cheap insurance against a tight burst making the display
 flicker, but is not load-bearing.
 
-**Gate:** powering up the device with the bringup firmware shows
-"UMSH bringup" and the git short SHA on the OLED without any host
-interaction.
+Hardware-verified: boots and displays "UMSH bringup" / git SHA /
+"MAC: 0" in landscape orientation — no panel-rotation transform
+needed (unlike the T-Echo's e-paper). Default orientation with
+`0xA1` segment remap and `0xC8` COM scan remapped is correct.
+
+Non-obvious integration notes:
+- `sh1106` v0.5.0 depends on `embedded-hal 0.2`, incompatible with
+  embassy's embedded-hal 1.0. Rolled a thin inline driver (~120 lines
+  of I²C page writes) rather than fighting the version mismatch.
+- `Twim` in embassy-nrf 0.10 has no peripheral type parameter (`Twim<'d>`,
+  not `Twim<'d, TWISPI0>`). The peripheral is erased at construction.
+- `Twim::new` in embassy-nrf 0.10 requires a static DMA scratch buffer
+  (`&'static mut [u8]`). Provided via `StaticCell<[u8; 256]>`.
+- The `twim` feature flag does not exist in embassy-nrf 0.10; TWIM is
+  included with the chip feature.
+- `embassy-sync` must be added as a direct dependency for `Signal` and
+  `ThreadModeRawMutex`; it is not re-exported by embassy-nrf.
+
+**Gate:** ✅ hardware-verified.
 
 ### Phase 3 — SX1262 LoRa radio
 
