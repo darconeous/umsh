@@ -74,7 +74,7 @@ mod firmware {
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::channel::Channel;
     use embassy_sync::signal::Signal;
-    use embassy_time::{Delay, Instant, Timer};
+    use embassy_time::{Delay, Duration, Instant, Timer};
     use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
@@ -87,7 +87,7 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{CryptoEngine, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
-    use umsh_mac::{MacEventRef, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_mac::{LocalIdentityId, MacEventRef, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -251,9 +251,14 @@ mod firmware {
     }
 
     #[embassy_executor::task]
-    async fn mac_task(mut mac: WioMac) {
+    async fn mac_task(mut mac: WioMac, identity_id: LocalIdentityId) {
         use core::fmt::Write as _;
-        mac.run(|_id, event| {
+
+        const BEACON_INTERVAL: Duration = Duration::from_secs(10);
+        let opts = SendOptions::default();
+        let mut next_beacon = Instant::now() + BEACON_INTERVAL;
+
+        let mut on_event = |_id: LocalIdentityId, event: MacEventRef<'_>| {
             let MacEventRef::Received(pkt) = event else { return };
             PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
             DISPLAY_SIGNAL.signal(());
@@ -267,9 +272,18 @@ mod firmware {
                 pkt.packet_family(),
             );
             let _ = PRINT_CH.try_send(line);
-        })
-        .await
-        .unwrap_or_else(|_| panic!("mac"));
+        };
+
+        loop {
+            match select(mac.next_event(&mut on_event), Timer::at(next_beacon)).await {
+                Either::First(Ok(())) => {}
+                Either::First(Err(_)) => panic!("mac"),
+                Either::Second(()) => {
+                    mac.queue_broadcast(identity_id, b"", &opts).ok();
+                    next_beacon = Instant::now() + BEACON_INTERVAL;
+                }
+            }
+        }
     }
 
     // ─── Main ────────────────────────────────────────────────────────────────
@@ -375,8 +389,8 @@ mod firmware {
             radio_handle, crypto, EmbassyClock, rng, RamCounterStore,
             RepeaterConfig::default(), OperatingPolicy::default(),
         );
-        mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
-        spawner.spawn(mac_task(mac).unwrap());
+        let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        spawner.spawn(mac_task(mac, identity_id).unwrap());
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
@@ -441,7 +455,8 @@ mod firmware {
             rx.wait_connection().await;
 
             let _ = tx.write_packet(b"\r\nUMSH hello-wio-tracker-l1 ready.\r\n").await;
-            let _ = tx.write_packet(b"MAC: awaiting UMSH packets (MeshCore frames dropped)\r\n").await;
+            let _ = tx.write_packet(b"TX: broadcast beacon every 10 s\r\n").await;
+            let _ = tx.write_packet(b"RX: counting UMSH frames (MeshCore dropped)\r\n").await;
 
             if !prev_panic.is_empty() {
                 let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
