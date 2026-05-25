@@ -314,7 +314,7 @@ Non-obvious integration notes:
 
 **Gate:** ✅ hardware-verified.
 
-### Phase 3 — SX1262 LoRa radio
+### Phase 3 — SX1262 LoRa radio ✅
 
 Wire `umsh-radio-sx126x` into the firmware with the Wio Tracker's
 pin map. The radio crate itself should not need to change for the
@@ -388,12 +388,20 @@ unless something forces otherwise.
 The runner / handle split, the `embassy-sync::Channel`-based bridge,
 and the `AtomicWaker` TOCTOU mitigation are all reused unchanged.
 
-**Gate:** boots without panic; radio init (HW reset + full SX1262
-calibration) completes successfully; the runner spins in continuous
-RX. Verification surface: USB-CDC log line each time a frame is
-received, regardless of whether it parses as UMSH (raw `[RX]
-rssi=… snr=… len=…`). At this point with a T-Echo on the bench
-running MeshCore US, we should see MeshCore frames on this device too.
+Hardware-verified: OLED shows "RX: N" with N increasing as nearby
+MeshCore frames arrive on the 910.525 MHz channel. RXEN handling
+confirmed correct — no special toggling needed in the runner because
+lora-phy drives the `rf_switch_rx` pin automatically via
+`GenericSx126xInterfaceVariant`. Passing RXEN as `rf_switch_rx = Some(rxen)` and leaving `rf_switch_tx = None` matches the Wio Tracker's hardware (no separate TX enable pin).
+
+Non-obvious integration notes:
+- `rf_switch_rx` in `GenericSx126xInterfaceVariant` is exactly the
+  right hook for RXEN — no changes to `umsh-radio-sx126x` required.
+- Drive RXEN LOW at boot before handing to lora-phy, so it is not
+  asserted during radio init/calibration.
+- TWISPI1 is used for the radio SPI (TWISPI0 is taken by the OLED).
+
+**Gate:** ✅ hardware-verified; RX counter advancing.
 
 ### Phase 4 — MAC coordinator integration
 
