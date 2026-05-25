@@ -1,27 +1,26 @@
-// Seeed Wio Tracker L1 / L1 Pro bringup firmware (Phase 3).
+// Seeed Wio Tracker L1 / L1 Pro bringup firmware (Phase 4).
 //
 // Boot sequence:
-//   1. Arm the watchdog (8 s timeout, petted by the heartbeat task).
-//   2. Read any panic message left by the previous boot.
-//   3. Initialize the SH1106 OLED and spawn the display task.
-//   4. Initialize the SX1262 LoRa radio (MeshCore US settings) with
-//      the Wio Tracker's pin map and spawn the radio runner task.
-//      RXEN (P1.08) is passed as rf_switch_rx to lora-phy, which drives
-//      it HIGH in RX and LOW in TX automatically.
-//   5. Spawn the packet handler task (raw RX counter + USB log).
-//   6. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
+//   1. Initialize the 4 KiB global heap (required by umsh-sync → alloc).
+//   2. Arm the watchdog (8 s timeout).
+//   3. Read any panic message left by the previous boot.
+//   4. Initialize the SH1106 OLED and spawn the display task.
+//   5. Initialize the SX1262 LoRa radio and spawn the radio runner task.
+//   6. Build Mac<WioTrackerPlatform>, add an ephemeral identity, and spawn
+//      the mac_task which drives the full UMSH MAC coordinator.
+//   7. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
 //
 // Task layout (steady state):
 //   - main():              joins usb.run / run_echo / heartbeat
-//   - display_task:        renders the OLED on boot and count-change signals
+//   - display_task:        renders the OLED on boot and MAC count signals
 //   - radio_runner_task:   owns lora_phy::LoRa, RX/TX state machine
-//   - packet_handler_task: counts received frames, logs to USB, signals display
+//   - mac_task:            drives Mac<WioTrackerPlatform>, counts UMSH packets
 //
-// Radio pin map (Wio Tracker L1 hardware reconstruction):
+// Radio pin map (Wio Tracker L1):
 //   SPI:  SCK=P0.30, MISO=P0.03, MOSI=P0.28  (TWISPI1)
 //   CS=P1.14, RST=P1.07, BUSY=P1.10, DIO1=P0.07
-//   RXEN=P1.08 (external RX enable; passed to lora-phy as rf_switch_rx)
-//   DIO2: internal RF switch (lora-phy SetDIO2AsRfSwitchCtrl, same as T-Echo)
+//   RXEN=P1.08 → rf_switch_rx (lora-phy drives HIGH in RX, LOW in TX)
+//   DIO2: internal RF switch (lora-phy SetDIO2AsRfSwitchCtrl)
 //   DIO3: 1.8 V TCXO
 
 #![cfg_attr(target_os = "none", no_std)]
@@ -36,8 +35,6 @@ mod panic;
 #[cfg(target_os = "none")]
 mod display;
 
-// lora-phy 3.x unconditionally depends on defmt. Provide a no-op global
-// logger so this binary links without any debug transport.
 #[cfg(target_os = "none")]
 mod defmt_logger {
     #[defmt::global_logger]
@@ -50,6 +47,12 @@ mod defmt_logger {
     }
     defmt::timestamp!("{=u32}", 0u32);
 }
+
+// Global heap allocator. umsh-mac → umsh-sync → alloc requires this even
+// though runtime allocation is near-zero (we use Mac::run, not MacHandle).
+#[cfg(target_os = "none")]
+#[global_allocator]
+static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 
 #[cfg(target_os = "none")]
 mod firmware {
@@ -79,17 +82,18 @@ mod firmware {
     use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use lora_phy::LoRa;
+    use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    use umsh_crypto::{CryptoEngine, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
+    use umsh_mac::{MacEventRef, OperatingPolicy, Platform, RepeaterConfig};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
         USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
         CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
-        // TWIM0/SPIM0 shared block → I²C for the SH1106 OLED.
         TWISPI0     => embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
-        // TWIM1/SPIM1 shared block → SPI for the SX1262 LoRa radio.
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
     });
 
@@ -104,6 +108,87 @@ mod firmware {
     type RadioIv     = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
     type RadioKind   = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
     type LoraRadio   = LoRa<RadioKind, Delay>;
+
+    // ─── Platform types ───────────────────────────────────────────────────────
+
+    struct EmbassyClock;
+
+    impl umsh_hal::Clock for EmbassyClock {
+        fn now_ms(&self) -> u64 { Instant::now().as_millis() }
+
+        fn poll_delay_until(
+            &self,
+            cx: &mut core::task::Context<'_>,
+            deadline_ms: u64,
+        ) -> core::task::Poll<()> {
+            let target = Instant::from_millis(deadline_ms);
+            if Instant::now() >= target { return core::task::Poll::Ready(()); }
+            let mut timer = core::pin::pin!(Timer::at(target));
+            timer.as_mut().poll(cx)
+        }
+    }
+
+    /// XorShift64 PRNG seeded from the nRF52840 FICR device ID.
+    /// Not cryptographic — acceptable for MAC backoff randomization.
+    struct WioRng { state: u64 }
+
+    impl WioRng {
+        fn from_ficr() -> Self {
+            let lo = unsafe { core::ptr::read_volatile(0x1000_0060u32 as *const u32) } as u64;
+            let hi = unsafe { core::ptr::read_volatile(0x1000_0064u32 as *const u32) } as u64;
+            Self { state: ((hi << 32) | lo).max(1) }
+        }
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.state;
+            x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+            self.state = x; x
+        }
+    }
+
+    impl TryRng for WioRng {
+        type Error = core::convert::Infallible;
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> { Ok(self.next_u64() as u32) }
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> { Ok(self.next_u64()) }
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+            for chunk in dest.chunks_mut(8) {
+                let val = self.next_u64().to_le_bytes();
+                chunk.copy_from_slice(&val[..chunk.len()]);
+            }
+            Ok(())
+        }
+    }
+    impl TryCryptoRng for WioRng {}
+
+    struct RamCounterStore;
+    impl umsh_hal::CounterStore for RamCounterStore {
+        type Error = core::convert::Infallible;
+        async fn load(&self, _: &[u8]) -> Result<u32, Self::Error> { Ok(0) }
+        async fn store(&self, _: &[u8], _: u32) -> Result<(), Self::Error> { Ok(()) }
+        async fn flush(&self) -> Result<(), Self::Error> { Ok(()) }
+    }
+
+    struct NullKeyValueStore;
+    impl umsh_hal::KeyValueStore for NullKeyValueStore {
+        type Error = core::convert::Infallible;
+        async fn load(&self, _: &[u8], _: &mut [u8]) -> Result<Option<usize>, Self::Error> { Ok(None) }
+        async fn store(&self, _: &[u8], _: &[u8]) -> Result<(), Self::Error> { Ok(()) }
+        async fn delete(&self, _: &[u8]) -> Result<(), Self::Error> { Ok(()) }
+    }
+
+    struct WioTrackerPlatform;
+    impl Platform for WioTrackerPlatform {
+        type Identity      = SoftwareIdentity;
+        type Aes           = SoftwareAes;
+        type Sha           = SoftwareSha256;
+        type Radio         = umsh_radio_sx126x::Sx1262Radio<ThreadModeRawMutex, 4, 2>;
+        type Delay         = Delay;
+        type Clock         = EmbassyClock;
+        type Rng           = WioRng;
+        type CounterStore  = RamCounterStore;
+        type KeyValueStore = NullKeyValueStore;
+    }
+
+    type WioMac = umsh_mac::Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>;
 
     // ─── Shared state ────────────────────────────────────────────────────────
 
@@ -139,7 +224,7 @@ mod firmware {
             let _ = Text::with_baseline("UMSH bringup", Point::new(0, 0),  style, Baseline::Top).draw(fb);
             let _ = Text::with_baseline(sha,             Point::new(0, 16), style, Baseline::Top).draw(fb);
             let mut s: String<16> = String::new();
-            let _ = core::fmt::write(&mut s, format_args!("RX: {}", count));
+            let _ = core::fmt::write(&mut s, format_args!("MAC: {}", count));
             let _ = Text::with_baseline(&s, Point::new(0, 32), style, Baseline::Top).draw(fb);
         };
 
@@ -166,28 +251,39 @@ mod firmware {
     }
 
     #[embassy_executor::task]
-    async fn packet_handler_task() {
+    async fn mac_task(mut mac: WioMac) {
         use core::fmt::Write as _;
-        loop {
-            let frame = RADIO_CH.rx.receive().await;
+        mac.run(|_id, event| {
+            let MacEventRef::Received(pkt) = event else { return };
             PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
             DISPLAY_SIGNAL.signal(());
             let mut line: PrintLine = heapless::String::new();
             let _ = write!(
                 line,
-                "\r\n[RX] rssi={} snr={} len={}\r\n",
-                frame.info.rssi,
-                frame.info.snr.as_centibels() / 10,
-                frame.info.len,
+                "\r\n[MAC] rssi={} snr={} auth={} {:?}\r\n",
+                pkt.rssi().unwrap_or(0),
+                pkt.snr().map_or(0, |s| s.as_centibels() / 10),
+                pkt.source_authenticated(),
+                pkt.packet_family(),
             );
             let _ = PRINT_CH.try_send(line);
-        }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("mac"));
     }
 
     // ─── Main ────────────────────────────────────────────────────────────────
 
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
+        // Heap must be initialized before any alloc-using code runs.
+        {
+            use core::mem::MaybeUninit;
+            const HEAP_SIZE: usize = 4096;
+            static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+            unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
+        }
+
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
         let mut wdt_config = WdtConfig::default();
@@ -220,16 +316,7 @@ mod firmware {
             spawner.spawn(display_task(i2c).unwrap());
         }
 
-        // ── SX1262 LoRa radio (TWISPI1, MeshCore US settings) ────────────────
-        // Pin map (Wio Tracker L1 hardware reconstruction):
-        //   SPI: SCK=P0.30, MISO=P0.03, MOSI=P0.28 (TWISPI1)
-        //   CS=P1.14, RST=P1.07, BUSY=P1.10, DIO1=P0.07
-        //   RXEN=P1.08 passed as rf_switch_rx; lora-phy drives it HIGH in
-        //   RX and LOW before TX, which is the correct polarity for an RX
-        //   enable / LNA enable line. Drive LOW at boot so it is never
-        //   asserted during radio init / calibration.
-        //   DIO2: internal RF switch (lora-phy SetDIO2AsRfSwitchCtrl).
-        //   DIO3: 1.8 V TCXO.
+        // ── SX1262 LoRa radio (TWISPI1) ──────────────────────────────────────
         let t_frame_ms = umsh_radio_sx126x::airtime_ms(
             SpreadingFactor::_7,
             Bandwidth::_62KHz,
@@ -251,16 +338,12 @@ mod firmware {
             let radio_rst  = Output::new(p.P1_07, Level::High, OutputDrive::Standard);
             let radio_dio1 = Input::new(p.P0_07, Pull::None);
             let radio_busy = Input::new(p.P1_10, Pull::None);
-            // RXEN: drive LOW at boot (safe during init/calibration), then
-            // hand ownership to lora-phy as rf_switch_rx.
             let radio_rxen = Output::new(p.P1_08, Level::Low, OutputDrive::Standard);
 
             let iv = GenericSx126xInterfaceVariant::new(
-                radio_rst,
-                radio_dio1,
-                radio_busy,
+                radio_rst, radio_dio1, radio_busy,
                 Some(radio_rxen), // rf_switch_rx: lora-phy drives HIGH in RX, LOW in TX
-                None,             // rf_switch_tx: no separate TX enable on Wio Tracker
+                None,             // rf_switch_tx: no separate TX enable
             ).unwrap();
 
             let lora_config = LoraConfig {
@@ -280,8 +363,20 @@ mod firmware {
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
-        let _ = t_frame_ms; // will be used in Phase 4 for Sx1262Radio airtime calc
-        spawner.spawn(packet_handler_task().unwrap());
+        // ── MAC coordinator ───────────────────────────────────────────────────
+        let mut rng = WioRng::from_ficr();
+        let mut id_seed = [0u8; 32];
+        rng.try_fill_bytes(&mut id_seed).ok();
+        let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
+
+        let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
+        let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let mut mac = WioMac::new(
+            radio_handle, crypto, EmbassyClock, rng, RamCounterStore,
+            RepeaterConfig::default(), OperatingPolicy::default(),
+        );
+        mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        spawner.spawn(mac_task(mac).unwrap());
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
@@ -333,7 +428,7 @@ mod firmware {
         }
     }
 
-    // ─── USB-CDC echo + radio log drain ───────────────────────────────────────
+    // ─── USB-CDC echo + MAC log drain ─────────────────────────────────────────
 
     async fn run_echo<'d, D: embassy_usb::driver::Driver<'d>>(
         mut tx: Sender<'d, D>,
@@ -346,7 +441,7 @@ mod firmware {
             rx.wait_connection().await;
 
             let _ = tx.write_packet(b"\r\nUMSH hello-wio-tracker-l1 ready.\r\n").await;
-            let _ = tx.write_packet(b"Phase 3: listening MeshCore US 910.525MHz SF7 BW62.5\r\n").await;
+            let _ = tx.write_packet(b"MAC: awaiting UMSH packets (MeshCore frames dropped)\r\n").await;
 
             if !prev_panic.is_empty() {
                 let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
