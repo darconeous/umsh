@@ -44,6 +44,7 @@ use crate::mac_cmd::encode_mac_command;
 use crate::ping::PendingPing;
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
+use umsh_hal::PeerStore;
 use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
@@ -101,6 +102,7 @@ pub struct CliSession<
     M,
     OUT,
     LOG,
+    PS,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
@@ -113,11 +115,13 @@ pub struct CliSession<
     M::CapacityError: core::fmt::Debug,
     OUT: CliOutput,
     LOG: CliLogger,
+    PS: PeerStore,
 {
     pub(crate) node: LocalNode<M>,
     pub(crate) local_key: PublicKey,
     pub(crate) out: OUT,
     pub(crate) logger: LOG,
+    pub(crate) peer_store: PS,
     pub(crate) peers: FnvIndexMap<PublicKey, PeerEntry, N_PEERS>,
     pub(crate) aliases: FnvIndexMap<HString<16>, PublicKey, N_ALIASES>,
     pub(crate) channels: FnvIndexMap<HString<16>, ChannelEntry, N_CHANNELS>,
@@ -136,25 +140,31 @@ impl<
     M,
     OUT,
     LOG,
+    PS,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
     const N_EVENTS: usize,
     const N_PENDING_PINGS: usize,
     const LINE_MAX: usize,
-> CliSession<M, OUT, LOG, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
+> CliSession<M, OUT, LOG, PS, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
     OUT: CliOutput,
     LOG: CliLogger,
+    PS: PeerStore,
 {
     /// Construct a new session around a cloned `LocalNode<M>`. `local_key`
     /// is passed in because the caller already has it; no node-crate accessor
     /// for the local key is added. The session owns the `out` half of the
     /// CLI transport; the input half is supplied to [`Self::run`].
-    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG) -> Self {
+    ///
+    /// `peer_store` is called on every `/peer add` and `/peer rm` to persist
+    /// the change. Pass [`umsh_hal::NoPeerStore`] when persistence is not
+    /// needed.
+    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG, peer_store: PS) -> Self {
         let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
         let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
         let pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>> =
@@ -175,6 +185,7 @@ where
             local_key,
             out,
             logger,
+            peer_store,
             peers: FnvIndexMap::new(),
             aliases: FnvIndexMap::new(),
             channels: FnvIndexMap::new(),
@@ -726,6 +737,9 @@ where
             let msg = node_err_str(&e);
             return self.write_err(&msg).await;
         }
+        // Persist to flash (best-effort; the peer is usable even if storage fails).
+        let alias_bytes = alias_heap.as_ref().map(|s: &HString<16>| s.as_bytes());
+        let _ = self.peer_store.store_peer(&key.0, alias_bytes).await;
         self.out.write_line("ok").await?;
         Ok(())
     }
@@ -744,6 +758,8 @@ where
         if self.current_peer == Some(key) {
             self.current_peer = None;
         }
+        // Remove from persistent storage (best-effort).
+        let _ = self.peer_store.delete_peer(&key.0).await;
         self.out.write_line("ok").await?;
         Ok(())
     }

@@ -148,6 +148,38 @@ pub trait Clock {
     }
 }
 
+/// Persistent peer directory for the node layer.
+///
+/// Stores and retrieves peer records keyed by the raw 32-byte Ed25519 public
+/// key. `alias` is an optional UTF-8 label (the implementation may silently
+/// truncate values longer than 16 bytes). Implementors MUST treat `store_peer`
+/// as an upsert — calling it twice for the same key overwrites the record.
+pub trait PeerStore {
+    type Error;
+
+    /// Upsert the peer record for `key`. `alias`, if present, is a UTF-8
+    /// display label; passing `None` removes any existing alias.
+    async fn store_peer(&self, key: &[u8; 32], alias: Option<&[u8]>) -> Result<(), Self::Error>;
+
+    /// Remove the peer record for `key`. A no-op if the key is not present.
+    async fn delete_peer(&self, key: &[u8; 32]) -> Result<(), Self::Error>;
+}
+
+/// No-op peer store — use when peer persistence is not needed.
+pub struct NoPeerStore;
+
+impl PeerStore for NoPeerStore {
+    type Error = core::convert::Infallible;
+
+    async fn store_peer(&self, _: &[u8; 32], _: Option<&[u8]>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn delete_peer(&self, _: &[u8; 32]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 /// Persistent frame-counter storage.
 pub trait CounterStore {
     type Error;
