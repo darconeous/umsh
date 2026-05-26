@@ -423,6 +423,177 @@ impl NvmcStorage {
     }
 }
 
+// ─── Channel storage helpers ──────────────────────────────────────────────────
+
+/// Key under which the packed channel index is stored.
+const CH_INDEX_KEY: &[u8] = b"channels";
+/// Prefix for individual channel records (`ch:` + name).
+const CH_KEY_PREFIX: &[u8] = b"ch:";
+/// Maximum channel name length in bytes (UTF-8). Matches CliSession's alias cap.
+pub const MAX_CHANNEL_NAME_LEN: usize = 16;
+/// Fixed slot size for one channel-name entry in the index:
+/// 1 byte length + 16 bytes name data.
+const CH_NAME_SLOT_LEN: usize = 1 + MAX_CHANNEL_NAME_LEN;
+/// Maximum number of channels tracked in the channel index.
+pub const MAX_CHANNELS: usize = 8;
+
+fn make_channel_key(name: &[u8]) -> Result<StoreKey, Error> {
+    if name.len() > MAX_CHANNEL_NAME_LEN {
+        return Err(Error::KeyTooLong);
+    }
+    let mut key = StoreKey::new();
+    let r1 = key.extend_from_slice(CH_KEY_PREFIX);
+    let r2 = key.extend_from_slice(name);
+    if r1.is_err() || r2.is_err() {
+        return Err(Error::KeyTooLong);
+    }
+    Ok(key)
+}
+
+impl NvmcStorage {
+    /// Load every persisted channel into `out`.
+    ///
+    /// Each entry is a name string (up to 16 UTF-8 bytes) and a 32-byte key.
+    /// Entries beyond `N` are silently dropped.
+    pub async fn load_all_channels<const N: usize>(
+        &self,
+        out: &mut Vec<(heapless::String<MAX_CHANNEL_NAME_LEN>, [u8; 32]), N>,
+    ) -> Result<(), Error> {
+        let mut index_buf = [0u8; CH_NAME_SLOT_LEN * MAX_CHANNELS];
+        let n = match self.load_bytes(CH_INDEX_KEY, &mut index_buf).await? {
+            None => return Ok(()),
+            Some(n) if n % CH_NAME_SLOT_LEN == 0 => n,
+            Some(_) => return Err(Error::CorruptedData),
+        };
+        for slot in index_buf[..n].chunks_exact(CH_NAME_SLOT_LEN) {
+            let name_len = slot[0] as usize;
+            if name_len == 0 || name_len > MAX_CHANNEL_NAME_LEN {
+                continue;
+            }
+            let name_bytes = &slot[1..1 + name_len];
+            let name = match core::str::from_utf8(name_bytes) {
+                Ok(s) => match heapless::String::try_from(s) {
+                    Ok(h) => h,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
+            let key_bytes = match self.load_channel_key(name_bytes).await? {
+                Some(k) => k,
+                None => continue,
+            };
+            let _ = out.push((name, key_bytes));
+        }
+        Ok(())
+    }
+
+    async fn load_channel_key(&self, name: &[u8]) -> Result<Option<[u8; 32]>, Error> {
+        let key = make_channel_key(name)?;
+        let mut buf = [0u8; 32];
+        match self.load_bytes(&key, &mut buf).await? {
+            Some(32) => Ok(Some(buf)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Upsert the channel record for `name`.
+    ///
+    /// Writes the 32-byte key into the per-name record and appends the name
+    /// to the channel index if not already present.
+    pub async fn store_channel_entry(
+        &self,
+        name: &[u8],
+        key: &[u8; 32],
+    ) -> Result<(), Error> {
+        if name.len() > MAX_CHANNEL_NAME_LEN {
+            return Err(Error::ValueTooLong);
+        }
+        // Write individual record.
+        let ch_key = make_channel_key(name)?;
+        self.store_bytes(&ch_key, key).await?;
+
+        // Update index: load, add slot if missing, store.
+        let mut index_buf = [0u8; CH_NAME_SLOT_LEN * MAX_CHANNELS];
+        let existing_n = match self.load_bytes(CH_INDEX_KEY, &mut index_buf).await? {
+            Some(n) => n,
+            None => 0,
+        };
+        let already_present = index_buf[..existing_n]
+            .chunks_exact(CH_NAME_SLOT_LEN)
+            .any(|slot| slot[0] as usize == name.len() && &slot[1..1 + name.len()] == name);
+        if !already_present {
+            let new_n = existing_n + CH_NAME_SLOT_LEN;
+            if new_n > index_buf.len() {
+                return Err(Error::PeerIndexFull);
+            }
+            index_buf[existing_n] = name.len() as u8;
+            index_buf[existing_n + 1..existing_n + 1 + name.len()].copy_from_slice(name);
+            // Zero remaining padding in the slot.
+            index_buf[existing_n + 1 + name.len()..new_n].fill(0);
+            self.store_bytes(CH_INDEX_KEY, &index_buf[..new_n]).await?;
+        }
+        Ok(())
+    }
+
+    /// Remove the channel record for `name` from both the per-name record and
+    /// the channel index. A no-op if the channel was not previously stored.
+    pub async fn delete_channel_entry(&self, name: &[u8]) -> Result<(), Error> {
+        // Best-effort delete of the individual record.
+        if let Ok(ch_key) = make_channel_key(name) {
+            let _ = self.delete_bytes(&ch_key).await;
+        }
+
+        // Remove from index.
+        let mut index_buf = [0u8; CH_NAME_SLOT_LEN * MAX_CHANNELS];
+        let n = match self.load_bytes(CH_INDEX_KEY, &mut index_buf).await? {
+            Some(n) => n,
+            None => return Ok(()),
+        };
+        let mut new_buf = [0u8; CH_NAME_SLOT_LEN * MAX_CHANNELS];
+        let mut new_n = 0usize;
+        for slot in index_buf[..n].chunks_exact(CH_NAME_SLOT_LEN) {
+            let slot_name_len = slot[0] as usize;
+            let matches = slot_name_len == name.len()
+                && &slot[1..1 + slot_name_len.min(MAX_CHANNEL_NAME_LEN)] == name;
+            if !matches {
+                new_buf[new_n..new_n + CH_NAME_SLOT_LEN].copy_from_slice(slot);
+                new_n += CH_NAME_SLOT_LEN;
+            }
+        }
+        if new_n == 0 {
+            let _ = self.delete_bytes(CH_INDEX_KEY).await;
+        } else {
+            self.store_bytes(CH_INDEX_KEY, &new_buf[..new_n]).await?;
+        }
+        Ok(())
+    }
+}
+
+/// View implementing [`umsh_hal::ChannelStore`] on top of a shared
+/// [`NvmcStorage`].
+pub struct NvmcChannelStore {
+    storage: &'static NvmcStorage,
+}
+
+impl NvmcChannelStore {
+    /// Construct a channel-store view over the shared static storage.
+    pub fn new(storage: &'static NvmcStorage) -> Self {
+        Self { storage }
+    }
+}
+
+impl umsh_hal::ChannelStore for NvmcChannelStore {
+    type Error = Error;
+
+    async fn store_channel(&self, name: &[u8], key: &[u8; 32]) -> Result<(), Self::Error> {
+        self.storage.store_channel_entry(name, key).await
+    }
+
+    async fn delete_channel(&self, name: &[u8]) -> Result<(), Self::Error> {
+        self.storage.delete_channel_entry(name).await
+    }
+}
+
 /// View implementing [`umsh_hal::PeerStore`] on top of a shared
 /// [`NvmcStorage`]. Follows the same view-type pattern as
 /// [`NvmcKeyValueStore`] and [`NvmcCounterStore`].

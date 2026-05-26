@@ -30,7 +30,7 @@ use umsh::{
     tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio},
 };
 use umsh_cli::{
-    DefaultCliSession, NoPeerStore,
+    DefaultCliSession, NoChannelStore, NoPeerStore,
     io::{StdioOutput, stdio_split},
     logger::{CliLogger, LogLevel},
 };
@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build CLI session.
     let (mut stdin_in, stdout_out) = stdio_split();
     let logger = StderrLogger::new(LogLevel::Info);
-    let mut cli: Session<'_, _> = CliSession::new(node, local_key, stdout_out, logger, NoPeerStore);
+    let mut cli: Session<'_, _> = CliSession::new(node, local_key, stdout_out, logger, NoPeerStore, NoChannelStore);
 
     // Pre-register peers from --peer args.
     for (key, alias) in cfg.peers {

@@ -97,7 +97,7 @@ mod firmware {
     use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{CryptoEngine, NodeIdentity, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
     use umsh_core::PublicKey;
@@ -302,10 +302,13 @@ mod firmware {
         let mut input = cli_io::CdcInput::new(rx);
         let mut out = cli_io::CdcOutput::new();
 
-        // Load persisted peers into a scratch buffer before `out` is moved into the CLI.
+        // Load persisted peers and channels before `out` is moved into the CLI.
         let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
             heapless::Vec::new();
         let _ = storage.load_all_peers(&mut peer_buf).await;
+        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> =
+            heapless::Vec::new();
+        let _ = storage.load_all_channels(&mut ch_buf).await;
 
         // Wait for the host to open the CDC port before writing the banner —
         // otherwise the writes silently disappear into a closed IN endpoint
@@ -324,14 +327,18 @@ mod firmware {
             }
         }
 
-        let peer_store = NvmcPeerStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, 4, 4, 2, 8, 2, 128> =
-            CliSession::new(node, local_key, out, NullLogger::new(), peer_store);
+        let peer_store    = NvmcPeerStore::new(storage);
+        let channel_store = NvmcChannelStore::new(storage);
+        let mut cli: CliSession<_, _, _, _, _, 4, 4, 2, 8, 2, 128> =
+            CliSession::new(node, local_key, out, NullLogger::new(), peer_store, channel_store);
 
-        // Re-register loaded peers into the CLI session peer table.
+        // Re-register loaded peers and channels into the CLI session tables.
         for (pk, alias) in peer_buf.iter() {
             let key = PublicKey(*pk);
             let _ = cli.register_peer(key, alias.as_deref()).await;
+        }
+        for (name, key_bytes) in ch_buf.iter() {
+            let _ = cli.register_channel(name.as_str(), *key_bytes).await;
         }
 
         // Drive the MAC and the CLI concurrently. No periodic beacon — the
