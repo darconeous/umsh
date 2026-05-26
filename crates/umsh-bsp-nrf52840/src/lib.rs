@@ -22,6 +22,9 @@ pub mod cdc_rescue;
 pub mod clocks;
 
 #[cfg(target_os = "none")]
+pub mod flash_store;
+
+#[cfg(target_os = "none")]
 pub mod gpregret;
 
 // TODO: implement.
@@ -29,4 +32,3 @@ pub mod gpregret;
 // Planned modules (see docs/firmware-plan-t1000e.md):
 //   pub mod usb;           // embassy-nrf USB driver wrapper.
 //   pub mod system_off;    // Configure DETECT and enter System OFF.
-//   pub mod flash_store;   // CounterStore / KeyValueStore over NVMC.

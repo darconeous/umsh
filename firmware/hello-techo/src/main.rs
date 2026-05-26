@@ -86,7 +86,9 @@ mod firmware {
     use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+    use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
+    use embassy_nrf::rng::Rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::usb::Driver;
@@ -104,6 +106,7 @@ mod firmware {
     use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
+    use umsh_bsp_nrf52840::flash_store::{NvmcCounterStore, NvmcKeyValueStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
@@ -125,6 +128,7 @@ mod firmware {
         // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
         // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
+        RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
     });
 
     // ─── Configuration constants ─────────────────────────────────────────────
@@ -176,6 +180,7 @@ mod firmware {
     /// reference can be handed to the spawned `umsh_task` (which builds
     /// `MacHandle` / `Host` / `CliSession` off of it).
     static MAC_CELL: StaticCell<AsyncRefCell<TechoMac>> = StaticCell::new();
+    static STORAGE:  StaticCell<NvmcStorage>             = StaticCell::new();
 
     // ─── Platform types ───────────────────────────────────────────────────────
     //
@@ -260,33 +265,6 @@ mod firmware {
 
     impl TryCryptoRng for TeChoRng {}
 
-    /// No-op counter store.
-    ///
-    /// Returns 0 on every load (counter starts fresh each boot). Replay
-    /// protection is session-scoped only. Acceptable for Phase 6 bringup
-    /// with a SoftwareIdentity; replace with flash-backed storage before
-    /// deploying long-term identities.
-    struct RamCounterStore;
-
-    impl umsh_hal::CounterStore for RamCounterStore {
-        type Error = core::convert::Infallible;
-
-        async fn load(&self, _context: &[u8]) -> Result<u32, Self::Error> { Ok(0) }
-        async fn store(&self, _context: &[u8], _value: u32) -> Result<(), Self::Error> { Ok(()) }
-        async fn flush(&self) -> Result<(), Self::Error> { Ok(()) }
-    }
-
-    /// No-op key-value store. Always returns `None` for reads.
-    struct NullKeyValueStore;
-
-    impl umsh_hal::KeyValueStore for NullKeyValueStore {
-        type Error = core::convert::Infallible;
-
-        async fn load(&self, _key: &[u8], _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> { Ok(None) }
-        async fn store(&self, _key: &[u8], _value: &[u8]) -> Result<(), Self::Error> { Ok(()) }
-        async fn delete(&self, _key: &[u8]) -> Result<(), Self::Error> { Ok(()) }
-    }
-
     /// Platform bundle wiring the T-Echo hardware into `Mac<P>`.
     struct TechoPlatform;
 
@@ -298,8 +276,8 @@ mod firmware {
         type Delay        = Delay;
         type Clock        = EmbassyClock;
         type Rng          = TeChoRng;
-        type CounterStore = RamCounterStore;
-        type KeyValueStore = NullKeyValueStore;
+        type CounterStore = NvmcCounterStore;
+        type KeyValueStore = NvmcKeyValueStore;
     }
 
     /// Fully-typed MAC coordinator for the T-Echo.
@@ -563,15 +541,31 @@ mod firmware {
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
+        // ── NV storage ────────────────────────────────────────────────────────
+        let storage: &'static NvmcStorage =
+            STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+
         // ── MAC coordinator ───────────────────────────────────────────────────
-        // Generate a software identity from the FICR-seeded RNG. The identity
-        // is ephemeral (new key on every boot) which is acceptable for Phase 6
-        // bringup; swap in a persistent identity for production.
-        let mut rng = TeChoRng::from_ficr();
-        let mut id_seed = [0u8; 32];
-        rng.try_fill_bytes(&mut id_seed).ok();
-        let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
+        // Load the persisted identity key, or generate a fresh one from the
+        // nRF52840 hardware TRNG (with bias correction) on first boot.
+        // We do NOT fall back to a FICR-seeded PRNG on failure — a predictable
+        // long-term key is worse than refusing to start.
+        let sk_bytes: [u8; 32] = match storage.load_sk().await {
+            Ok(Some(sk)) => sk,
+            Ok(None) => {
+                let mut hw_rng = Rng::new(p.RNG, Irqs);
+                hw_rng.set_bias_correction(true);
+                let mut sk = [0u8; 32];
+                hw_rng.fill_bytes(&mut sk).await;
+                storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
+                sk
+            }
+            Err(_) => panic!("storage init failed"),
+        };
+        let identity  = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key = *identity.public_key();
+
+        let rng = TeChoRng::from_ficr();
 
         let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
@@ -580,7 +574,7 @@ mod firmware {
             crypto,
             EmbassyClock,
             rng,
-            RamCounterStore,
+            NvmcCounterStore::new(storage),
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         );
