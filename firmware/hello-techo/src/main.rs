@@ -1,4 +1,4 @@
-// LilyGO T-Echo bringup firmware.
+// LilyGO T-Echo bringup firmware with an interactive UMSH CLI on USB-CDC.
 //
 // Boot sequence:
 //   1. Bring up the peripheral rail (P0.12 HIGH).
@@ -7,15 +7,22 @@
 //      short SHA + "MAC: 0") plus subsequent count-update refreshes.
 //   4. Initialize the SX1262 LoRa radio (MeshCore US settings) and spawn
 //      the radio runner task.
-//   5. Build a `Mac<TechoPlatform>` and spawn the mac_task, which drives
-//      the full MAC coordinator and counts UMSH-authenticated packets.
-//   6. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
+//   5. Build a `Mac<TechoPlatform>`, park it in a `'static AsyncRefCell`,
+//      and spawn `umsh_task` which drives `Host::run` + `CliSession::run`
+//      concurrently over the shared `MacHandle`.
+//   6. Spawn `output_task` to own the USB `Sender` and drain `OUTPUT_CH`.
+//   7. Join usb.run / heartbeat in main; the CLI runs in spawned tasks.
 //
 // Task layout (steady state):
-//   - main():               joins usb.run / run_echo / heartbeat
+//   - main():               joins usb.run / heartbeat
 //   - display_task:         renders the e-paper on count changes
 //   - radio_runner_task:    owns lora_phy::LoRa, RX/TX state machine
-//   - mac_task:             drives Mac<TechoPlatform>, authenticates frames
+//   - umsh_task:            host.run() + cli.run(), shares the MAC via MacHandle
+//   - output_task:          owns the USB Sender, drains OUTPUT_CH
+//
+// USB CDC flow control is preserved by the output_task / OUTPUT_CH split:
+// nothing blocks CdcInput::read_packet on TX progress, so the host's bulk
+// OUT NAK / retry mechanism handles backpressure correctly during pastes.
 //
 // Safety primitives inherited from the BSP (see umsh-bsp-nrf52840):
 //   * Panic capture into reserved RAM, dumped over USB on the next boot.
@@ -40,6 +47,9 @@ mod panic;
 // awkward #[path] gymnastics.
 #[cfg(target_os = "none")]
 mod display;
+
+#[cfg(target_os = "none")]
+mod cli_io;
 
 // lora-phy 3.x unconditionally depends on defmt. Provide a zero-overhead
 // no-op global logger so this binary links without any debug transport.
@@ -72,7 +82,7 @@ mod firmware {
     use super::display;
 
     use embassy_executor::Spawner;
-    use embassy_futures::join::join3;
+    use embassy_futures::join::join;
     use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -82,10 +92,9 @@ mod firmware {
     use embassy_nrf::usb::Driver;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-    use embassy_sync::channel::Channel;
     use embassy_sync::signal::Signal;
     use embassy_time::{Delay, Duration, Instant, Timer};
-    use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
+    use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
     use lora_phy::iv::GenericSx126xInterfaceVariant;
@@ -97,10 +106,15 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{
-        CryptoEngine,
+        CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_mac::{LocalIdentityId, MacEventRef, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
+    use umsh_core::PublicKey;
+    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_node::Host;
+    use umsh_sync::AsyncRefCell;
+
+    use super::cli_io;
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -127,9 +141,6 @@ mod firmware {
     const TITLE_Y: i32 =  70;
     const SHA_Y:   i32 = 100;
     const COUNT_Y: i32 = 130;
-
-    /// Bound on the per-packet print line.
-    const PRINT_LINE_CAP: usize = 128;
 
     /// Per-frame TX power in dBm. SX1262 PA range is roughly -9..+22.
     /// 14 dBm is the conservative bringup default.
@@ -161,12 +172,10 @@ mod firmware {
     /// rapid bursts produce one refresh per throttle window, not one per packet.
     static DISPLAY_COUNT_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-    /// Pre-formatted per-packet print lines waiting to be drained to USB
-    /// by `run_echo`. If USB isn't draining (no serial connection), the
-    /// queue fills and subsequent lines are dropped silently — the count
-    /// still increments and the display still updates.
-    type PrintLine = heapless::String<PRINT_LINE_CAP>;
-    static PRINT_CH: Channel<ThreadModeRawMutex, PrintLine, 2> = Channel::new();
+    /// Shared MAC coordinator cell. Stored in a `StaticCell` so a `'static`
+    /// reference can be handed to the spawned `umsh_task` (which builds
+    /// `MacHandle` / `Host` / `CliSession` off of it).
+    static MAC_CELL: StaticCell<AsyncRefCell<TechoMac>> = StaticCell::new();
 
     // ─── Platform types ───────────────────────────────────────────────────────
     //
@@ -314,45 +323,66 @@ mod firmware {
         umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
-    /// Drives the UMSH MAC coordinator forever.
-    ///
-    /// Only `MacEventRef::Received` packets are counted and printed — other
-    /// event types (ACK tracking, forwarding) are silently ignored for now.
-    /// The display shows "MAC: N" where N is UMSH-authenticated packets only;
-    /// raw MeshCore frames on the same frequency are dropped by the parser.
+    // ─── Concrete USB driver types ────────────────────────────────────────────
+    // ('static lifetime, VbusDetect = HardwareVbusDetect.) Used by `umsh_task`
+    // and `output_task`.
+    type TechoUsbDriver = Driver<'static, HardwareVbusDetect>;
+    type TechoSender    = embassy_usb::class::cdc_acm::Sender<'static, TechoUsbDriver>;
+    type TechoRescue    = umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue<'static, TechoUsbDriver>;
+
+    // ─── CliSession-backed combined task ─────────────────────────────────────
+
+    /// Owns the USB `Sender` and drains `cli_io::OUTPUT_CH`. Decoupling the
+    /// sender from `umsh_task` lets RX keep flowing while TX awaits host IN
+    /// polls, so USB OUT NAKs handle backpressure correctly during pastes.
     #[embassy_executor::task]
-    async fn mac_task(mut mac: TechoMac, identity_id: LocalIdentityId) {
-        use core::fmt::Write as _;
+    async fn output_task(mut tx: TechoSender) {
+        cli_io::drain_to_sender(&mut tx).await;
+    }
 
-        const BEACON_INTERVAL: Duration = Duration::from_secs(10);
-        let opts = SendOptions::default();
-        let mut next_beacon = Instant::now() + BEACON_INTERVAL;
+    /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
+    /// concurrently via `select`. The shared `AsyncRefCell<Mac>` (held via
+    /// `MacHandle`) serialises MAC access between the host driver and the
+    /// CLI's send-side calls.
+    #[embassy_executor::task]
+    async fn umsh_task(
+        mac_cell: &'static AsyncRefCell<TechoMac>,
+        identity_id: LocalIdentityId,
+        local_key: PublicKey,
+        rx: TechoRescue,
+        prev_panic_buf: &'static [u8; 256],
+        prev_panic_len: usize,
+    ) {
+        use umsh_cli::CliSession;
+        use umsh_cli::io::CliOutput;
+        use umsh_cli::logger::NullLogger;
 
-        let mut on_event = |_id: LocalIdentityId, event: MacEventRef<'_>| {
-            let MacEventRef::Received(pkt) = event else { return };
-            PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
-            DISPLAY_COUNT_SIGNAL.signal(());
-            let mut line: PrintLine = heapless::String::new();
-            let rssi   = pkt.rssi().unwrap_or(0);
-            let snr_db = pkt.snr().map_or(0, |s| s.as_centibels() / 10);
-            let _ = write!(
-                line,
-                "\r\n[MAC] rssi={} snr={} auth={} {:?}\r\n",
-                rssi, snr_db,
-                pkt.source_authenticated(),
-                pkt.packet_family(),
-            );
-            let _ = PRINT_CH.try_send(line);
-        };
+        let handle = MacHandle::new(mac_cell);
+        let mut host: Host<'_, TechoPlatform, 1, 8, 4, 4, 8, 255, 32> = Host::new(handle);
+        let node = host.add_node(identity_id);
+
+        let mut input = cli_io::CdcInput::new(rx);
+        let mut out = cli_io::CdcOutput::new();
+
+        input.wait_connection().await;
+
+        let _ = out.write_line("").await;
+        let _ = out.write_line("UMSH CLI (T-Echo)").await;
+        let _ = out.write_line("type /help for commands").await;
+        if prev_panic_len > 0 {
+            let _ = out.write_line("[PREV PANIC]:").await;
+            if let Ok(s) = core::str::from_utf8(&prev_panic_buf[..prev_panic_len]) {
+                let _ = out.write_line(s).await;
+            }
+        }
+
+        let mut cli: CliSession<_, _, _, 4, 4, 2, 8, 2, 128> =
+            CliSession::new(node, local_key, out, NullLogger::new());
 
         loop {
-            match select(mac.next_event(&mut on_event), Timer::at(next_beacon)).await {
-                Either::First(Ok(())) => {}
-                Either::First(Err(_)) => panic!("mac"),
-                Either::Second(()) => {
-                    mac.queue_broadcast(identity_id, b"", &opts).ok();
-                    next_beacon = Instant::now() + BEACON_INTERVAL;
-                }
+            match select(host.run(), cli.run(&mut input)).await {
+                Either::First(_) => panic!("host exited"),
+                Either::Second(_) => {}
             }
         }
     }
@@ -429,7 +459,7 @@ mod firmware {
         // alloc usage is near-zero since we don't create a MacHandle.
         {
             use core::mem::MaybeUninit;
-            const HEAP_SIZE: usize = 4096;
+            const HEAP_SIZE: usize = 8192;
             static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
             unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
         }
@@ -447,18 +477,20 @@ mod firmware {
             Watchdog::try_new::<_, 1>(p.WDT, wdt_config).unwrap_or_else(|_| panic!("wdt"));
 
         // Pick up any panic message left by the previous boot.
-        let mut prev_panic_buf = [0u8; 256];
+        static PREV_PANIC_BUF: StaticCell<[u8; 256]> = StaticCell::new();
+        let mut prev_panic_tmp = [0u8; 256];
         let prev_panic_len = {
             let mut slot = PanicSlot::new(super::panic::panic_region());
             if let Some(msg) = slot.read() {
-                let n = msg.len().min(prev_panic_buf.len());
-                prev_panic_buf[..n].copy_from_slice(&msg[..n]);
+                let n = msg.len().min(prev_panic_tmp.len());
+                prev_panic_tmp[..n].copy_from_slice(&msg[..n]);
                 slot.clear();
                 n
             } else {
                 0
             }
         };
+        let prev_panic_buf: &'static [u8; 256] = PREV_PANIC_BUF.init(prev_panic_tmp);
 
         // ── E-paper display task ──────────────────────────────────────────────
         // P1.11 is the e-paper backlight on this module; drive it LOW
@@ -539,6 +571,7 @@ mod firmware {
         let mut id_seed = [0u8; 32];
         rng.try_fill_bytes(&mut id_seed).ok();
         let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
+        let local_key = *identity.public_key();
 
         let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
@@ -552,7 +585,8 @@ mod firmware {
             OperatingPolicy::default(),
         );
         let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
-        spawner.spawn(mac_task(mac, identity_id).unwrap());
+        let mac_cell: &'static AsyncRefCell<TechoMac> =
+            MAC_CELL.init(AsyncRefCell::new(mac));
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
@@ -586,9 +620,14 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
-        join3(
+        spawner.spawn(output_task(tx).unwrap());
+        spawner.spawn(
+            umsh_task(mac_cell, identity_id, local_key, rx, prev_panic_buf, prev_panic_len)
+                .unwrap()
+        );
+
+        join(
             usb.run(),
-            run_echo(tx, rx, &prev_panic_buf[..prev_panic_len]),
             heartbeat(led, wdt_handle),
         ).await;
     }
@@ -606,57 +645,4 @@ mod firmware {
         }
     }
 
-    // ─── USB-CDC: echo input, drain queued radio print lines ─────────────────
-    //
-    // 1200-baud touchless reset and Ctrl-C × 3 + "dfu" escape are baked into
-    // CdcAcmRescue::read_packet and fire automatically on every read.
-    //
-    // Selects between (a) bytes from the host (echoed back) and (b) lines
-    // from PRINT_CH (forwarded to host). Lines arrive pre-formatted from
-    // mac_task.
-
-    async fn run_echo<'d, D: embassy_usb::driver::Driver<'d>>(
-        mut tx: Sender<'d, D>,
-        mut rx: CdcAcmRescue<'d, D>,
-        prev_panic: &[u8],
-    ) -> ! {
-        let mut usb_buf = [0u8; 64];
-
-        loop {
-            rx.wait_connection().await;
-
-            let _ = tx.write_packet(b"\r\nUMSH hello-techo ready.\r\n").await;
-            let _ = tx.write_packet(b"RF: 910.525 MHz SF7 BW62.5 (MeshCore US)\r\n").await;
-            let _ = tx.write_packet(b"TX: broadcast beacon every 10 s\r\n").await;
-            let _ = tx.write_packet(b"RX: counting UMSH frames (MeshCore dropped)\r\n").await;
-
-            if !prev_panic.is_empty() {
-                let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
-                for chunk in prev_panic.chunks(64) {
-                    if tx.write_packet(chunk).await.is_err() {
-                        break;
-                    }
-                }
-                let _ = tx.write_packet(b"\r\n").await;
-            }
-
-            'session: loop {
-                match select(rx.read_packet(&mut usb_buf), PRINT_CH.receive()).await {
-                    Either::First(Ok(0)) | Either::First(Err(_)) => break 'session,
-                    Either::First(Ok(n)) => {
-                        if tx.write_packet(&usb_buf[..n]).await.is_err() {
-                            break 'session;
-                        }
-                    }
-                    Either::Second(line) => {
-                        for chunk in line.as_bytes().chunks(64) {
-                            if tx.write_packet(chunk).await.is_err() {
-                                break 'session;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
