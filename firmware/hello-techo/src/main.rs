@@ -394,6 +394,12 @@ mod firmware {
             let key = PublicKey(*pk);
             let _ = cli.register_peer(key, alias.as_deref()).await;
         }
+        // Load RX counter boundaries so the replay window starts above any
+        // frames accepted before the last reboot.
+        MacHandle::new(mac_cell)
+            .load_all_persisted_rx_counters()
+            .await
+            .ok();
         for (name, key_bytes) in ch_buf.iter() {
             let _ = cli.register_channel(name.as_str(), *key_bytes).await;
         }
@@ -635,6 +641,10 @@ mod firmware {
             OperatingPolicy::default(),
         );
         let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        // Restore the TX frame-counter boundary so the counter never rewinds.
+        mac.load_persisted_counter(identity_id)
+            .await
+            .unwrap_or_else(|_| panic!("tx counter load"));
         let mac_cell: &'static AsyncRefCell<TechoMac> =
             MAC_CELL.init(AsyncRefCell::new(mac));
 
