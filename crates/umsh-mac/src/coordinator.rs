@@ -999,6 +999,92 @@ impl<
         Ok(wrote)
     }
 
+    /// Persist RX frame-counter boundaries for all peers that have received
+    /// enough frames since the last flush.
+    ///
+    /// Called automatically from [`Self::next_event`] so applications need not
+    /// invoke this directly.
+    async fn service_rx_counter_persistence(
+        &mut self,
+    ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        // Collect all (identity_index, peer_id, peer_pk, last_accepted) tuples
+        // that need persisting. We collect before awaiting to avoid holding
+        // live references across the async CounterStore calls.
+        let mut pending: heapless::Vec<(u8, crate::peers::PeerId, [u8; 32], u32), PEERS> =
+            heapless::Vec::new();
+
+        for (identity_index, slot) in self.identities.iter().enumerate() {
+            let Some(slot) = slot.as_ref() else {
+                continue;
+            };
+            for (peer_id, state) in slot.peer_crypto().iter() {
+                if !state.needs_rx_persist {
+                    continue;
+                }
+                let Some(info) = self.peer_registry.get(*peer_id) else {
+                    continue;
+                };
+                let _ = pending.push((
+                    identity_index as u8,
+                    *peer_id,
+                    info.public_key.0,
+                    state.replay_window.last_accepted,
+                ));
+            }
+        }
+
+        let mut wrote = 0usize;
+        for (_, _, pk, last) in pending.iter() {
+            let key = rx_counter_key_bytes(pk);
+            self.counter_store.store(&key, *last).await?;
+            wrote += 1;
+        }
+        if wrote > 0 {
+            self.counter_store.flush().await?;
+            // Clear flags and update persisted_rx_counter only after a
+            // successful flush.
+            for (identity_index, peer_id, _, last) in pending.iter() {
+                if let Some(slot) = self.identities[*identity_index as usize].as_mut() {
+                    if let Some(state) = slot.peer_crypto_mut().get_mut(peer_id) {
+                        state.persisted_rx_counter = *last;
+                        state.needs_rx_persist = false;
+                    }
+                }
+            }
+        }
+        Ok(wrote)
+    }
+
+    /// Load persisted RX frame-counter boundaries for all registered peers and
+    /// store them in [`PeerInfo::initial_rx_counter`].
+    ///
+    /// Call this once at boot after registering all known peers. When pairwise
+    /// keys are first derived for each peer, the replay window is initialised
+    /// to the loaded boundary so frames replayed from before the reboot are
+    /// rejected.
+    pub async fn load_all_persisted_rx_counters(
+        &mut self,
+    ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        let mut loaded = 0usize;
+        // PeerRegistry is a dense Vec; PeerId(i) == index i. Break on first None.
+        for peer_index in 0..PEERS {
+            let peer_id = crate::peers::PeerId(peer_index as u8);
+            let Some(info) = self.peer_registry.get(peer_id) else {
+                break;
+            };
+            let pk = info.public_key;
+            let key = rx_counter_key_bytes(&pk.0);
+            let stored = self.counter_store.load(&key).await?;
+            if stored > 0 {
+                if let Some(info) = self.peer_registry.get_mut(peer_id) {
+                    info.initial_rx_counter = stored;
+                    loaded += 1;
+                }
+            }
+        }
+        Ok(loaded)
+    }
+
     #[cfg(feature = "software-crypto")]
     /// Register an ephemeral software identity linked to `parent`.
     pub fn register_ephemeral(
@@ -1076,6 +1162,17 @@ impl<
         peer_id: PeerId,
         pairwise_keys: PairwiseKeys,
     ) -> Result<Option<crate::peers::PeerCryptoState>, SendError> {
+        // Read initial_rx_counter and clock before the mutable identity borrow.
+        let initial = self
+            .peer_registry
+            .get(peer_id)
+            .map(|info| info.initial_rx_counter)
+            .unwrap_or(0);
+        let now_ms = self.clock.now_ms();
+        let mut replay_window = ReplayWindow::new();
+        if initial > 0 {
+            replay_window.reset(initial, now_ms);
+        }
         let slot = self
             .identity_mut(identity_id)
             .ok_or(SendError::IdentityMissing)?;
@@ -1084,7 +1181,9 @@ impl<
                 peer_id,
                 crate::peers::PeerCryptoState {
                     pairwise_keys,
-                    replay_window: ReplayWindow::new(),
+                    replay_window,
+                    persisted_rx_counter: initial,
+                    needs_rx_persist: false,
                 },
             )
             .map_err(|_| SendError::QueueFull)
@@ -1726,6 +1825,12 @@ impl<
             // Phases 3-5: process the wake, drain any follow-up sends, and run timeouts.
             self.process_wake_reason(reason, &mut buf, &mut on_event)
                 .await?;
+
+            // Flush any pending TX or RX counter boundaries to durable storage.
+            // Errors are intentionally ignored — persistence is best-effort and
+            // must not block the radio event loop.
+            let _ = self.service_counter_persistence().await;
+            let _ = self.service_rx_counter_persistence().await;
 
             // If the tx_queue has new work (e.g. retransmits just enqueued),
             // loop back to drain it before waiting again.
@@ -2930,12 +3035,27 @@ impl<
         if slot.peer_crypto().get(&peer_id).is_some() {
             return Ok(());
         }
+        let initial = self
+            .peer_registry
+            .get(peer_id)
+            .map(|info| info.initial_rx_counter)
+            .unwrap_or(0);
+        let now_ms = self.clock.now_ms();
+        let mut replay_window = ReplayWindow::new();
+        if initial > 0 {
+            replay_window.reset(initial, now_ms);
+        }
+        let slot = self
+            .identity_mut(local_id)
+            .ok_or(SendError::IdentityMissing)?;
         slot.peer_crypto_mut()
             .insert(
                 peer_id,
                 crate::peers::PeerCryptoState {
                     pairwise_keys,
-                    replay_window: ReplayWindow::new(),
+                    replay_window,
+                    persisted_rx_counter: initial,
+                    needs_rx_persist: false,
                 },
             )
             .map_err(|_| SendError::QueueFull)?;
@@ -3036,19 +3156,23 @@ impl<
             return false;
         };
         let now_ms = self.clock.now_ms();
-        let Some(window) = self
+        let Some(state) = self
             .identity_mut(local_id)
             .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
-            .map(|state| &mut state.replay_window)
         else {
             return false;
         };
 
-        if window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
+        if state.replay_window.check(counter, mic, now_ms) != ReplayVerdict::Accept {
             return false;
         }
 
-        window.accept(counter, mic, now_ms);
+        state.replay_window.accept(counter, mic, now_ms);
+        // Schedule an RX counter flush when we've advanced one full persist block.
+        let last = state.replay_window.last_accepted;
+        if last.wrapping_sub(state.persisted_rx_counter) >= COUNTER_PERSIST_BLOCK_SIZE {
+            state.needs_rx_persist = true;
+        }
         true
     }
 
@@ -3097,6 +3221,10 @@ impl<
         };
         state.replay_window.reset(counter, now_ms);
         state.replay_window.accept(counter, mic, now_ms);
+        // A resync resets the window; treat the new counter as a fresh baseline
+        // and schedule a persist so the new boundary survives a reboot.
+        state.persisted_rx_counter = 0;
+        state.needs_rx_persist = true;
         let _ = slot.pending_counter_resync_mut().remove(&peer_id);
         true
     }
@@ -4495,4 +4623,16 @@ fn align_counter_boundary(value: u32) -> u32 {
 
 fn next_counter_persist_target(next_counter: u32) -> u32 {
     next_counter.wrapping_add(COUNTER_PERSIST_BLOCK_SIZE) & !COUNTER_PERSIST_BLOCK_MASK
+}
+
+/// Build the CounterStore context key for a peer's RX boundary.
+///
+/// Format: `mac.rx:` (7 bytes) + raw Ed25519 pubkey (32 bytes) = 39 bytes.
+/// This is distinct from the TX key (which is the bare 32-byte local pubkey)
+/// and from peer record keys in the flash KV store.
+fn rx_counter_key_bytes(pk: &[u8; 32]) -> [u8; 39] {
+    let mut key = [0u8; 39];
+    key[..7].copy_from_slice(b"mac.rx:");
+    key[7..].copy_from_slice(pk);
+    key
 }

@@ -111,6 +111,24 @@ impl<
             .await
     }
 
+    /// Load persisted RX counter boundaries for all registered peers from
+    /// durable storage, storing them in each peer's [`PeerInfo::initial_rx_counter`].
+    ///
+    /// Call this once at boot, after all known peers have been registered with
+    /// [`add_peer`](Self::add_peer), and before the first call to
+    /// [`next_event`](crate::Mac::next_event). When pairwise keys are later
+    /// derived for a peer, the replay window is automatically initialised to
+    /// the loaded boundary.
+    pub async fn load_all_persisted_rx_counters(
+        &self,
+    ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        self.mac
+            .borrow_mut()
+            .await
+            .load_all_persisted_rx_counters()
+            .await
+    }
+
     /// Registers or refreshes a remote peer in the shared registry.
     pub async fn add_peer(&self, key: PublicKey) -> Result<PeerId, CapacityError> {
         self.mac.borrow_mut().await.add_peer(key)

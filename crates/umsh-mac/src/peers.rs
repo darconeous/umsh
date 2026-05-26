@@ -33,6 +33,12 @@ pub struct PeerInfo {
     pub route: Option<CachedRoute>,
     /// Most recent observation timestamp.
     pub last_seen_ms: u64,
+    /// Highest RX frame counter loaded from persistent storage at boot.
+    ///
+    /// Non-zero means a stored boundary was found. When pairwise keys are
+    /// first installed for this peer, the replay window is initialised to
+    /// this value so that frames from before the reboot are rejected.
+    pub initial_rx_counter: u32,
 }
 
 /// Outcome of inserting or updating an auto-learned peer.
@@ -109,6 +115,7 @@ impl<const N: usize> PeerRegistry<N> {
                 pinned: true,
                 route: None,
                 last_seen_ms: 0,
+                initial_rx_counter: 0,
             })
             .map_err(|_| CapacityError)?;
         Ok(PeerId((self.peers.len() - 1) as u8))
@@ -143,6 +150,7 @@ impl<const N: usize> PeerRegistry<N> {
                     pinned: false,
                     route: None,
                     last_seen_ms: now_ms,
+                    initial_rx_counter: 0,
                 })
                 .map_err(|_| CapacityError)?;
             return Ok(AutoPeerUpdate {
@@ -167,6 +175,7 @@ impl<const N: usize> PeerRegistry<N> {
             pinned: false,
             route: None,
             last_seen_ms: now_ms,
+            initial_rx_counter: 0,
         };
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
@@ -196,6 +205,12 @@ pub struct PeerCryptoState {
     pub pairwise_keys: PairwiseKeys,
     /// Replay state for traffic from this peer.
     pub replay_window: ReplayWindow,
+    /// Highest `last_accepted` value written to persistent storage.
+    /// Updated by `service_rx_counter_persistence` after each flush.
+    pub persisted_rx_counter: u32,
+    /// Set when `last_accepted` has advanced `COUNTER_PERSIST_BLOCK_SIZE`
+    /// beyond `persisted_rx_counter`. Cleared after the next flush.
+    pub needs_rx_persist: bool,
 }
 
 /// Fixed-capacity map of per-peer secure transport state.
@@ -240,6 +255,11 @@ impl<const N: usize> PeerCryptoMap<N> {
     /// Remove state for a peer.
     pub fn remove(&mut self, id: &PeerId) -> Option<PeerCryptoState> {
         self.entries.remove(id)
+    }
+
+    /// Iterate over all peer crypto entries.
+    pub fn iter(&self) -> impl Iterator<Item = (&PeerId, &PeerCryptoState)> {
+        self.entries.iter()
     }
 }
 
