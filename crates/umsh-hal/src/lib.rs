@@ -16,7 +16,7 @@ use core::task::{Context, Poll};
 /// compact and integer-friendly. Some common LoRa radios report SNR in
 /// quarter-dB steps. Converting those readings into centibels requires
 /// rounding, introducing at most 0.5 cB (0.05 dB) of error.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Snr(i16);
 
 impl Snr {
@@ -45,6 +45,25 @@ impl Snr {
     /// Return the stored value in centibels.
     pub const fn as_centibels(self) -> i16 {
         self.0
+    }
+
+    /// Return the stored value in decibels.
+    pub const fn as_decibels(self) -> i16 {
+        self.0 / 10
+    }
+}
+
+impl core::fmt::Display for Snr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let db = self.as_decibels();
+        let cdb = self.0 % 10;
+        write!(f, "{}.{:01}dB", db, cdb)
+    }
+}
+
+impl core::fmt::Debug for Snr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Snr({self})")
     }
 }
 

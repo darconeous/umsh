@@ -390,6 +390,40 @@ dependencies = [
 
 [[package]]
 name = "embassy-embedded-hal"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c62a3bf127e03832fb97d8b01a058775e617653bc89e2a12c256485a7fb54c1"
+dependencies = [
+ "embassy-embedded-hal 0.4.0",
+ "embassy-futures",
+ "embassy-sync 0.6.2",
+ "embedded-hal 0.2.7",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-storage",
+ "embedded-storage-async",
+ "nb 1.1.0",
+]
+
+[[package]]
+name = "embassy-embedded-hal"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1611b7a7ab5d1fbed84c338df26d56fd9bded58006ebb029075112ed2c5e039"
+dependencies = [
+ "embassy-futures",
+ "embassy-hal-internal 0.3.0",
+ "embassy-sync 0.7.2",
+ "embedded-hal 0.2.7",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-storage",
+ "embedded-storage-async",
+ "nb 1.1.0",
+]
+
+[[package]]
+name = "embassy-embedded-hal"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0641612053b2f34fc250bb63f6630ae75de46e02ade7f457268447081d709ce"
@@ -470,6 +504,15 @@ checksum = "dc2d050bdc5c21e0862a89256ed8029ae6c290a93aecefc73084b3002cdebb01"
 
 [[package]]
 name = "embassy-hal-internal"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95285007a91b619dc9f26ea8f55452aa6c60f7115a4edc05085cd2bd3127cd7a"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "embassy-hal-internal"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f10ce10a4dfdf6402d8e9bd63128986b96a736b1a0a6680547ed2ac55d55dba"
@@ -517,7 +560,7 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "document-features",
- "embassy-embedded-hal",
+ "embassy-embedded-hal 0.6.0",
  "embassy-futures",
  "embassy-hal-internal 0.5.0",
  "embassy-sync 0.8.0",
@@ -548,6 +591,20 @@ dependencies = [
  "embedded-io-async 0.6.1",
  "futures-sink",
  "futures-util",
+ "heapless 0.8.0",
+]
+
+[[package]]
+name = "embassy-sync"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73974a3edbd0bd286759b3d483540f0ebef705919a5f56f4fc7709066f71689b"
+dependencies = [
+ "cfg-if",
+ "critical-section",
+ "embedded-io-async 0.6.1",
+ "futures-core",
+ "futures-sink",
  "heapless 0.8.0",
 ]
 
@@ -1544,6 +1601,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
+name = "sequential-storage"
+version = "7.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "574e5a379bf43653079b34cb4cf32958404b5f42e0ed5b5adcdff02c2de04d4d"
+dependencies = [
+ "embedded-storage-async",
+ "heapless 0.8.0",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,9 +1958,16 @@ name = "umsh-bsp-nrf52840"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "embassy-embedded-hal 0.3.2",
  "embassy-futures",
  "embassy-nrf",
+ "embassy-sync 0.6.2",
  "embassy-usb",
+ "embedded-storage",
+ "embedded-storage-async",
+ "heapless 0.8.0",
+ "sequential-storage",
+ "umsh-hal",
 ]
 
 [[package]]

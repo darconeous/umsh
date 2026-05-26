@@ -19,6 +19,7 @@ repository.workspace = true
 default = []
 
 [dependencies]
+umsh-hal = { path = "../umsh-hal", default-features = false }
 
 # Embedded-only deps. Gated on `target_os = "none"` so this crate still
 # parses and unit-tests cleanly on host (the rescue watchers are pure
@@ -28,4 +29,10 @@ default = []
 embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.6", default-features = false }
+embassy-embedded-hal = { version = "0.3", default-features = false }
 cortex-m = { version = "0.7" }
+sequential-storage = { version = "7.2", default-features = false, features = ["heapless"] }
+embedded-storage = "0.3"
+embedded-storage-async = "0.4"
+heapless = { workspace = true }

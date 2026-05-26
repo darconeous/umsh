@@ -76,7 +76,9 @@ mod firmware {
     use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+    use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
+    use embassy_nrf::rng::Rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::twim::{self, Config as TwimConfig, Twim};
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -95,6 +97,7 @@ mod firmware {
     use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
+    use umsh_bsp_nrf52840::flash_store::{NvmcCounterStore, NvmcKeyValueStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{CryptoEngine, NodeIdentity, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
     use umsh_core::PublicKey;
@@ -110,6 +113,7 @@ mod firmware {
         CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
         TWISPI0     => embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
+        RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
     });
 
     // ─── Configuration ───────────────────────────────────────────────────────
@@ -173,22 +177,6 @@ mod firmware {
     }
     impl TryCryptoRng for WioRng {}
 
-    struct RamCounterStore;
-    impl umsh_hal::CounterStore for RamCounterStore {
-        type Error = core::convert::Infallible;
-        async fn load(&self, _: &[u8]) -> Result<u32, Self::Error> { Ok(0) }
-        async fn store(&self, _: &[u8], _: u32) -> Result<(), Self::Error> { Ok(()) }
-        async fn flush(&self) -> Result<(), Self::Error> { Ok(()) }
-    }
-
-    struct NullKeyValueStore;
-    impl umsh_hal::KeyValueStore for NullKeyValueStore {
-        type Error = core::convert::Infallible;
-        async fn load(&self, _: &[u8], _: &mut [u8]) -> Result<Option<usize>, Self::Error> { Ok(None) }
-        async fn store(&self, _: &[u8], _: &[u8]) -> Result<(), Self::Error> { Ok(()) }
-        async fn delete(&self, _: &[u8]) -> Result<(), Self::Error> { Ok(()) }
-    }
-
     struct WioTrackerPlatform;
     impl Platform for WioTrackerPlatform {
         type Identity      = SoftwareIdentity;
@@ -198,8 +186,8 @@ mod firmware {
         type Delay         = Delay;
         type Clock         = EmbassyClock;
         type Rng           = WioRng;
-        type CounterStore  = RamCounterStore;
-        type KeyValueStore = NullKeyValueStore;
+        type CounterStore  = NvmcCounterStore;
+        type KeyValueStore = NvmcKeyValueStore;
     }
 
     type WioMac = umsh_mac::Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>;
@@ -225,7 +213,8 @@ mod firmware {
     /// `Send` (since `WioMac: Send`); `MacHandle` and `CliSession` are `!Send`
     /// but that's fine — Embassy's local `Spawner::spawn` accepts `!Send`
     /// tasks (only `SendSpawner` requires `Send`).
-    static MAC_CELL: StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
+    static MAC_CELL:  StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
+    static STORAGE:   StaticCell<NvmcStorage>           = StaticCell::new();
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -443,17 +432,37 @@ mod firmware {
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
 
+        // ── NV storage ────────────────────────────────────────────────────────
+        let storage: &'static NvmcStorage =
+            STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+
         // ── MAC coordinator ───────────────────────────────────────────────────
-        let mut rng = WioRng::from_ficr();
-        let mut id_seed = [0u8; 32];
-        rng.try_fill_bytes(&mut id_seed).ok();
-        let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
-        let local_key = *identity.public_key(); // save before identity moves into add_identity
+        // Load the persisted identity key, or generate a fresh one from the
+        // nRF52840 hardware TRNG (with bias correction) on first boot.
+        // We do NOT fall back to a FICR-seeded PRNG on failure — a predictable
+        // long-term key is worse than refusing to start.
+        let sk_bytes: [u8; 32] = match storage.load_sk().await {
+            Ok(Some(sk)) => sk,
+            Ok(None) => {
+                let mut hw_rng = Rng::new(p.RNG, Irqs);
+                hw_rng.set_bias_correction(true);
+                let mut sk = [0u8; 32];
+                hw_rng.fill_bytes(&mut sk).await;
+                storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
+                sk
+            }
+            Err(_) => panic!("storage init failed"),
+        };
+        let identity   = SoftwareIdentity::from_secret_bytes(&sk_bytes);
+        let local_key  = *identity.public_key();
+
+        let rng = WioRng::from_ficr();
 
         let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac = WioMac::new(
-            radio_handle, crypto, EmbassyClock, rng, RamCounterStore,
+            radio_handle, crypto, EmbassyClock, rng,
+            NvmcCounterStore::new(storage),
             RepeaterConfig::default(), OperatingPolicy::default(),
         );
         let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
