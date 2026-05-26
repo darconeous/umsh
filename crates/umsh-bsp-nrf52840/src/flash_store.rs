@@ -393,6 +393,19 @@ impl NvmcStorage {
         Ok(Some(identity.len()))
     }
 
+    /// Return `true` if `pk` appears in the peer index.
+    ///
+    /// Used to guard `update_peer_identity` so that identity bytes received
+    /// over the air are only stored for peers the user has explicitly added.
+    pub async fn peer_exists(&self, pk: &[u8; 32]) -> Result<bool, Error> {
+        let mut index_buf = [0u8; 32 * MAX_PEERS];
+        let n = match self.load_bytes(PEER_INDEX_KEY, &mut index_buf).await? {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        Ok(index_buf[..n].chunks_exact(32).any(|c| c == pk.as_slice()))
+    }
+
     /// Remove the peer record for `pk` from both the per-key record and the
     /// peer index. A no-op if the peer was not previously stored.
     pub async fn delete_peer_entry(&self, pk: &[u8; 32]) -> Result<(), Error> {
