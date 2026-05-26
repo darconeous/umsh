@@ -342,6 +342,7 @@ Id   | Mnemonic              | Commands   | Description
 40   | `PROP_PHY_LORA_SF`    | Get, Set   | LoRa spreading factor
 41   | `PROP_PHY_LORA_CR`    | Get, Set   | LoRa coding rate
 42   | `PROP_PHY_MTU`        | Get        | Max size of a frame
+43   | `PROP_PHY_LORA_SW`    | Get, Set   | LoRa sync word (16-bit style)
 113  | `STR_PHY_RAW`         | Send, Recv | Raw radio frame stream
 4820 | `PROP_PHY_DUTY_NOW`   | Get        | Current duty usage
 4822 | `PROP_PHY_DUTY_LIMIT` | Get, Set   | Duty-cycle limit
@@ -550,6 +551,17 @@ Value is the configured LoRa coding rate.
 * Post-Reset Value: Implementation-Specific
 
 Maximum size of the `DATA` field that may be supplied to `STR_PHY_RAW`.
+
+### PROP 43: `PROP_PHY_LORA_SW` {#prop-phy-lora-sw}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_PHY_LORA`
+* Scope: NLI
+* Value Type: UINT16
+* Post-Reset Value: Implementation-Specific, but 0x1424 is a good suggestion.
+
+Value is the 16-bit (SX126x-style) LoRa sync-word.
 
 ### STREAM 113: `STR_PHY_RAW` {#str-radio-raw}
 

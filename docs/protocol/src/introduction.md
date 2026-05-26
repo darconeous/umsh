@@ -53,6 +53,9 @@ The following principles guide UMSH's design. When evaluating a design decision,
 
 **Graceful extensibility.** The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.
 
+> [!NOTE]
+> Regarding layer separation... There is a case to be made that having the payload type be non-opaque could be a benefit to the mesh as a whole, because you could then do things like prioritize text chat messages over other types of messages at the repeater level. This would help to ensure that there is a minimum-level of text service always available, even if there is lots of other traffic present. I am not yet convinced this is a good idea yet, but it is worth thinking about.
+
 ## Use Cases
 
 UMSH is designed for deployments where LoRa's range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.
