@@ -1,20 +1,28 @@
-// Seeed Wio Tracker L1 / L1 Pro bringup firmware (Phase 4).
+// Seeed Wio Tracker L1 / L1 Pro bringup firmware with an interactive
+// UMSH CLI on USB-CDC.
 //
 // Boot sequence:
-//   1. Initialize the 4 KiB global heap (required by umsh-sync → alloc).
+//   1. Initialize the 8 KiB global heap (umsh-cli/umsh-node alloc usage).
 //   2. Arm the watchdog (8 s timeout).
 //   3. Read any panic message left by the previous boot.
 //   4. Initialize the SH1106 OLED and spawn the display task.
 //   5. Initialize the SX1262 LoRa radio and spawn the radio runner task.
-//   6. Build Mac<WioTrackerPlatform>, add an ephemeral identity, and spawn
-//      the mac_task which drives the full UMSH MAC coordinator.
-//   7. Run USB-CDC echo + heartbeat LED + USB stack concurrently.
+//   6. Build Mac<WioTrackerPlatform>, park it in a 'static AsyncRefCell, and
+//      spawn umsh_task which drives Host::run + CliSession::run concurrently
+//      over the shared MacHandle.
+//   7. Spawn output_task to own the USB Sender and drain OUTPUT_CH.
+//   8. Join usb.run / heartbeat in main; the CLI runs in spawned tasks.
 //
 // Task layout (steady state):
-//   - main():              joins usb.run / run_echo / heartbeat
+//   - main():              joins usb.run / heartbeat
 //   - display_task:        renders the OLED on boot and MAC count signals
 //   - radio_runner_task:   owns lora_phy::LoRa, RX/TX state machine
-//   - mac_task:            drives Mac<WioTrackerPlatform>, counts UMSH packets
+//   - umsh_task:           host.run() + cli.run(), shares MAC via MacHandle
+//   - output_task:         owns the USB Sender, drains OUTPUT_CH
+//
+// USB CDC flow control is preserved by the output_task / OUTPUT_CH split:
+// nothing blocks CdcInput::read_packet on TX progress, so the host's bulk
+// OUT NAK / retry mechanism handles backpressure correctly during pastes.
 //
 // Radio pin map (Wio Tracker L1):
 //   SPI:  SCK=P0.30, MISO=P0.03, MOSI=P0.28  (TWISPI1)
@@ -34,6 +42,9 @@ mod panic;
 
 #[cfg(target_os = "none")]
 mod display;
+
+#[cfg(target_os = "none")]
+mod cli_io;
 
 #[cfg(target_os = "none")]
 mod defmt_logger {
@@ -61,7 +72,7 @@ mod firmware {
     use super::display;
 
     use embassy_executor::Spawner;
-    use embassy_futures::join::join3;
+    use embassy_futures::join::join;
     use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -72,9 +83,8 @@ mod firmware {
     use embassy_nrf::usb::Driver;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-    use embassy_sync::channel::Channel;
     use embassy_sync::signal::Signal;
-    use embassy_time::{Delay, Duration, Instant, Timer};
+    use embassy_time::{Delay, Instant, Timer};
     use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
@@ -86,8 +96,13 @@ mod firmware {
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    use umsh_crypto::{CryptoEngine, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
-    use umsh_mac::{LocalIdentityId, MacEventRef, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
+    use umsh_crypto::{CryptoEngine, NodeIdentity, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
+    use umsh_core::PublicKey;
+    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_node::Host;
+    use umsh_sync::AsyncRefCell;
+
+    use super::cli_io;
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -100,7 +115,6 @@ mod firmware {
     // ─── Configuration ───────────────────────────────────────────────────────
 
     const TX_POWER_DBM: i32 = 14;
-    const PRINT_LINE_CAP: usize = 128;
 
     // ─── Concrete types ───────────────────────────────────────────────────────
 
@@ -190,6 +204,13 @@ mod firmware {
 
     type WioMac = umsh_mac::Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>;
 
+    // ─── Concrete USB driver type aliases ────────────────────────────────────
+    // ('static lifetime, VbusDetect = HardwareVbusDetect.) Used by `umsh_task`
+    // and `output_task`.
+    type WioUsbDriver = Driver<'static, HardwareVbusDetect>;
+    type WioSender    = Sender<'static, WioUsbDriver>;
+    type WioRescue    = CdcAcmRescue<'static, WioUsbDriver>;
+
     // ─── Shared state ────────────────────────────────────────────────────────
 
     type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
@@ -198,8 +219,13 @@ mod firmware {
     static PACKET_COUNT: AtomicU32 = AtomicU32::new(0);
     static DISPLAY_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-    type PrintLine = heapless::String<PRINT_LINE_CAP>;
-    static PRINT_CH: Channel<ThreadModeRawMutex, PrintLine, 2> = Channel::new();
+    /// Shared MAC coordinator cell. Stored in a `StaticCell` so a `'static`
+    /// reference can be handed to the spawned `umsh_task` (which builds
+    /// `MacHandle` / `Host` / `CliSession` off of it). The cell itself is
+    /// `Send` (since `WioMac: Send`); `MacHandle` and `CliSession` are `!Send`
+    /// but that's fine — Embassy's local `Spawner::spawn` accepts `!Send`
+    /// tasks (only `SendSpawner` requires `Send`).
+    static MAC_CELL: StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -250,37 +276,71 @@ mod firmware {
         umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
+    // ─── umsh_task (CliSession-backed CLI + MAC driver) ─────────────────────
+
+    /// Owns the USB `Sender` and serves the static `OUTPUT_CH`. Decoupling
+    /// the sender from `umsh_task` lets RX keep flowing while TX awaits host
+    /// IN polls, so USB OUT NAKs handle backpressure from the host correctly
+    /// during long pastes.
     #[embassy_executor::task]
-    async fn mac_task(mut mac: WioMac, identity_id: LocalIdentityId) {
-        use core::fmt::Write as _;
+    async fn output_task(mut tx: WioSender) {
+        cli_io::drain_to_sender(&mut tx).await;
+    }
 
-        const BEACON_INTERVAL: Duration = Duration::from_secs(10);
-        let opts = SendOptions::default();
-        let mut next_beacon = Instant::now() + BEACON_INTERVAL;
+    /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
+    /// concurrently via `select`. The shared `AsyncRefCell<Mac>` (held via
+    /// `MacHandle`) serialises MAC access between the host driver and the
+    /// CLI's send-side calls.
+    #[embassy_executor::task]
+    async fn umsh_task(
+        mac_cell: &'static AsyncRefCell<WioMac>,
+        identity_id: LocalIdentityId,
+        local_key: PublicKey,
+        rx: WioRescue,
+        prev_panic_buf: &'static [u8; 256],
+        prev_panic_len: usize,
+    ) {
+        use umsh_cli::CliSession;
+        use umsh_cli::io::CliOutput;
+        use umsh_cli::logger::NullLogger;
 
-        let mut on_event = |_id: LocalIdentityId, event: MacEventRef<'_>| {
-            let MacEventRef::Received(pkt) = event else { return };
-            PACKET_COUNT.fetch_add(1, Ordering::Relaxed);
-            DISPLAY_SIGNAL.signal(());
-            let mut line: PrintLine = heapless::String::new();
-            let _ = write!(
-                line,
-                "\r\n[MAC] rssi={} snr={} auth={} {:?}\r\n",
-                pkt.rssi().unwrap_or(0),
-                pkt.snr().map_or(0, |s| s.as_centibels() / 10),
-                pkt.source_authenticated(),
-                pkt.packet_family(),
-            );
-            let _ = PRINT_CH.try_send(line);
-        };
+        let handle = MacHandle::new(mac_cell);
+        let mut host: Host<'_, WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32> =
+            Host::new(handle);
+        let node = host.add_node(identity_id);
 
+        let mut input = cli_io::CdcInput::new(rx);
+        let mut out = cli_io::CdcOutput::new();
+
+        // Wait for the host to open the CDC port before writing the banner —
+        // otherwise the writes silently disappear into a closed IN endpoint
+        // and the user sees a blank terminal on connect. (This blocks the
+        // MAC from being driven until first connection, which is fine for
+        // bringup; revisit if we ever want to MAC pre-connect.)
+        input.wait_connection().await;
+
+        let _ = out.write_line("").await;
+        let _ = out.write_line("UMSH CLI (Wio Tracker L1)").await;
+        let _ = out.write_line("type /help for commands").await;
+        if prev_panic_len > 0 {
+            let _ = out.write_line("[PREV PANIC]:").await;
+            if let Ok(s) = core::str::from_utf8(&prev_panic_buf[..prev_panic_len]) {
+                let _ = out.write_line(s).await;
+            }
+        }
+
+        let mut cli: CliSession<_, _, _, 4, 4, 2, 8, 2, 128> =
+            CliSession::new(node, local_key, out, NullLogger::new());
+
+        // Drive the MAC and the CLI concurrently. No periodic beacon — the
+        // user triggers any TX explicitly via CLI commands.
         loop {
-            match select(mac.next_event(&mut on_event), Timer::at(next_beacon)).await {
-                Either::First(Ok(())) => {}
-                Either::First(Err(_)) => panic!("mac"),
-                Either::Second(()) => {
-                    mac.queue_broadcast(identity_id, b"", &opts).ok();
-                    next_beacon = Instant::now() + BEACON_INTERVAL;
+            match select(host.run(), cli.run(&mut input)).await {
+                Either::First(_) => panic!("host exited"),
+                Either::Second(_) => {
+                    // CdcInput never returns Ok(None); `cli.run` exits only on
+                    // `/quit`. Loop back and re-enter — input buffer state
+                    // persists across the cancel so behaviour is seamless.
                 }
             }
         }
@@ -291,9 +351,11 @@ mod firmware {
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
         // Heap must be initialized before any alloc-using code runs.
+        // Bumped from 4 KiB to 8 KiB to accommodate umsh-cli alloc (command parse errors,
+        // subscription vecs, etc.) without embedded-alloc OOM.
         {
             use core::mem::MaybeUninit;
-            const HEAP_SIZE: usize = 4096;
+            const HEAP_SIZE: usize = 8192;
             static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
             unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
         }
@@ -305,18 +367,22 @@ mod firmware {
         let (_wdt, [wdt_handle]) =
             Watchdog::try_new::<_, 1>(p.WDT, wdt_config).unwrap_or_else(|_| panic!("wdt"));
 
-        let mut prev_panic_buf = [0u8; 256];
+        // Panic message from previous boot — stored in a StaticCell so cli_task
+        // can hold a 'static reference to it without lifetime issues.
+        static PREV_PANIC_BUF: StaticCell<[u8; 256]> = StaticCell::new();
+        let mut prev_panic_tmp = [0u8; 256];
         let prev_panic_len = {
             let mut slot = PanicSlot::new(super::panic::panic_region());
             if let Some(msg) = slot.read() {
-                let n = msg.len().min(prev_panic_buf.len());
-                prev_panic_buf[..n].copy_from_slice(&msg[..n]);
+                let n = msg.len().min(prev_panic_tmp.len());
+                prev_panic_tmp[..n].copy_from_slice(&msg[..n]);
                 slot.clear();
                 n
             } else {
                 0
             }
         };
+        let prev_panic_buf: &'static [u8; 256] = PREV_PANIC_BUF.init(prev_panic_tmp);
 
         // ── SH1106 OLED (TWIM0, SDA=P0.06, SCL=P0.05) ───────────────────────
         {
@@ -382,6 +448,7 @@ mod firmware {
         let mut id_seed = [0u8; 32];
         rng.try_fill_bytes(&mut id_seed).ok();
         let identity = SoftwareIdentity::from_secret_bytes(&id_seed);
+        let local_key = *identity.public_key(); // save before identity moves into add_identity
 
         let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
@@ -390,7 +457,11 @@ mod firmware {
             RepeaterConfig::default(), OperatingPolicy::default(),
         );
         let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
-        spawner.spawn(mac_task(mac, identity_id).unwrap());
+
+        // Hand ownership of the MAC to a 'static AsyncRefCell so `umsh_task`
+        // can build MacHandle/Host/CliSession off of it.
+        let mac_cell: &'static AsyncRefCell<WioMac> =
+            MAC_CELL.init(AsyncRefCell::new(mac));
 
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
@@ -423,9 +494,14 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
-        join3(
+        spawner.spawn(output_task(tx).unwrap());
+        spawner.spawn(
+            umsh_task(mac_cell, identity_id, local_key, rx, prev_panic_buf, prev_panic_len)
+                .unwrap()
+        );
+
+        join(
             usb.run(),
-            run_echo(tx, rx, &prev_panic_buf[..prev_panic_len]),
             heartbeat(led, wdt_handle),
         ).await;
     }
@@ -442,43 +518,4 @@ mod firmware {
         }
     }
 
-    // ─── USB-CDC echo + MAC log drain ─────────────────────────────────────────
-
-    async fn run_echo<'d, D: embassy_usb::driver::Driver<'d>>(
-        mut tx: Sender<'d, D>,
-        mut rx: CdcAcmRescue<'d, D>,
-        prev_panic: &[u8],
-    ) -> ! {
-        let mut usb_buf = [0u8; 64];
-
-        loop {
-            rx.wait_connection().await;
-
-            let _ = tx.write_packet(b"\r\nUMSH hello-wio-tracker-l1 ready.\r\n").await;
-            let _ = tx.write_packet(b"TX: broadcast beacon every 10 s\r\n").await;
-            let _ = tx.write_packet(b"RX: counting UMSH frames (MeshCore dropped)\r\n").await;
-
-            if !prev_panic.is_empty() {
-                let _ = tx.write_packet(b"\r\n[PREV PANIC]: ").await;
-                for chunk in prev_panic.chunks(64) {
-                    if tx.write_packet(chunk).await.is_err() { break; }
-                }
-                let _ = tx.write_packet(b"\r\n").await;
-            }
-
-            'session: loop {
-                match select(rx.read_packet(&mut usb_buf), PRINT_CH.receive()).await {
-                    Either::First(Ok(0)) | Either::First(Err(_)) => break 'session,
-                    Either::First(Ok(n)) => {
-                        if tx.write_packet(&usb_buf[..n]).await.is_err() { break 'session; }
-                    }
-                    Either::Second(line) => {
-                        for chunk in line.as_bytes().chunks(64) {
-                            if tx.write_packet(chunk).await.is_err() { break 'session; }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

@@ -391,10 +391,22 @@ where
                 self.out.write_line(&line).await?;
             }
 
-            CliEvent::Beacon { from } => {
-                let alias = self.peer_alias_display(&from);
+            CliEvent::Beacon { hint, from } => {
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                let _ = write!(&mut line, "[beacon from {}]", alias);
+                match from {
+                    Some(key) => {
+                        let alias = self.peer_alias_display(&key);
+                        let _ = write!(&mut line, "[beacon from {}]", alias);
+                    }
+                    None => {
+                        // Hint-only beacon (sender didn't include the full pubkey).
+                        let _ = write!(
+                            &mut line,
+                            "[beacon hint:{:02x}{:02x}{:02x}]",
+                            hint.0[0], hint.0[1], hint.0[2],
+                        );
+                    }
+                }
                 self.out.write_line(&line).await?;
             }
 
@@ -1418,10 +1430,9 @@ where
         let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
-        subs.push(node.on_beacon(move |_hint, key| {
+        subs.push(node.on_beacon(move |hint, key| {
             st.borrow_mut().beacons_rx += 1;
-            let Some(from) = key else { return };
-            push_event(&ev, &dr, &wk, CliEvent::Beacon { from });
+            push_event(&ev, &dr, &wk, CliEvent::Beacon { hint, from: key });
         }));
     }
 

@@ -6,7 +6,7 @@
 //! commands the CLI actually cares about get dedicated variants.
 
 use heapless::{String, Vec};
-use umsh_core::PublicKey;
+use umsh_core::{NodeHint, PublicKey};
 
 /// Maximum payload length recorded in inbound events (per-event cap).
 pub const EVENT_PAYLOAD_MAX: usize = 64;
@@ -34,7 +34,11 @@ pub enum CliEvent {
         name: Option<String<32>>,
     },
     Beacon {
-        from: PublicKey,
+        /// 3-byte source hint from the packet header — always present.
+        hint: NodeHint,
+        /// Full source pubkey, when the beacon carried it (some senders only
+        /// include the hint to save airtime).
+        from: Option<PublicKey>,
     },
     PfsEstablished {
         peer: PublicKey,
