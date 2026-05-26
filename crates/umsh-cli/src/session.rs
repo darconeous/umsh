@@ -44,7 +44,7 @@ use crate::mac_cmd::encode_mac_command;
 use crate::ping::PendingPing;
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
-use umsh_hal::PeerStore;
+use umsh_hal::{ChannelStore, PeerStore};
 use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
@@ -103,6 +103,7 @@ pub struct CliSession<
     OUT,
     LOG,
     PS,
+    CS,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
@@ -116,12 +117,14 @@ pub struct CliSession<
     OUT: CliOutput,
     LOG: CliLogger,
     PS: PeerStore,
+    CS: ChannelStore,
 {
     pub(crate) node: LocalNode<M>,
     pub(crate) local_key: PublicKey,
     pub(crate) out: OUT,
     pub(crate) logger: LOG,
     pub(crate) peer_store: PS,
+    pub(crate) channel_store: CS,
     pub(crate) peers: FnvIndexMap<PublicKey, PeerEntry, N_PEERS>,
     pub(crate) aliases: FnvIndexMap<HString<16>, PublicKey, N_ALIASES>,
     pub(crate) channels: FnvIndexMap<HString<16>, ChannelEntry, N_CHANNELS>,
@@ -141,13 +144,14 @@ impl<
     OUT,
     LOG,
     PS,
+    CS,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
     const N_EVENTS: usize,
     const N_PENDING_PINGS: usize,
     const LINE_MAX: usize,
-> CliSession<M, OUT, LOG, PS, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
+> CliSession<M, OUT, LOG, PS, CS, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
@@ -155,16 +159,17 @@ where
     OUT: CliOutput,
     LOG: CliLogger,
     PS: PeerStore,
+    CS: ChannelStore,
 {
     /// Construct a new session around a cloned `LocalNode<M>`. `local_key`
     /// is passed in because the caller already has it; no node-crate accessor
     /// for the local key is added. The session owns the `out` half of the
     /// CLI transport; the input half is supplied to [`Self::run`].
     ///
-    /// `peer_store` is called on every `/peer add` and `/peer rm` to persist
-    /// the change. Pass [`umsh_hal::NoPeerStore`] when persistence is not
-    /// needed.
-    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG, peer_store: PS) -> Self {
+    /// `peer_store` and `channel_store` are called on join/leave and add/rm
+    /// to persist changes. Pass [`umsh_hal::NoPeerStore`] /
+    /// [`umsh_hal::NoChannelStore`] when persistence is not needed.
+    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG, peer_store: PS, channel_store: CS) -> Self {
         let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
         let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
         let pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>> =
@@ -186,6 +191,7 @@ where
             out,
             logger,
             peer_store,
+            channel_store,
             peers: FnvIndexMap::new(),
             aliases: FnvIndexMap::new(),
             channels: FnvIndexMap::new(),
@@ -249,6 +255,34 @@ where
             if let Some(a) = alias.and_then(|s| HString::<16>::try_from(s).ok()) {
                 let _ = self.aliases.remove(&a);
             }
+            return false;
+        }
+        true
+    }
+
+    /// Pre-register a channel at startup (e.g. from persisted storage).
+    ///
+    /// Joins the channel at the MAC layer and inserts it into the session
+    /// channel table. Returns `false` if the channel or MAC table is full, or
+    /// if the key is invalid. Does NOT call `channel_store` — use this only
+    /// when restoring data that is already durable.
+    #[cfg(feature = "software-crypto")]
+    pub async fn register_channel(&mut self, name: &str, key_bytes: [u8; 32]) -> bool {
+        let hname = match HString::<16>::try_from(name) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        if self.channels.contains_key(&hname) {
+            return true;
+        }
+        let channel_key = umsh_core::ChannelKey(key_bytes);
+        let channel = umsh_node::Channel::private(channel_key, name);
+        if self.node.join(&channel).await.is_err() {
+            return false;
+        }
+        let entry = ChannelEntry { name: hname.clone(), key_bytes };
+        if self.channels.insert(hname, entry).is_err() {
+            let _ = self.node.leave(&channel);
             return false;
         }
         true
@@ -1163,6 +1197,8 @@ where
                         let _ = self.node.leave(&channel);
                         return self.write_err("channel table full").await;
                     }
+                    // Persist (best-effort).
+                    let _ = self.channel_store.store_channel(name.as_bytes(), &key_bytes).await;
                     self.out.write_line("joined").await?;
                 }
                 Err(e) => self.write_err(&node_err_str(&e)).await?,
@@ -1191,6 +1227,8 @@ where
             let channel_key = umsh_core::ChannelKey(key_bytes);
             let channel = umsh_node::Channel::private(channel_key, name);
             let _ = self.node.leave(&channel);
+            // Persist deletion (best-effort).
+            let _ = self.channel_store.delete_channel(name.as_bytes()).await;
             self.out.write_line("left").await?;
         }
         #[cfg(not(feature = "software-crypto"))]

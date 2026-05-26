@@ -180,6 +180,35 @@ impl PeerStore for NoPeerStore {
     }
 }
 
+/// Persistent channel directory for the node layer.
+///
+/// Stores and retrieves shared channel keys keyed by channel name (UTF-8,
+/// up to 16 bytes). Implementors MUST treat `store_channel` as an upsert.
+pub trait ChannelStore {
+    type Error;
+
+    /// Upsert the channel record for `name`.
+    async fn store_channel(&self, name: &[u8], key: &[u8; 32]) -> Result<(), Self::Error>;
+
+    /// Remove the channel record for `name`. A no-op if not present.
+    async fn delete_channel(&self, name: &[u8]) -> Result<(), Self::Error>;
+}
+
+/// No-op channel store — use when channel persistence is not needed.
+pub struct NoChannelStore;
+
+impl ChannelStore for NoChannelStore {
+    type Error = core::convert::Infallible;
+
+    async fn store_channel(&self, _: &[u8], _: &[u8; 32]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn delete_channel(&self, _: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 /// Persistent frame-counter storage.
 pub trait CounterStore {
     type Error;
