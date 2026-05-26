@@ -106,7 +106,7 @@ mod firmware {
     use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcCounterStore, NvmcKeyValueStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
@@ -327,6 +327,7 @@ mod firmware {
         mac_cell: &'static AsyncRefCell<TechoMac>,
         identity_id: LocalIdentityId,
         local_key: PublicKey,
+        storage: &'static NvmcStorage,
         rx: TechoRescue,
         prev_panic_buf: &'static [u8; 256],
         prev_panic_len: usize,
@@ -342,6 +343,12 @@ mod firmware {
         let mut input = cli_io::CdcInput::new(rx);
         let mut out = cli_io::CdcOutput::new();
 
+        // Load persisted peers into a scratch buffer before `out` is moved into the CLI.
+        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
+            heapless::Vec::new();
+        let _ = storage.load_all_peers(&mut peer_buf).await;
+
+        // Wait for the host to open the CDC port before writing the banner.
         input.wait_connection().await;
 
         let _ = out.write_line("").await;
@@ -354,8 +361,15 @@ mod firmware {
             }
         }
 
-        let mut cli: CliSession<_, _, _, 4, 4, 2, 8, 2, 128> =
-            CliSession::new(node, local_key, out, NullLogger::new());
+        let peer_store = NvmcPeerStore::new(storage);
+        let mut cli: CliSession<_, _, _, _, 4, 4, 2, 8, 2, 128> =
+            CliSession::new(node, local_key, out, NullLogger::new(), peer_store);
+
+        // Re-register loaded peers into the CLI session peer table.
+        for (pk, alias) in peer_buf.iter() {
+            let key = PublicKey(*pk);
+            let _ = cli.register_peer(key, alias.as_deref()).await;
+        }
 
         loop {
             match select(host.run(), cli.run(&mut input)).await {
@@ -616,7 +630,7 @@ mod firmware {
 
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(
-            umsh_task(mac_cell, identity_id, local_key, rx, prev_panic_buf, prev_panic_len)
+            umsh_task(mac_cell, identity_id, local_key, storage, rx, prev_panic_buf, prev_panic_len)
                 .unwrap()
         );
 

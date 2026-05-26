@@ -10,8 +10,9 @@
 //!
 //! | Prefix       | Trait           | Payload                              |
 //! |--------------|-----------------|--------------------------------------|
-//! | `id.sk`      | KeyValueStore   | local Ed25519 secret scalar (32 B)   |
-//! | `peer:<pk>`  | KeyValueStore   | serialised peer record               |
+//! | `id.sk`      | (direct)        | local Ed25519 secret scalar (32 B)   |
+//! | `peers`      | PeerStore       | packed pubkey index (32 B × N)       |
+//! | `peer:<pk>`  | PeerStore       | alias len (1 B) + alias (≤16 B)      |
 //! | `ch:<id>`    | KeyValueStore   | channel name + key + flags           |
 //! | `mac.tx:<pk>`| CounterStore    | TX reservation boundary (u32 LE)     |
 //! | `mac.rx:<pk>`| CounterStore    | RX replay-window boundary (u32 LE)   |
@@ -28,11 +29,11 @@
 //! ## Sharing model
 //!
 //! [`NvmcStorage`] owns the flash + map behind an async mutex.
-//! [`NvmcKeyValueStore`] and [`NvmcCounterStore`] are zero-cost view
-//! types that each hold a `&'static NvmcStorage`. They exist as
-//! separate types because the `umsh-hal` traits both define `load` and
-//! `store` methods — implementing both on a single type would force
-//! every caller to disambiguate via UFCS. Keep them split.
+//! [`NvmcKeyValueStore`], [`NvmcCounterStore`], and [`NvmcPeerStore`] are
+//! zero-cost view types that each hold a `&'static NvmcStorage`. They exist
+//! as separate types because the `umsh-hal` traits both define `load` and
+//! `store` methods — implementing both on a single type would force every
+//! caller to disambiguate via UFCS. Keep them split.
 
 use core::ops::Range;
 
@@ -70,6 +71,29 @@ type FlashDriver = BlockingAsync<Nvmc<'static>>;
 
 type Map = MapStorage<StoreKey, FlashDriver, NoCache>;
 
+/// Maximum number of peers tracked in the peer index.
+/// 8 × 32 = 256 bytes, comfortably under the 512-byte scratch limit.
+pub const MAX_PEERS: usize = 8;
+
+/// Maximum alias length in bytes (UTF-8).
+pub const MAX_ALIAS_LEN: usize = 16;
+
+/// Fixed-size alias header prepended to every peer record.
+///
+/// Layout:
+/// ```text
+/// Byte 0      alias_len  (0 = no alias, 1–16 = alias present)
+/// Bytes 1–16  alias data (16-byte slot; only alias_len bytes significant)
+/// ```
+pub const ALIAS_HEADER_LEN: usize = 1 + MAX_ALIAS_LEN; // 17 bytes
+
+/// Maximum total peer record size.
+///
+/// `ALIAS_HEADER_LEN` (17) + serialised `NodeIdentityPayload` (≤239 B).
+/// Full NodeIdentityPayload with all optional fields is well under 150 B,
+/// so 256 B provides ample headroom for future additions.
+pub const MAX_PEER_RECORD_LEN: usize = 256;
+
 /// Errors surfaced by this module.
 #[derive(Debug)]
 pub enum Error {
@@ -77,6 +101,10 @@ pub enum Error {
     KeyTooLong,
     /// Stored value did not fit in the caller-supplied buffer on load.
     ValueTooLong,
+    /// The peer index already holds [`MAX_PEERS`] entries.
+    PeerIndexFull,
+    /// A stored record contained unexpected bytes (e.g. invalid UTF-8 alias).
+    CorruptedData,
     /// `sequential-storage` returned an error (corruption, full storage,
     /// underlying NVMC failure, …).
     Storage(sequential_storage::Error<embassy_nrf::nvmc::Error>),
@@ -178,6 +206,246 @@ impl NvmcStorage {
     /// [`load_sk`]: Self::load_sk
     pub async fn store_sk(&self, sk: &[u8; 32]) -> Result<(), Error> {
         self.store_bytes(SK_KEY, sk).await
+    }
+}
+
+// ─── Peer storage helpers ─────────────────────────────────────────────────────
+
+/// Key under which the packed peer index is stored (`peers`).
+const PEER_INDEX_KEY: &[u8] = b"peers";
+/// Prefix for individual peer records (`peer:` + 32-byte pubkey = 37 bytes).
+const PEER_KEY_PREFIX: &[u8] = b"peer:";
+
+fn make_peer_key(pk: &[u8; 32]) -> Result<StoreKey, Error> {
+    let mut key = StoreKey::new();
+    let r1 = key.extend_from_slice(PEER_KEY_PREFIX);
+    let r2 = key.extend_from_slice(pk);
+    if r1.is_err() || r2.is_err() {
+        return Err(Error::KeyTooLong);
+    }
+    Ok(key)
+}
+
+impl NvmcStorage {
+    /// Load every persisted peer into `out`.
+    ///
+    /// Each entry is a raw 32-byte public key plus an optional alias string
+    /// (up to 16 UTF-8 bytes). Entries beyond `N` are silently dropped.
+    pub async fn load_all_peers<const N: usize>(
+        &self,
+        out: &mut Vec<([u8; 32], Option<heapless::String<MAX_ALIAS_LEN>>), N>,
+    ) -> Result<(), Error> {
+        let mut index_buf = [0u8; 32 * MAX_PEERS];
+        let n = match self.load_bytes(PEER_INDEX_KEY, &mut index_buf).await? {
+            None => return Ok(()),
+            Some(n) if n % 32 == 0 => n,
+            Some(_) => return Err(Error::CorruptedData),
+        };
+        for chunk in index_buf[..n].chunks_exact(32) {
+            let mut pk = [0u8; 32];
+            pk.copy_from_slice(chunk);
+            let alias = self.load_peer_alias(&pk).await?;
+            let _ = out.push((pk, alias));
+        }
+        Ok(())
+    }
+
+    /// Read the full raw peer record into a [`MAX_PEER_RECORD_LEN`]-byte buffer.
+    ///
+    /// Returns `(buf, len)` when present. The alias header occupies
+    /// `buf[0..ALIAS_HEADER_LEN]` and any identity bytes follow at
+    /// `buf[ALIAS_HEADER_LEN..len]`.
+    async fn read_peer_record(
+        &self,
+        pk: &[u8; 32],
+    ) -> Result<Option<([u8; MAX_PEER_RECORD_LEN], usize)>, Error> {
+        let key = make_peer_key(pk)?;
+        let mut buf = [0u8; MAX_PEER_RECORD_LEN];
+        match self.load_bytes(&key, &mut buf).await? {
+            None => Ok(None),
+            Some(n) => Ok(Some((buf, n))),
+        }
+    }
+
+    async fn load_peer_alias(
+        &self,
+        pk: &[u8; 32],
+    ) -> Result<Option<heapless::String<MAX_ALIAS_LEN>>, Error> {
+        let (buf, n) = match self.read_peer_record(pk).await? {
+            None => return Ok(None),
+            Some(x) => x,
+        };
+        if n < 1 {
+            return Ok(None);
+        }
+        let alias_len = buf[0] as usize;
+        if alias_len == 0 || n < 1 + alias_len {
+            return Ok(None);
+        }
+        let s = core::str::from_utf8(&buf[1..1 + alias_len])
+            .map_err(|_| Error::CorruptedData)?;
+        Ok(heapless::String::try_from(s).ok())
+    }
+
+    /// Upsert the alias for `pk`.
+    ///
+    /// Writes the alias header and appends `pk` to the peer index if not
+    /// already present. Any previously stored identity bytes are preserved.
+    /// `alias`, if supplied, must be at most [`MAX_ALIAS_LEN`] bytes.
+    pub async fn store_peer_entry(
+        &self,
+        pk: &[u8; 32],
+        alias: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        let key = make_peer_key(pk)?;
+
+        // Read existing record to preserve any identity bytes.
+        let (mut value, existing_len) = match self.read_peer_record(pk).await? {
+            Some((buf, n)) => (buf, n),
+            None => ([0u8; MAX_PEER_RECORD_LEN], ALIAS_HEADER_LEN),
+        };
+        let identity_end = existing_len.max(ALIAS_HEADER_LEN);
+
+        // Overwrite the alias header in-place.
+        value[0] = 0;
+        if let Some(a) = alias {
+            if a.len() > MAX_ALIAS_LEN {
+                return Err(Error::ValueTooLong);
+            }
+            value[0] = a.len() as u8;
+            value[1..1 + a.len()].copy_from_slice(a);
+            // Zero the padding in the alias slot so the record stays canonical.
+            value[1 + a.len()..ALIAS_HEADER_LEN].fill(0);
+        } else {
+            value[1..ALIAS_HEADER_LEN].fill(0);
+        }
+
+        self.store_bytes(&key, &value[..identity_end]).await?;
+
+        // Update peer index: load, add if missing, store.
+        let mut index_buf = [0u8; 32 * MAX_PEERS];
+        let existing_n = match self.load_bytes(PEER_INDEX_KEY, &mut index_buf).await? {
+            Some(n) => n,
+            None => 0,
+        };
+        let already_present = index_buf[..existing_n]
+            .chunks_exact(32)
+            .any(|c| c == pk.as_slice());
+        if !already_present {
+            let new_n = existing_n + 32;
+            if new_n > index_buf.len() {
+                return Err(Error::PeerIndexFull);
+            }
+            index_buf[existing_n..new_n].copy_from_slice(pk);
+            self.store_bytes(PEER_INDEX_KEY, &index_buf[..new_n]).await?;
+        }
+        Ok(())
+    }
+
+    /// Update (or clear) the serialised `NodeIdentityPayload` for `pk`.
+    ///
+    /// The alias header is preserved. Pass an empty slice to remove the
+    /// identity portion while keeping the alias. The peer must already be in
+    /// the peer index (i.e. `store_peer_entry` called first).
+    pub async fn update_peer_identity(
+        &self,
+        pk: &[u8; 32],
+        identity_bytes: &[u8],
+    ) -> Result<(), Error> {
+        let new_len = ALIAS_HEADER_LEN + identity_bytes.len();
+        if new_len > MAX_PEER_RECORD_LEN {
+            return Err(Error::ValueTooLong);
+        }
+        let key = make_peer_key(pk)?;
+
+        // Read existing record to preserve alias header.
+        let (mut value, _) = match self.read_peer_record(pk).await? {
+            Some(x) => x,
+            None => ([0u8; MAX_PEER_RECORD_LEN], 0), // peer not yet stored
+        };
+
+        value[ALIAS_HEADER_LEN..new_len].copy_from_slice(identity_bytes);
+        self.store_bytes(&key, &value[..new_len]).await?;
+        Ok(())
+    }
+
+    /// Load the raw serialised identity bytes for `pk` into `out`.
+    ///
+    /// Returns the number of bytes written when an identity record is present,
+    /// `None` when no identity has been stored yet.
+    pub async fn load_peer_identity(
+        &self,
+        pk: &[u8; 32],
+        out: &mut [u8],
+    ) -> Result<Option<usize>, Error> {
+        let (buf, n) = match self.read_peer_record(pk).await? {
+            None => return Ok(None),
+            Some(x) => x,
+        };
+        if n <= ALIAS_HEADER_LEN {
+            return Ok(None);
+        }
+        let identity = &buf[ALIAS_HEADER_LEN..n];
+        if identity.len() > out.len() {
+            return Err(Error::ValueTooLong);
+        }
+        out[..identity.len()].copy_from_slice(identity);
+        Ok(Some(identity.len()))
+    }
+
+    /// Remove the peer record for `pk` from both the per-key record and the
+    /// peer index. A no-op if the peer was not previously stored.
+    pub async fn delete_peer_entry(&self, pk: &[u8; 32]) -> Result<(), Error> {
+        // Best-effort delete of the individual record.
+        let key = make_peer_key(pk)?;
+        let _ = self.delete_bytes(&key).await;
+
+        // Remove from index.
+        let mut index_buf = [0u8; 32 * MAX_PEERS];
+        let n = match self.load_bytes(PEER_INDEX_KEY, &mut index_buf).await? {
+            Some(n) => n,
+            None => return Ok(()),
+        };
+        let mut new_buf = [0u8; 32 * MAX_PEERS];
+        let mut new_n = 0usize;
+        for chunk in index_buf[..n].chunks_exact(32) {
+            if chunk != pk.as_slice() {
+                new_buf[new_n..new_n + 32].copy_from_slice(chunk);
+                new_n += 32;
+            }
+        }
+        if new_n == 0 {
+            let _ = self.delete_bytes(PEER_INDEX_KEY).await;
+        } else {
+            self.store_bytes(PEER_INDEX_KEY, &new_buf[..new_n]).await?;
+        }
+        Ok(())
+    }
+}
+
+/// View implementing [`umsh_hal::PeerStore`] on top of a shared
+/// [`NvmcStorage`]. Follows the same view-type pattern as
+/// [`NvmcKeyValueStore`] and [`NvmcCounterStore`].
+pub struct NvmcPeerStore {
+    storage: &'static NvmcStorage,
+}
+
+impl NvmcPeerStore {
+    /// Construct a peer-store view over the shared static storage.
+    pub fn new(storage: &'static NvmcStorage) -> Self {
+        Self { storage }
+    }
+}
+
+impl umsh_hal::PeerStore for NvmcPeerStore {
+    type Error = Error;
+
+    async fn store_peer(&self, key: &[u8; 32], alias: Option<&[u8]>) -> Result<(), Self::Error> {
+        self.storage.store_peer_entry(key, alias).await
+    }
+
+    async fn delete_peer(&self, key: &[u8; 32]) -> Result<(), Self::Error> {
+        self.storage.delete_peer_entry(key).await
     }
 }
 

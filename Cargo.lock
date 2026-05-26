@@ -2008,6 +2008,7 @@ dependencies = [
  "heapless 0.8.0",
  "tokio",
  "umsh-core",
+ "umsh-hal",
  "umsh-mac",
  "umsh-node",
  "umsh-sync",

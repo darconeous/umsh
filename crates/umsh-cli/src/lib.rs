@@ -17,8 +17,13 @@ pub use events::CliEvent;
 pub use io::{CliInput, CliOutput};
 pub use logger::{CliLogger, LogLevel, NullLogger};
 pub use session::{CliError, CliSession};
+pub use umsh_hal::{NoPeerStore, PeerStore};
 
 /// [`CliSession`] sized for typical desktop and tracker-class targets.
+///
+/// Uses [`NoPeerStore`] — peers are tracked in-memory only and are not
+/// persisted across sessions. For embedded targets with flash storage, use
+/// `CliSession<…, NvmcPeerStore, …>` directly.
 ///
 /// Capacity defaults: 16 peers, 16 aliases, 8 channels, 64 events, 8 pending
 /// pings, 256-byte command line. Replace with an explicit
@@ -27,6 +32,7 @@ pub type DefaultCliSession<M, OUT, LOG> = CliSession<
     M,
     OUT,
     LOG,
+    NoPeerStore,
     16,  // N_PEERS
     16,  // N_ALIASES
     8,   // N_CHANNELS

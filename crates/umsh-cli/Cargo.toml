@@ -19,6 +19,7 @@ serial = ["dep:embedded-io-async"]
 
 [dependencies]
 umsh-core = { path = "../umsh-core", default-features = false }
+umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-mac = { path = "../umsh-mac", default-features = false }
 umsh-node = { path = "../umsh-node", default-features = false }
 umsh-sync = { path = "../umsh-sync", default-features = false }
