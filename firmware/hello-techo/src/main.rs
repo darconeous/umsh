@@ -112,7 +112,7 @@ mod firmware {
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_core::PublicKey;
+    use umsh_core::{PayloadType, PublicKey};
     use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
     use umsh_node::Host;
     use umsh_sync::AsyncRefCell;
@@ -181,6 +181,13 @@ mod firmware {
     /// `MacHandle` / `Host` / `CliSession` off of it).
     static MAC_CELL: StaticCell<AsyncRefCell<TechoMac>> = StaticCell::new();
     static STORAGE:  StaticCell<NvmcStorage>             = StaticCell::new();
+
+    /// Relay from the sync `on_receive` callback to the async
+    /// `identity_persist_task`. Carries (pk, payload_body, len).
+    /// Only the most-recent identity per sender is retained; a newer
+    /// over-the-air update simply overwrites an earlier un-drained one.
+    static IDENTITY_SIGNAL: Signal<ThreadModeRawMutex, ([u8; 32], [u8; 256], usize)> =
+        Signal::new();
 
     // ─── Platform types ───────────────────────────────────────────────────────
     //
@@ -318,6 +325,19 @@ mod firmware {
         cli_io::drain_to_sender(&mut tx).await;
     }
 
+    /// Drains `IDENTITY_SIGNAL` and persists received `NodeIdentityPayload`
+    /// bytes for known peers. Runs independently of the MAC/CLI task so that
+    /// NVMC writes (which stall the CPU for ~85 ms) don't affect radio timing.
+    #[embassy_executor::task]
+    async fn identity_persist_task(storage: &'static NvmcStorage) {
+        loop {
+            let (pk, payload, len) = IDENTITY_SIGNAL.wait().await;
+            if storage.peer_exists(&pk).await.unwrap_or(false) {
+                let _ = storage.update_peer_identity(&pk, &payload[..len]).await;
+            }
+        }
+    }
+
     /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
     /// concurrently via `select`. The shared `AsyncRefCell<Mac>` (held via
     /// `MacHandle`) serialises MAC access between the host driver and the
@@ -377,6 +397,21 @@ mod firmware {
         for (name, key_bytes) in ch_buf.iter() {
             let _ = cli.register_channel(name.as_str(), *key_bytes).await;
         }
+
+        // Subscribe to raw packets so NodeIdentity payloads from known peers
+        // can be relayed to identity_persist_task for durable storage.
+        // The guard must remain live for the duration of the task.
+        let sub_node = host.node(identity_id).expect("node just added");
+        let _identity_sub = sub_node.on_receive(|pkt| {
+            if pkt.payload_type() != PayloadType::NodeIdentity { return false; }
+            let Some(from) = pkt.from_key() else { return false; };
+            let raw = pkt.payload();
+            let len = raw.len().min(256);
+            let mut buf = [0u8; 256];
+            buf[..len].copy_from_slice(&raw[..len]);
+            IDENTITY_SIGNAL.signal((from.0, buf, len));
+            false // don't consume — let other handlers see it too
+        });
 
         loop {
             match select(host.run(), cli.run(&mut input)).await {
@@ -636,6 +671,7 @@ mod firmware {
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
         spawner.spawn(output_task(tx).unwrap());
+        spawner.spawn(identity_persist_task(storage).unwrap());
         spawner.spawn(
             umsh_task(mac_cell, identity_id, local_key, storage, rx, prev_panic_buf, prev_panic_len)
                 .unwrap()
