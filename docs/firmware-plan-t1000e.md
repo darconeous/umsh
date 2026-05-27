@@ -482,43 +482,75 @@ ignores it but the tool rejects packages without it).
 **Gate:** ✅ USB CDC enumerates on host, banner appears on connect, echo
 works, LED blinks at LedEngine default cadence, WDT survives indefinitely.
 
-### Phase 2 — Power/DFU safety primitives
+### Phase 2 — Power/DFU safety primitives ✅
 
-Add GPREGRET helpers, USB-CDC rescue escape, WDT setup, and a *minimal*
-button task that handles long-press-off and triple-tap-DFU. No umsh yet,
-no CLI.
+Button task (`ButtonFsm` over P0.06) plus a shutdown task that tri-states the
+LED and enters System OFF with the button armed as the wake source.
+Hardware-verified.
 
-The BSP pieces are already implemented and hardware-verified:
+| Action | Trigger | Path |
+|---|---|---|
+| Power off | Long-press ≥ 5 s | `button_task` → `SHUTDOWN_SIGNAL` → `shutdown_task` → `power_off([WakePin { P0.06, High }])` |
+| Wake | Press button while off | DETECT-high on P0.06 (hardware-only) |
+| DFU (UF2) | Triple-tap | `button_task` → `enter_dfu_uf2()` |
+| DFU (serial) | Button held at boot | `main()` button check → `enter_dfu_serial()` |
+| DFU (UF2) | 1200-baud touch | `CdcAcmRescue` → `enter_dfu_uf2()` |
+| DFU (UF2) | Ctrl-C×3 + `dfu\r` | `CdcAcmRescue` → `enter_dfu_uf2()` |
+| DFU (UF2) | Hardware double-USB-connect | Discrete RESET circuit + bootloader (no firmware involvement) |
+
+The BSP pieces were already implemented and hardware-verified before Phase 2:
 
 - `gpregret` module (`enter_dfu_uf2`, `enter_dfu_serial`, `reset_to_app`) ✅
 - `system_off` module (`tristate_pin`, `configure_wake`, `power_off`) ✅
+- `CdcAcmRescue` (1200-baud touch + Ctrl-C×3 `dfu\r` escape) ✅
+- `ButtonFsm` in `umsh-ux-tracker::button` ✅
 
-T1000-E-specific wiring for Phase 2:
+Phase 2 just wired them together for the T1000-E:
 
-- **Button** P0.06 is active-high with pull-down → `WakeSense::High`.
-  Use `configure_wake(WakePin { port: Port::P0, pin: 6, sense: WakeSense::High })`.
-- **Peripheral pins to tristate** before `power_off`: LR1110 SPI bus
-  (SCK P0.11, MOSI P1.09, MISO P1.08, CS P0.12), LR1110 control
-  (RST P1.10, IRQ P1.01, BUSY P0.07), AG3335 UART (TX P0.13, RX P0.14),
-  accelerometer I²C (SDA P0.26, SCL P0.27), plus any rail-gated ADC
-  or sensor pins. The `SwitchedRails` RAII guards drop the rails themselves;
-  tristate the signal lines separately.
-- **Don't forget the LR1110 IRQ/BUSY pins.** Embassy's async GPIO
-  infrastructure writes `PIN_CNF SENSE` for any `wait_for_high/low`
-  that is in-flight. An un-tristated IRQ or BUSY pin with SENSE still set
-  will fire DETECT and immediately wake the chip from System OFF — this
-  exact bug was observed and fixed on the T-Echo with DIO1 (P0.20).
+- **Button task.** Owns `Input<P0.06, Pull::Down>`, races GPIO edges against
+  `ButtonFsm::next_deadline()` so the FSM gets both `on_edge` and `poll` calls
+  at the right times. Translates `ButtonEvent::Long` → `SHUTDOWN_SIGNAL` and
+  `ButtonEvent::Triple` → diverging `enter_dfu_uf2()`. The same `Input` is
+  re-used after the boot-time DFU check (created once, then handed to the
+  task — claims the peripheral exactly once).
+- **Shutdown task.** Waits on `SHUTDOWN_SIGNAL`, then `tristate_pin(P0.24)`
+  (LED — kills heartbeat's drive into the LED pin via direct PIN_CNF write,
+  no need to coordinate ownership with the heartbeat task), then `power_off`.
+  `tristate_pin` operates via PAC writes so it works regardless of which
+  Embassy task still "owns" the pin.
+- **Button wake.** P0.06 is active-high with pull-down → `WakeSense::High`.
+  We do *not* tristate it in shutdown — that would clear the SENSE bits
+  `power_off` is about to set.
 
-**Note on the "connect USB twice while holding button" path:** this is
-hardware + bootloader, not firmware. A discrete circuit on the T1000-E pulses
-the nRF52840 RESET pin when VBUS rises with the button held, making two quick
-USB connections look like a double-tap reset to the bootloader. It works
-regardless of what firmware is running. Do not try to replicate it in software
-and do not touch P0.18 (RESET) or the UICR reset-pin configuration.
+Phase 2 only owns the LED and the button. Future phases must extend the
+shutdown tristate list as they bring up the radio, GNSS, accelerometer, and
+buzzer. The pins to add (deferred until those drivers exist):
 
-**Gate:** user can power off with long-press, wake with short-press, enter DFU
-via serial escape and button-held-at-boot, and the device is recoverable via
-the hardware double-connect path even if firmware is unresponsive.
+- LR1110 SPI bus: SCK P0.11, MOSI P1.09, MISO P1.08, CS P0.12
+- LR1110 control: RST P1.10, IRQ P1.01, BUSY P0.07
+- AG3335 UART: TX P0.13, RX P0.14
+- Accelerometer I²C: SDA P0.26, SCL P0.27
+- Plus any rail-gated ADC pins.
+
+The `SwitchedRails` RAII guards (when introduced in the board BSP) will drop
+the rails themselves; the tristate calls cover the signal lines separately.
+
+**Don't forget the LR1110 IRQ/BUSY pins** once the radio is up. Embassy's
+async GPIO writes `PIN_CNF SENSE` for any `wait_for_high/low` that is
+in-flight. An un-tristated IRQ or BUSY pin with SENSE still set will fire
+DETECT and immediately wake the chip from System OFF — this exact bug was
+observed and fixed on the T-Echo with DIO1 (P0.20).
+
+**Note on the "connect USB twice while holding button" path:** hardware +
+bootloader, not firmware. A discrete circuit on the T1000-E pulses the
+nRF52840 RESET pin when VBUS rises with the button held, making two quick
+USB connections look like a double-tap reset to the bootloader. Works
+regardless of what firmware is running. Do not try to replicate it in
+software and do not touch P0.18 (RESET) or the UICR reset-pin configuration.
+
+**Gate:** ✅ long-press powers off, short-press wakes, triple-tap enters UF2
+DFU. Hardware double-connect rescue path remains available because firmware
+never touches the RESET pin.
 
 ### Phase 3 — CLI plumbed
 

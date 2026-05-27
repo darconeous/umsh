@@ -1,7 +1,10 @@
-// Seeed SenseCAP T1000-E companion-radio CLI firmware — Phase 1 bringup.
+// Seeed SenseCAP T1000-E companion-radio CLI firmware — Phase 2 bringup.
 //
-// Establishes USB-CDC enumeration, the WDT heartbeat, panic persistence, and
-// every DFU rescue path. No radio or CLI yet.
+// Phase 1 established USB-CDC enumeration, WDT heartbeat, panic persistence,
+// and every DFU rescue path. Phase 2 adds the user-facing power and DFU
+// surfaces: a button task that recognises long-press (→ shutdown) and
+// triple-tap (→ DFU), and a shutdown task that tri-states peripheral pins
+// before entering System OFF so the button wake survives un-noised.
 //
 // Boot sequence:
 //   1. Read button (P0.06); if held, enter serial DFU immediately.
@@ -10,23 +13,32 @@
 //   4. Set up USB-CDC with CdcAcmRescue (1200-baud touch + escape rescue).
 //   5. Spawn output_task (drains OUTPUT_CH to the USB sender).
 //   6. Spawn echo_task (waits for host connection, emits banner, echoes input).
-//   7. Join usb.run / heartbeat in main.
+//   7. Spawn button_task (long-press → SHUTDOWN_SIGNAL, triple-tap → DFU UF2).
+//   8. Spawn shutdown_task (waits on SHUTDOWN_SIGNAL, performs ordered off).
+//   9. Join usb.run / heartbeat in main.
 //
 // Task layout:
-//   - main():       joins usb.run / heartbeat
-//   - output_task:  owns USB Sender, drains OUTPUT_CH
-//   - echo_task:    owns CdcAcmRescue; on each host connection emits banner
-//                   then echoes inbound bytes back through OUTPUT_CH
+//   - main():         joins usb.run / heartbeat
+//   - output_task:    owns USB Sender, drains OUTPUT_CH
+//   - echo_task:      owns CdcAcmRescue; on each host connection emits banner
+//                     then echoes inbound bytes back through OUTPUT_CH
+//   - button_task:    owns P0.06 Input; runs ButtonFsm
+//   - shutdown_task:  owns LED + button-pin metadata; performs System OFF
 //
 // DFU paths:
 //   - Button held at boot     → enter_dfu_serial() before embassy starts
 //   - 1200-baud touchless     → CdcAcmRescue → enter_dfu_uf2()
 //   - Escape rescue           → CdcAcmRescue → enter_dfu_uf2()
+//   - Triple-tap button       → button_task → enter_dfu_uf2()
 //   - Hardware double-tap     → discrete RESET circuit + bootloader (no firmware action)
+//
+// Power-off paths:
+//   - Long-press button (≥5 s) → button_task → SHUTDOWN_SIGNAL → shutdown_task
+//   - Wake from System OFF      → button press (P0.06 DETECT-high)
 //
 // T1000-E pin notes:
 //   LED:    P0.24  active-HIGH  (set_high = on)
-//   Button: P0.06  active-HIGH  pull-down  (HIGH = pressed)
+//   Button: P0.06  active-HIGH  pull-down  (HIGH = pressed, WakeSense::High)
 //   No peripheral power-enable rail (unlike T-Echo P0.12).
 //
 // Non-obvious gotcha learned during bringup:
@@ -49,6 +61,7 @@ mod panic;
 mod firmware {
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
+    use embassy_futures::select::{select, Either};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::peripherals;
@@ -57,12 +70,16 @@ mod firmware {
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::channel::Channel;
-    use embassy_time::{Instant, Timer};
+    use embassy_sync::signal::Signal;
+    use embassy_time::{Duration, Instant, Timer};
     use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
     use embassy_usb::{Builder, Config};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
+    use umsh_bsp_nrf52840::gpregret;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    use umsh_bsp_nrf52840::system_off::{power_off, tristate_pin, Port, WakePin, WakeSense};
+    use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -75,6 +92,15 @@ mod firmware {
 
     type OutputLine = heapless::Vec<u8, OUTPUT_LINE_MAX>;
     static OUTPUT_CH: Channel<ThreadModeRawMutex, OutputLine, OUTPUT_CAPACITY> = Channel::new();
+
+    /// Single-consumer shutdown trigger. Fired by `button_task` on a
+    /// long-press and (eventually) by `/poweroff` once the CLI is wired.
+    static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Debounce window applied between raw GPIO edges. The button line on
+    /// P0.06 settles in well under this; 10 ms is the conventional safe
+    /// floor.
+    const DEBOUNCE: Duration = Duration::from_millis(10);
 
     async fn write_line(s: &str) {
         let mut v: OutputLine = heapless::Vec::new();
@@ -117,8 +143,9 @@ mod firmware {
             rx.wait_connection().await;
 
             write_line("").await;
-            write_line("UMSH T1000-E bringup -- Phase 1").await;
+            write_line("UMSH T1000-E bringup -- Phase 2").await;
             write_line(concat!("sha: ", env!("GIT_SHORT_SHA"))).await;
+            write_line("button: long-press = power off, triple-tap = DFU").await;
             if prev_panic_len > 0 {
                 write_line("[PREV PANIC]:").await;
                 if let Ok(s) = core::str::from_utf8(&prev_panic_buf[..prev_panic_len]) {
@@ -140,6 +167,83 @@ mod firmware {
         }
     }
 
+    /// Resolves raw GPIO edges on the user button (P0.06, active-high,
+    /// pull-down) into `ButtonFsm` events. `Long` raises `SHUTDOWN_SIGNAL`,
+    /// `Triple` enters UF2 DFU directly (diverges via system reset).
+    ///
+    /// The task races three futures via nested `select`s:
+    ///   * `wait_for_high/low` for the next debounced edge,
+    ///   * a `Timer` to the FSM's next deadline (long-press / inter-click gap),
+    ///   * a fallback long timer when the FSM is idle.
+    #[embassy_executor::task]
+    async fn button_task(mut button: Input<'static>) {
+        let mut fsm = ButtonFsm::new(ButtonTimings::default());
+        // Active-high, pull-down: pressed = HIGH.
+        let mut pressed = button.is_high();
+        loop {
+            let event = {
+                let now_ms = Instant::now().as_millis();
+                let edge_fut = async {
+                    if pressed {
+                        button.wait_for_low().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Release
+                    } else {
+                        button.wait_for_high().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Press
+                    }
+                };
+                let timeout_deadline_ms = fsm
+                    .next_deadline()
+                    .unwrap_or(now_ms.saturating_add(60_000));
+                let timer_fut = Timer::at(Instant::from_millis(timeout_deadline_ms));
+                match select(edge_fut, timer_fut).await {
+                    Either::First(edge) => {
+                        pressed = matches!(edge, ButtonEdge::Press);
+                        fsm.on_edge(edge, Instant::now().as_millis())
+                    }
+                    Either::Second(()) => fsm.poll(Instant::now().as_millis()),
+                }
+            };
+
+            match event {
+                Some(ButtonEvent::Long) => {
+                    SHUTDOWN_SIGNAL.signal(());
+                }
+                Some(ButtonEvent::Triple) => {
+                    gpregret::enter_dfu_uf2();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Orchestrates the controlled power-off: tristate the GPIOs the
+    /// firmware drove or sensed on so neither output leakage nor leftover
+    /// SENSE bits keep current flowing or fire a spurious DETECT wake,
+    /// then enter System OFF with the button armed as the wake source.
+    ///
+    /// `tristate_pin` writes PIN_CNF directly via PAC, so it works
+    /// regardless of who in Embassy still "owns" the pin — by the time
+    /// the CPU resumes from System OFF the firmware will have re-init
+    /// everything from scratch anyway.
+    ///
+    /// Phase 2 only touches the LED (P0.24) and button (P0.06). Future
+    /// phases must extend the tristate list as they bring up the radio,
+    /// GNSS, sensors, and buzzer (see `docs/firmware-plan-t1000e.md`).
+    #[embassy_executor::task]
+    async fn shutdown_task() -> ! {
+        SHUTDOWN_SIGNAL.wait().await;
+
+        tristate_pin(Port::P0, 24); // LED — kills heartbeat's drive into the LED
+        // Button (P0.06) is configured for wake by `power_off`; do not
+        // tristate it here, that would clear the wake configuration.
+
+        // Button is active-high with pull-down → wake on rising edge.
+        power_off(&[WakePin { port: Port::P0, pin: 6, sense: WakeSense::High }])
+    }
+
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
         loop {
@@ -155,13 +259,14 @@ mod firmware {
     async fn main(spawner: Spawner) {
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
-        // Button-held-at-boot DFU check (active-HIGH, pull-down).
-        {
-            let btn = Input::new(p.P0_06, Pull::Down);
-            cortex_m::asm::delay(640_000); // ~10 ms settle
-            if btn.is_high() {
-                umsh_bsp_nrf52840::gpregret::enter_dfu_serial();
-            }
+        // Button-held-at-boot DFU check (active-HIGH, pull-down). The same
+        // `Input` is then handed to `button_task` for ongoing event
+        // recognition (long-press, triple-tap), so the peripheral is
+        // claimed exactly once.
+        let button = Input::new(p.P0_06, Pull::Down);
+        cortex_m::asm::delay(640_000); // ~10 ms settle
+        if button.is_high() {
+            umsh_bsp_nrf52840::gpregret::enter_dfu_serial();
         }
 
         let mut wdt_config = WdtConfig::default();
@@ -221,6 +326,8 @@ mod firmware {
 
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(echo_task(rx, prev_panic_buf, prev_panic_len).unwrap());
+        spawner.spawn(button_task(button).unwrap());
+        spawner.spawn(shutdown_task().unwrap());
 
         // Run USB + heartbeat together via join.
         join(usb.run(), heartbeat(led, wdt_handle)).await;
