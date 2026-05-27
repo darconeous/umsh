@@ -821,9 +821,18 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
- "panic-halt",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.6.2",
+ "embassy-time",
+ "embassy-usb",
+ "heapless 0.8.0",
+ "static_cell",
  "umsh-app-companion-cli",
+ "umsh-bsp-nrf52840",
  "umsh-bsp-t1000e",
+ "umsh-ux-tracker",
 ]
 
 [[package]]
@@ -1386,12 +1395,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "panic-halt"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
 
 [[package]]
 name = "pin-project-lite"
