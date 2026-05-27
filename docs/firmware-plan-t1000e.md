@@ -80,12 +80,27 @@ for the generalized recipes.
 
 - `init_clocks()` — HFXO start, LF source select.
 - `usb_driver()` — `embassy-nrf` USB peripheral wrapper.
-- `enter_dfu() -> !` — sets `POWER.GPREGRET = 0x57` then `SCB::sys_reset()`.
-  *Single function in the codebase that can put the device in DFU mode.*
-- `enter_system_off(wake_pin) -> !` — configures DETECT on the button pin,
-  enters System OFF.
+- `gpregret` module — `enter_dfu_uf2() -> !`, `enter_dfu_serial() -> !`,
+  `reset_to_app() -> !`. ✅ Implemented and hardware-verified on T-Echo.
+- `system_off` module — ✅ Implemented in `crates/umsh-bsp-nrf52840/src/system_off.rs`.
+  Key API:
+  - `tristate_pin(port, pin)` — sets `PIN_CNF = 0x02` (input-disconnected, no
+    pull, SENSE disabled). Call on every peripheral signal pin before sleeping.
+  - `configure_wake(WakePin { port, pin, sense })` — sets SENSE bits only,
+    preserving DIR/INPUT/PULL/DRIVE. `WakeSense::Low` for active-low buttons
+    (T-Echo, pull-up); `WakeSense::High` for active-high buttons
+    (T1000-E P0.06, pull-down).
+  - `power_off(&[WakePin]) -> !` — configures SENSE on each wake pin then
+    writes `POWER.SYSTEMOFF = 1`. Diverges.
+  - **Critical gotcha (proven on T-Echo):** embassy's async GPIO layer
+    (`Input::wait_for_high/low`) writes `PIN_CNF SENSE` bits that stay set
+    until the wait completes. Any peripheral task mid-wait when `power_off` is
+    called will have SENSE configured, causing an immediate DETECT wake from
+    System OFF. Fix: call `tristate_pin` on *every* peripheral signal pin
+    (including radio DIO and BUSY) before calling `power_off`.
 - `RngBackend`, `FlashCounterStore`, `FlashKeyValueStore` — implementations of
   the `umsh-hal` traits using nRF52840 NVMC / `sequential-storage`.
+  ✅ Implemented and hardware-verified on T-Echo (Phases 3–6 of T-Echo plan).
 
 ### `umsh-bsp-t1000e` (board-level)
 
@@ -125,16 +140,25 @@ reliably drop every rail before sleeping.
   - `cli_task` — runs `umsh_cli::CliSession::run` over the USB-CDC adapter.
   - `mac_task` — runs `umsh::node::Host` poll loop.
   - `button_task` — runs the press FSM. **High priority.**
-  - `power_task` — listens for power/DFU intents from any source.
+  - `shutdown_task` — waits on `SHUTDOWN_SIGNAL`, performs the ordered
+    shutdown sequence (flush counters → LED/buzzer farewell → tristate all
+    peripheral pins → drop rails → `power_off`). Mirrors the pattern
+    proven on T-Echo.
   - `led_task` — visual feedback; owns the heartbeat (see [LED behavior](#led-behavior)).
   - `gnss_task` — duty-cycled GNSS fix acquisition (only when GPS is enabled).
 - `UsbCdcCliIo` — wraps `embassy-usb` CDC-ACM read/write halves to implement
-  `CliInput`/`CliOutput`. Hooks `embedded-io-async` to the existing CLI
-  `serial` feature.
-- Defines a `PowerIntent` enum (`PowerOff`, `EnterDfu`, `Reboot`) sent over an
-  `embassy_sync::Channel` to `power_task`.
-- App-specific CLI commands (`location`, `silence`, `gnss on|off`, `poweroff`,
-  `dfu`, `reboot`) plug into `umsh-cli`'s command dispatch.
+  `CliInput`/`CliOutput`.
+- Power-off is wired via the `umsh_hal::PowerControl` trait (✅ implemented).
+  `CliSession<…, PowerSignaler>` calls `PowerSignaler::request_power_off()`
+  which signals `SHUTDOWN_SIGNAL`. This replaces the `PowerIntent` channel
+  described in earlier drafts of this plan — the `PowerControl` trait is
+  simpler and already tested on the T-Echo.
+- DFU entry remains a separate path through `umsh-bsp-nrf52840::gpregret`
+  (not via `PowerControl`) since it's a one-way diverging reset, not a
+  coordinated shutdown.
+- App-specific CLI commands (`location`, `silence`, `gnss on|off`, `/poweroff`,
+  `dfu`, `reboot`) plug into `umsh-cli`'s command dispatch. `/poweroff` and
+  `/off` are already implemented in `umsh-cli`. ✅
 
 ### `firmware/companion-cli-t1000e` (binary)
 
@@ -163,8 +187,10 @@ each operation.
 | USB plug-in wakes from System OFF | Yes (if VBUS detection enabled in BSP) |
 
 No firmware involvement once we're off. The button-DETECT setup happens in
-`enter_system_off` *before* we cut to System OFF — wake source is armed by
-hardware before firmware stops running.
+`power_off` *before* we cut to System OFF — wake source is armed by hardware
+before firmware stops running. T1000-E button (P0.06, active-high, pull-down)
+uses `WakeSense::High`; the T-Echo (P1.10, active-low, pull-up) uses
+`WakeSense::Low`. Both are supported by `system_off::configure_wake`.
 
 ### Low-battery shutdown (firmware-enforced)
 
@@ -228,8 +254,8 @@ Trigger paths:
 | CLI command `dfu` | `0x57` | Sends `EnterDfu` intent → `power_task` calls `bsp::enter_dfu_uf2()`; convenient for manual drag-and-drop |
 | CLI command `dfu serial` | `0x4e` | As above but calls `bsp::enter_dfu_serial()` |
 | Serial rescue escape | `0x4e` | USB-CDC RX hook (below the CLI parser) watches for e.g. `\x03\x03\x03dfu\r` and calls `bsp::enter_dfu_serial()` directly |
-| Adafruit bootloader double-reset | — | Hardware-detected by bootloader, independent of app |
-| Long-press + button-held-at-boot recovery | `0x4e` | App startup logic: button held at reset for >2 s jumps to serial DFU |
+| **Hardware RESET circuit + bootloader double-tap** | — | The T1000-E has a discrete circuit (RC + supervisor or similar) that pulses the nRF52840 RESET pin when VBUS rises **while** the button is held. Connect USB with button held → RESET → bootloader → no magic yet → app boots. Disconnect → reconnect with button still held → RESET again (within the bootloader's ~500 ms double-tap window) → bootloader sees double-tap magic → DFU. Works across all firmwares (Meshtastic, MeshCore, ours) because it is entirely hardware + bootloader. "Do it quickly / may need multiple tries" = timing against the double-tap window. **We do not need to implement this in firmware. Do not reconfigure P0.18 (RESET) or modify UICR reset-pin settings.** |
+| **Button held at boot** | `0x4e` | App startup: read button (P0.06, pull-down) before embassy tasks start; if HIGH, call `enter_dfu_serial()`. Defense-in-depth for soft-reset scenarios (WDT reset, `NVIC_SystemReset()`) where the hardware RESET pulse path is not involved. ~10 ms pull-down settle via `cortex_m::asm::delay`. |
 
 **The 1200-baud touchless reset is the most important path to get right.**
 Implement it inside the USB-CDC task as a `SET_LINE_CODING` control-request
@@ -399,55 +425,114 @@ now so wiring it up later doesn't touch app logic.
 
 Each phase ends in a flashable, demonstrable artifact.
 
-### Phase 0 — Bootloader reconnaissance (no SWD)
+### Phase 0 — Bootloader reconnaissance (no SWD) ✅
 
-Since the case is sealed, we can't read flash directly. Instead, characterize
-the bootloader through the channels it exposes:
+Triggered UF2 mode on a stock T1000-E, mounted `/Volumes/T1000-E`, read
+`INFO_UF2.TXT`, and confirmed the app start address by scanning the first-block
+target address in `CURRENT.UF2`.
 
-- Trigger UF2 mode (double-tap the magnetic connector or use the stock
-  firmware's DFU path). Inspect `INFO_UF2.TXT` on the mass-storage drive — it
-  reports bootloader name, version, board ID / UF2 family ID, and the app
-  flash range (start/end addresses). This tells us where to link the app and
-  what UF2 family ID to embed.
-- Verify that 1200-baud touchless reset works with the **stock firmware**
-  using `adafruit-nrfutil --touch 1200` and the MeshCore web flasher. If it
-  does, the stock firmware implements the line-coding hook — we'll need to
-  reproduce that behavior. If it doesn't, only double-reset works for entering
-  DFU from a running app.
-- Verify the bootloader's double-reset detection by physically toggling power
-  twice quickly. This is our ultimate recovery path; confirm it works now,
-  before we ever flash custom firmware.
-- Record the USB VID/PID, CDC interface count, and any other USB descriptors
-  the stock firmware presents — useful for diagnosing our own enumeration
-  later.
+| Fact | Value |
+|---|---|
+| Bootloader | Seeed fork UF2 0.9.1-5-g488711a |
+| Board-ID | `nRF52840-T1000-E-v1` |
+| SoftDevice | **S140 7.3.0** (same as Wio Tracker L1) |
+| App flash start | **`0x00027000`** (confirmed by UF2 block scan; `memory.x` pre-assumption of `0x26000` was wrong) |
+| App flash length | **820K** (to bootloader at `0xF4000`) |
+| UF2 family ID | **`0x28860057`** (Seeed VID `0x2886` \| T1000-E PID `0x0057`) |
+| Bootloader mount | `/Volumes/T1000-E` |
 
-**Gate:** we have a written record of the bootloader version, app flash range
-(from `INFO_UF2.TXT`), UF2 family ID, and confirmed that both UF2 drag-drop
-and double-reset recovery work on the unmodified device.
+`memory.x`, `scripts/flash.py`, and the `Makefile` `flash-companion-cli-t1000e`
+target have been updated with the confirmed values.
 
-### Phase 1 — "Hello USB-CDC"
+**Gate:** ✅ flash layout and UF2 family ID confirmed; proceed to Phase 1.
 
-New crates created but mostly empty. Binary: embassy-nrf USB CDC echo. No
-umsh. Flash via UF2.
+### Phase 1 — "Hello USB-CDC" ✅
 
-**Gate:** USB CDC enumerates on host, echoes characters.
+Embassy USB-CDC echo on the T1000-E, hardware-verified. Mirrors the T-Echo /
+Wio Tracker pattern with these board-specific differences:
+
+- LED P0.24, active-HIGH (set_high = on; opposite of T-Echo P0.14)
+- Button P0.06, active-HIGH with pull-down (boot-time DFU check uses `is_high()`)
+- No peripheral power-enable rail
+- USB IDs: 0x2886:0x0057 (Seeed T1000-E)
+- Heap allocator NOT needed (no MAC/CLI in Phase 1)
+
+**Non-obvious gotcha worth recording (one full debug session):**
+`CdcAcmRescue::read_packet()` returns `Ok(0)` immediately when DTR is LOW.
+A read task that does `loop { read_packet().await }` without first calling
+`wait_connection().await` busy-loops the executor and starves heartbeat,
+causing a WDT reset every 8 s. Symptom: LED solid on (heartbeat ran once)
++ ~8 s reboot loop. Fix: nested-loop pattern (outer `wait_connection`,
+inner `read_packet` until Ok(0)/Err, then back to outer).
+
+**Flashing on T1000-E without UF2 mass-storage:** the user-button-held bootloader
+entry path only exposes serial DFU (`/dev/tty.usbmodem*`). UF2 mass-storage
+mode requires the hardware "connect USB twice while holding button" path. For
+iterating on firmware during bringup, use `adafruit-nrfutil dfu serial`:
+
+```
+arm-none-eabi-objcopy -O ihex <elf> <out.hex>
+adafruit-nrfutil dfu genpkg --dev-type 0x0052 --application <out.hex> <out.zip>
+adafruit-nrfutil --verbose dfu serial -pkg <out.zip> -p /dev/tty.usbmodem1101 -b 115200
+```
+
+The `--dev-type 0x0052` is required (any non-zero value works; the bootloader
+ignores it but the tool rejects packages without it).
+
+**Gate:** ✅ USB CDC enumerates on host, banner appears on connect, echo
+works, LED blinks at LedEngine default cadence, WDT survives indefinitely.
 
 ### Phase 2 — Power/DFU safety primitives
 
-Add `bsp::enter_dfu()`, `bsp::enter_system_off()`, GPREGRET helpers, the
-USB-CDC rescue escape, the WDT setup, and a *minimal* button task that handles
-long-press-off and triple-tap-DFU. No umsh yet, no CLI.
+Add GPREGRET helpers, USB-CDC rescue escape, WDT setup, and a *minimal*
+button task that handles long-press-off and triple-tap-DFU. No umsh yet,
+no CLI.
 
-**Gate:** user can poweroff with long-press, wake with short-press, enter DFU
-via serial escape, and the device is recoverable via double-reset even after a
-forced panic.
+The BSP pieces are already implemented and hardware-verified:
+
+- `gpregret` module (`enter_dfu_uf2`, `enter_dfu_serial`, `reset_to_app`) ✅
+- `system_off` module (`tristate_pin`, `configure_wake`, `power_off`) ✅
+
+T1000-E-specific wiring for Phase 2:
+
+- **Button** P0.06 is active-high with pull-down → `WakeSense::High`.
+  Use `configure_wake(WakePin { port: Port::P0, pin: 6, sense: WakeSense::High })`.
+- **Peripheral pins to tristate** before `power_off`: LR1110 SPI bus
+  (SCK P0.11, MOSI P1.09, MISO P1.08, CS P0.12), LR1110 control
+  (RST P1.10, IRQ P1.01, BUSY P0.07), AG3335 UART (TX P0.13, RX P0.14),
+  accelerometer I²C (SDA P0.26, SCL P0.27), plus any rail-gated ADC
+  or sensor pins. The `SwitchedRails` RAII guards drop the rails themselves;
+  tristate the signal lines separately.
+- **Don't forget the LR1110 IRQ/BUSY pins.** Embassy's async GPIO
+  infrastructure writes `PIN_CNF SENSE` for any `wait_for_high/low`
+  that is in-flight. An un-tristated IRQ or BUSY pin with SENSE still set
+  will fire DETECT and immediately wake the chip from System OFF — this
+  exact bug was observed and fixed on the T-Echo with DIO1 (P0.20).
+
+**Note on the "connect USB twice while holding button" path:** this is
+hardware + bootloader, not firmware. A discrete circuit on the T1000-E pulses
+the nRF52840 RESET pin when VBUS rises with the button held, making two quick
+USB connections look like a double-tap reset to the bootloader. It works
+regardless of what firmware is running. Do not try to replicate it in software
+and do not touch P0.18 (RESET) or the UICR reset-pin configuration.
+
+**Gate:** user can power off with long-press, wake with short-press, enter DFU
+via serial escape and button-held-at-boot, and the device is recoverable via
+the hardware double-connect path even if firmware is unresponsive.
 
 ### Phase 3 — CLI plumbed
 
-Bring up `umsh-cli` over USB-CDC with the rescue escape preserved. Stub `dfu`,
-`poweroff`, `reboot` commands. No MAC yet.
+Bring up `umsh-cli` over USB-CDC with the rescue escape preserved. No MAC yet.
 
-**Gate:** user gets a prompt, can run `help`, `dfu`, `poweroff` from a host
+`/poweroff` and `/off` commands are already implemented in `umsh-cli` via the
+`PowerControl` trait (✅). Wire `PowerSignaler` (a unit struct implementing
+`PowerControl` that fires a static `SHUTDOWN_SIGNAL`) into `CliSession::new`.
+Spawn a `shutdown_task` that waits on the signal and runs the shutdown sequence.
+
+`/dfu` and `/reboot` are T1000-E-specific CLI extensions not yet in the generic
+CLI — add them as app-specific commands in `umsh-app-companion-cli`.
+
+**Gate:** user gets a prompt, can run `/help`, `/dfu`, `/poweroff` from a host
 terminal.
 
 ### Phase 4 — MAC + LR1110
@@ -468,9 +553,34 @@ triple-press toggles GNSS.
 
 ### Phase 6 — Persistence
 
-Frame counters and identity in flash via `sequential-storage`.
+Frame counters and identity in flash via `sequential-storage`. The full
+storage stack is already implemented and hardware-verified on T-Echo and
+Wio Tracker (T-Echo Phases 3–6):
 
-**Gate:** device retains identity and replay counters across power cycles.
+- **Identity** — Ed25519 secret key persisted to NVMC on first boot;
+  loaded on subsequent boots. Generated from the hardware TRNG
+  (`embassy_nrf::rng::Rng` with bias correction). Never falls back to
+  FICR-seeded PRNG.
+- **Peer registry** — per-peer records keyed by 32-byte public key.
+  Record layout: `[alias_len (1B) | alias slot (16B) | NodeIdentityPayload bytes]`.
+  Alias (locally chosen) is separate from the remote-chosen name.
+- **Channel keys** — stored by channel name, restored at boot via
+  `CliSession::register_channel`.
+- **TX frame counter** — persisted in blocks of 128 to bound flash wear.
+  Loaded at boot via `mac.load_persisted_counter`. Auto-serviced from
+  `Mac::next_event`.
+- **RX per-peer counters** — replay-window baseline persisted similarly.
+  Loaded at boot via `MacHandle::load_all_persisted_rx_counters`.
+  Auto-serviced from `Mac::next_event`.
+- **Flush on shutdown** — `shutdown_task` calls
+  `MacHandle::service_counter_persistence()` before entering System OFF
+  to ensure any partial TX block is committed.
+
+Storage key scheme and `sequential-storage` configuration documented in
+`docs/firmware-storage-plan.md`.
+
+**Gate:** device retains identity, peer list, channel keys, and replay
+counters across power cycles.
 
 ## Build / flash recipe
 

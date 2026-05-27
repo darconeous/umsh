@@ -25,8 +25,10 @@ name = "firmware-companion-cli-t1000e"
 path = "src/main.rs"
 
 [dependencies]
-umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = false }
+umsh-bsp-t1000e    = { path = "../../crates/umsh-bsp-t1000e",    default-features = false }
+umsh-bsp-nrf52840  = { path = "../../crates/umsh-bsp-nrf52840",  default-features = false }
 umsh-app-companion-cli = { path = "../../crates/umsh-app-companion-cli", default-features = false }
+umsh-ux-tracker    = { path = "../../crates/umsh-ux-tracker",    default-features = false }
 
 # Embedded-only deps. Gated on `target_os = "none"` so this crate still
 # parses and trivially compiles on host (as an empty `fn main()`),
@@ -34,11 +36,13 @@ umsh-app-companion-cli = { path = "../../crates/umsh-app-companion-cli", default
 # installed. Real firmware builds use the embedded target via the
 # .cargo/config.toml in this directory.
 [target.'cfg(target_os = "none")'.dependencies]
-cortex-m = "0.7"
-cortex-m-rt = "0.7"
-panic-halt = "1"
-
-# Note: cargo only honors `[profile.*]` at the workspace root. When we want
-# size-optimized firmware builds, add `[profile.release]` (and any
-# per-firmware profile tweaks via `[profile.release.package.<name>]`) to
-# the root Cargo.toml rather than this manifest.
+cortex-m     = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt  = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time     = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf      = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-usb      = { version = "0.6", default-features = false }
+embassy-futures  = { version = "0.1", default-features = false }
+embassy-sync     = { version = "0.6", default-features = false }
+static_cell      = "2"
+heapless         = { version = "0.8", default-features = false }

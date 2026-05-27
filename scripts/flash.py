@@ -23,6 +23,8 @@ Boards
   wio-tracker-l1   Seeed Wio Tracker L1 / L1 Pro
                    (Seeed family 0x28861667, S140 v7.3.0,
                    app @ 0x27000, /Volumes/TRACKER L1).
+  t1000e           Seeed SenseCAP T1000-E (Seeed family 0x28860057,
+                   S140 v7.3.0, app @ 0x27000, /Volumes/T1000-E).
 
 Examples
 --------
@@ -39,6 +41,11 @@ Examples
   # Same as above with the board's default mount path picked up:
   scripts/flash.py --board wio-tracker-l1 --copy-default \\
       target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1
+
+  # Flash via serial DFU (useful on T1000-E where the user-button bootloader
+  # path only exposes /dev/tty.usbmodem* and not the UF2 mass-storage drive):
+  scripts/flash.py --board t1000e --serial-dfu /dev/tty.usbmodem1101 \\
+      target/thumbv7em-none-eabihf/release/firmware-companion-cli-t1000e
 """
 
 from __future__ import annotations
@@ -60,6 +67,16 @@ UF2_BLOCK_BYTES = 512
 
 DEFAULT_OBJCOPY = "arm-none-eabi-objcopy"
 
+# Common locations to look for adafruit-nrfutil (used by --serial-dfu).
+# `shutil.which` checks PATH first; these are pip-install fallbacks for
+# users (e.g. macOS Homebrew Python) where pip's bin dir isn't on PATH.
+ADAFRUIT_NRFUTIL_FALLBACKS = [
+    os.path.expanduser("~/Library/Python/3.13/bin/adafruit-nrfutil"),
+    os.path.expanduser("~/Library/Python/3.12/bin/adafruit-nrfutil"),
+    os.path.expanduser("~/Library/Python/3.11/bin/adafruit-nrfutil"),
+    os.path.expanduser("~/.local/bin/adafruit-nrfutil"),
+]
+
 # Board presets. Each entry has the flash base address (where the app
 # starts, after MBR + SoftDevice), the UF2 family ID the bootloader
 # accepts, and the typical macOS mount path for the bootloader volume.
@@ -79,6 +96,12 @@ BOARDS = {
         "family": 0x28861667,        # Seeed family (VID 0x2886 | PID 0x1667)
         "mount":  "/Volumes/TRACKER L1",
         "description": "Seeed Wio Tracker L1 / L1 Pro",
+    },
+    "t1000e": {
+        "base":   0x00027000,        # S140 v7.3.0 reserves 156 KiB (confirmed Phase 0)
+        "family": 0x28860057,        # Seeed family (VID 0x2886 | PID 0x0057)
+        "mount":  "/Volumes/T1000-E",
+        "description": "Seeed SenseCAP T1000-E",
     },
 }
 
@@ -140,6 +163,52 @@ def parse_int(value: str) -> int:
     return int(value, 0)
 
 
+def find_adafruit_nrfutil() -> str | None:
+    """Locate adafruit-nrfutil on PATH or in known pip-install fallbacks."""
+    found = shutil.which("adafruit-nrfutil")
+    if found:
+        return found
+    for path in ADAFRUIT_NRFUTIL_FALLBACKS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def flash_serial_dfu(elf_path: str, port: str, objcopy: str) -> int:
+    """ELF → ihex → DFU zip → adafruit-nrfutil dfu serial."""
+    nrfutil = find_adafruit_nrfutil()
+    if nrfutil is None:
+        print("flash.py: adafruit-nrfutil not found in PATH or common pip "
+              "install locations.", file=sys.stderr)
+        print("flash.py: install with: pip install --user adafruit-nrfutil",
+              file=sys.stderr)
+        return 1
+
+    hex_path = elf_path + ".hex"
+    zip_path = elf_path + ".zip"
+
+    print(f"flash.py: extracting ihex via {objcopy} ...")
+    subprocess.run([objcopy, "-O", "ihex", elf_path, hex_path], check=True)
+
+    print(f"flash.py: packaging DFU zip via {nrfutil} ...")
+    subprocess.run(
+        [nrfutil, "dfu", "genpkg",
+         "--dev-type", "0x0052",   # arbitrary non-zero; bootloader ignores it
+         "--application", hex_path,
+         zip_path],
+        check=True,
+    )
+
+    print(f"flash.py: flashing via serial DFU on {port} ...")
+    result = subprocess.run(
+        [nrfutil, "--verbose", "dfu", "serial",
+         "-pkg", zip_path,
+         "-p", port,
+         "-b", "115200"],
+    )
+    return result.returncode
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Convert an ELF to UF2 and optionally drop on a bootloader volume.",
@@ -184,6 +253,14 @@ def main(argv: list[str]) -> int:
         "--copy-to is also given",
     )
     parser.add_argument(
+        "--serial-dfu",
+        metavar="PORT",
+        help="instead of producing a UF2, flash the ELF over serial DFU at "
+        "PORT (e.g. /dev/tty.usbmodem1101). Uses arm-none-eabi-objcopy + "
+        "adafruit-nrfutil; both must be installed. Useful when the "
+        "bootloader exposes only serial DFU (e.g. T1000-E button-held entry).",
+    )
+    parser.add_argument(
         "--objcopy",
         default=DEFAULT_OBJCOPY,
         metavar="CMD",
@@ -207,6 +284,9 @@ def main(argv: list[str]) -> int:
     if not os.path.isfile(args.elf):
         print(f"flash.py: not a file: {args.elf}", file=sys.stderr)
         return 1
+
+    if args.serial_dfu:
+        return flash_serial_dfu(args.elf, args.serial_dfu, args.objcopy)
 
     out_path = args.out or args.elf + ".uf2"
 
