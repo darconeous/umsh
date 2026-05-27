@@ -346,8 +346,15 @@ mod firmware {
 
         let peer_store    = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, _, 4, 4, 2, 8, 2, 128> =
-            CliSession::new(node, local_key, out, NullLogger::new(), peer_store, channel_store);
+        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 2, 128> = CliSession::new(
+            node,
+            local_key,
+            out,
+            NullLogger::new(),
+            peer_store,
+            channel_store,
+            umsh_hal::NoPowerControl,
+        );
 
         // Re-register loaded peers and channels into the CLI session tables.
         for (pk, alias) in peer_buf.iter() {

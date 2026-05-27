@@ -27,8 +27,10 @@ pub mod flash_store;
 #[cfg(target_os = "none")]
 pub mod gpregret;
 
+#[cfg(target_os = "none")]
+pub mod system_off;
+
 // TODO: implement.
 //
 // Planned modules (see docs/firmware-plan-t1000e.md):
 //   pub mod usb;           // embassy-nrf USB driver wrapper.
-//   pub mod system_off;    // Configure DETECT and enter System OFF.

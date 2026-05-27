@@ -44,7 +44,7 @@ use crate::mac_cmd::encode_mac_command;
 use crate::ping::PendingPing;
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
-use umsh_hal::{ChannelStore, PeerStore};
+use umsh_hal::{ChannelStore, PeerStore, PowerControl};
 use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
@@ -104,6 +104,7 @@ pub struct CliSession<
     LOG,
     PS,
     CS,
+    PC,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
@@ -118,6 +119,7 @@ pub struct CliSession<
     LOG: CliLogger,
     PS: PeerStore,
     CS: ChannelStore,
+    PC: PowerControl,
 {
     pub(crate) node: LocalNode<M>,
     pub(crate) local_key: PublicKey,
@@ -125,6 +127,7 @@ pub struct CliSession<
     pub(crate) logger: LOG,
     pub(crate) peer_store: PS,
     pub(crate) channel_store: CS,
+    pub(crate) power: PC,
     pub(crate) peers: FnvIndexMap<PublicKey, PeerEntry, N_PEERS>,
     pub(crate) aliases: FnvIndexMap<HString<16>, PublicKey, N_ALIASES>,
     pub(crate) channels: FnvIndexMap<HString<16>, ChannelEntry, N_CHANNELS>,
@@ -145,13 +148,14 @@ impl<
     LOG,
     PS,
     CS,
+    PC,
     const N_PEERS: usize,
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
     const N_EVENTS: usize,
     const N_PENDING_PINGS: usize,
     const LINE_MAX: usize,
-> CliSession<M, OUT, LOG, PS, CS, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
+> CliSession<M, OUT, LOG, PS, CS, PC, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
@@ -160,6 +164,7 @@ where
     LOG: CliLogger,
     PS: PeerStore,
     CS: ChannelStore,
+    PC: PowerControl,
 {
     /// Construct a new session around a cloned `LocalNode<M>`. `local_key`
     /// is passed in because the caller already has it; no node-crate accessor
@@ -169,7 +174,18 @@ where
     /// `peer_store` and `channel_store` are called on join/leave and add/rm
     /// to persist changes. Pass [`umsh_hal::NoPeerStore`] /
     /// [`umsh_hal::NoChannelStore`] when persistence is not needed.
-    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG, peer_store: PS, channel_store: CS) -> Self {
+    ///
+    /// `power` is invoked by `/poweroff`; pass [`umsh_hal::NoPowerControl`]
+    /// on targets without a power-off path.
+    pub fn new(
+        node: LocalNode<M>,
+        local_key: PublicKey,
+        out: OUT,
+        logger: LOG,
+        peer_store: PS,
+        channel_store: CS,
+        power: PC,
+    ) -> Self {
         let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
         let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
         let pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>> =
@@ -192,6 +208,7 @@ where
             logger,
             peer_store,
             channel_store,
+            power,
             peers: FnvIndexMap::new(),
             aliases: FnvIndexMap::new(),
             channels: FnvIndexMap::new(),
@@ -580,7 +597,14 @@ where
             Command::Raw { peer, hex } => {
                 self.cmd_raw(peer, hex).await.map(|_| ExecOutcome::Continue)
             }
+            Command::PowerOff => self.cmd_power_off().await.map(|_| ExecOutcome::Continue),
         }
+    }
+
+    async fn cmd_power_off(&mut self) -> Result<(), CliError<OUT::Error>> {
+        self.out.write_line("powering off").await?;
+        self.power.request_power_off();
+        Ok(())
     }
 
     // ─── Local-state commands ────────────────────────────────────────────────
@@ -595,6 +619,7 @@ where
             "  /quit                       exit the CLI",
             "  /whoami                     print the local public key",
             "  /log <level>                set verbosity: error|warn|info|debug|trace",
+            "  /poweroff                   request a hardware power-off (alias: /off)",
             "",
             "peers:",
             "  /peer add <pubkey> [alias]  register a peer (base58/base64/hex, 32 bytes)",
@@ -646,6 +671,13 @@ where
             "log" => &[
                 "/log <level> — set log verbosity.",
                 "  levels: error, warn, info, debug, trace",
+            ],
+            "poweroff" | "off" => &[
+                "/poweroff — request a controlled power-off.",
+                "  Persists any pending counters, sleeps the display, drops the",
+                "  peripheral rail, and enters System OFF. On supported boards a",
+                "  button press resumes the device (via reset + reboot).",
+                "  Alias: /off.",
             ],
             "peer" => &[
                 "/peer add <pubkey> [alias] — register a peer.",

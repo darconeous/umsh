@@ -221,6 +221,23 @@ pub trait CounterStore {
     async fn flush(&self) -> Result<(), Self::Error>;
 }
 
+/// Optional power-control hook for higher layers (e.g. the CLI).
+///
+/// Implementations request a controlled shutdown — the actual sequencing
+/// (display, storage flush, GPIO sense, entering System OFF, etc.) lives
+/// in the firmware that owns those peripherals. This call MUST return
+/// promptly; it's typically a `Signal::signal(())` to a shutdown task.
+pub trait PowerControl {
+    fn request_power_off(&self);
+}
+
+/// No-op power control — use when shutdown is not implemented for the target.
+pub struct NoPowerControl;
+
+impl PowerControl for NoPowerControl {
+    fn request_power_off(&self) {}
+}
+
 /// Persistent key-value store used by higher layers for cached state.
 pub trait KeyValueStore {
     type Error;

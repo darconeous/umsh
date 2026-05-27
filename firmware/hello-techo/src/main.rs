@@ -108,6 +108,7 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    use umsh_bsp_nrf52840::system_off::{power_off, tristate_pin, Port, WakePin, WakeSense};
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
@@ -188,6 +189,31 @@ mod firmware {
     /// over-the-air update simply overwrites an earlier un-drained one.
     static IDENTITY_SIGNAL: Signal<ThreadModeRawMutex, ([u8; 32], [u8; 256], usize)> =
         Signal::new();
+
+    // ─── Shutdown signalling ─────────────────────────────────────────────────
+    //
+    // Three signals, each single-consumer:
+    //   SHUTDOWN_SIGNAL          → shutdown_task   (fired by button_task and the
+    //                                              `/poweroff` CLI command)
+    //   DISPLAY_SHUTDOWN_SIGNAL  → display_task    (fired by shutdown_task,
+    //                                              tells the display to render the
+    //                                              final frame and sleep)
+    //   DISPLAY_SHUTDOWN_DONE    → shutdown_task   (fired by display_task once
+    //                                              the panel is asleep)
+
+    static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static DISPLAY_SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static DISPLAY_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// `umsh_hal::PowerControl` shim that converts a `/poweroff` CLI call
+    /// into a signal the shutdown task is waiting on.
+    pub(crate) struct PowerSignaler;
+
+    impl umsh_hal::PowerControl for PowerSignaler {
+        fn request_power_off(&self) {
+            SHUTDOWN_SIGNAL.signal(());
+        }
+    }
 
     // ─── Platform types ───────────────────────────────────────────────────────
     //
@@ -386,8 +412,15 @@ mod firmware {
 
         let peer_store    = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, _, 4, 4, 2, 8, 2, 128> =
-            CliSession::new(node, local_key, out, NullLogger::new(), peer_store, channel_store);
+        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 2, 128> = CliSession::new(
+            node,
+            local_key,
+            out,
+            NullLogger::new(),
+            peer_store,
+            channel_store,
+            PowerSignaler,
+        );
 
         // Re-register loaded peers and channels into the CLI session tables.
         for (pk, alias) in peer_buf.iter() {
@@ -472,22 +505,139 @@ mod firmware {
             let _ = Text::with_baseline(&count_str, Point::new(center_x(&count_str), COUNT_Y), style, Baseline::Top).draw(&mut fb);
         };
 
+        // Renders centred lines (one per slice element) onto an all-white frame.
+        let render_lines = |buf: &mut [u8; display::BUF_SIZE], lines: &[(&str, i32)]| {
+            buf.fill(0xFF);
+            let mut fb = display::EpdFb(buf);
+            for (text, y) in lines {
+                let cx = (display::WIDTH as i32 - text.len() as i32 * FONT_W) / 2;
+                let _ = Text::with_baseline(text, Point::new(cx, *y), style, Baseline::Top)
+                    .draw(&mut fb);
+            }
+        };
+
         // Initial boot screen (count = 0).
         render(&mut buf, 0);
         display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
         display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
 
-        // Update loop. We deliberately do NOT reset the signal after the
+        // Update loop. Races count updates against the shutdown signal.
+        // We deliberately do NOT reset DISPLAY_COUNT_SIGNAL after the
         // throttle: any packet that fired during render+throttle stays
         // pending, so the next iteration starts immediately with the
         // newest count. Throttle still caps the refresh rate.
         loop {
-            DISPLAY_COUNT_SIGNAL.wait().await;
-            let count = PACKET_COUNT.load(Ordering::Relaxed);
-            render(&mut buf, count);
-            display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
-            Timer::after(DISPLAY_THROTTLE).await;
+            match select(DISPLAY_COUNT_SIGNAL.wait(), DISPLAY_SHUTDOWN_SIGNAL.wait()).await {
+                Either::First(()) => {
+                    let count = PACKET_COUNT.load(Ordering::Relaxed);
+                    render(&mut buf, count);
+                    display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
+                    Timer::after(DISPLAY_THROTTLE).await;
+                }
+                Either::Second(()) => {
+                    // Final frame, then deep sleep (RAM-retaining; the panel
+                    // wakes via hardware reset on the next boot).
+                    render_lines(&mut buf, &[("Powered off", 100)]);
+                    display::render(&mut spi, &mut cs, &mut dc, &mut busy, &buf).await;
+                    display::sleep(&mut spi, &mut cs, &mut dc).await;
+                    DISPLAY_SHUTDOWN_DONE.signal(());
+                    // Park forever; the shutdown task will System OFF shortly.
+                    core::future::pending::<()>().await;
+                }
+            }
         }
+    }
+
+    /// Long-press watcher for the user button on P1.10 (active-low, pull-up).
+    /// Two-second hold fires [`SHUTDOWN_SIGNAL`]. Releases before 2 s are
+    /// ignored — there's no short-press action defined yet.
+    #[embassy_executor::task]
+    async fn button_task(mut button: Input<'static>) {
+        const HOLD: Duration = Duration::from_secs(2);
+        loop {
+            button.wait_for_low().await;
+            match select(button.wait_for_high(), Timer::after(HOLD)).await {
+                Either::First(()) => {
+                    // Released before HOLD — no-op.
+                }
+                Either::Second(()) => {
+                    SHUTDOWN_SIGNAL.signal(());
+                    // Wait for release so we don't keep re-triggering.
+                    button.wait_for_high().await;
+                }
+            }
+        }
+    }
+
+    /// Orchestrates the controlled power-off:
+    ///   1. tell the display to render the final frame and sleep,
+    ///   2. flush any pending TX frame-counter reservations (RX counters are
+    ///      drained on every `next_event` in the parallel host task),
+    ///   3. wait for the display task to acknowledge (cap at 5 s),
+    ///   4. drop the peripheral power rail (P0.12) so LoRa / sensors / GNSS
+    ///      lose power before the chip parks,
+    ///   5. configure user-button DETECT-low and enter System OFF.
+    ///
+    /// Diverges via [`power_off`].
+    #[embassy_executor::task]
+    async fn shutdown_task(
+        mac_cell: &'static AsyncRefCell<TechoMac>,
+        peripheral_power: Output<'static>,
+    ) -> ! {
+        SHUTDOWN_SIGNAL.wait().await;
+
+        DISPLAY_SHUTDOWN_SIGNAL.signal(());
+
+        let handle = MacHandle::new(mac_cell);
+        let _ = handle.service_counter_persistence().await;
+
+        let _ = select(
+            DISPLAY_SHUTDOWN_DONE.wait(),
+            Timer::after(Duration::from_secs(5)),
+        )
+        .await;
+
+        // Tri-state all peripheral signal pins before cutting power.
+        //
+        // Two reasons:
+        //   1. Output pins driving into an unpowered peripheral leak current
+        //      through ESD diodes back onto its unpowered VCC rail.
+        //   2. Input pins with PIN_CNF SENSE configured by embassy's async
+        //      GPIO layer (e.g. radio DIO1 / BUSY mid-wait) will fire DETECT
+        //      and immediately wake the chip from System OFF.
+        //
+        // tristate_pin() writes PIN_CNF = 0x02 (DIR=input, INPUT=disconnect,
+        // PULL=none, DRIVE=0, SENSE=disabled) — clearing any SENSE bits.
+        //
+        // E-paper SPI bus (SPIM2): SCK=P0.31, MOSI=P1.07, MISO=P0.29
+        // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
+        // Radio SPI bus (TWISPI1): SCK=P0.19, MOSI=P0.22, MISO=P0.23
+        // Radio control:           CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
+        for (port, pin) in [
+            (Port::P0, 31u8), // e-paper SCK
+            (Port::P1,  7u8), // e-paper MOSI
+            (Port::P0, 29u8), // e-paper MISO
+            (Port::P0, 30u8), // e-paper CS
+            (Port::P0, 28u8), // e-paper DC
+            (Port::P0,  2u8), // e-paper RST
+            (Port::P0,  3u8), // e-paper BUSY
+            (Port::P0, 19u8), // radio SCK
+            (Port::P0, 22u8), // radio MOSI
+            (Port::P0, 23u8), // radio MISO
+            (Port::P0, 24u8), // radio CS
+            (Port::P0, 25u8), // radio RST
+            (Port::P0, 17u8), // radio BUSY
+            (Port::P0, 20u8), // radio DIO1  ← has SENSE set by async radio wait
+        ] {
+            tristate_pin(port, pin);
+        }
+
+        // Drop the peripheral rail so the LoRa module, GNSS, sensors, and
+        // e-paper bias generator all lose power before we enter System OFF.
+        drop(peripheral_power);
+
+        // P1.10 is the side user button. Active-low, pull-up → DETECT-low wakes.
+        power_off(&[WakePin { port: Port::P1, pin: 10, sense: WakeSense::Low }])
     }
 
     // ─── Main ────────────────────────────────────────────────────────────────
@@ -507,8 +657,10 @@ mod firmware {
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
         // Peripheral power enable (P0.12). Must be high before display, LoRa,
-        // or GNSS is addressed, including on battery power.
-        let _peripheral_power = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
+        // or GNSS is addressed, including on battery power. Ownership is later
+        // transferred to `shutdown_task` so it can drop the rail before entering
+        // System OFF.
+        let peripheral_power = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
 
         // WDT: 8 s timeout, petted by the heartbeat task every ~2 s.
         let mut wdt_config = WdtConfig::default();
@@ -686,6 +838,12 @@ mod firmware {
             umsh_task(mac_cell, identity_id, local_key, storage, rx, prev_panic_buf, prev_panic_len)
                 .unwrap()
         );
+
+        // User button (P1.10, active-low). Pull-up so DETECT can wake from
+        // System OFF on the falling edge.
+        let button = Input::new(p.P1_10, Pull::Up);
+        spawner.spawn(button_task(button).unwrap());
+        spawner.spawn(shutdown_task(mac_cell, peripheral_power).unwrap());
 
         join(
             usb.run(),
