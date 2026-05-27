@@ -38,6 +38,8 @@ pub enum Command<'a> {
     SetShow,                              // `/set` (no args)
     Set { var: &'a str, val: &'a str },
     Raw { peer: &'a str, hex: &'a str },
+
+    PowerOff,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -114,6 +116,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, ParseError> {
             require(hex, "hex")?;
             Ok(Command::Raw { peer, hex })
         }
+        "poweroff" | "off" => Ok(Command::PowerOff),
 
         other => {
             let mut s = String::new();
