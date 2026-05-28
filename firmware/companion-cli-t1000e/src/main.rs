@@ -360,12 +360,12 @@ mod firmware {
         pwm.disable();
         enable.set_low();
         let mut driving = false;
+        // Set when DO_SILENCE is playing; silence engages once that melody ends.
+        let mut pending_silence = false;
 
         loop {
             match engine.tick(Instant::now().as_millis()) {
                 BuzzerDecision::Tone { frequency_hz, next_deadline_ms } => {
-                    // set_period recomputes max_duty for the given frequency,
-                    // so the half-max read here is always the right 50% point.
                     pwm.set_period(frequency_hz as u32);
                     let half = pwm.max_duty() / 2;
                     pwm.set_duty(0, DutyCycle::normal(half));
@@ -382,15 +382,32 @@ mod firmware {
                     .await
                     {
                         Either3::First(melody) => {
+                            pending_silence = false;
                             engine.play(melody, Instant::now().as_millis());
                         }
                         Either3::Second(()) => {
-                            engine.toggle_silenced();
+                            // Toggle while playing: if not already headed to
+                            // silence, drop pending and un-silence; otherwise
+                            // cancel the pending silence.
+                            if pending_silence {
+                                pending_silence = false;
+                            } else {
+                                engine.set_silenced(false);
+                                engine.play(
+                                    &buzzer_melodies::UNSILENCE,
+                                    Instant::now().as_millis(),
+                                );
+                            }
                         }
                         Either3::Third(()) => {}
                     }
                 }
                 BuzzerDecision::Silent => {
+                    if pending_silence {
+                        // The DO_SILENCE chirp finished — now actually go silent.
+                        engine.set_silenced(true);
+                        pending_silence = false;
+                    }
                     if driving {
                         pwm.disable();
                         enable.set_low();
@@ -401,7 +418,21 @@ mod firmware {
                             engine.play(melody, Instant::now().as_millis());
                         }
                         Either::Second(()) => {
-                            engine.toggle_silenced();
+                            if engine.is_silenced() {
+                                // Turning sound back on: un-silence then play blip.
+                                engine.set_silenced(false);
+                                engine.play(
+                                    &buzzer_melodies::UNSILENCE,
+                                    Instant::now().as_millis(),
+                                );
+                            } else {
+                                // Turning sound off: play tiny click, then silence.
+                                pending_silence = true;
+                                engine.play(
+                                    &buzzer_melodies::DO_SILENCE,
+                                    Instant::now().as_millis(),
+                                );
+                            }
                         }
                     }
                 }
@@ -489,7 +520,9 @@ mod firmware {
                 Either3::Second(_) => {}
                 Either3::Third(()) => {
                     use umsh_node::Transport as _;
-                    let _ = beacon_node.send_all(&[], &SendOptions::default()).await;
+                    if beacon_node.send_all(&[], &SendOptions::default()).await.is_ok() {
+                        BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
+                    }
                 }
             }
         }
