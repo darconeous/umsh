@@ -63,19 +63,20 @@ pub mod melodies {
 
     /// Short confirmation blip after a beacon is transmitted.
     pub static BEACON_ACK: Melody = Melody::new(&[
-        Tone { frequency_hz: 1_800, duration: Duration::from_millis(40) },
-        Tone { frequency_hz: 2_200, duration: Duration::from_millis(40) },
+        Tone { frequency_hz: 1_800, duration: Duration::from_millis(60) },
+        Tone { frequency_hz: 2_200, duration: Duration::from_millis(60) },
     ]);
 
     /// Single bright blip played when the buzzer is un-silenced.
     pub static UNSILENCE: Melody = Melody::new(&[
-        Tone { frequency_hz: 2_000, duration: Duration::from_millis(45) },
+        Tone { frequency_hz: 2_000, duration: Duration::from_millis(80) },
     ]);
 
-    /// Tiny soft click played just before the buzzer goes silent.
-    /// Intentionally short so it doesn't feel like a reward.
+    /// Short descending blip played just before the buzzer goes silent.
+    /// Kept brief but long enough for the driver chip to energise (~20 ms
+    /// startup) and produce audible sound.
     pub static DO_SILENCE: Melody = Melody::new(&[
-        Tone { frequency_hz: 1_200, duration: Duration::from_millis(25) },
+        Tone { frequency_hz: 1_200, duration: Duration::from_millis(80) },
     ]);
 }
 

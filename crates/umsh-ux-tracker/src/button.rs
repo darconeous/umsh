@@ -72,7 +72,7 @@ pub struct ButtonTimings {
 impl Default for ButtonTimings {
     fn default() -> Self {
         Self {
-            max_click_hold: Duration::from_millis(250),
+            max_click_hold: Duration::from_millis(500),
             inter_click_gap: Duration::from_millis(400),
             long_press: Duration::from_secs(5),
         }
