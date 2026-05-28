@@ -93,13 +93,14 @@ mod firmware {
 
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, select};
+    use embassy_futures::select::{Either, Either3, select, select3};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
     use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng::Rng;
+    use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -132,7 +133,7 @@ mod firmware {
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
     use umsh_core::PublicKey;
-    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
     use umsh_node::Host;
     use umsh_sync::AsyncRefCell;
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
@@ -148,6 +149,7 @@ mod firmware {
         // LR1110 SPI is on this peripheral.
         TWISPI0     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
         RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
+        SAADC       => embassy_nrf::saadc::InterruptHandler;
     });
 
     // ─── Constants ───────────────────────────────────────────────────────────
@@ -278,6 +280,12 @@ mod firmware {
     /// into PWM tones via `BuzzerEngine`.
     static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
 
+    /// Single-press button event → broadcast a beacon from umsh_task.
+    static BEACON_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Double-press button event → toggle buzzer silence in buzzer_task.
+    static BUZZER_TOGGLE_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
     // ─── USB types ────────────────────────────────────────────────────────────
 
     type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
@@ -366,18 +374,20 @@ mod firmware {
                         pwm.enable();
                         driving = true;
                     }
-                    // Wait for the note to end, or for a fresh play request
-                    // to interrupt it.
-                    match select(
+                    match select3(
                         BUZZER_SIGNAL.wait(),
+                        BUZZER_TOGGLE_SIGNAL.wait(),
                         Timer::at(Instant::from_millis(next_deadline_ms)),
                     )
                     .await
                     {
-                        Either::First(melody) => {
+                        Either3::First(melody) => {
                             engine.play(melody, Instant::now().as_millis());
                         }
-                        Either::Second(()) => {}
+                        Either3::Second(()) => {
+                            engine.toggle_silenced();
+                        }
+                        Either3::Third(()) => {}
                     }
                 }
                 BuzzerDecision::Silent => {
@@ -386,8 +396,14 @@ mod firmware {
                         enable.set_low();
                         driving = false;
                     }
-                    let melody = BUZZER_SIGNAL.wait().await;
-                    engine.play(melody, Instant::now().as_millis());
+                    match select(BUZZER_SIGNAL.wait(), BUZZER_TOGGLE_SIGNAL.wait()).await {
+                        Either::First(melody) => {
+                            engine.play(melody, Instant::now().as_millis());
+                        }
+                        Either::Second(()) => {
+                            engine.toggle_silenced();
+                        }
+                    }
                 }
             }
         }
@@ -413,6 +429,8 @@ mod firmware {
         let handle = MacHandle::new(mac_cell);
         let mut host: Host<'_, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32> = Host::new(handle);
         let node = host.add_node(identity_id);
+        // Clone before moving into CliSession; used for button-triggered beacons.
+        let beacon_node = node.clone();
 
         let mut input = cli_io::CdcInput::new(rx);
         let mut out   = cli_io::CdcOutput::new();
@@ -466,9 +484,13 @@ mod firmware {
         }
 
         loop {
-            match select(host.run(), cli.run(&mut input)).await {
-                Either::First(_) => panic!("host exited"),
-                Either::Second(_) => {}
+            match select3(host.run(), cli.run(&mut input), BEACON_SIGNAL.wait()).await {
+                Either3::First(_) => panic!("host exited"),
+                Either3::Second(_) => {}
+                Either3::Third(()) => {
+                    use umsh_node::Transport as _;
+                    let _ = beacon_node.send_all(&[], &SendOptions::default()).await;
+                }
             }
         }
     }
@@ -507,6 +529,12 @@ mod firmware {
             };
 
             match event {
+                Some(ButtonEvent::Single) => {
+                    BEACON_SIGNAL.signal(());
+                }
+                Some(ButtonEvent::Double) => {
+                    BUZZER_TOGGLE_SIGNAL.signal(());
+                }
                 Some(ButtonEvent::Long) => {
                     // Wait for button release before signalling shutdown.
                     // If we fire while the button is still HIGH, shutdown_task
@@ -555,6 +583,8 @@ mod firmware {
         tristate_pin(Port::P0, 24); // LED
         tristate_pin(Port::P0, 25); // Buzzer PWM
         tristate_pin(Port::P1,  5); // Buzzer enable
+        tristate_pin(Port::P1,  6); // Sensor rail enable
+        tristate_pin(Port::P0,  2); // Battery ADC (AIN0)
         tristate_pin(Port::P0, 11); // SPI SCK
         tristate_pin(Port::P0, 12); // SPI CS
         tristate_pin(Port::P0,  7); // LR1110 BUSY
@@ -564,6 +594,51 @@ mod firmware {
 
         // Button is active-high with pull-down → wake on rising edge.
         power_off(&[WakePin { port: Port::P0, pin: 6, sense: WakeSense::High }])
+    }
+
+    /// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider).
+    ///
+    /// The sensor rail (P1.06) must be enabled during sampling — it gates the
+    /// analog path to the battery divider. The rail is dropped immediately after
+    /// the read to minimise the power overhead.
+    ///
+    /// Voltage math (12-bit, GAIN1_6, 0.6 V INTERNAL reference):
+    ///   full-scale input = 0.6 V / (1/6) = 3.6 V → 4096 LSB
+    ///   with 2:1 divider: VBAT_mV = raw × 2 × 3600 / 4096 = raw × 1.758 mV
+    ///
+    /// 3.1 V low threshold → raw ≈ 1764. Ten consecutive under-threshold
+    /// samples while USB is not detected trigger a protective shutdown.
+    #[embassy_executor::task]
+    async fn power_task(mut saadc: Saadc<'static, 1>, mut sensor_rail: Output<'static>) {
+        const LOW_RAW: i16 = 1764; // ~3.1 V VBAT
+        const CONSECUTIVE_NEEDED: u8 = 10;
+        const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
+
+        let mut low_count: u8 = 0;
+
+        loop {
+            Timer::after(SAMPLE_INTERVAL).await;
+
+            // Gate the sensor rail, settle, sample, then drop the rail.
+            sensor_rail.set_high();
+            Timer::after(Duration::from_millis(5)).await;
+            let mut buf = [0i16; 1];
+            saadc.sample(&mut buf).await;
+            sensor_rail.set_low();
+
+            let raw = buf[0].max(0);
+            if raw < LOW_RAW {
+                low_count = low_count.saturating_add(1);
+                if low_count >= CONSECUTIVE_NEEDED {
+                    // Cell protection: force shutdown before the battery
+                    // reaches the deep-discharge knee.
+                    SHUTDOWN_SIGNAL.signal(());
+                    return;
+                }
+            } else {
+                low_count = 0;
+            }
+        }
     }
 
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
@@ -776,9 +851,20 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
+        // ── Battery ADC ───────────────────────────────────────────────────────
+        // P0.02 = AIN0 via 2:1 divider; sensor rail P1.06 gates the path.
+        let sensor_rail = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
+        let saadc = Saadc::new(
+            p.SAADC,
+            Irqs,
+            SaadcConfig::default(), // 12-bit, no oversample
+            [ChannelConfig::single_ended(p.P0_02)],
+        );
+
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(button_task(button).unwrap());
         spawner.spawn(shutdown_task().unwrap());
+        spawner.spawn(power_task(saadc, sensor_rail).unwrap());
         spawner
             .spawn(
                 umsh_task(
