@@ -35,8 +35,9 @@ embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.6", default-features = false }
 static_cell = "2"
-# SX1262 LoRa radio driver and supporting crates.
-lora-phy = { version = "3", default-features = false }
+# SX1262 LoRa radio driver and supporting crates. Pinned via workspace dep
+# so the patched lora-rs fork applies uniformly across all firmware.
+lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
 # lora-phy 3.0.x unconditionally depends on defmt 0.3; provide a no-op
 # global logger so the firmware links without a debug transport.

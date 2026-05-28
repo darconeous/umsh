@@ -191,6 +191,29 @@ The firmware defines:
 - `LR11X0_DIO_AS_RF_SWITCH`
 - RF switch table handling in MeshCore
 
+### LR1110 internal regulator: LDO only (no DCDC)
+
+The T1000-E module does **not** populate the external switching inductor
+required for the LR1110's internal DCDC regulator (the chip's BST pin appears
+unrouted on this board). The LR1110 must therefore be configured in **LDO
+mode** — calling `SetRegMode(DCDC)` produces a malfunctioning regulator that
+draws noisy switching current on the shared 3V3 rail and disrupts everything
+sharing it.
+
+Symptoms of incorrectly enabling DCDC (observed during Phase 2.5 bringup):
+
+- USB-CDC enumeration **flaps rapidly** between "available" and "unavailable"
+  on the host while the nRF52840 itself stays running (heartbeat blinks,
+  buttons respond). USB has no other obvious failure mode that produces this
+  pattern.
+- The fault appears immediately after `LoRa::new` runs the
+  `SetRegMode(DCDC)` command — bisected by toggling the configuration flag
+  with all other init steps held constant.
+
+Reference: MeshCore (RadioLib) calls `setRegulatorLDO()` unconditionally on
+this board — it never enables DCDC. Match this in any LR1110-using firmware
+for the T1000-E. In `lora-phy` terms: `Config::use_dcdc = false`.
+
 ## What remains unknown without a schematic
 
 The firmware does **not** reveal:

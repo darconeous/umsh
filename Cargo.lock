@@ -821,13 +821,16 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "defmt 0.3.100",
  "embassy-executor 0.10.0",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.6.2",
  "embassy-time",
  "embassy-usb",
+ "embedded-hal-bus",
  "heapless 0.8.0",
+ "lora-phy",
  "static_cell",
  "umsh-app-companion-cli",
  "umsh-bsp-nrf52840",
@@ -1229,16 +1232,12 @@ dependencies = [
 [[package]]
 name = "lora-modulation"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c96c4a41a1f1ad04de765306e1829c7007a37898fe4033204fa82cf2e055624"
 
 [[package]]
 name = "lora-phy"
-version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61471c3b2909789e3332083577f6cf6c41a4fcf37674ef15156bcbb20504ac65"
+version = "3.0.2-alpha"
 dependencies = [
- "defmt 0.3.100",
+ "document-features",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "lora-modulation",
