@@ -98,6 +98,7 @@ mod firmware {
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
+    use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng::Rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
@@ -135,6 +136,7 @@ mod firmware {
     use umsh_node::Host;
     use umsh_sync::AsyncRefCell;
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
+    use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, Melody, melodies as buzzer_melodies};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     use super::cli_io;
@@ -271,6 +273,11 @@ mod firmware {
     /// and by `PowerSignaler::request_power_off` from the CLI `/poweroff` command.
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
+    /// Buzzer melody request. Latest signal wins — firing during a melody
+    /// replaces it immediately. The buzzer task converts a `&'static Melody`
+    /// into PWM tones via `BuzzerEngine`.
+    static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
+
     // ─── USB types ────────────────────────────────────────────────────────────
 
     type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
@@ -326,6 +333,64 @@ mod firmware {
         tx_pkt: PacketParams,
     ) {
         umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+    }
+
+    /// Owns the piezo buzzer: PWM on P0.25 and power-enable on P1.05.
+    /// Idle: PWM disabled, enable pin LOW (buzzer driver chip unpowered).
+    /// On melody: enable HIGH, PWM emits a 50% duty square wave at the
+    /// engine's current tone frequency, stepping through notes via
+    /// `BuzzerEngine::tick`.
+    ///
+    /// Frequencies in the melodies are 1–2 kHz; with Prescaler::Div16
+    /// the PWM clock is 1 MHz, giving max_duty 500–1000 — plenty of
+    /// resolution at 50% duty.
+    #[embassy_executor::task]
+    async fn buzzer_task(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
+        let mut engine = BuzzerEngine::new();
+
+        // Idle state: silent, unpowered.
+        pwm.disable();
+        enable.set_low();
+        let mut driving = false;
+
+        loop {
+            match engine.tick(Instant::now().as_millis()) {
+                BuzzerDecision::Tone { frequency_hz, next_deadline_ms } => {
+                    // set_period recomputes max_duty for the given frequency,
+                    // so the half-max read here is always the right 50% point.
+                    pwm.set_period(frequency_hz as u32);
+                    let half = pwm.max_duty() / 2;
+                    pwm.set_duty(0, DutyCycle::normal(half));
+                    if !driving {
+                        enable.set_high();
+                        pwm.enable();
+                        driving = true;
+                    }
+                    // Wait for the note to end, or for a fresh play request
+                    // to interrupt it.
+                    match select(
+                        BUZZER_SIGNAL.wait(),
+                        Timer::at(Instant::from_millis(next_deadline_ms)),
+                    )
+                    .await
+                    {
+                        Either::First(melody) => {
+                            engine.play(melody, Instant::now().as_millis());
+                        }
+                        Either::Second(()) => {}
+                    }
+                }
+                BuzzerDecision::Silent => {
+                    if driving {
+                        pwm.disable();
+                        enable.set_low();
+                        driving = false;
+                    }
+                    let melody = BUZZER_SIGNAL.wait().await;
+                    engine.play(melody, Instant::now().as_millis());
+                }
+            }
+        }
     }
 
     /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
@@ -469,6 +534,12 @@ mod firmware {
     async fn shutdown_task() -> ! {
         SHUTDOWN_SIGNAL.wait().await;
 
+        // Play the power-off chirp before tearing anything down. POWER_OFF
+        // is 80+80+120 = 280 ms; wait 320 ms to let the final note finish
+        // and the buzzer task return to its silent state.
+        BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_OFF);
+        Timer::after(Duration::from_millis(320)).await;
+
         // Hold LR1110 in reset (active-low). Stops chip clocks and collapses
         // current draw to the reset-state minimum.
         drive_pin_low(Port::P1, 10);
@@ -482,6 +553,8 @@ mod firmware {
         // Button P0.06 is left alone — power_off configures it for wake.
         // P1.10 (LR1110 RESET) is left driving LOW intentionally.
         tristate_pin(Port::P0, 24); // LED
+        tristate_pin(Port::P0, 25); // Buzzer PWM
+        tristate_pin(Port::P1,  5); // Buzzer enable
         tristate_pin(Port::P0, 11); // SPI SCK
         tristate_pin(Port::P0, 12); // SPI CS
         tristate_pin(Port::P0,  7); // LR1110 BUSY
@@ -551,6 +624,20 @@ mod firmware {
         let prev_panic_buf: &'static [u8; 256] = PREV_PANIC_BUF.init(prev_panic_tmp);
 
         let led = Output::new(p.P0_24, Level::Low, OutputDrive::Standard);
+
+        // ── Piezo buzzer ─────────────────────────────────────────────────────
+        // P0.25 = PWM, P1.05 = power-enable for the buzzer driver chip.
+        // Div16 prescaler gives a 1 MHz PWM clock — comfortably covers the
+        // 1–2 kHz melody range with max_duty 500–1000.
+        let buzzer_pwm = {
+            let mut cfg = SimpleConfig::default();
+            cfg.prescaler = Prescaler::Div16;
+            SimplePwm::new_1ch(p.PWM0, p.P0_25, &cfg)
+        };
+        let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
+        spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable).unwrap());
+        // Boot chirp — independent of USB, so headless boots also signal life.
+        BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
         // ── NVMC storage ─────────────────────────────────────────────────────
         // 64 KB at 0xE4000..0xF4000 (top of app window, per memory.x).
