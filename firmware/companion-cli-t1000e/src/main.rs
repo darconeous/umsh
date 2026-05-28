@@ -115,9 +115,12 @@ mod firmware {
     use lora_phy::iv::GenericLr1110InterfaceVariant;
     use lora_phy::lr1110::{
         Config as LoraConfig, Lr1110, RfSwitchConfig, TcxoCtrlVoltage,
+        radio_kind_params::PaSelection,
         variant::Lr1110 as Lr1110Chip,
     };
-    use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
+    use lora_phy::mod_params::{Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, RxMode, SpreadingFactor};
+    use lora_phy::mod_traits::IrqState;
+    use umsh_hal::{RxInfo, Snr};
     use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
@@ -134,7 +137,7 @@ mod firmware {
     };
     use umsh_core::PublicKey;
     use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
-    use umsh_node::Host;
+    use umsh_node::{Host, LocalNode};
     use umsh_sync::AsyncRefCell;
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, Melody, melodies as buzzer_melodies};
@@ -154,9 +157,10 @@ mod firmware {
 
     // ─── Constants ───────────────────────────────────────────────────────────
 
-    /// TX power for the LR1110 LP PA. Conservative bringup default;
-    /// raise to 22 dBm for the HP PA once TX is validated.
-    const TX_POWER_DBM: i32 = 14;
+    /// TX power for the LR1110 HP PA at max output (+22 dBm).
+    /// Using HP PA at max while debugging on-air TX to rule out power as
+    /// the cause of other devices not seeing our transmissions.
+    const TX_POWER_DBM: i32 = 22;
 
     const DEBOUNCE: Duration = Duration::from_millis(10);
 
@@ -254,6 +258,11 @@ mod firmware {
     /// 8 TX queue slots, 255-byte frame, 32-entry dup cache.
     type T1000EMac = umsh_mac::Mac<T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
 
+    /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
+    type T1000EHost = Host<'static, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
+    /// LocalNode handle. Cheap to clone — passed to `cli_task` and `beacon_task`.
+    type T1000ENode = LocalNode<MacHandle<'static, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>>;
+
     // ─── Concrete radio types ─────────────────────────────────────────────────
 
     type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
@@ -280,11 +289,9 @@ mod firmware {
     /// into PWM tones via `BuzzerEngine`.
     static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
 
-    /// Single-press button event → broadcast a beacon from umsh_task.
+    /// Button-driven beacon request. Single or Double presses both fire this
+    /// so users get feedback no matter how the FSM classifies the press.
     static BEACON_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
-
-    /// Double-press button event → toggle buzzer silence in buzzer_task.
-    static BUZZER_TOGGLE_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     // ─── USB types ────────────────────────────────────────────────────────────
 
@@ -330,17 +337,119 @@ mod firmware {
         cli_io::drain_to_sender(&mut tx).await;
     }
 
-    /// Owns the LR1110 LoRa instance. Loops continuous RX ↔ TX as requests
-    /// arrive from the MAC via RADIO_CH. umsh_radio_sx126x::runner is generic
-    /// over RadioKind, so the LR1110 LoRa instance works directly.
+    /// Owns the LR1110 LoRa instance and drives RX/TX state.
+    ///
+    /// Mirrors the manual IRQ-handling loop that was proven to work for
+    /// LR1110 RX in Phase 2.5: `prepare_for_rx` once at boot, then re-arm
+    /// with just `start_rx()` between packets. Full re-prepare is only used
+    /// on errors. IRQ flags are explicitly cleared after every event —
+    /// `LoRa::process_irq_event` passes `clear_interrupts=false` to the
+    /// chip driver, and without an explicit `clear_irq_status` DIO1 stays
+    /// latched high.
+    ///
+    /// On TX requests from the MAC channel we switch to TX, transmit, then
+    /// re-prepare RX (the chip leaves RX mode for TX so we can't just
+    /// `start_rx` after).
+    ///
+    /// Only cancels at `wait_for_irq`, which is a simple DIO1 edge wait
+    /// and safe to drop. We never cancel `process_irq_event` or `tx()` —
+    /// the lora-phy docs explicitly warn against that pattern.
     #[embassy_executor::task]
     async fn radio_runner_task(
-        lora: LoraRadio,
+        mut lora: LoraRadio,
         mdltn: ModulationParams,
         rx_pkt: PacketParams,
-        tx_pkt: PacketParams,
+        mut tx_pkt: PacketParams,
     ) {
-        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+        use umsh_radio_sx126x::{MAX_PAYLOAD, RxFrame};
+
+        let mut rx_buf = [0u8; MAX_PAYLOAD];
+
+        // Initial RX setup. Sets modem params, IRQ routing, and starts
+        // continuous RX. Subsequent re-arms after a packet use just
+        // `start_rx`, matching Phase 2.5 behavior.
+        if lora
+            .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        if lora.start_rx().await.is_err() {
+            return;
+        }
+
+        loop {
+            match select(lora.wait_for_irq(), RADIO_CH.tx.receive()).await {
+                Either::First(Ok(())) => {
+                    let irq_result = lora.process_irq_event().await;
+                    let _ = lora.clear_irq_status().await;
+
+                    match irq_result {
+                        Ok(Some(IrqState::Done)) => {
+                            if let Ok((len, status)) =
+                                lora.get_rx_result(&rx_pkt, &mut rx_buf).await
+                            {
+                                let mut data: heapless::Vec<u8, MAX_PAYLOAD> =
+                                    heapless::Vec::new();
+                                let _ = data.extend_from_slice(&rx_buf[..len as usize]);
+                                let info = RxInfo {
+                                    len: len as usize,
+                                    rssi: status.rssi,
+                                    snr: Snr::from_decibels(status.snr as i8),
+                                    lqi: None,
+                                };
+                                if RADIO_CH.rx.try_send(RxFrame { data, info }).is_ok() {
+                                    RADIO_CH.rx_waker.wake();
+                                }
+                            }
+                            // Light re-arm: just start_rx, no re-prepare.
+                            let _ = lora.start_rx().await;
+                        }
+                        Ok(Some(IrqState::PreambleReceived)) => {
+                            // Mid-packet — stay in RX.
+                        }
+                        Ok(None) => {}
+                        Err(_) => {
+                            // CRC / header / other error: full re-prepare.
+                            let _ = lora.enter_standby().await;
+                            let _ = lora
+                                .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+                                .await;
+                            let _ = lora.start_rx().await;
+                        }
+                    }
+                }
+                Either::First(Err(_)) => {
+                    let _ = lora.enter_standby().await;
+                    let _ = lora
+                        .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+                        .await;
+                    let _ = lora.start_rx().await;
+                }
+                Either::Second(tx_req) => {
+                    let result: Result<(), RadioError> = async {
+                        lora.prepare_for_tx(
+                            &mdltn,
+                            &mut tx_pkt,
+                            TX_POWER_DBM,
+                            &tx_req.data,
+                        )
+                        .await?;
+                        lora.tx().await
+                    }
+                    .await;
+                    RADIO_CH.tx_done.signal(result);
+                    // Returning to RX after TX requires a full re-prepare —
+                    // tx() left the chip in Standby and the mode tracker
+                    // expects Receive state for start_rx to work.
+                    let _ = lora
+                        .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+                        .await;
+                    let _ = lora.start_rx().await;
+                }
+            }
+        }
     }
 
     /// Owns the piezo buzzer: PWM on P0.25 and power-enable on P1.05.
@@ -360,8 +469,6 @@ mod firmware {
         pwm.disable();
         enable.set_low();
         let mut driving = false;
-        // Set when DO_SILENCE is playing; silence engages once that melody ends.
-        let mut pending_silence = false;
 
         loop {
             match engine.tick(Instant::now().as_millis()) {
@@ -374,79 +481,60 @@ mod firmware {
                         pwm.enable();
                         driving = true;
                     }
-                    match select3(
+                    match select(
                         BUZZER_SIGNAL.wait(),
-                        BUZZER_TOGGLE_SIGNAL.wait(),
                         Timer::at(Instant::from_millis(next_deadline_ms)),
                     )
                     .await
                     {
-                        Either3::First(melody) => {
-                            pending_silence = false;
+                        Either::First(melody) => {
                             engine.play(melody, Instant::now().as_millis());
                         }
-                        Either3::Second(()) => {
-                            // Toggle while playing: if not already headed to
-                            // silence, drop pending and un-silence; otherwise
-                            // cancel the pending silence.
-                            if pending_silence {
-                                pending_silence = false;
-                            } else {
-                                engine.set_silenced(false);
-                                engine.play(
-                                    &buzzer_melodies::UNSILENCE,
-                                    Instant::now().as_millis(),
-                                );
-                            }
-                        }
-                        Either3::Third(()) => {}
+                        Either::Second(()) => {}
                     }
                 }
                 BuzzerDecision::Silent => {
-                    if pending_silence {
-                        // The DO_SILENCE chirp finished — now actually go silent.
-                        engine.set_silenced(true);
-                        pending_silence = false;
-                    }
                     if driving {
                         pwm.disable();
                         enable.set_low();
                         driving = false;
                     }
-                    match select(BUZZER_SIGNAL.wait(), BUZZER_TOGGLE_SIGNAL.wait()).await {
-                        Either::First(melody) => {
-                            engine.play(melody, Instant::now().as_millis());
-                        }
-                        Either::Second(()) => {
-                            if engine.is_silenced() {
-                                // Turning sound back on: un-silence then play blip.
-                                engine.set_silenced(false);
-                                engine.play(
-                                    &buzzer_melodies::UNSILENCE,
-                                    Instant::now().as_millis(),
-                                );
-                            } else {
-                                // Turning sound off: play tiny click, then silence.
-                                pending_silence = true;
-                                engine.play(
-                                    &buzzer_melodies::DO_SILENCE,
-                                    Instant::now().as_millis(),
-                                );
-                            }
-                        }
-                    }
+                    let melody = BUZZER_SIGNAL.wait().await;
+                    engine.play(melody, Instant::now().as_millis());
                 }
             }
         }
     }
 
-    /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
-    /// concurrently via `select`. The shared `AsyncRefCell<Mac>` serialises
-    /// MAC access between the host driver and the CLI's send-side calls.
+    /// Drives the MAC coordinator. Independent of USB so radio RX/TX and
+    /// the MAC pump keep running whether or not a host terminal is attached.
     #[embassy_executor::task]
-    async fn umsh_task(
-        mac_cell: &'static AsyncRefCell<T1000EMac>,
-        identity_id: LocalIdentityId,
+    async fn mac_task(mut host: T1000EHost) {
+        let _ = host.run().await;
+        panic!("host exited");
+    }
+
+    /// Listens for button-driven beacon requests. Independent of USB so
+    /// pressing the button broadcasts a beacon (and chirps) even when no
+    /// host terminal is attached.
+    #[embassy_executor::task]
+    async fn beacon_task(beacon_node: T1000ENode) {
+        use umsh_node::Transport as _;
+        loop {
+            BEACON_SIGNAL.wait().await;
+            // Audible feedback first so the user hears the press even if
+            // the MAC layer fails or stalls.
+            BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
+            let _ = beacon_node.send_all(&[], &SendOptions::default()).await;
+        }
+    }
+
+    /// Runs the `CliSession` over USB-CDC. This is the only task that
+    /// blocks on a host terminal connection — everything else (radio, MAC,
+    /// button, buzzer, beacon) runs without it.
+    #[embassy_executor::task]
+    async fn cli_task(
+        node: T1000ENode,
         local_key: PublicKey,
         storage: &'static NvmcStorage,
         rx: T1000eRescue,
@@ -457,17 +545,10 @@ mod firmware {
         use umsh_cli::io::CliOutput;
         use umsh_cli::logger::NullLogger;
 
-        let handle = MacHandle::new(mac_cell);
-        let mut host: Host<'_, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32> = Host::new(handle);
-        let node = host.add_node(identity_id);
-        // Clone before moving into CliSession; used for button-triggered beacons.
-        let beacon_node = node.clone();
-
         let mut input = cli_io::CdcInput::new(rx);
         let mut out   = cli_io::CdcOutput::new();
 
-        // Pre-load persisted state before first connect so register_peer /
-        // register_channel calls below don't block the CLI banner.
+        // Pre-load persisted state.
         let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
             heapless::Vec::new();
         let _ = storage.load_all_peers(&mut peer_buf).await;
@@ -500,32 +581,15 @@ mod firmware {
             PowerSignaler,
         );
 
-        // Re-register persisted peers and channels into the session tables.
         for (pk, alias) in peer_buf.iter() {
             let _ = cli.register_peer(PublicKey(*pk), alias.as_deref()).await;
         }
-        // Restore RX counter boundaries so the replay window starts above
-        // any frames accepted before the last reboot.
-        MacHandle::new(mac_cell)
-            .load_all_persisted_rx_counters()
-            .await
-            .ok();
         for (name, key_bytes) in ch_buf.iter() {
             let _ = cli.register_channel(name.as_str(), *key_bytes).await;
         }
 
-        loop {
-            match select3(host.run(), cli.run(&mut input), BEACON_SIGNAL.wait()).await {
-                Either3::First(_) => panic!("host exited"),
-                Either3::Second(_) => {}
-                Either3::Third(()) => {
-                    use umsh_node::Transport as _;
-                    if beacon_node.send_all(&[], &SendOptions::default()).await.is_ok() {
-                        BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
-                    }
-                }
-            }
-        }
+        let _ = cli.run(&mut input).await;
+        panic!("cli exited");
     }
 
     /// Resolves raw GPIO edges on the user button (P0.06, active-high, pull-down)
@@ -562,11 +626,8 @@ mod firmware {
             };
 
             match event {
-                Some(ButtonEvent::Single) => {
+                Some(ButtonEvent::Single) | Some(ButtonEvent::Double) => {
                     BEACON_SIGNAL.signal(());
-                }
-                Some(ButtonEvent::Double) => {
-                    BUZZER_TOGGLE_SIGNAL.signal(());
                 }
                 Some(ButtonEvent::Long) => {
                     // Wait for button release before signalling shutdown.
@@ -811,7 +872,10 @@ mod firmware {
             .unwrap_or_else(|_| panic!("lr1110 iv"));
 
             let lora_config = LoraConfig {
-                chip:      Lr1110Chip::new(),
+                // HP PA — SetTx will route through tx_hp (0x0A = DIO6+DIO8)
+                // on our RF-switch table. Combined with TX_POWER_DBM=22 this
+                // is the maximum output the chip + board can produce.
+                chip:      Lr1110Chip::with_pa(PaSelection::Hp),
                 tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V6),
                 use_dcdc:  false, // T1000-E module has no external inductor for BST
                 rx_boost:  true,
@@ -824,11 +888,42 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            // meshcore_us_params: 910.525 MHz / SF7 / BW62.5 kHz / CR4/5 /
-            // rx_preamble=8 / tx_preamble=16. Generic over RadioKind; works
-            // with the LR1110 LoRa instance directly.
-            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::meshcore_us_params(&mut lora)
-                .unwrap_or_else(|_| panic!("radio params"));
+            // MeshCore-US on-air parameters tuned for LR1110.
+            //
+            // Phase 2.5 RX bringup proved that preamble_length=16 (matching
+            // MeshCore's RadioLib TX preamble) reliably triggers
+            // SyncWordHeaderValid → RxDone on the LR1110. The shared
+            // `umsh_radio_sx126x::meshcore_us_params` helper uses 8 for RX,
+            // which is fine for the SX1262 on T-Echo but loses packets on
+            // LR1110. We pin both rx and tx to 16 here to match what worked
+            // on real hardware.
+            let mdltn = lora
+                .create_modulation_params(
+                    SpreadingFactor::_7,
+                    Bandwidth::_62KHz,
+                    CodingRate::_4_5,
+                    910_525_000,
+                )
+                .unwrap_or_else(|_| panic!("modulation params"));
+            let rx_pkt = lora
+                .create_rx_packet_params(
+                    16,    // preamble length: LR1110 needs 16 for MeshCore-US
+                    false, // explicit header
+                    255,   // max payload
+                    true,  // CRC on
+                    false, // IQ normal
+                    &mdltn,
+                )
+                .unwrap_or_else(|_| panic!("rx packet params"));
+            let tx_pkt = lora
+                .create_tx_packet_params(
+                    16,    // preamble length: matches MeshCore RadioLib
+                    false, // explicit header
+                    true,  // CRC on
+                    false, // IQ normal
+                    &mdltn,
+                )
+                .unwrap_or_else(|_| panic!("tx packet params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }
@@ -894,15 +989,33 @@ mod firmware {
             [ChannelConfig::single_ended(p.P0_02)],
         );
 
+        // ── Host + LocalNode ──────────────────────────────────────────────────
+        // Build the Host and add the local identity's node here in main() so
+        // we can clone the node for the beacon task before moving Host into
+        // mac_task. The Host's internal node store and the cloned LocalNode
+        // share Rc state, so events route correctly regardless of which task
+        // holds which copy.
+        let handle = MacHandle::new(mac_cell);
+        let mut host: T1000EHost = Host::new(handle);
+        let node = host.add_node(identity_id);
+        let beacon_node = node.clone();
+        // Restore RX counter boundaries before the MAC starts processing
+        // packets so the replay window starts above the last accepted frame.
+        MacHandle::new(mac_cell)
+            .load_all_persisted_rx_counters()
+            .await
+            .ok();
+
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(button_task(button).unwrap());
         spawner.spawn(shutdown_task().unwrap());
         spawner.spawn(power_task(saadc, sensor_rail).unwrap());
+        spawner.spawn(mac_task(host).unwrap());
+        spawner.spawn(beacon_task(beacon_node).unwrap());
         spawner
             .spawn(
-                umsh_task(
-                    mac_cell,
-                    identity_id,
+                cli_task(
+                    node,
                     local_key,
                     storage,
                     rx,
