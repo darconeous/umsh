@@ -63,6 +63,8 @@ pub struct WakePin {
 const P0_BASE: usize = 0x5000_0000;
 const P1_BASE: usize = 0x5000_0300;
 const PIN_CNF_OFFSET: usize = 0x700;
+const OUTSET_OFFSET: usize = 0x508;
+const OUTCLR_OFFSET: usize = 0x50C;
 const POWER_SYSTEMOFF: *mut u32 = 0x4000_0500 as *mut u32;
 
 const PIN_CNF_SENSE_SHIFT: u32 = 16;
@@ -76,6 +78,44 @@ fn pin_cnf_addr(port: Port, pin: u8) -> *mut u32 {
         Port::P1 => P1_BASE,
     };
     (base + PIN_CNF_OFFSET + (pin as usize) * 4) as *mut u32
+}
+
+fn port_base(port: Port) -> usize {
+    match port {
+        Port::P0 => P0_BASE,
+        Port::P1 => P1_BASE,
+    }
+}
+
+/// Drive a pin LOW as a push-pull output. Useful for asserting an
+/// active-low peripheral RESET line before entering System OFF, holding
+/// the peripheral in reset (lowest-power state) without relying on the
+/// peripheral's power rail being switchable.
+///
+/// Order: clear the OUT bit first (so when DIR becomes output we already
+/// drive LOW, not the previous OUT level), then write PIN_CNF =
+/// `DIR=output, INPUT=connect, PULL=none, DRIVE=standard, SENSE=disabled`.
+pub fn drive_pin_low(port: Port, pin: u8) {
+    let base = port_base(port);
+    let outclr: *mut u32 = (base + OUTCLR_OFFSET) as *mut u32;
+    let cnf_addr = pin_cnf_addr(port, pin);
+    unsafe {
+        core::ptr::write_volatile(outclr, 1u32 << (pin as u32));
+        // DIR=1 (output) at bit 0. All other fields zero.
+        core::ptr::write_volatile(cnf_addr, 0x0000_0001);
+    }
+}
+
+/// Drive a pin HIGH as a push-pull output. Symmetric counterpart to
+/// [`drive_pin_low`] for chips whose RESET line is active-high.
+pub fn drive_pin_high(port: Port, pin: u8) {
+    let base = port_base(port);
+    let outset: *mut u32 = (base + OUTSET_OFFSET) as *mut u32;
+    let cnf_addr = pin_cnf_addr(port, pin);
+    unsafe {
+        core::ptr::write_volatile(outset, 1u32 << (pin as u32));
+        core::ptr::write_volatile(cnf_addr, 0x0000_0001);
+    }
 }
 
 /// Tri-state a pin: disconnected input, no pull, no drive.

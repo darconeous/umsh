@@ -53,6 +53,15 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/darconeous/umsh"
 
+# Override the published `lora-phy` (and its sibling `lora-modulation`) with our
+# fork at ../lora-rs. The fork adds `RfSwitchConfig` to `lr1110::Config` so the
+# T1000-E (and similar boards with custom DIO5–DIO8 RF-switch tables) can
+# initialize the LR1110 correctly. Tracking branch: `umsh/lr1110-rf-switch-config`.
+# Plan: upstream as a PR; drop this patch when the change lands in a release.
+[patch.crates-io]
+lora-phy        = { path = "../lora-rs/lora-phy" }
+lora-modulation = { path = "../lora-rs/lora-modulation" }
+
 [workspace.dependencies]
 aes = { version = "0.8", default-features = false }
 bitflags = { version = "2", default-features = false }
@@ -62,6 +71,10 @@ curve25519-dalek = { version = "4", default-features = false }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }
 hamaddr = { version = "0.1.0", default-features = false }
 heapless = { version = "0.8", default-features = false }
+# Pre-release version specifier is required so cargo will accept the patched
+# `lora-phy = "3.0.2-alpha"` from ../lora-rs. The patch is rejected as "unused"
+# under a plain `^3` requirement because Cargo excludes pre-releases by default.
+lora-phy = { version = "3.0.2-alpha", default-features = false }
 lwuri = { version = "0.1.1", default-features = false }
 rand = { version = "0.10.1", default-features = false }
 rand_core = { version = "0.6", default-features = false }

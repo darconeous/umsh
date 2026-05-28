@@ -594,7 +594,7 @@ The `Send` metadata is the following fields in order:
 * `TX_POWER` (`i8`): Transmit power override (`0x7F` indicates to use the radio
   default, `0x7E` indicates to transmit at maximum power)
 * `TX_FLAGS` (`u8`): Transmit flags
-  * `TX_FLAG_NOCCA` Bit 0: If set, do not use CCA (or the equivalent
+  * `TX_FLAG_NOCCA` Bit 0: If set, do not use CCA (or the equivalent LoRa
     mechanism)
   * `TX_FLAG_NODUTY` Bit 1: If set, send the packet even if it would push us
     over the duty-cycle limit

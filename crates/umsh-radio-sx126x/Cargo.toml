@@ -26,7 +26,7 @@ default = []
 umsh-hal = { path = "../umsh-hal", default-features = false }
 
 # lora-phy: we only need the sx126x module.
-lora-phy = { version = "3", default-features = false }
+lora-phy = { workspace = true }
 
 # Needed for the DelayNs bound on the runner's DLY type parameter.
 embedded-hal-async = { version = "1", default-features = false }
