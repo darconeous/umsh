@@ -21,6 +21,17 @@
 //! See `docs/lilygo-techo-hardware.md` for the firmware-derived
 //! hardware reference.
 
+#[cfg(target_os = "none")]
+pub mod platform;
+
+#[cfg(target_os = "none")]
+pub mod power;
+
+#[cfg(target_os = "none")]
+pub use platform::{TechoMac, TechoPlatform};
+#[cfg(target_os = "none")]
+pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
+
 // TODO: implement (see docs/firmware-plan-techo.md):
 //   pub mod pins;          // typed pin handles per lilygo-techo-hardware.md.
 //   pub mod board;          // `Board::init()` and the composed Platform impl.

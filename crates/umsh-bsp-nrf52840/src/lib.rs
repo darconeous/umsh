@@ -19,6 +19,9 @@ pub mod rescue;
 pub mod cdc_rescue;
 
 #[cfg(target_os = "none")]
+pub mod clock;
+
+#[cfg(target_os = "none")]
 pub mod clocks;
 
 #[cfg(target_os = "none")]
@@ -28,7 +31,15 @@ pub mod flash_store;
 pub mod gpregret;
 
 #[cfg(target_os = "none")]
+pub mod rng;
+
+#[cfg(target_os = "none")]
 pub mod system_off;
+
+#[cfg(target_os = "none")]
+pub use clock::EmbassyClock;
+#[cfg(target_os = "none")]
+pub use rng::Nrf52840Rng;
 
 // TODO: implement.
 //

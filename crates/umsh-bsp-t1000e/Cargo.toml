@@ -20,3 +20,21 @@ default = []
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
+umsh-hal          = { path = "../umsh-hal", default-features = false }
+
+# Used by the `Platform` type bundle. Software-crypto pulls in the concrete
+# Identity / Aes / Sha types used by every nRF52840 firmware in this tree.
+umsh-mac    = { path = "../umsh-mac", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"] }
+
+# Embedded-only deps. Gated on `target_os = "none"` so this crate parses
+# on host; the embedded firmware brings them in via the embedded target.
+[target.'cfg(target_os = "none")'.dependencies]
+umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
+umsh-ux-tracker   = { path = "../umsh-ux-tracker", default-features = false }
+embassy-nrf       = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-time      = { version = "0.5", default-features = false }
+embassy-sync      = { version = "0.6", default-features = false }
+embassy-futures   = { version = "0.1", default-features = false }
+cortex-m          = { version = "0.7" }
+lora-phy          = { workspace = true }

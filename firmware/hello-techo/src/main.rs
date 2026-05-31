@@ -88,7 +88,6 @@ mod firmware {
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
-    use embassy_nrf::rng::Rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::usb::Driver;
@@ -103,18 +102,19 @@ mod firmware {
     use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use lora_phy::LoRa;
-    use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::system_off::{power_off, tristate_pin, Port, WakePin, WakeSense};
+    use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
+    use umsh_bsp_techo::{PowerSignaler, SHUTDOWN_SIGNAL, TechoMac, TechoPlatform};
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
     use umsh_core::{PayloadType, PublicKey};
-    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, RepeaterConfig};
     use umsh_node::Host;
     use umsh_sync::AsyncRefCell;
 
@@ -129,7 +129,6 @@ mod firmware {
         // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
         // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
-        RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
     });
 
     // ─── Configuration constants ─────────────────────────────────────────────
@@ -163,9 +162,9 @@ mod firmware {
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
-    /// Channels shared between the radio runner and Sx1262Radio / MAC.
+    /// Channels shared between the radio runner and LoraphyRadio / MAC.
     /// Capacity: 4 inbound frames, 2 pending TX requests.
-    type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
+    type RadioCh = umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
     /// Count of UMSH-authenticated packets received by the MAC coordinator.
@@ -201,124 +200,17 @@ mod firmware {
     //   DISPLAY_SHUTDOWN_DONE    → shutdown_task   (fired by display_task once
     //                                              the panel is asleep)
 
-    static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    // SHUTDOWN_SIGNAL and PowerSignaler live in `umsh-bsp-techo::power`;
+    // the display-shutdown handshake stays firmware-local because it's
+    // specific to this firmware's task layout.
     static DISPLAY_SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static DISPLAY_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-    /// `umsh_hal::PowerControl` shim that converts a `/poweroff` CLI call
-    /// into a signal the shutdown task is waiting on.
-    pub(crate) struct PowerSignaler;
-
-    impl umsh_hal::PowerControl for PowerSignaler {
-        fn request_power_off(&self) {
-            SHUTDOWN_SIGNAL.signal(());
-        }
-    }
-
     // ─── Platform types ───────────────────────────────────────────────────────
     //
-    // TechoPlatform bundles the concrete driver types for Mac<P>. All
-    // implementations live here so the MAC type is fully concrete.
-
-    /// Embassy monotonic clock implementing `umsh_hal::Clock`.
-    struct EmbassyClock;
-
-    impl umsh_hal::Clock for EmbassyClock {
-        fn now_ms(&self) -> u64 {
-            Instant::now().as_millis()
-        }
-
-        fn poll_delay_until(
-            &self,
-            cx: &mut core::task::Context<'_>,
-            deadline_ms: u64,
-        ) -> core::task::Poll<()> {
-            let target = Instant::from_millis(deadline_ms);
-            if Instant::now() >= target {
-                return core::task::Poll::Ready(());
-            }
-            // Poll a freshly-pinned timer once to register `cx.waker()` with
-            // embassy's global timer queue. The waker registration outlives the
-            // future itself, so dropping the timer here is safe.
-            let mut timer = core::pin::pin!(Timer::at(target));
-            timer.as_mut().poll(cx)
-        }
-    }
-
-    /// XorShift64 PRNG seeded from the nRF52840 FICR device ID.
-    ///
-    /// The FICR DEVICEID registers hold a 64-bit unique identifier burned
-    /// into the chip at the factory, giving different seeds per device. This
-    /// is NOT a cryptographic RNG — it is sufficient for MAC backoff
-    /// randomization in Phase 6 bringup. Replace with a proper CSPRNG
-    /// (e.g. seeded from the hardware RNG peripheral) before deployment.
-    struct TeChoRng {
-        state: u64,
-    }
-
-    impl TeChoRng {
-        fn from_ficr() -> Self {
-            // FICR DEVICEID[0] at 0x10000060, DEVICEID[1] at 0x10000064.
-            // Addresses are fixed per nRF52840 Product Specification §5.1.3.
-            // SAFETY: FICR is a read-only, always-mapped peripheral region.
-            let lo = unsafe { core::ptr::read_volatile(0x1000_0060u32 as *const u32) } as u64;
-            let hi = unsafe { core::ptr::read_volatile(0x1000_0064u32 as *const u32) } as u64;
-            Self { state: ((hi << 32) | lo).max(1) }
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            let mut x = self.state;
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            self.state = x;
-            x
-        }
-    }
-
-    impl TryRng for TeChoRng {
-        type Error = core::convert::Infallible;
-
-        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-            Ok(self.next_u64() as u32)
-        }
-
-        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-            Ok(self.next_u64())
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-            for chunk in dest.chunks_mut(8) {
-                let val = self.next_u64().to_le_bytes();
-                chunk.copy_from_slice(&val[..chunk.len()]);
-            }
-            Ok(())
-        }
-    }
-
-    impl TryCryptoRng for TeChoRng {}
-
-    /// Platform bundle wiring the T-Echo hardware into `Mac<P>`.
-    struct TechoPlatform;
-
-    impl Platform for TechoPlatform {
-        type Identity     = SoftwareIdentity;
-        type Aes          = SoftwareAes;
-        type Sha          = SoftwareSha256;
-        type Radio        = umsh_radio_sx126x::Sx1262Radio<ThreadModeRawMutex, 4, 2>;
-        type Delay        = Delay;
-        type Clock        = EmbassyClock;
-        type Rng          = TeChoRng;
-        type CounterStore = NvmcCounterStore;
-        type KeyValueStore = NvmcKeyValueStore;
-    }
-
-    /// Fully-typed MAC coordinator for the T-Echo.
-    ///
-    /// Capacity is deliberately minimal for Phase 6 bringup: 1 identity,
-    /// 8 peers, 4 channels, 4 pending ACKs, 8 TX queue slots, 255-byte frame
-    /// buffer, 32-entry dup cache. Total static footprint ≈ 6 KiB.
-    type TechoMac = umsh_mac::Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>;
+    // `TechoPlatform`, `TechoMac`, the embassy-backed clock, and the
+    // hardware-TRNG RNG live in `umsh-bsp-techo` (which composes the
+    // chip-level pieces from `umsh-bsp-nrf52840`).
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -331,7 +223,7 @@ mod firmware {
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
-        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
     // ─── Concrete USB driver types ────────────────────────────────────────────
@@ -412,7 +304,7 @@ mod firmware {
 
         let peer_store    = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 2, 128> = CliSession::new(
+        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
             local_key,
             out,
@@ -705,10 +597,10 @@ mod firmware {
         //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
         //   DIO2: internal RF switch (lora-phy sends SetDIO2AsRfSwitchCtrl).
         //   DIO3: 1.8 V TCXO (lora-phy sends SetDIO3AsTcxoCtrl).
-        let t_frame_ms = umsh_radio_sx126x::airtime_ms(
+        let t_frame_ms = umsh_radio_loraphy::airtime_ms(
             SpreadingFactor::_7,
             Bandwidth::_62KHz,
-            umsh_radio_sx126x::MAX_PAYLOAD,
+            umsh_radio_loraphy::MAX_PAYLOAD,
         );
         {
             let mut cfg = SpimConfig::default();
@@ -749,7 +641,7 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::meshcore_us_params(&mut lora)
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)
                 .unwrap_or_else(|_| panic!("radio params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
@@ -760,17 +652,19 @@ mod firmware {
             STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
-        // Load the persisted identity key, or generate a fresh one from the
-        // nRF52840 hardware TRNG (with bias correction) on first boot.
-        // We do NOT fall back to a FICR-seeded PRNG on failure — a predictable
-        // long-term key is worse than refusing to start.
+        // The hardware-TRNG RNG built here is the single RNG path for this
+        // firmware — used for first-boot identity generation AND passed
+        // ownership-by-value into `Mac::new` below as `Platform::Rng`.
+        //
+        // Load identity from flash on subsequent boots; TRNG-generate on
+        // first boot. We do NOT fall back to any PRNG on failure — a
+        // predictable long-term key is worse than refusing to start.
+        let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
             Ok(Some(sk)) => sk,
             Ok(None) => {
-                let mut hw_rng = Rng::new(p.RNG, Irqs);
-                hw_rng.set_bias_correction(true);
                 let mut sk = [0u8; 32];
-                hw_rng.fill_bytes(&mut sk).await;
+                rng.fill_bytes(&mut sk);
                 storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
@@ -779,9 +673,7 @@ mod firmware {
         let identity  = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key = *identity.public_key();
 
-        let rng = TeChoRng::from_ficr();
-
-        let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
+        let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac = TechoMac::new(
             radio_handle,

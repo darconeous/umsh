@@ -1,18 +1,19 @@
 [package]
-name = "umsh-radio-sx126x"
-description = "SX1262 LoRa radio driver implementing umsh-hal::Radio"
+name = "umsh-radio-loraphy"
+description = "umsh-hal::Radio implementation backed by any lora-phy RadioKind"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Wraps lora-phy's SX126x driver and exposes a umsh_hal::Radio
-# implementation backed by an Embassy async task and a pair of channels.
+# Wraps lora-phy and exposes a umsh_hal::Radio implementation backed by
+# an Embassy async task and a pair of channels. Works with any chip that
+# implements lora_phy::mod_traits::RadioKind (SX126x, LR11xx, etc.).
 #
 # The caller is responsible for:
 #   - Creating the lora_phy::LoRa instance (SPI, InterfaceVariant, Config)
 #   - Spawning the `runner` task with that instance + the shared Channels
-#   - Passing Channels to Sx1262Radio for use by the MAC coordinator
+#   - Passing Channels to LoraphyRadio for use by the MAC coordinator
 #
 # All embassy-sync generic parameters are exposed so the caller can choose
 # the mutex raw type (e.g. CriticalSectionRawMutex for no_std with critical
@@ -25,7 +26,6 @@ default = []
 [dependencies]
 umsh-hal = { path = "../umsh-hal", default-features = false }
 
-# lora-phy: we only need the sx126x module.
 lora-phy = { workspace = true }
 
 # Needed for the DelayNs bound on the runner's DLY type parameter.

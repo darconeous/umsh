@@ -49,35 +49,59 @@ pub mod melodies {
 
     /// Rising chirp: 1000 → 1500 → 2000 Hz.
     pub static POWER_ON: Melody = Melody::new(&[
-        Tone { frequency_hz: 1_000, duration: Duration::from_millis(80) },
-        Tone { frequency_hz: 1_500, duration: Duration::from_millis(80) },
-        Tone { frequency_hz: 2_000, duration: Duration::from_millis(120) },
+        Tone {
+            frequency_hz: 1_000,
+            duration: Duration::from_millis(80),
+        },
+        Tone {
+            frequency_hz: 1_500,
+            duration: Duration::from_millis(80),
+        },
+        Tone {
+            frequency_hz: 2_000,
+            duration: Duration::from_millis(120),
+        },
     ]);
 
     /// Falling chirp: 2000 → 1500 → 1000 Hz.
     pub static POWER_OFF: Melody = Melody::new(&[
-        Tone { frequency_hz: 2_000, duration: Duration::from_millis(80) },
-        Tone { frequency_hz: 1_500, duration: Duration::from_millis(80) },
-        Tone { frequency_hz: 1_000, duration: Duration::from_millis(120) },
+        Tone {
+            frequency_hz: 2_000,
+            duration: Duration::from_millis(80),
+        },
+        Tone {
+            frequency_hz: 1_500,
+            duration: Duration::from_millis(80),
+        },
+        Tone {
+            frequency_hz: 1_000,
+            duration: Duration::from_millis(120),
+        },
     ]);
 
     /// Short confirmation blip after a beacon is transmitted.
     pub static BEACON_ACK: Melody = Melody::new(&[
-        Tone { frequency_hz: 1_800, duration: Duration::from_millis(60) },
-        Tone { frequency_hz: 2_200, duration: Duration::from_millis(60) },
+        Tone {
+            frequency_hz: 1_800,
+            duration: Duration::from_millis(60),
+        },
+        Tone {
+            frequency_hz: 2_200,
+            duration: Duration::from_millis(60),
+        },
     ]);
 
-    /// Single bright blip played when the buzzer is un-silenced.
-    pub static UNSILENCE: Melody = Melody::new(&[
-        Tone { frequency_hz: 2_000, duration: Duration::from_millis(80) },
-    ]);
+    /// Bright blip played when the buzzer is un-silenced.
+    pub static UNSILENCE: Melody = Melody::new(&[Tone {
+        frequency_hz: 2_000,
+        duration: Duration::from_millis(60),
+    }]);
 
-    /// Short descending blip played just before the buzzer goes silent.
-    /// Kept brief but long enough for the driver chip to energise (~20 ms
-    /// startup) and produce audible sound.
-    pub static DO_SILENCE: Melody = Melody::new(&[
-        Tone { frequency_hz: 1_200, duration: Duration::from_millis(80) },
-    ]);
+    /// Short low blip played just before the buzzer goes silent.
+    pub static DO_SILENCE: Melody = Melody::new(&[Tone {
+        frequency_hz: 1_200 / 8,
+        duration: Duration::from_millis(10),
+    }]);
 }
 
 /// State to apply to the buzzer driver right now.
@@ -159,6 +183,21 @@ impl BuzzerEngine {
         self.silenced
     }
 
+    /// Rewind the active melody so its first note plays from `now_ms`.
+    /// No-op if no melody is active.
+    ///
+    /// Buzzer drivers that need an inaudible warmup period (e.g. the
+    /// T1000-E's piezo driver chip needs ~80 ms of PWM activity before
+    /// it starts emitting) should run that warmup with the engine
+    /// already loaded, then call this to drop the warmup interval out
+    /// of the engine's perceived clock so the first note gets its full
+    /// declared duration.
+    pub fn restart_active(&mut self, now_ms: u64) {
+        if let Some(active) = self.active.as_mut() {
+            active.started_at_ms = now_ms;
+        }
+    }
+
     /// Start a melody. No-op if silenced.
     pub fn play(&mut self, melody: &'static Melody, now_ms: u64) {
         if self.silenced {
@@ -215,23 +254,35 @@ mod tests {
         // Note 1: 1000 Hz, 80ms
         assert_eq!(
             e.tick(0),
-            BuzzerDecision::Tone { frequency_hz: 1_000, next_deadline_ms: 80 }
+            BuzzerDecision::Tone {
+                frequency_hz: 1_000,
+                next_deadline_ms: 80
+            }
         );
         assert_eq!(
             e.tick(79),
-            BuzzerDecision::Tone { frequency_hz: 1_000, next_deadline_ms: 80 }
+            BuzzerDecision::Tone {
+                frequency_hz: 1_000,
+                next_deadline_ms: 80
+            }
         );
 
         // Note 2: 1500 Hz, 80ms
         assert_eq!(
             e.tick(80),
-            BuzzerDecision::Tone { frequency_hz: 1_500, next_deadline_ms: 160 }
+            BuzzerDecision::Tone {
+                frequency_hz: 1_500,
+                next_deadline_ms: 160
+            }
         );
 
         // Note 3: 2000 Hz, 120ms
         assert_eq!(
             e.tick(160),
-            BuzzerDecision::Tone { frequency_hz: 2_000, next_deadline_ms: 280 }
+            BuzzerDecision::Tone {
+                frequency_hz: 2_000,
+                next_deadline_ms: 280
+            }
         );
 
         // Melody done.
@@ -260,6 +311,22 @@ mod tests {
                 w[1].frequency_hz
             );
         }
+    }
+
+    #[test]
+    fn restart_active_rewinds_start_time() {
+        let mut e = BuzzerEngine::new();
+        e.play(&melodies::POWER_ON, 0);
+        // Pretend a board-side warmup ran for 80ms; now rewind.
+        e.restart_active(80);
+        // First note should still play in full from t=80 (deadline 160).
+        assert_eq!(
+            e.tick(80),
+            BuzzerDecision::Tone {
+                frequency_hz: 1_000,
+                next_deadline_ms: 160
+            }
+        );
     }
 
     #[test]
@@ -311,7 +378,10 @@ mod tests {
         // First note of POWER_OFF is 2000 Hz, ends at 50 + 80 = 130.
         assert_eq!(
             e.tick(50),
-            BuzzerDecision::Tone { frequency_hz: 2_000, next_deadline_ms: 130 }
+            BuzzerDecision::Tone {
+                frequency_hz: 2_000,
+                next_deadline_ms: 130
+            }
         );
     }
 
@@ -319,23 +389,38 @@ mod tests {
     fn rest_note_is_silent_within_melody() {
         // Custom melody with a rest in the middle.
         static REST_MELODY: Melody = Melody::new(&[
-            Tone { frequency_hz: 1_000, duration: Duration::from_millis(50) },
-            Tone { frequency_hz: 0,     duration: Duration::from_millis(50) }, // rest
-            Tone { frequency_hz: 2_000, duration: Duration::from_millis(50) },
+            Tone {
+                frequency_hz: 1_000,
+                duration: Duration::from_millis(50),
+            },
+            Tone {
+                frequency_hz: 0,
+                duration: Duration::from_millis(50),
+            }, // rest
+            Tone {
+                frequency_hz: 2_000,
+                duration: Duration::from_millis(50),
+            },
         ]);
 
         let mut e = BuzzerEngine::new();
         e.play(&REST_MELODY, 0);
         // 0..50: tone 1000
         match e.tick(25) {
-            BuzzerDecision::Tone { frequency_hz: 1_000, .. } => {}
+            BuzzerDecision::Tone {
+                frequency_hz: 1_000,
+                ..
+            } => {}
             d => panic!("expected 1000 Hz tone, got {:?}", d),
         }
         // 50..100: rest → silent
         assert_eq!(e.tick(75), BuzzerDecision::Silent);
         // 100..150: tone 2000
         match e.tick(125) {
-            BuzzerDecision::Tone { frequency_hz: 2_000, .. } => {}
+            BuzzerDecision::Tone {
+                frequency_hz: 2_000,
+                ..
+            } => {}
             d => panic!("expected 2000 Hz tone, got {:?}", d),
         }
     }

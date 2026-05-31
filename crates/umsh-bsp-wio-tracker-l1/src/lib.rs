@@ -23,6 +23,17 @@
 //! See `docs/seeed-wio-tracker-l1-pro-hardware.md` for the
 //! firmware-derived hardware reference.
 
+#[cfg(target_os = "none")]
+pub mod platform;
+
+#[cfg(target_os = "none")]
+pub mod power;
+
+#[cfg(target_os = "none")]
+pub use platform::{WioMac, WioTrackerPlatform};
+#[cfg(target_os = "none")]
+pub use power::PowerSignaler;
+
 // TODO: implement (see docs/firmware-plan-wio-tracker-l1.md):
 //   pub mod pins;        // typed pin handles per the Wio Tracker pinout.
 //   pub mod board;       // `Board::init()` and the composed Platform impl.

@@ -78,7 +78,6 @@ mod firmware {
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
-    use embassy_nrf::rng::Rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::twim::{self, Config as TwimConfig, Twim};
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -94,14 +93,15 @@ mod firmware {
     use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use lora_phy::LoRa;
-    use rand::{TryCryptoRng, TryRng};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage};
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
+    use umsh_bsp_wio_tracker_l1::{PowerSignaler, WioMac, WioTrackerPlatform};
     use umsh_crypto::{CryptoEngine, NodeIdentity, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
     use umsh_core::{PayloadType, PublicKey};
-    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig};
+    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, RepeaterConfig};
     use umsh_node::Host;
     use umsh_sync::AsyncRefCell;
 
@@ -113,7 +113,6 @@ mod firmware {
         CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
         TWISPI0     => embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
-        RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
     });
 
     // ─── Configuration ───────────────────────────────────────────────────────
@@ -128,69 +127,10 @@ mod firmware {
     type LoraRadio   = LoRa<RadioKind, Delay>;
 
     // ─── Platform types ───────────────────────────────────────────────────────
-
-    struct EmbassyClock;
-
-    impl umsh_hal::Clock for EmbassyClock {
-        fn now_ms(&self) -> u64 { Instant::now().as_millis() }
-
-        fn poll_delay_until(
-            &self,
-            cx: &mut core::task::Context<'_>,
-            deadline_ms: u64,
-        ) -> core::task::Poll<()> {
-            let target = Instant::from_millis(deadline_ms);
-            if Instant::now() >= target { return core::task::Poll::Ready(()); }
-            let mut timer = core::pin::pin!(Timer::at(target));
-            timer.as_mut().poll(cx)
-        }
-    }
-
-    /// XorShift64 PRNG seeded from the nRF52840 FICR device ID.
-    /// Not cryptographic — acceptable for MAC backoff randomization.
-    struct WioRng { state: u64 }
-
-    impl WioRng {
-        fn from_ficr() -> Self {
-            let lo = unsafe { core::ptr::read_volatile(0x1000_0060u32 as *const u32) } as u64;
-            let hi = unsafe { core::ptr::read_volatile(0x1000_0064u32 as *const u32) } as u64;
-            Self { state: ((hi << 32) | lo).max(1) }
-        }
-        fn next_u64(&mut self) -> u64 {
-            let mut x = self.state;
-            x ^= x << 13; x ^= x >> 7; x ^= x << 17;
-            self.state = x; x
-        }
-    }
-
-    impl TryRng for WioRng {
-        type Error = core::convert::Infallible;
-        fn try_next_u32(&mut self) -> Result<u32, Self::Error> { Ok(self.next_u64() as u32) }
-        fn try_next_u64(&mut self) -> Result<u64, Self::Error> { Ok(self.next_u64()) }
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-            for chunk in dest.chunks_mut(8) {
-                let val = self.next_u64().to_le_bytes();
-                chunk.copy_from_slice(&val[..chunk.len()]);
-            }
-            Ok(())
-        }
-    }
-    impl TryCryptoRng for WioRng {}
-
-    struct WioTrackerPlatform;
-    impl Platform for WioTrackerPlatform {
-        type Identity      = SoftwareIdentity;
-        type Aes           = SoftwareAes;
-        type Sha           = SoftwareSha256;
-        type Radio         = umsh_radio_sx126x::Sx1262Radio<ThreadModeRawMutex, 4, 2>;
-        type Delay         = Delay;
-        type Clock         = EmbassyClock;
-        type Rng           = WioRng;
-        type CounterStore  = NvmcCounterStore;
-        type KeyValueStore = NvmcKeyValueStore;
-    }
-
-    type WioMac = umsh_mac::Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>;
+    //
+    // `WioTrackerPlatform`, `WioMac`, the embassy-backed clock, and the
+    // hardware-TRNG RNG live in `umsh-bsp-wio-tracker-l1` (which composes
+    // the chip-level pieces from `umsh-bsp-nrf52840`).
 
     // ─── Concrete USB driver type aliases ────────────────────────────────────
     // ('static lifetime, VbusDetect = HardwareVbusDetect.) Used by `umsh_task`
@@ -201,7 +141,7 @@ mod firmware {
 
     // ─── Shared state ────────────────────────────────────────────────────────
 
-    type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
+    type RadioCh = umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
     static PACKET_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -267,8 +207,12 @@ mod firmware {
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
-        umsh_radio_sx126x::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
+
+    // `PowerSignaler` lives in `umsh-bsp-wio-tracker-l1::power`. The L1's
+    // `request_power_off` is currently a no-op (mechanical power switch);
+    // see the BSP module's TODO if/when soft poweroff is needed.
 
     // ─── umsh_task (CliSession-backed CLI + MAC driver) ─────────────────────
 
@@ -346,14 +290,14 @@ mod firmware {
 
         let peer_store    = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 2, 128> = CliSession::new(
+        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
             local_key,
             out,
             NullLogger::new(),
             peer_store,
             channel_store,
-            umsh_hal::NoPowerControl,
+            PowerSignaler,
         );
 
         // Re-register loaded peers and channels into the CLI session tables.
@@ -448,10 +392,10 @@ mod firmware {
         }
 
         // ── SX1262 LoRa radio (TWISPI1) ──────────────────────────────────────
-        let t_frame_ms = umsh_radio_sx126x::airtime_ms(
+        let t_frame_ms = umsh_radio_loraphy::airtime_ms(
             SpreadingFactor::_7,
             Bandwidth::_62KHz,
-            umsh_radio_sx126x::MAX_PAYLOAD,
+            umsh_radio_loraphy::MAX_PAYLOAD,
         );
         {
             let mut spi_cfg = SpimConfig::default();
@@ -488,7 +432,7 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_sx126x::meshcore_us_params(&mut lora)
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)
                 .unwrap_or_else(|_| panic!("radio params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
@@ -499,17 +443,19 @@ mod firmware {
             STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
-        // Load the persisted identity key, or generate a fresh one from the
-        // nRF52840 hardware TRNG (with bias correction) on first boot.
-        // We do NOT fall back to a FICR-seeded PRNG on failure — a predictable
-        // long-term key is worse than refusing to start.
+        // The hardware-TRNG RNG built here is the single RNG path for this
+        // firmware — used for first-boot identity generation AND passed
+        // ownership-by-value into `Mac::new` below as `Platform::Rng`.
+        //
+        // Load identity from flash on subsequent boots; TRNG-generate on
+        // first boot. We do NOT fall back to any PRNG on failure — a
+        // predictable long-term key is worse than refusing to start.
+        let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
             Ok(Some(sk)) => sk,
             Ok(None) => {
-                let mut hw_rng = Rng::new(p.RNG, Irqs);
-                hw_rng.set_bias_correction(true);
                 let mut sk = [0u8; 32];
-                hw_rng.fill_bytes(&mut sk).await;
+                rng.fill_bytes(&mut sk);
                 storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
@@ -518,9 +464,7 @@ mod firmware {
         let identity   = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key  = *identity.public_key();
 
-        let rng = WioRng::from_ficr();
-
-        let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
+        let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac = WioMac::new(
             radio_handle, crypto, EmbassyClock, rng,

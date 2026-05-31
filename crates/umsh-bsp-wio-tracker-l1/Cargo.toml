@@ -39,3 +39,14 @@ default = []
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
+umsh-hal          = { path = "../umsh-hal", default-features = false }
+
+# Used by the `Platform` type bundle.
+umsh-mac    = { path = "../umsh-mac", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
+embassy-time      = { version = "0.5", default-features = false }
+embassy-sync      = { version = "0.6", default-features = false }
+cortex-m          = { version = "0.7" }

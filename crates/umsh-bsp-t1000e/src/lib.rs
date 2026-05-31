@@ -13,6 +13,30 @@
 
 pub use umsh_bsp_nrf52840::panic_persist;
 
+#[cfg(target_os = "none")]
+pub mod buzzer;
+
+#[cfg(target_os = "none")]
+pub mod platform;
+
+#[cfg(target_os = "none")]
+pub mod power;
+
+#[cfg(target_os = "none")]
+pub mod radio;
+
+#[cfg(target_os = "none")]
+pub mod shutdown;
+
+#[cfg(target_os = "none")]
+pub use buzzer::{BUZZER_SIGNAL, BUZZER_SILENCE_TOGGLE};
+#[cfg(target_os = "none")]
+pub use platform::{T1000EMac, T1000EPlatform};
+#[cfg(target_os = "none")]
+pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
+#[cfg(target_os = "none")]
+pub use radio::RF_SWITCH;
+
 // TODO: implement.
 //
 // Planned modules (see docs/firmware-plan-t1000e.md):
