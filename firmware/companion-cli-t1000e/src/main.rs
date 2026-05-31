@@ -11,7 +11,7 @@
 // Phase 3 wires CliSession over USB-CDC using the same MAC + radio_runner
 // pattern as hello-techo (T-Echo Phase 6). Changes from Phase 2.5:
 //   - echo_task replaced by umsh_task (Host::run + CliSession::run)
-//   - radio_task replaced by radio_runner_task (umsh_radio_sx126x::runner)
+//   - radio_task replaced by radio_runner_task (umsh_radio_loraphy::runner)
 //   - output_task upgraded to cli_io::drain_to_sender (64-byte chunk drain)
 //   - NVMC identity persistence (first-boot TRNG key generation)
 //   - NVMC counter / peer / channel persistence
@@ -93,13 +93,12 @@ mod firmware {
 
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, Either3, select, select3};
+    use embassy_futures::select::{Either, select};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
-    use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
-    use embassy_nrf::rng::Rng;
+    use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
@@ -114,33 +113,29 @@ mod firmware {
     use lora_phy::LoRa;
     use lora_phy::iv::GenericLr1110InterfaceVariant;
     use lora_phy::lr1110::{
-        Config as LoraConfig, Lr1110, RfSwitchConfig, TcxoCtrlVoltage,
+        Config as LoraConfig, Lr1110, TcxoCtrlVoltage,
         radio_kind_params::PaSelection,
         variant::Lr1110 as Lr1110Chip,
     };
-    use lora_phy::mod_params::{Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, RxMode, SpreadingFactor};
-    use lora_phy::mod_traits::IrqState;
-    use umsh_hal::{RxInfo, Snr};
-    use rand::{TryCryptoRng, TryRng};
+    use lora_phy::mod_params::{Bandwidth, CodingRate, ModulationParams, PacketParams, SpreadingFactor};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::flash_store::{
-        NvmcChannelStore, NvmcCounterStore, NvmcKeyValueStore, NvmcPeerStore, NvmcStorage,
+        NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage,
     };
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    use umsh_bsp_nrf52840::system_off::{
-        Port, WakePin, WakeSense, drive_pin_low, power_off, tristate_pin,
-    };
+    use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
+    use umsh_bsp_t1000e::{PowerSignaler, RF_SWITCH, SHUTDOWN_SIGNAL, T1000EMac, T1000EPlatform};
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
     use umsh_core::PublicKey;
-    use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions};
+    use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
     use umsh_node::{Host, LocalNode};
     use umsh_sync::AsyncRefCell;
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
-    use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, Melody, melodies as buzzer_melodies};
+    use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     use super::cli_io;
@@ -151,7 +146,6 @@ mod firmware {
         // Shared SPIM0/TWIM0 block — named TWISPI0 in embassy-nrf.
         // LR1110 SPI is on this peripheral.
         TWISPI0     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
-        RNG         => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
         SAADC       => embassy_nrf::saadc::InterruptHandler;
     });
 
@@ -164,100 +158,16 @@ mod firmware {
 
     const DEBOUNCE: Duration = Duration::from_millis(10);
 
-    // ─── Platform: EmbassyClock ───────────────────────────────────────────────
-
-    struct EmbassyClock;
-
-    impl umsh_hal::Clock for EmbassyClock {
-        fn now_ms(&self) -> u64 {
-            Instant::now().as_millis()
-        }
-
-        fn poll_delay_until(
-            &self,
-            cx: &mut core::task::Context<'_>,
-            deadline_ms: u64,
-        ) -> core::task::Poll<()> {
-            let target = Instant::from_millis(deadline_ms);
-            if Instant::now() >= target {
-                return core::task::Poll::Ready(());
-            }
-            let mut timer = core::pin::pin!(Timer::at(target));
-            timer.as_mut().poll(cx)
-        }
-    }
-
-    // ─── Platform: T1000ERng (FICR-seeded XorShift64) ────────────────────────
+    // ─── Platform ─────────────────────────────────────────────────────────────
     //
-    // NOT a cryptographic RNG — used only for MAC backoff randomization.
-    // Identity key generation uses the nRF52840 hardware TRNG (Rng peripheral).
+    // `T1000EPlatform`, `T1000EMac`, the embassy-backed clock, the nRF52840
+    // hardware-TRNG RNG, and the LR1110 RF-switch table all live in
+    // `umsh-bsp-t1000e` (which composes the chip-level pieces from
+    // `umsh-bsp-nrf52840`).
 
-    struct T1000ERng {
-        state: u64,
-    }
-
-    impl T1000ERng {
-        fn from_ficr() -> Self {
-            // FICR DEVICEID[0] at 0x10000060, DEVICEID[1] at 0x10000064.
-            // Fixed addresses per nRF52840 Product Specification §5.1.3.
-            // SAFETY: FICR is read-only, always-mapped.
-            let lo = unsafe { core::ptr::read_volatile(0x1000_0060u32 as *const u32) } as u64;
-            let hi = unsafe { core::ptr::read_volatile(0x1000_0064u32 as *const u32) } as u64;
-            Self { state: ((hi << 32) | lo).max(1) }
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            let mut x = self.state;
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            self.state = x;
-            x
-        }
-    }
-
-    impl TryRng for T1000ERng {
-        type Error = core::convert::Infallible;
-
-        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-            Ok(self.next_u64() as u32)
-        }
-
-        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-            Ok(self.next_u64())
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-            for chunk in dest.chunks_mut(8) {
-                let val = self.next_u64().to_le_bytes();
-                chunk.copy_from_slice(&val[..chunk.len()]);
-            }
-            Ok(())
-        }
-    }
-
-    impl TryCryptoRng for T1000ERng {}
-
-    // ─── Platform: T1000EPlatform ─────────────────────────────────────────────
-
-    struct T1000EPlatform;
-
-    impl Platform for T1000EPlatform {
-        type Identity      = SoftwareIdentity;
-        type Aes           = SoftwareAes;
-        type Sha           = SoftwareSha256;
-        type Radio         = umsh_radio_sx126x::Sx1262Radio<ThreadModeRawMutex, 4, 2>;
-        type Delay         = Delay;
-        type Clock         = EmbassyClock;
-        type Rng           = T1000ERng;
-        type CounterStore  = NvmcCounterStore;
-        type KeyValueStore = NvmcKeyValueStore;
-    }
-
-    /// Capacity: 1 identity, 8 peers, 4 channels, 4 pending ACKs,
-    /// 8 TX queue slots, 255-byte frame, 32-entry dup cache.
-    type T1000EMac = umsh_mac::Mac<T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
-
+    // `T1000EMac` is re-exported from `umsh_bsp_t1000e`. `Host` and `LocalNode`
+    // depend on `umsh-node` (alloc + software-crypto), which the BSP doesn't
+    // pull in, so the firmware owns those two aliases.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
     type T1000EHost = Host<'static, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
     /// LocalNode handle. Cheap to clone — passed to `cli_task` and `beacon_task`.
@@ -272,22 +182,20 @@ mod firmware {
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
-    /// Channels shared between radio_runner_task and Sx1262Radio / MAC.
+    /// Channels shared between radio_runner_task and LoraphyRadio / MAC.
     /// 4 inbound frames, 2 pending TX requests — same as T-Echo.
-    type RadioCh = umsh_radio_sx126x::Channels<ThreadModeRawMutex, 4, 2>;
+    type RadioCh = umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
     static MAC_CELL: StaticCell<AsyncRefCell<T1000EMac>> = StaticCell::new();
     static STORAGE:  StaticCell<NvmcStorage>              = StaticCell::new();
 
-    /// Single-consumer shutdown trigger. Fired by `button_task` on long-press
-    /// and by `PowerSignaler::request_power_off` from the CLI `/poweroff` command.
-    static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    // SHUTDOWN_SIGNAL and PowerSignaler now live in `umsh-bsp-t1000e::power`;
+    // this firmware imports `SHUTDOWN_SIGNAL` for the long-press button source
+    // and uses `umsh_bsp_t1000e::PowerSignaler` for the CLI's PowerControl.
 
-    /// Buzzer melody request. Latest signal wins — firing during a melody
-    /// replaces it immediately. The buzzer task converts a `&'static Melody`
-    /// into PWM tones via `BuzzerEngine`.
-    static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
+    // BUZZER_SIGNAL now lives in `umsh_bsp_t1000e::buzzer` alongside the
+    // buzzer runner; firmware code uses `umsh_bsp_t1000e::BUZZER_SIGNAL`.
 
     /// Button-driven beacon request. Single or Double presses both fire this
     /// so users get feedback no matter how the FSM classifies the press.
@@ -301,32 +209,7 @@ mod firmware {
 
     // ─── RF switch config ─────────────────────────────────────────────────────
 
-    /// T1000-E RF-switch DIO table. Sourced from MeshCore's `t1000-e/target.cpp`:
-    ///   STBY: LOW LOW LOW LOW   → 0x00
-    ///   RX:   HIGH LOW LOW HIGH → DIO5+DIO8 = 0x09
-    ///   TX:   HIGH HIGH LOW HIGH → DIO5+DIO6+DIO8 = 0x0B  (LP PA)
-    ///   TX_HP: LOW HIGH LOW HIGH → DIO6+DIO8 = 0x0A  (HP PA)
-    ///   GNSS: LOW LOW HIGH LOW  → DIO7 = 0x04
-    const T1000E_RF_SWITCH: RfSwitchConfig = RfSwitchConfig {
-        standby: 0x00,
-        rx:      0x09,
-        tx:      0x0B,
-        tx_hp:   0x0A,
-        tx_hf:   0x00,
-        gnss:    0x04,
-        wifi:    0x00,
-    };
-
-    // ─── PowerSignaler ────────────────────────────────────────────────────────
-
-    /// Bridges the CLI `/poweroff` command to the shutdown task.
-    struct PowerSignaler;
-
-    impl umsh_hal::PowerControl for PowerSignaler {
-        fn request_power_off(&self) {
-            SHUTDOWN_SIGNAL.signal(());
-        }
-    }
+    // `RF_SWITCH` and `PowerSignaler` are re-exported from `umsh_bsp_t1000e`.
 
     // ─── Tasks ───────────────────────────────────────────────────────────────
 
@@ -337,173 +220,24 @@ mod firmware {
         cli_io::drain_to_sender(&mut tx).await;
     }
 
-    /// Owns the LR1110 LoRa instance and drives RX/TX state.
-    ///
-    /// Mirrors the manual IRQ-handling loop that was proven to work for
-    /// LR1110 RX in Phase 2.5: `prepare_for_rx` once at boot, then re-arm
-    /// with just `start_rx()` between packets. Full re-prepare is only used
-    /// on errors. IRQ flags are explicitly cleared after every event —
-    /// `LoRa::process_irq_event` passes `clear_interrupts=false` to the
-    /// chip driver, and without an explicit `clear_irq_status` DIO1 stays
-    /// latched high.
-    ///
-    /// On TX requests from the MAC channel we switch to TX, transmit, then
-    /// re-prepare RX (the chip leaves RX mode for TX so we can't just
-    /// `start_rx` after).
-    ///
-    /// Only cancels at `wait_for_irq`, which is a simple DIO1 edge wait
-    /// and safe to drop. We never cancel `process_irq_event` or `tx()` —
-    /// the lora-phy docs explicitly warn against that pattern.
+    /// Owns the `lora_phy::LoRa` instance. Switches between continuous RX
+    /// and TX as TX requests arrive on `RADIO_CH.tx`.
     #[embassy_executor::task]
     async fn radio_runner_task(
-        mut lora: LoraRadio,
+        lora: LoraRadio,
         mdltn: ModulationParams,
         rx_pkt: PacketParams,
-        mut tx_pkt: PacketParams,
+        tx_pkt: PacketParams,
     ) {
-        use umsh_radio_sx126x::{MAX_PAYLOAD, RxFrame};
-
-        let mut rx_buf = [0u8; MAX_PAYLOAD];
-
-        // Initial RX setup. Sets modem params, IRQ routing, and starts
-        // continuous RX. Subsequent re-arms after a packet use just
-        // `start_rx`, matching Phase 2.5 behavior.
-        if lora
-            .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-            .await
-            .is_err()
-        {
-            return;
-        }
-        if lora.start_rx().await.is_err() {
-            return;
-        }
-
-        loop {
-            match select(lora.wait_for_irq(), RADIO_CH.tx.receive()).await {
-                Either::First(Ok(())) => {
-                    let irq_result = lora.process_irq_event().await;
-                    let _ = lora.clear_irq_status().await;
-
-                    match irq_result {
-                        Ok(Some(IrqState::Done)) => {
-                            if let Ok((len, status)) =
-                                lora.get_rx_result(&rx_pkt, &mut rx_buf).await
-                            {
-                                let mut data: heapless::Vec<u8, MAX_PAYLOAD> =
-                                    heapless::Vec::new();
-                                let _ = data.extend_from_slice(&rx_buf[..len as usize]);
-                                let info = RxInfo {
-                                    len: len as usize,
-                                    rssi: status.rssi,
-                                    snr: Snr::from_decibels(status.snr as i8),
-                                    lqi: None,
-                                };
-                                if RADIO_CH.rx.try_send(RxFrame { data, info }).is_ok() {
-                                    RADIO_CH.rx_waker.wake();
-                                }
-                            }
-                            // Light re-arm: just start_rx, no re-prepare.
-                            let _ = lora.start_rx().await;
-                        }
-                        Ok(Some(IrqState::PreambleReceived)) => {
-                            // Mid-packet — stay in RX.
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            // CRC / header / other error: full re-prepare.
-                            let _ = lora.enter_standby().await;
-                            let _ = lora
-                                .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-                                .await;
-                            let _ = lora.start_rx().await;
-                        }
-                    }
-                }
-                Either::First(Err(_)) => {
-                    let _ = lora.enter_standby().await;
-                    let _ = lora
-                        .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-                        .await;
-                    let _ = lora.start_rx().await;
-                }
-                Either::Second(tx_req) => {
-                    let result: Result<(), RadioError> = async {
-                        lora.prepare_for_tx(
-                            &mdltn,
-                            &mut tx_pkt,
-                            TX_POWER_DBM,
-                            &tx_req.data,
-                        )
-                        .await?;
-                        lora.tx().await
-                    }
-                    .await;
-                    RADIO_CH.tx_done.signal(result);
-                    // Returning to RX after TX requires a full re-prepare —
-                    // tx() left the chip in Standby and the mode tracker
-                    // expects Receive state for start_rx to work.
-                    let _ = lora
-                        .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-                        .await;
-                    let _ = lora.start_rx().await;
-                }
-            }
-        }
+        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
     }
 
-    /// Owns the piezo buzzer: PWM on P0.25 and power-enable on P1.05.
-    /// Idle: PWM disabled, enable pin LOW (buzzer driver chip unpowered).
-    /// On melody: enable HIGH, PWM emits a 50% duty square wave at the
-    /// engine's current tone frequency, stepping through notes via
-    /// `BuzzerEngine::tick`.
-    ///
-    /// Frequencies in the melodies are 1–2 kHz; with Prescaler::Div16
-    /// the PWM clock is 1 MHz, giving max_duty 500–1000 — plenty of
-    /// resolution at 50% duty.
+    /// Owns the piezo buzzer (PWM on P0.25 + power-enable on P1.05).
+    /// Body lives in `umsh_bsp_t1000e::buzzer`; this shim is required so
+    /// the embassy task macro sees concrete monomorphised types.
     #[embassy_executor::task]
-    async fn buzzer_task(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
-        let mut engine = BuzzerEngine::new();
-
-        // Idle state: silent, unpowered.
-        pwm.disable();
-        enable.set_low();
-        let mut driving = false;
-
-        loop {
-            match engine.tick(Instant::now().as_millis()) {
-                BuzzerDecision::Tone { frequency_hz, next_deadline_ms } => {
-                    pwm.set_period(frequency_hz as u32);
-                    let half = pwm.max_duty() / 2;
-                    pwm.set_duty(0, DutyCycle::normal(half));
-                    if !driving {
-                        enable.set_high();
-                        pwm.enable();
-                        driving = true;
-                    }
-                    match select(
-                        BUZZER_SIGNAL.wait(),
-                        Timer::at(Instant::from_millis(next_deadline_ms)),
-                    )
-                    .await
-                    {
-                        Either::First(melody) => {
-                            engine.play(melody, Instant::now().as_millis());
-                        }
-                        Either::Second(()) => {}
-                    }
-                }
-                BuzzerDecision::Silent => {
-                    if driving {
-                        pwm.disable();
-                        enable.set_low();
-                        driving = false;
-                    }
-                    let melody = BUZZER_SIGNAL.wait().await;
-                    engine.play(melody, Instant::now().as_millis());
-                }
-            }
-        }
+    async fn buzzer_task(pwm: SimplePwm<'static>, enable: Output<'static>) {
+        umsh_bsp_t1000e::buzzer::run(pwm, enable).await;
     }
 
     /// Drives the MAC coordinator. Independent of USB so radio RX/TX and
@@ -524,7 +258,7 @@ mod firmware {
             BEACON_SIGNAL.wait().await;
             // Audible feedback first so the user hears the press even if
             // the MAC layer fails or stalls.
-            BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
+            umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
             let _ = beacon_node.send_all(&[], &SendOptions::default()).await;
         }
     }
@@ -571,7 +305,7 @@ mod firmware {
 
         let peer_store    = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
-        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 2, 128> = CliSession::new(
+        let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
             local_key,
             out,
@@ -626,8 +360,11 @@ mod firmware {
             };
 
             match event {
-                Some(ButtonEvent::Single) | Some(ButtonEvent::Double) => {
+                Some(ButtonEvent::Single) => {
                     BEACON_SIGNAL.signal(());
+                }
+                Some(ButtonEvent::Double) => {
+                    umsh_bsp_t1000e::BUZZER_SILENCE_TOGGLE.signal(());
                 }
                 Some(ButtonEvent::Long) => {
                     // Wait for button release before signalling shutdown.
@@ -648,91 +385,19 @@ mod firmware {
         }
     }
 
-    /// Orchestrates the controlled power-off. Tristates peripheral GPIOs
-    /// (clearing any embassy SENSE bits that would trigger instant DETECT wake),
-    /// holds LR1110 in reset, then enters System OFF with the button armed as
-    /// the wake source.
+    /// Orchestrates controlled power-off (LR1110 reset + GPIO tristate +
+    /// System OFF with button as wake). Body lives in
+    /// `umsh_bsp_t1000e::shutdown`.
     #[embassy_executor::task]
     async fn shutdown_task() -> ! {
-        SHUTDOWN_SIGNAL.wait().await;
-
-        // Play the power-off chirp before tearing anything down. POWER_OFF
-        // is 80+80+120 = 280 ms; wait 320 ms to let the final note finish
-        // and the buzzer task return to its silent state.
-        BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_OFF);
-        Timer::after(Duration::from_millis(320)).await;
-
-        // Hold LR1110 in reset (active-low). Stops chip clocks and collapses
-        // current draw to the reset-state minimum.
-        drive_pin_low(Port::P1, 10);
-        cortex_m::asm::delay(640); // ~10 µs @ 64 MHz
-
-        // Tristate all peripheral signal pins. Embassy's async GPIO
-        // `wait_for_*` leaves PIN_CNF SENSE bits set on in-flight waits;
-        // any such pin matching its SENSE level at System OFF entry fires
-        // DETECT and the chip wakes immediately (observable as a reboot).
-        //
-        // Button P0.06 is left alone — power_off configures it for wake.
-        // P1.10 (LR1110 RESET) is left driving LOW intentionally.
-        tristate_pin(Port::P0, 24); // LED
-        tristate_pin(Port::P0, 25); // Buzzer PWM
-        tristate_pin(Port::P1,  5); // Buzzer enable
-        tristate_pin(Port::P1,  6); // Sensor rail enable
-        tristate_pin(Port::P0,  2); // Battery ADC (AIN0)
-        tristate_pin(Port::P0, 11); // SPI SCK
-        tristate_pin(Port::P0, 12); // SPI CS
-        tristate_pin(Port::P0,  7); // LR1110 BUSY
-        tristate_pin(Port::P1,  1); // LR1110 DIO1/IRQ
-        tristate_pin(Port::P1,  8); // SPI MISO
-        tristate_pin(Port::P1,  9); // SPI MOSI
-
-        // Button is active-high with pull-down → wake on rising edge.
-        power_off(&[WakePin { port: Port::P0, pin: 6, sense: WakeSense::High }])
+        umsh_bsp_t1000e::shutdown::run().await
     }
 
-    /// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider).
-    ///
-    /// The sensor rail (P1.06) must be enabled during sampling — it gates the
-    /// analog path to the battery divider. The rail is dropped immediately after
-    /// the read to minimise the power overhead.
-    ///
-    /// Voltage math (12-bit, GAIN1_6, 0.6 V INTERNAL reference):
-    ///   full-scale input = 0.6 V / (1/6) = 3.6 V → 4096 LSB
-    ///   with 2:1 divider: VBAT_mV = raw × 2 × 3600 / 4096 = raw × 1.758 mV
-    ///
-    /// 3.1 V low threshold → raw ≈ 1764. Ten consecutive under-threshold
-    /// samples while USB is not detected trigger a protective shutdown.
+    /// Monitors battery voltage via SAADC and forces shutdown on low VBAT.
+    /// Body lives in `umsh_bsp_t1000e::power`.
     #[embassy_executor::task]
-    async fn power_task(mut saadc: Saadc<'static, 1>, mut sensor_rail: Output<'static>) {
-        const LOW_RAW: i16 = 1764; // ~3.1 V VBAT
-        const CONSECUTIVE_NEEDED: u8 = 10;
-        const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
-
-        let mut low_count: u8 = 0;
-
-        loop {
-            Timer::after(SAMPLE_INTERVAL).await;
-
-            // Gate the sensor rail, settle, sample, then drop the rail.
-            sensor_rail.set_high();
-            Timer::after(Duration::from_millis(5)).await;
-            let mut buf = [0i16; 1];
-            saadc.sample(&mut buf).await;
-            sensor_rail.set_low();
-
-            let raw = buf[0].max(0);
-            if raw < LOW_RAW {
-                low_count = low_count.saturating_add(1);
-                if low_count >= CONSECUTIVE_NEEDED {
-                    // Cell protection: force shutdown before the battery
-                    // reaches the deep-discharge knee.
-                    SHUTDOWN_SIGNAL.signal(());
-                    return;
-                }
-            } else {
-                low_count = 0;
-            }
-        }
+    async fn power_task(saadc: Saadc<'static, 1>, sensor_rail: Output<'static>) {
+        umsh_bsp_t1000e::power::run_battery_monitor(saadc, sensor_rail).await;
     }
 
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
@@ -806,23 +471,26 @@ mod firmware {
         let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
         spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable).unwrap());
         // Boot chirp — independent of USB, so headless boots also signal life.
-        BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
+        umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
         // ── NVMC storage ─────────────────────────────────────────────────────
         // 64 KB at 0xE4000..0xF4000 (top of app window, per memory.x).
         let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── Local identity ────────────────────────────────────────────────────
-        // Load from flash on subsequent boots; TRNG-generate on first boot.
-        // We do NOT fall back to a FICR-seeded PRNG on failure — a predictable
-        // long-term key is worse than panicking.
+        // The hardware-TRNG RNG built here is the single RNG path for this
+        // firmware — used for first-boot identity generation AND passed
+        // ownership-by-value into `Mac::new` below as `Platform::Rng`.
+        //
+        // Load identity from flash on subsequent boots; TRNG-generate on
+        // first boot. We do NOT fall back to any PRNG on failure — a
+        // predictable long-term key is worse than panicking.
+        let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
             Ok(Some(sk)) => sk,
             Ok(None) => {
-                let mut hw_rng = Rng::new(p.RNG, Irqs);
-                hw_rng.set_bias_correction(true);
                 let mut sk = [0u8; 32];
-                hw_rng.fill_bytes(&mut sk).await;
+                rng.fill_bytes(&mut sk);
                 storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
@@ -831,18 +499,16 @@ mod firmware {
         let identity  = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key = *identity.public_key();
 
-        let rng = T1000ERng::from_ficr();
-
         // ── LR1110 LoRa radio ─────────────────────────────────────────────────
         // Pin map (confirmed against MeshCore variants/t1000-e):
         //   SPI bus: SCK=P0.11, MISO=P1.08, MOSI=P1.09 (TWISPI0)
         //   CS=P0.12, RST=P1.10, IRQ/DIO1=P1.01, BUSY=P0.07
         //   DIO3: 1.6 V TCXO control (handled by lora-phy SetDIO3AsTCXOCtrl)
         //   DIO5-8: internal RF switch (handled by RfSwitchConfig via SetDioAsRfSwitch)
-        let t_frame_ms = umsh_radio_sx126x::airtime_ms(
+        let t_frame_ms = umsh_radio_loraphy::airtime_ms(
             SpreadingFactor::_7,
             Bandwidth::_62KHz,
-            umsh_radio_sx126x::MAX_PAYLOAD,
+            umsh_radio_loraphy::MAX_PAYLOAD,
         );
         {
             let mut cfg = SpimConfig::default();
@@ -879,7 +545,7 @@ mod firmware {
                 tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V6),
                 use_dcdc:  false, // T1000-E module has no external inductor for BST
                 rx_boost:  true,
-                rf_switch: Some(T1000E_RF_SWITCH),
+                rf_switch: Some(RF_SWITCH),
             };
 
             // enable_public_network=false → private sync word 0x1424,
@@ -893,7 +559,7 @@ mod firmware {
             // Phase 2.5 RX bringup proved that preamble_length=16 (matching
             // MeshCore's RadioLib TX preamble) reliably triggers
             // SyncWordHeaderValid → RxDone on the LR1110. The shared
-            // `umsh_radio_sx126x::meshcore_us_params` helper uses 8 for RX,
+            // `umsh_radio_loraphy::meshcore_us_params` helper uses 8 for RX,
             // which is fine for the SX1262 on T-Echo but loses packets on
             // LR1110. We pin both rx and tx to 16 here to match what worked
             // on real hardware.
@@ -929,7 +595,7 @@ mod firmware {
         }
 
         // ── MAC coordinator ───────────────────────────────────────────────────
-        let radio_handle = umsh_radio_sx126x::Sx1262Radio::new(&RADIO_CH, t_frame_ms);
+        let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
         let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac      = T1000EMac::new(
             radio_handle,

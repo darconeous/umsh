@@ -1,4 +1,9 @@
-//! SX1262 LoRa radio driver implementing `umsh_hal::Radio`.
+//! lora-phy-backed LoRa radio driver implementing `umsh_hal::Radio`.
+//!
+//! Works with any chip that implements `lora_phy::mod_traits::RadioKind`
+//! (SX126x, LR11xx, etc.). Per-board parameters (frequency, modulation,
+//! preamble, TCXO, RF switch) are supplied by the caller — this crate
+//! only owns the RX/TX state machine.
 //!
 //! # Architecture
 //!
@@ -8,7 +13,7 @@
 //!    It loops between continuous RX and TX: when a TX request arrives on the
 //!    TX channel it exits RX, transmits, signals the result, then re-enters RX.
 //!
-//! 2. **[`Sx1262Radio`]** — a lightweight handle used by the MAC coordinator.
+//! 2. **[`LoraphyRadio`]** — a lightweight handle used by the MAC coordinator.
 //!    It borrows `&'static Channels` for `transmit()` (sends request, awaits
 //!    result signal) and `poll_receive()` (non-blocking probe of the RX channel
 //!    with waker registration via `AtomicWaker`).
@@ -16,12 +21,12 @@
 //! # Usage
 //!
 //! ```ignore
-//! use umsh_radio_sx126x::{Channels, Sx1262Radio};
+//! use umsh_radio_loraphy::{Channels, LoraphyRadio};
 //! use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 //!
 //! static RADIO_CH: Channels<ThreadModeRawMutex, 4, 2> = Channels::new();
 //! // Spawn runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, power_dbm).
-//! // Pass Sx1262Radio::new(&RADIO_CH, power_dbm, mdltn) to the MAC.
+//! // Pass LoraphyRadio::new(&RADIO_CH, t_frame_ms) to the MAC.
 //! ```
 
 #![no_std]
@@ -42,7 +47,7 @@ use lora_phy::{
     mod_params::{
         Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, SpreadingFactor,
     },
-    mod_traits::RadioKind,
+    mod_traits::{IrqState, RadioKind},
 };
 use umsh_hal::{RxInfo, Snr, TxError, TxOptions};
 
@@ -87,7 +92,7 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
     }
 }
 
-// ─── Sx1262Radio ─────────────────────────────────────────────────────────────
+// ─── LoraphyRadio ────────────────────────────────────────────────────────────
 
 /// Implements `umsh_hal::Radio` over the shared [`Channels`].
 ///
@@ -96,12 +101,12 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
 ///   - the channel pair used to talk to the runner,
 ///   - a precomputed worst-case airtime so the MAC's scheduler doesn't have
 ///     to recompute it.
-pub struct Sx1262Radio<M: RawMutex + 'static, const RX: usize, const TX: usize> {
+pub struct LoraphyRadio<M: RawMutex + 'static, const RX: usize, const TX: usize> {
     ch: &'static Channels<M, RX, TX>,
     t_frame_ms: u32,
 }
 
-impl<M: RawMutex + 'static, const RX: usize, const TX: usize> Sx1262Radio<M, RX, TX> {
+impl<M: RawMutex + 'static, const RX: usize, const TX: usize> LoraphyRadio<M, RX, TX> {
     /// Use [`airtime_ms`] with your modulation settings to compute `t_frame_ms`.
     pub fn new(ch: &'static Channels<M, RX, TX>, t_frame_ms: u32) -> Self {
         Self { ch, t_frame_ms }
@@ -109,7 +114,7 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> Sx1262Radio<M, RX,
 }
 
 impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
-    for Sx1262Radio<M, RX, TX>
+    for LoraphyRadio<M, RX, TX>
 {
     type Error = RadioError;
 
@@ -168,6 +173,18 @@ fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> RxInfo {
 ///
 /// Wrap this in a `#[embassy_executor::task]` in the binary crate so the
 /// concrete monomorphisation is visible to the linker.
+///
+/// # Cancellation safety
+///
+/// `wait_for_irq` is the only `await` point that may be cancelled (it just
+/// awaits a DIO edge and is safe to drop). `process_irq_event`,
+/// `prepare_for_tx`, and `tx` all run to completion outside any `select`
+/// branch — cancelling those leaves the radio in a wedged state from which
+/// `prepare_for_tx` will hang forever (lora-phy explicitly warns against
+/// dropping `process_irq_event` futures). The convenience `lora.rx()`
+/// helper internally calls `complete_rx`/`process_irq_event`, so it is
+/// **not** safe inside a `select` either; we hand-roll the IRQ loop here
+/// to keep cancellation pinned to `wait_for_irq`.
 pub async fn runner<RK, DLY, M, const RX: usize, const TX: usize>(
     mut lora: LoRa<RK, DLY>,
     ch: &'static Channels<M, RX, TX>,
@@ -183,7 +200,7 @@ where
 {
     let mut rx_buf = [0u8; MAX_PAYLOAD];
 
-    loop {
+    'outer: loop {
         if lora
             .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
             .await
@@ -191,36 +208,59 @@ where
         {
             continue;
         }
+        if lora.start_rx().await.is_err() {
+            continue;
+        }
 
-        match select(lora.rx(&rx_pkt, &mut rx_buf), ch.tx.receive()).await {
-            Either::First(Ok((len, status))) => {
-                let mut data: Vec<u8, MAX_PAYLOAD> = Vec::new();
-                let _ = data.extend_from_slice(&rx_buf[..len as usize]);
-                // lora-phy PacketStatus.snr is in whole dB (quarter-dB steps
-                // from the chip divided by 4 with rounding in get_rx_packet_status).
-                let info = RxInfo {
-                    len: len as usize,
-                    rssi: status.rssi,
-                    snr: Snr::from_decibels(status.snr as i8),
-                    lqi: None,
-                };
-                if ch.rx.try_send(RxFrame { data, info }).is_ok() {
-                    ch.rx_waker.wake();
+        // Inner loop: stay in continuous RX, handling partial-packet IRQs
+        // (PreambleReceived) without re-preparing. Break back to the outer
+        // loop to re-prepare RX after a completed frame, an error, or a TX.
+        loop {
+            match select(lora.wait_for_irq(), ch.tx.receive()).await {
+                Either::First(Ok(())) => {
+                    // process_irq_event is NOT cancel-safe — it MUST run to
+                    // completion. The public method passes clear_interrupts=false
+                    // (unlike complete_rx's internal call), so we explicitly
+                    // clear afterwards or DIO1 stays latched high on LR1110.
+                    let irq_result = lora.process_irq_event().await;
+                    let _ = lora.clear_irq_status().await;
+
+                    match irq_result {
+                        Ok(Some(IrqState::Done)) => {
+                            if let Ok((len, status)) =
+                                lora.get_rx_result(&rx_pkt, &mut rx_buf).await
+                            {
+                                let mut data: Vec<u8, MAX_PAYLOAD> = Vec::new();
+                                let _ = data.extend_from_slice(&rx_buf[..len as usize]);
+                                let info = RxInfo {
+                                    len: len as usize,
+                                    rssi: status.rssi,
+                                    snr: Snr::from_decibels(status.snr as i8),
+                                    lqi: None,
+                                };
+                                if ch.rx.try_send(RxFrame { data, info }).is_ok() {
+                                    ch.rx_waker.wake();
+                                }
+                            }
+                            continue 'outer; // re-prepare RX for the next frame
+                        }
+                        Ok(_) => continue, // PreambleReceived / no-op: stay in RX
+                        Err(_) => continue 'outer, // CRC / header error: full re-prepare
+                    }
                 }
-            }
-            Either::First(Err(_)) => {
-                // RX error (CRC fail, timeout, etc.) — re-enter RX next lap.
-            }
-            Either::Second(tx_req) => {
-                // prepare_for_tx calls set_standby() first, which cleanly
-                // exits the RX state even though rx() was cancelled.
-                let result = async {
-                    lora.prepare_for_tx(&mdltn, &mut tx_pkt, power_dbm, &tx_req.data)
-                        .await?;
-                    lora.tx().await
+                Either::First(Err(_)) => continue 'outer,
+                Either::Second(tx_req) => {
+                    // TX is also NOT cancel-safe — run prepare_for_tx + tx
+                    // to completion outside any select.
+                    let result = async {
+                        lora.prepare_for_tx(&mdltn, &mut tx_pkt, power_dbm, &tx_req.data)
+                            .await?;
+                        lora.tx().await
+                    }
+                    .await;
+                    ch.tx_done.signal(result);
+                    continue 'outer; // tx() leaves the chip in standby — re-prepare RX
                 }
-                .await;
-                ch.tx_done.signal(result);
             }
         }
     }

@@ -843,7 +843,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
- "umsh-radio-sx126x",
+ "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ux-tracker",
 ]
@@ -876,7 +876,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
- "umsh-radio-sx126x",
+ "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ux-tracker",
 ]
@@ -909,7 +909,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
- "umsh-radio-sx126x",
+ "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ux-tracker",
 ]
@@ -1974,10 +1974,12 @@ dependencies = [
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.6.2",
+ "embassy-time",
  "embassy-usb",
  "embedded-storage",
  "embedded-storage-async",
  "heapless 0.8.0",
+ "rand",
  "sequential-storage",
  "umsh-hal",
 ]
@@ -1986,21 +1988,46 @@ dependencies = [
 name = "umsh-bsp-t1000e"
 version = "0.1.0"
 dependencies = [
+ "cortex-m",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.6.2",
+ "embassy-time",
+ "lora-phy",
  "umsh-bsp-nrf52840",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-radio-loraphy",
+ "umsh-ux-tracker",
 ]
 
 [[package]]
 name = "umsh-bsp-techo"
 version = "0.1.0"
 dependencies = [
+ "cortex-m",
+ "embassy-sync 0.6.2",
+ "embassy-time",
  "umsh-bsp-nrf52840",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-radio-loraphy",
 ]
 
 [[package]]
 name = "umsh-bsp-wio-tracker-l1"
 version = "0.1.0"
 dependencies = [
+ "cortex-m",
+ "embassy-sync 0.6.2",
+ "embassy-time",
  "umsh-bsp-nrf52840",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-radio-loraphy",
 ]
 
 [[package]]
@@ -2020,6 +2047,7 @@ dependencies = [
  "heapless 0.8.0",
  "tokio",
  "umsh-core",
+ "umsh-crypto",
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
@@ -2081,7 +2109,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "umsh-radio-sx126x"
+name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
  "embassy-futures",

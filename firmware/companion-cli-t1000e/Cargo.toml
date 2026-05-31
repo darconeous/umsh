@@ -66,5 +66,5 @@ umsh-cli           = { path = "../../crates/umsh-cli", default-features = false,
 umsh-core          = { path = "../../crates/umsh-core", default-features = false }
 umsh-node          = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
 umsh-sync          = { path = "../../crates/umsh-sync", default-features = false }
-umsh-radio-sx126x  = { path = "../../crates/umsh-radio-sx126x", default-features = false }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 rand               = { workspace = true }
