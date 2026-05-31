@@ -52,8 +52,8 @@ pub struct LedTimings {
 impl Default for LedTimings {
     fn default() -> Self {
         Self {
-            heartbeat_interval: Duration::from_millis(2_000),
-            heartbeat_pulse: Duration::from_millis(50),
+            heartbeat_interval: Duration::from_millis(4_000),
+            heartbeat_pulse: Duration::from_millis(20),
         }
     }
 }
@@ -158,7 +158,10 @@ impl LedEngine {
     pub fn tick(&mut self, now_ms: u64) -> LedDecision {
         if let Some(seq) = &self.active {
             if let Some((on, end_ms)) = seq.resolve(now_ms) {
-                return LedDecision { on, next_deadline_ms: end_ms };
+                return LedDecision {
+                    on,
+                    next_deadline_ms: end_ms,
+                };
             }
             self.active = None;
         }
@@ -200,14 +203,26 @@ mod tests {
     fn heartbeat_starts_on_at_anchor() {
         let mut e = engine(0);
         let d = e.tick(0);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 50 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 50
+            }
+        );
     }
 
     #[test]
     fn heartbeat_turns_off_after_pulse() {
         let mut e = engine(0);
         let d = e.tick(50);
-        assert_eq!(d, LedDecision { on: false, next_deadline_ms: 2_000 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: false,
+                next_deadline_ms: 2_000
+            }
+        );
     }
 
     #[test]
@@ -221,10 +236,22 @@ mod tests {
         assert_eq!(e.tick(1_999).on, false);
         // Second pulse.
         let d = e.tick(2_000);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 2_050 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 2_050
+            }
+        );
         // Off.
         let d = e.tick(2_050);
-        assert_eq!(d, LedDecision { on: false, next_deadline_ms: 4_000 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: false,
+                next_deadline_ms: 4_000
+            }
+        );
     }
 
     #[test]
@@ -233,11 +260,23 @@ mod tests {
         let mut e = engine(0);
         // Skip to mid-pulse of cycle 5: 5*2000 + 20 = 10_020.
         let d = e.tick(10_020);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 10_050 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 10_050
+            }
+        );
 
         // Skip to mid-gap of cycle 7: 7*2000 + 500 = 14_500.
         let d = e.tick(14_500);
-        assert_eq!(d, LedDecision { on: false, next_deadline_ms: 16_000 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: false,
+                next_deadline_ms: 16_000
+            }
+        );
     }
 
     #[test]
@@ -245,9 +284,27 @@ mod tests {
         let mut e = engine(0);
         e.play(LedSequence::PowerOn, 100);
         // During the sequence: ON until 100 + 1000 = 1100.
-        assert_eq!(e.tick(100), LedDecision { on: true, next_deadline_ms: 1_100 });
-        assert_eq!(e.tick(500), LedDecision { on: true, next_deadline_ms: 1_100 });
-        assert_eq!(e.tick(1_099), LedDecision { on: true, next_deadline_ms: 1_100 });
+        assert_eq!(
+            e.tick(100),
+            LedDecision {
+                on: true,
+                next_deadline_ms: 1_100
+            }
+        );
+        assert_eq!(
+            e.tick(500),
+            LedDecision {
+                on: true,
+                next_deadline_ms: 1_100
+            }
+        );
+        assert_eq!(
+            e.tick(1_099),
+            LedDecision {
+                on: true,
+                next_deadline_ms: 1_100
+            }
+        );
     }
 
     #[test]
@@ -257,7 +314,13 @@ mod tests {
         // After the sequence: heartbeat. At t=1100, we're in cycle 0's
         // off-gap (since first pulse was 0..50). Next ON is 2000.
         let d = e.tick(1_100);
-        assert_eq!(d, LedDecision { on: false, next_deadline_ms: 2_000 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: false,
+                next_deadline_ms: 2_000
+            }
+        );
     }
 
     #[test]
@@ -265,15 +328,15 @@ mod tests {
         // ON 100, OFF 100, ON 100, OFF 100, ON 100.
         let mut e = engine(0);
         e.play(LedSequence::PowerOff, 0);
-        assert_eq!(e.tick(0).on, true);   // start of 1st ON
+        assert_eq!(e.tick(0).on, true); // start of 1st ON
         assert_eq!(e.tick(99).on, true);
         assert_eq!(e.tick(100).on, false); // 1st OFF
         assert_eq!(e.tick(199).on, false);
-        assert_eq!(e.tick(200).on, true);  // 2nd ON
+        assert_eq!(e.tick(200).on, true); // 2nd ON
         assert_eq!(e.tick(299).on, true);
         assert_eq!(e.tick(300).on, false); // 2nd OFF
         assert_eq!(e.tick(399).on, false);
-        assert_eq!(e.tick(400).on, true);  // 3rd ON
+        assert_eq!(e.tick(400).on, true); // 3rd ON
         assert_eq!(e.tick(499).on, true);
         // After 500ms, sequence done → heartbeat. At t=500 we're past
         // the heartbeat ON pulse (0..50), in the off-gap → false.
@@ -290,7 +353,13 @@ mod tests {
         assert_eq!(e.tick(2_010).on, true);
         e.play(LedSequence::LocationAdvert, 2_010);
         let d = e.tick(2_010);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 2_060 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 2_060
+            }
+        );
     }
 
     #[test]
@@ -304,7 +373,13 @@ mod tests {
         // Engine should still align with heartbeat anchor=0, i.e. next
         // pulse is t=2000, not 1100 + 2000.
         let d = e.tick(2_000);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 2_050 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 2_050
+            }
+        );
     }
 
     #[test]
@@ -316,7 +391,13 @@ mod tests {
         e.play(LedSequence::PowerOn, 50);
         // PowerOn is 1s ON starting at 50; ends at 1050.
         let d = e.tick(50);
-        assert_eq!(d, LedDecision { on: true, next_deadline_ms: 1_050 });
+        assert_eq!(
+            d,
+            LedDecision {
+                on: true,
+                next_deadline_ms: 1_050
+            }
+        );
     }
 
     #[test]
