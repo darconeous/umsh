@@ -7,8 +7,8 @@ use umsh_hal::{Clock, CounterStore};
 use umsh_sync::AsyncRefCell;
 
 use crate::{
-    CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES,
-    DEFAULT_PEERS, DEFAULT_TX, Platform,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME,
+    DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX, Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
     peers::PeerId,
     send::{SendOptions, SendReceipt},
@@ -130,7 +130,7 @@ impl<
     }
 
     /// Registers or refreshes a remote peer in the shared registry.
-    pub async fn add_peer(&self, key: PublicKey) -> Result<PeerId, CapacityError> {
+    pub async fn add_peer(&self, key: PublicKey) -> Result<PeerId, AddPeerError> {
         self.mac.borrow_mut().await.add_peer(key)
     }
 
@@ -304,6 +304,16 @@ impl<
                 .process_wake_reason(reason, &mut buf, &mut on_event)
                 .await?;
 
+            // Flush any pending TX or RX counter boundaries to durable storage.
+            // Mirrors `Mac::next_event`. Errors are intentionally ignored —
+            // persistence is best-effort and must not block the radio event
+            // loop. Borrow is dropped before the next phase.
+            {
+                let mut mac = self.mac.borrow_mut().await;
+                let _ = mac.service_counter_persistence().await;
+                let _ = mac.service_rx_counter_persistence().await;
+            }
+
             // If new transmit work appeared during processing (e.g. a
             // retransmit was enqueued), loop back to drain it before
             // waiting again.
@@ -373,5 +383,46 @@ impl<
             .borrow_mut()
             .await
             .cancel_pending_ack(identity_id, receipt)
+    }
+
+    /// Return the live TX frame counter for one identity, if registered.
+    pub async fn frame_counter(&self, id: LocalIdentityId) -> Option<u32> {
+        self.mac
+            .borrow_mut()
+            .await
+            .identity(id)
+            .map(|slot| slot.frame_counter())
+    }
+
+    /// Return the persisted TX frame-counter boundary for one identity, if registered.
+    pub async fn persisted_frame_counter(&self, id: LocalIdentityId) -> Option<u32> {
+        self.mac
+            .borrow_mut()
+            .await
+            .identity(id)
+            .map(|slot| slot.persisted_counter())
+    }
+
+    /// Invoke `f` for each peer with an established crypto state for `id`,
+    /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
+    pub async fn for_each_peer_counter(
+        &self,
+        id: LocalIdentityId,
+        f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
+    ) {
+        let mac = self.mac.borrow_mut().await;
+        let Some(slot) = mac.identity(id) else {
+            return;
+        };
+        for (peer_id, state) in slot.peer_crypto().iter() {
+            let Some(info) = mac.peer_registry().get(*peer_id) else {
+                continue;
+            };
+            f(
+                info.public_key,
+                state.replay_window.last_accepted,
+                state.persisted_rx_counter,
+            );
+        }
     }
 }

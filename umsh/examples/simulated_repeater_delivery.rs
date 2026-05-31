@@ -619,6 +619,7 @@ fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
         MacEventRef::Transmitted {
             identity_id,
             receipt,
+            ..
         } => format!("transmitted id={identity_id:?} receipt={receipt:?}"),
         MacEventRef::Forwarded {
             identity_id,

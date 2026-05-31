@@ -37,11 +37,9 @@ use umsh_node::{LocalNode, MacBackend, NodeError, OwnedMacCommand, Subscription}
 use umsh_text::UnicastTextChatWrapper;
 
 use crate::commands::{Command, ParseError, parse};
-use crate::events::{CliEvent, EVENT_LINE_MAX};
+use crate::events::{CliEvent, EVENT_LINE_MAX, EVENT_RAW_MAX};
 use crate::io::{CliInput, CliOutput};
 use crate::logger::{CliLogger, LogLevel};
-use crate::mac_cmd::encode_mac_command;
-use crate::ping::PendingPing;
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
 use umsh_hal::{ChannelStore, PeerStore, PowerControl};
@@ -109,7 +107,6 @@ pub struct CliSession<
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
     const N_EVENTS: usize,
-    const N_PENDING_PINGS: usize,
     const LINE_MAX: usize,
 > where
     M: MacBackend,
@@ -133,7 +130,6 @@ pub struct CliSession<
     pub(crate) channels: FnvIndexMap<HString<16>, ChannelEntry, N_CHANNELS>,
     pub(crate) events: SharedQueue<Deque<CliEvent, N_EVENTS>>,
     pub(crate) events_dropped: SharedQueue<u64>,
-    pub(crate) pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>>,
     pub(crate) stats: SharedQueue<Stats>,
     pub(crate) wake: Rc<AsyncCondition>,
     pub(crate) current_peer: Option<PublicKey>,
@@ -153,9 +149,8 @@ impl<
     const N_ALIASES: usize,
     const N_CHANNELS: usize,
     const N_EVENTS: usize,
-    const N_PENDING_PINGS: usize,
     const LINE_MAX: usize,
-> CliSession<M, OUT, LOG, PS, CS, PC, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, N_PENDING_PINGS, LINE_MAX>
+> CliSession<M, OUT, LOG, PS, CS, PC, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, LINE_MAX>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
@@ -188,8 +183,6 @@ where
     ) -> Self {
         let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
         let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
-        let pending_pings: SharedQueue<HVec<PendingPing, N_PENDING_PINGS>> =
-            Rc::new(RefCell::new(HVec::new()));
         let stats: SharedQueue<Stats> = Rc::new(RefCell::new(Stats::default()));
         let wake = Rc::new(AsyncCondition::new());
 
@@ -214,7 +207,6 @@ where
             channels: FnvIndexMap::new(),
             events,
             events_dropped,
-            pending_pings,
             stats,
             wake,
             current_peer: None,
@@ -486,33 +478,17 @@ where
                 self.out.write_line(&line).await?;
             }
 
-            CliEvent::EchoResponseIn { peer, data } => {
-                // Match against a pending ping and compute RTT.
-                let now_ms = self.node_now_ms();
-                let nonce = if data.len() >= 2 {
-                    u16::from_be_bytes([data[0], data[1]])
-                } else {
-                    0
-                };
-                let matched = {
-                    let mut pings = self.pending_pings.borrow_mut();
-                    if let Some(idx) = pings
-                        .iter()
-                        .position(|p| p.nonce == nonce && p.peer == peer)
-                    {
-                        Some(pings.swap_remove(idx))
-                    } else {
-                        None
-                    }
-                };
+            CliEvent::Pong { peer, rtt_ms } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                if let Some(ping) = matched {
-                    let rtt = now_ms.saturating_sub(ping.sent_at_ms);
-                    let _ = write!(&mut line, "pong {} rtt={} ms", alias, rtt);
-                } else {
-                    let _ = write!(&mut line, "pong {} (unmatched nonce {})", alias, nonce);
-                }
+                let _ = write!(&mut line, "pong {} rtt={} ms", alias, rtt_ms);
+                self.out.write_line(&line).await?;
+            }
+
+            CliEvent::PingTimeout { peer } => {
+                let alias = self.peer_alias_display(&peer);
+                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let _ = write!(&mut line, "[ping timeout: {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
@@ -527,11 +503,32 @@ where
                 self.out.write_line(&line).await?;
             }
 
+            CliEvent::RawTx { bytes } => {
+                if self.settings.show_raw {
+                    let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                    let _ = write!(&mut line, "tx");
+                    for b in bytes.iter() {
+                        let _ = write!(&mut line, " {:02x}", b);
+                    }
+                    self.out.write_line(&line).await?;
+                }
+            }
+
+            CliEvent::RawRx { bytes } => {
+                if self.settings.show_raw {
+                    let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                    let _ = write!(&mut line, "rx");
+                    for b in bytes.iter() {
+                        let _ = write!(&mut line, " {:02x}", b);
+                    }
+                    self.out.write_line(&line).await?;
+                }
+            }
+
             // Outbound variants are dead in this implementation — `execute()`
             // calls MAC I/O directly and never pushes these. See the TODO in
             // `events.rs` for context on the intended future model.
             CliEvent::SendText { .. }
-            | CliEvent::SendPing { .. }
             | CliEvent::StartPfs { .. }
             | CliEvent::EndPfs { .. }
             | CliEvent::ChannelSend { .. }
@@ -552,6 +549,10 @@ where
                 .cmd_peer_add(pubkey, alias)
                 .await
                 .map(|_| ExecOutcome::Continue),
+            Command::PeerAlias { peer, alias } => self
+                .cmd_peer_alias(peer, alias)
+                .await
+                .map(|_| ExecOutcome::Continue),
             Command::PeerRm { peer } => self.cmd_peer_rm(peer).await.map(|_| ExecOutcome::Continue),
             Command::Peers => self.cmd_peers().await.map(|_| ExecOutcome::Continue),
             Command::Query { peer } => self.cmd_query(peer).await.map(|_| ExecOutcome::Continue),
@@ -561,6 +562,7 @@ where
             Command::SetShow => self.cmd_set_show().await.map(|_| ExecOutcome::Continue),
             Command::Log { level } => self.cmd_log(level).await.map(|_| ExecOutcome::Continue),
             Command::Stats => self.cmd_stats().await.map(|_| ExecOutcome::Continue),
+            Command::Counters => self.cmd_counters().await.map(|_| ExecOutcome::Continue),
             Command::Channels => self.cmd_channels().await.map(|_| ExecOutcome::Continue),
             Command::PfsStatus { peer } => self
                 .cmd_pfs_status(peer)
@@ -598,12 +600,19 @@ where
                 self.cmd_raw(peer, hex).await.map(|_| ExecOutcome::Continue)
             }
             Command::PowerOff => self.cmd_power_off().await.map(|_| ExecOutcome::Continue),
+            Command::Reboot => self.cmd_reboot().await.map(|_| ExecOutcome::Continue),
         }
     }
 
     async fn cmd_power_off(&mut self) -> Result<(), CliError<OUT::Error>> {
         self.out.write_line("powering off").await?;
         self.power.request_power_off();
+        Ok(())
+    }
+
+    async fn cmd_reboot(&mut self) -> Result<(), CliError<OUT::Error>> {
+        self.out.write_line("rebooting").await?;
+        self.power.request_reboot();
         Ok(())
     }
 
@@ -620,11 +629,13 @@ where
             "  /whoami                     print the local public key",
             "  /log <level>                set verbosity: error|warn|info|debug|trace",
             "  /poweroff                   request a hardware power-off (alias: /off)",
+            "  /reboot                     request a soft reboot",
             "",
             "peers:",
             "  /peer add <pubkey> [alias]  register a peer (base58/base64/hex, 32 bytes)",
+            "  /peer alias <peer> <alias>  rename a registered peer",
             "  /peer rm <peer-ref>         remove a peer",
-            "  /peers                      list registered peers",
+            "  /peers                      list registered peers with full public key",
             "  /query <peer-ref>           set the current peer for bare text",
             "",
             "messaging:",
@@ -637,6 +648,7 @@ where
             "  /ping <peer-ref> [bytes]    send an EchoRequest (default 8 bytes)",
             "  /beacon                     broadcast a beacon",
             "  /stats                      show TX/RX counters, RSSI, queue depth",
+            "  /counters                   show frame-counter state (local TX + per-peer RX)",
             "",
             "pfs (perfect forward secrecy):",
             "  /pfs start <peer-ref> [min] request a PFS session (default 60 min)",
@@ -651,7 +663,7 @@ where
             "",
             "settings:",
             "  /set                        show current settings",
-            "  /set <var> <val>            flood_hops|ack_requested|show_hex",
+            "  /set <var> <val>            flood_hops|ack_requested|show_hex|show_raw",
         ];
         for l in lines {
             self.out.write_line(l).await?;
@@ -679,13 +691,19 @@ where
                 "  button press resumes the device (via reset + reboot).",
                 "  Alias: /off.",
             ],
+            "reboot" => &[
+                "/reboot — request a soft reboot.",
+                "  Persists any pending counters, then triggers a system reset.",
+                "  The device comes back up running the same firmware image.",
+            ],
             "peer" => &[
                 "/peer add <pubkey> [alias] — register a peer.",
                 "  <pubkey> accepts base58, base64, or hex (32-byte Ed25519 key).",
                 "  Also registers the peer at the MAC layer so inbound frames validate.",
+                "/peer alias <peer-ref> <alias> — rename a registered peer.",
                 "/peer rm <peer-ref> — remove a peer. <peer-ref> is an alias or full key.",
             ],
-            "peers" => &["/peers — list registered peers: alias and key hint."],
+            "peers" => &["/peers — list registered peers: alias and full public key (hex)."],
             "query" => &[
                 "/query <peer-ref> — set the current peer for bare-text sends.",
                 "  After /query bob, a bare line is sent to bob as a text message.",
@@ -711,6 +729,9 @@ where
                 "  TX/RX packets, ACK outcomes, last RSSI/SNR, event-queue depth,",
                 "  and events_dropped (non-zero if the inbound queue overflowed).",
             ],
+            "counters" => &[
+                "/counters — show the local TX frame counter and each known peer's RX counter (live and persisted boundaries).",
+            ],
             "pfs" => &[
                 "/pfs start <peer-ref> [minutes] — request a PFS session.",
                 "  [minutes] is the requested lifetime (default 60).",
@@ -729,6 +750,7 @@ where
                 "  flood_hops     u8 in 0..=15 (default 5) — FHOPS_REM on outbound sends",
                 "  ack_requested  bool (default true)     — request MAC acks on unicast",
                 "  show_hex       bool (default false)    — also print inbound bytes as hex",
+                "  show_raw       bool (default false)    — log every TX/RX packet as hex",
             ],
             other => {
                 let mut msg: HString<EVENT_LINE_MAX> = HString::new();
@@ -830,6 +852,38 @@ where
         Ok(())
     }
 
+    async fn cmd_peer_alias(
+        &mut self,
+        peer: &str,
+        new_alias: &str,
+    ) -> Result<(), CliError<OUT::Error>> {
+        let Some(key) = self.resolve_peer(peer) else {
+            return self.write_err("unknown peer").await;
+        };
+        let new_alias_heap = match HString::<16>::try_from(new_alias) {
+            Ok(s) => s,
+            Err(_) => return self.write_err("alias too long (max 16 chars)").await,
+        };
+        // Remove old alias from lookup table.
+        if let Some(entry) = self.peers.get(&key) {
+            if let Some(old_alias) = entry.alias.clone() {
+                let _ = self.aliases.remove(&old_alias);
+            }
+        }
+        // Insert new alias into lookup table.
+        if self.aliases.insert(new_alias_heap.clone(), key).is_err() {
+            return self.write_err("alias table full").await;
+        }
+        // Update the peer entry.
+        if let Some(entry) = self.peers.get_mut(&key) {
+            entry.alias = Some(new_alias_heap.clone());
+        }
+        // Persist (best-effort).
+        let _ = self.peer_store.store_peer(&key.0, Some(new_alias_heap.as_bytes())).await;
+        self.out.write_line("ok").await?;
+        Ok(())
+    }
+
     async fn cmd_peers(&mut self) -> Result<(), CliError<OUT::Error>> {
         if self.peers.is_empty() {
             self.out.write_line("(no peers)").await?;
@@ -840,7 +894,7 @@ where
             let mut line: HString<EVENT_LINE_MAX> = HString::new();
             let alias = entry.alias.as_deref().unwrap_or("-");
             let _ = write!(&mut line, "{:16} ", alias);
-            for b in entry.key.0.iter().take(6) {
+            for b in &entry.key.0 {
                 let _ = write!(&mut line, "{:02x}", b);
             }
             lines.push(String::from(line.as_str()));
@@ -864,8 +918,11 @@ where
         let mut line: HString<EVENT_LINE_MAX> = HString::new();
         let _ = write!(
             &mut line,
-            "flood_hops={} ack_requested={} show_hex={}",
-            self.settings.flood_hops, self.settings.ack_requested, self.settings.show_hex,
+            "flood_hops={} ack_requested={} show_hex={} show_raw={}",
+            self.settings.flood_hops,
+            self.settings.ack_requested,
+            self.settings.show_hex,
+            self.settings.show_raw,
         );
         self.out.write_line(&line).await?;
         Ok(())
@@ -894,8 +951,17 @@ where
                 }
                 None => self.write_err("show_hex: expected true|false").await?,
             },
+            "show_raw" => match parse_bool(val) {
+                Some(b) => {
+                    self.settings.show_raw = b;
+                    self.out.write_line("ok").await?;
+                }
+                None => self.write_err("show_raw: expected true|false").await?,
+            },
             _ => {
-                self.write_err("unknown setting (flood_hops / ack_requested / show_hex)")
+                self.write_err(
+                    "unknown setting (flood_hops / ack_requested / show_hex / show_raw)",
+                )
                     .await?
             }
         }
@@ -940,6 +1006,35 @@ where
             let _ = write!(&mut line, "last_rssi={} last_snr={:?}", rssi, s.last_snr);
             self.out.write_line(&line).await?;
         }
+        Ok(())
+    }
+
+    async fn cmd_counters(&mut self) -> Result<(), CliError<OUT::Error>> {
+        let tx = self.node.frame_counter().await.unwrap_or(0);
+        let persisted = self.node.persisted_frame_counter().await.unwrap_or(0);
+        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let _ = write!(&mut line, "local: tx={} (persisted {})", tx, persisted);
+        self.out.write_line(&line).await?;
+
+        // Collect first (callback can't await), then format with alias lookup.
+        let mut entries: alloc::vec::Vec<(PublicKey, u32, u32)> = alloc::vec::Vec::new();
+        self.node
+            .for_each_peer_counter(&mut |pk, last_accepted, persisted_rx| {
+                entries.push((pk, last_accepted, persisted_rx));
+            })
+            .await;
+
+        for (pk, last_accepted, persisted_rx) in entries {
+            let alias = self.peer_alias_display(&pk);
+            let mut s: HString<EVENT_LINE_MAX> = HString::new();
+            let _ = write!(
+                &mut s,
+                "{:16} rx={} (persisted {})",
+                alias, last_accepted, persisted_rx
+            );
+            self.out.write_line(&s).await?;
+        }
+
         Ok(())
     }
 
@@ -1028,67 +1123,19 @@ where
             Ok(p) => p,
             Err(e) => return self.write_err(&node_err_str(&e)).await,
         };
-        // Generate nonce.
-        let nonce: u16 = simple_nonce();
-        let size = bytes.unwrap_or(8).min(60) as usize;
-        let mut data: HVec<u8, 64> = HVec::new();
-        let _ = data.extend_from_slice(&nonce.to_be_bytes());
-        for _ in 2..size {
-            let _ = data.push(0xA5);
-        }
-
-        // Record pending ping. Check capacity without holding the borrow
-        // across the write_err call.
-        if self.pending_pings.borrow().is_full() {
-            return self.write_err("too many pings in flight").await;
-        }
-        let now_ms = self.node_now_ms();
-        let alias = self.peers.get(&key).and_then(|e| e.alias.clone());
-        let _ = self.pending_pings.borrow_mut().push(PendingPing {
-            nonce,
-            peer: key,
-            alias,
-            sent_at_ms: now_ms,
-        });
-
-        // Send EchoRequest. The EchoResponse itself is the logical ack, so
-        // don't also request a MAC-layer ack — that would double-count and
-        // would print spurious `[ack from ...]` lines alongside the pong.
-        let mut out = [0u8; 128];
-        let cmd = umsh_node::MacCommand::EchoRequest { data: &data };
-        match encode_mac_command(&cmd, &mut out) {
-            Ok(n) => {
-                let opts = self.send_opts().with_ack_requested(false);
-                match pc.send(&out[..n], &opts).await {
-                    Ok(_) => {
-                        self.stats.borrow_mut().packets_tx += 1;
-                        let alias_str = self.peer_alias_display(&key);
-                        let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                        let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, data.len());
-                        self.out.write_line(&line).await?;
-                    }
-                    Err(e) => {
-                        // Remove the pending ping on send failure; drop borrow before write_err.
-                        {
-                            let mut pings = self.pending_pings.borrow_mut();
-                            if let Some(idx) = pings.iter().position(|p| p.nonce == nonce) {
-                                pings.swap_remove(idx);
-                            }
-                        }
-                        let msg = node_err_str(&e);
-                        self.write_err(&msg).await?;
-                    }
-                }
+        let total = bytes.unwrap_or(8).min(60) as usize;
+        let extra_bytes = total.saturating_sub(2);
+        let opts = self.send_opts();
+        match pc.ping(extra_bytes, &opts, 30_000).await {
+            Ok(_) => {
+                self.stats.borrow_mut().packets_tx += 1;
+                let alias_str = self.peer_alias_display(&key);
+                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, total.max(2));
+                self.out.write_line(&line).await?;
             }
             Err(e) => {
-                {
-                    let mut pings = self.pending_pings.borrow_mut();
-                    if let Some(idx) = pings.iter().position(|p| p.nonce == nonce) {
-                        pings.swap_remove(idx);
-                    }
-                }
-                let msg = alloc::format!("{:?}", e);
-                self.write_err(&msg).await?;
+                self.write_err(&node_err_str(&e)).await?;
             }
         }
         Ok(())
@@ -1381,20 +1428,6 @@ where
         s
     }
 
-    fn node_now_ms(&self) -> u64 {
-        // LocalNode does not expose a clock accessor; use wall-clock on std
-        // targets, or zero on bare-metal (RTT will be inaccurate but harmless).
-        #[cfg(feature = "std")]
-        {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0)
-        }
-        #[cfg(not(feature = "std"))]
-        0
-    }
 }
 
 // ─── Subscription wiring (free function to avoid borrow conflicts) ────────────
@@ -1449,6 +1482,11 @@ where
             let payload = pkt.payload_bytes();
             let n = payload.len().min(64);
             let _ = prefix.extend_from_slice(&payload[..n]);
+            let wire = pkt.wire_bytes();
+            let raw_n = wire.len().min(EVENT_RAW_MAX);
+            let mut raw_bytes: HVec<u8, EVENT_RAW_MAX> = HVec::new();
+            let _ = raw_bytes.extend_from_slice(&wire[..raw_n]);
+            push_event(&ev, &dr, &wk, CliEvent::RawRx { bytes: raw_bytes });
             push_event(
                 &ev,
                 &dr,
@@ -1462,6 +1500,19 @@ where
                 },
             );
             false // don't consume — let other handlers see it too
+        }));
+    }
+
+    // on_transmitted — raw outbound MAC frames
+    {
+        let ev = events.clone();
+        let dr = dropped.clone();
+        let wk = wake.clone();
+        subs.push(node.on_transmitted(move |wire: &[u8]| {
+            let raw_n = wire.len().min(EVENT_RAW_MAX);
+            let mut raw_bytes: HVec<u8, EVENT_RAW_MAX> = HVec::new();
+            let _ = raw_bytes.extend_from_slice(&wire[..raw_n]);
+            push_event(&ev, &dr, &wk, CliEvent::RawTx { bytes: raw_bytes });
         }));
     }
 
@@ -1542,21 +1593,18 @@ where
         }));
     }
 
-    // on_mac_command — EchoResponse matching only. EchoRequest is auto-replied
-    // at the MAC layer (see coordinator::process_received), so surfacing it
-    // here would produce a duplicate EchoResponse.
+    // on_mac_command — EchoRequest and EchoResponse are both silently ignored
+    // here. EchoRequest is auto-replied by the MAC coordinator. EchoResponse
+    // is handled by on_pong below (match_pong is called in host.rs before
+    // dispatch_mac_command fires).
     {
         let ev = events.clone();
         let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_mac_command(move |peer, cmd| {
             let event = match cmd {
-                OwnedMacCommand::EchoRequest { .. } => return,
-                OwnedMacCommand::EchoResponse { data } => {
-                    let mut v: HVec<u8, 64> = HVec::new();
-                    let n = data.len().min(64);
-                    let _ = v.extend_from_slice(&data[..n]);
-                    CliEvent::EchoResponseIn { peer, data: v }
+                OwnedMacCommand::EchoRequest { .. } | OwnedMacCommand::EchoResponse { .. } => {
+                    return;
                 }
                 other => {
                     let cmd_id = mac_cmd_id(other);
@@ -1564,6 +1612,26 @@ where
                 }
             };
             push_event(&ev, &dr, &wk, event);
+        }));
+    }
+
+    // on_pong — fired by node-layer ping tracking when an EchoResponse matches.
+    {
+        let ev = events.clone();
+        let dr = dropped.clone();
+        let wk = wake.clone();
+        subs.push(node.on_pong(move |peer, rtt_ms| {
+            push_event(&ev, &dr, &wk, CliEvent::Pong { peer, rtt_ms });
+        }));
+    }
+
+    // on_ping_timeout — fired when a pending ping exceeds its deadline.
+    {
+        let ev = events.clone();
+        let dr = dropped.clone();
+        let wk = wake.clone();
+        subs.push(node.on_ping_timeout(move |peer| {
+            push_event(&ev, &dr, &wk, CliEvent::PingTimeout { peer });
         }));
     }
 
@@ -1628,8 +1696,3 @@ fn hex_nib(b: u8) -> Option<u8> {
     }
 }
 
-static NONCE_COUNTER: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(1);
-
-fn simple_nonce() -> u16 {
-    NONCE_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-}

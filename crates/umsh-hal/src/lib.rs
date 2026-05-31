@@ -229,6 +229,13 @@ pub trait CounterStore {
 /// promptly; it's typically a `Signal::signal(())` to a shutdown task.
 pub trait PowerControl {
     fn request_power_off(&self);
+
+    /// Request a soft reboot. The default implementation is a no-op; targets
+    /// without a wired reboot path can leave it as such. Like
+    /// [`request_power_off`](Self::request_power_off), this MUST return
+    /// promptly — typically a `Signal::signal(())` to a reboot task that
+    /// performs any final flushes before triggering a system reset.
+    fn request_reboot(&self) {}
 }
 
 /// No-op power control — use when shutdown is not implemented for the target.

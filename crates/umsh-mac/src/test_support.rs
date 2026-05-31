@@ -753,10 +753,34 @@ pub struct DummyIdentity {
 
 impl DummyIdentity {
     /// Construct a dummy identity from fixed public-key bytes.
+    ///
+    /// When the `software-crypto` feature is enabled the supplied bytes
+    /// are treated as a *seed* and run through Ed25519 key derivation so
+    /// that the resulting public key is always a valid point on the
+    /// curve. This keeps test code source-compatible (callers still pass
+    /// distinguishable byte patterns like `[0xAB; 32]`) while letting
+    /// the MAC layer enforce real curve validation in `add_peer`.
+    ///
+    /// Without `software-crypto` the bytes are used verbatim — useful
+    /// for `no_std` test scenarios where Ed25519 derivation is not
+    /// available, and where the validator is also compiled out.
     pub fn new(bytes: [u8; 32]) -> Self {
-        Self {
-            public_key: PublicKey(bytes),
-        }
+        #[cfg(feature = "software-crypto")]
+        let public_key = {
+            use umsh_crypto::NodeIdentity;
+            *umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&bytes).public_key()
+        };
+        #[cfg(not(feature = "software-crypto"))]
+        let public_key = PublicKey(bytes);
+        Self { public_key }
+    }
+
+    /// Construct a dummy identity from a raw `PublicKey` without
+    /// running it through Ed25519 derivation. Intended for callers that
+    /// need exact control over the test public-key bytes (e.g. to
+    /// construct a key that the validator should reject).
+    pub fn from_public_key(public_key: PublicKey) -> Self {
+        Self { public_key }
     }
 }
 

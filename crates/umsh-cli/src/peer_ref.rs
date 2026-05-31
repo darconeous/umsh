@@ -19,12 +19,26 @@ use umsh_core::PublicKey;
 /// bytes, so a token that happens to be valid in two alphabets will be
 /// resolved by the first one whose length check passes.
 ///
+/// After successful decoding the bytes are validated as a well-formed
+/// Ed25519 compressed public-key point on the curve (when the
+/// `software-crypto` feature is enabled). Bytes that decode to 32 bytes but
+/// do not lie on the curve return `None` so a typo'd hex string can never
+/// be accepted as a peer key.
+///
 /// Returns `None` if the token doesn't decode to a full 32-byte key in any
-/// of the supported encodings.
+/// of the supported encodings, or if the decoded bytes are not a valid
+/// Ed25519 point.
 pub fn try_parse_pubkey(token: &str) -> Option<PublicKey> {
-    try_hex(token)
+    let key = try_hex(token)
         .or_else(|| try_b58(token))
-        .or_else(|| try_b64(token))
+        .or_else(|| try_b64(token))?;
+    #[cfg(feature = "software-crypto")]
+    {
+        if !umsh_crypto::is_valid_ed25519_public_key(&key) {
+            return None;
+        }
+    }
+    Some(key)
 }
 
 fn try_hex(token: &str) -> Option<PublicKey> {
@@ -104,24 +118,39 @@ fn try_b64(token: &str) -> Option<PublicKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use umsh_crypto::NodeIdentity;
+    use umsh_crypto::software::SoftwareIdentity;
 
-    const KEY: [u8; 32] = [
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
-    ];
+    /// A real Ed25519 public key derived from a known seed. Generated at
+    /// test time so the constant cannot silently drift away from a
+    /// valid point on the curve.
+    fn valid_key() -> [u8; 32] {
+        SoftwareIdentity::from_secret_bytes(&[0x11; 32]).public_key().0
+    }
+
+    fn hex_encode(bytes: &[u8; 32]) -> std::string::String {
+        let mut s = std::string::String::with_capacity(64);
+        for b in bytes {
+            use core::fmt::Write;
+            let _ = write!(s, "{:02x}", b);
+        }
+        s
+    }
 
     #[test]
     fn decodes_hex() {
-        let hex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        assert_eq!(try_parse_pubkey(hex).unwrap().0, KEY);
-        let prefixed = "0x0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20";
-        assert_eq!(try_parse_pubkey(prefixed).unwrap().0, KEY);
+        let key = valid_key();
+        let hex = hex_encode(&key);
+        assert_eq!(try_parse_pubkey(&hex).unwrap().0, key);
+        let prefixed = std::format!("0x{}", hex.to_uppercase());
+        assert_eq!(try_parse_pubkey(&prefixed).unwrap().0, key);
     }
 
     #[test]
     fn decodes_base58() {
-        let b58 = bs58::encode(KEY).into_string();
-        assert_eq!(try_parse_pubkey(&b58).unwrap().0, KEY);
+        let key = valid_key();
+        let b58 = bs58::encode(key).into_string();
+        assert_eq!(try_parse_pubkey(&b58).unwrap().0, key);
     }
 
     #[test]
@@ -129,5 +158,15 @@ mod tests {
         assert!(try_parse_pubkey("").is_none());
         assert!(try_parse_pubkey("hello").is_none());
         assert!(try_parse_pubkey("0x01").is_none());
+    }
+
+    #[test]
+    fn rejects_non_curve_point() {
+        // Y = 2 (little-endian) is well-formed hex but does not lie on
+        // the Ed25519 curve. Without curve validation this would have
+        // been blindly accepted as a peer key and only failed later at
+        // ECDH time with `IdentityAgreementFailed`.
+        let bogus = "0200000000000000000000000000000000000000000000000000000000000000";
+        assert!(try_parse_pubkey(bogus).is_none());
     }
 }

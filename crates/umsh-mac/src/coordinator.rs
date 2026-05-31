@@ -15,9 +15,9 @@ use umsh_crypto::{
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
-    CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS,
-    DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS,
-    Platform, ReplayVerdict, ReplayWindow,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES,
+    DEFAULT_PEERS, DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
+    MAX_SOURCE_ROUTE_HOPS, Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
@@ -47,6 +47,13 @@ const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
 const MAC_COMMAND_ECHO_RESPONSE_ID: u8 = 5;
 const COUNTER_RESYNC_NONCE_LEN: usize = 4;
 const COUNTER_RESYNC_REQUEST_RETRY_MS: u64 = 5_000;
+/// Minimum backward gap (peer's `last_accepted` minus received counter) that
+/// will trigger a counter-resync exchange. Gaps smaller than this are silently
+/// dropped: they're indistinguishable from ordinary mesh reordering and would
+/// otherwise cause resync churn whenever a slightly-late packet arrives. A
+/// real desync (peer reboot, lost persistence boundary) typically produces a
+/// jump much larger than this.
+const COUNTER_RESYNC_GAP_THRESHOLD: u32 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PendingCounterResync {
@@ -949,6 +956,18 @@ impl<
             .load(&context.0)
             .await
             .map_err(CounterPersistenceError::Store)?;
+        // A stored value of 0 is the sentinel for "no boundary persisted yet"
+        // (see CounterStore impls). In that case keep the random initial counter
+        // installed by `insert_identity` instead of overwriting it with 0, which
+        // would let TX frames start at counter 1 and be rejected as replays by
+        // any peer that still has a higher persisted RX boundary from a previous
+        // session.
+        if loaded == 0 {
+            let slot = self
+                .identity(id)
+                .ok_or(CounterPersistenceError::IdentityMissing)?;
+            return Ok(slot.frame_counter());
+        }
         let aligned = align_counter_boundary(loaded);
         let slot = self
             .identity_mut(id)
@@ -1004,7 +1023,7 @@ impl<
     ///
     /// Called automatically from [`Self::next_event`] so applications need not
     /// invoke this directly.
-    async fn service_rx_counter_persistence(
+    pub(crate) async fn service_rx_counter_persistence(
         &mut self,
     ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
         // Collect all (identity_index, peer_id, peer_pk, last_accepted) tuples
@@ -1128,8 +1147,19 @@ impl<
     }
 
     /// Registers or refreshes a known remote peer in the shared registry.
-    pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
-        self.peer_registry.try_insert_or_update(key)
+    ///
+    /// When the `software-crypto` feature is enabled, the supplied public key
+    /// is validated as a well-formed Ed25519 compressed point on the curve.
+    /// Malformed keys are rejected with [`AddPeerError::InvalidPublicKey`]
+    /// before they can pollute the peer registry.
+    pub fn add_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
+        #[cfg(feature = "software-crypto")]
+        {
+            if !umsh_crypto::is_valid_ed25519_public_key(&key) {
+                return Err(AddPeerError::InvalidPublicKey);
+            }
+        }
+        Ok(self.peer_registry.try_insert_or_update(key)?)
     }
 
     /// Adds or updates a shared channel and derives its multicast keys.
@@ -1696,6 +1726,7 @@ impl<
                 crate::MacEventRef::Transmitted {
                     identity_id,
                     receipt,
+                    wire_bytes: queued.frame.as_slice(),
                 },
             );
         }
@@ -2211,15 +2242,38 @@ impl<
                         ) {
                             replay_target = Some((local_id, peer_id));
                         } else {
-                            self.store_deferred_counter_resync_frame(
-                                local_id,
-                                peer_id,
-                                &original[..frame_len],
-                                rx,
-                                received_at_ms,
-                            );
-                            self.maybe_request_counter_resync(local_id, peer_id, peer_key)
+                            // Only initiate a counter resync if the backward
+                            // gap is large enough that out-of-order delivery
+                            // can't explain it. Small gaps (handful of packets)
+                            // are silently dropped to avoid resync churn from
+                            // normal mesh reordering. See
+                            // `COUNTER_RESYNC_GAP_THRESHOLD`.
+                            let counter = Self::replay_metadata(
+                                header,
+                                &buf[..frame_len],
+                            )
+                            .map(|(c, _)| c)
+                            .unwrap_or(0);
+                            let gap = self
+                                .identity(local_id)
+                                .and_then(|slot| slot.peer_crypto().get(&peer_id))
+                                .map(|state| {
+                                    state.replay_window.last_accepted.wrapping_sub(counter)
+                                })
+                                .unwrap_or(0);
+                            if gap >= COUNTER_RESYNC_GAP_THRESHOLD {
+                                self.store_deferred_counter_resync_frame(
+                                    local_id,
+                                    peer_id,
+                                    &original[..frame_len],
+                                    rx,
+                                    received_at_ms,
+                                );
+                                self.maybe_request_counter_resync(
+                                    local_id, peer_id, peer_key,
+                                )
                                 .await;
+                            }
                             continue;
                         }
                     }
@@ -3346,7 +3400,13 @@ impl<
         }
     }
 
-    fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, CapacityError> {
+    fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {
+        #[cfg(feature = "software-crypto")]
+        {
+            if !umsh_crypto::is_valid_ed25519_public_key(&key) {
+                return Err(AddPeerError::InvalidPublicKey);
+            }
+        }
         let now_ms = self.clock.now_ms();
         let outcome = self.peer_registry.try_insert_or_update_auto(key, now_ms)?;
         if outcome.evicted_key.is_some() {

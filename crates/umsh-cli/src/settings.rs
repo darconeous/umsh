@@ -9,6 +9,8 @@ pub struct SessionSettings {
     pub ack_requested: bool,
     /// Display-only: print raw bytes alongside decoded lines.
     pub show_hex: bool,
+    /// Display-only: log every TX/RX MAC frame as `tx`/`rx` hex lines.
+    pub show_raw: bool,
 }
 
 impl Default for SessionSettings {
@@ -17,6 +19,7 @@ impl Default for SessionSettings {
             flood_hops: 5,
             ack_requested: true,
             show_hex: false,
+            show_raw: false,
         }
     }
 }

@@ -1,7 +1,7 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_mac::{
-    CapacityError, LocalIdentityId, MacHandle, PeerId, Platform, SendError, SendOptions,
-    SendReceipt,
+    AddPeerError, CapacityError, LocalIdentityId, MacHandle, PeerId, Platform, SendError,
+    SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -75,6 +75,28 @@ pub trait MacBackend: Clone {
 
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
+
+    /// Return the live TX frame counter for `from`, if it identifies a registered identity.
+    async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
+        let _ = from;
+        None
+    }
+
+    /// Return the persisted TX frame-counter boundary for `from`, if registered.
+    async fn persisted_frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
+        let _ = from;
+        None
+    }
+
+    /// Invoke `f` for each peer with established crypto state for `from`.
+    /// Arguments are `(peer public key, last-accepted RX counter, persisted RX boundary)`.
+    async fn for_each_peer_counter(
+        &self,
+        from: LocalIdentityId,
+        f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
+    ) {
+        let _ = (from, f);
+    }
 }
 
 /// Normalized wrapper around MAC-backend failures.
@@ -84,6 +106,8 @@ pub enum MacBackendError<S, C> {
     Send(S),
     /// Capacity-related MAC failure.
     Capacity(C),
+    /// A supplied public key did not decode to a valid Ed25519 point on the curve.
+    InvalidPublicKey,
 }
 
 impl<
@@ -105,7 +129,10 @@ impl<
         &self,
         key: PublicKey,
     ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.add_peer(key).await.map_err(MacBackendError::Capacity)
+        self.add_peer(key).await.map_err(|err| match err {
+            AddPeerError::Capacity => MacBackendError::Capacity(CapacityError),
+            AddPeerError::InvalidPublicKey => MacBackendError::InvalidPublicKey,
+        })
     }
 
     async fn add_private_channel(
@@ -196,5 +223,21 @@ impl<
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
         self.remove_ephemeral(id).await
+    }
+
+    async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
+        self.frame_counter(from).await
+    }
+
+    async fn persisted_frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
+        self.persisted_frame_counter(from).await
+    }
+
+    async fn for_each_peer_counter(
+        &self,
+        from: LocalIdentityId,
+        f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
+    ) {
+        self.for_each_peer_counter(from, f).await
     }
 }
