@@ -13,12 +13,13 @@ default = ["std", "software-crypto"]
 # pick `std` (which implies `alloc`).
 std = ["alloc", "umsh-core/std", "umsh-mac/std", "umsh-node/std", "umsh-text/std"]
 alloc = ["umsh-node/alloc", "software-crypto"]
-software-crypto = ["umsh-node/software-crypto", "umsh-text/software-crypto"]
+software-crypto = ["umsh-node/software-crypto", "umsh-text/software-crypto", "umsh-crypto/software-crypto"]
 tokio-stdio = ["std", "dep:tokio"]
 serial = ["dep:embedded-io-async"]
 
 [dependencies]
 umsh-core = { path = "../umsh-core", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false }
 umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-mac = { path = "../umsh-mac", default-features = false }
 umsh-node = { path = "../umsh-node", default-features = false }

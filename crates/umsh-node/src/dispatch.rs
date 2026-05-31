@@ -32,6 +32,7 @@ impl EventDispatcher {
             MacEventRef::Transmitted {
                 identity_id: tx_id,
                 receipt,
+                ..
             } => {
                 if let Some(receipt) = receipt {
                     let token = SendToken::new(tx_id, receipt);

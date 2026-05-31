@@ -1,6 +1,5 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-#[cfg(feature = "software-crypto")]
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
@@ -119,6 +118,13 @@ impl<T> HandlerTable<T> {
     }
 }
 
+pub(crate) struct PendingPing {
+    pub nonce: u16,
+    pub peer: PublicKey,
+    pub sent_at_ms: u64,
+    pub deadline_ms: u64,
+}
+
 pub(crate) struct PeerSubscriptions {
     peer: PublicKey,
     pub(crate) receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
@@ -126,6 +132,8 @@ pub(crate) struct PeerSubscriptions {
     pub(crate) ack_timeout_handlers: HandlerTable<Box<dyn FnMut(SendToken)>>,
     pub(crate) pfs_established_handlers: HandlerTable<Box<dyn FnMut()>>,
     pub(crate) pfs_ended_handlers: HandlerTable<Box<dyn FnMut()>>,
+    pub(crate) pong_handlers: HandlerTable<Box<dyn FnMut(u64)>>,
+    pub(crate) ping_timeout_handlers: HandlerTable<Box<dyn FnMut()>>,
 }
 
 impl PeerSubscriptions {
@@ -137,6 +145,8 @@ impl PeerSubscriptions {
             ack_timeout_handlers: HandlerTable::default(),
             pfs_established_handlers: HandlerTable::default(),
             pfs_ended_handlers: HandlerTable::default(),
+            pong_handlers: HandlerTable::default(),
+            ping_timeout_handlers: HandlerTable::default(),
         }
     }
 }
@@ -146,10 +156,14 @@ pub(crate) struct LocalNodeState {
     node_discovered_handlers: HandlerTable<Box<dyn FnMut(PublicKey, Option<&str>)>>,
     beacon_handlers: HandlerTable<Box<dyn FnMut(NodeHint, Option<PublicKey>)>>,
     mac_command_handlers: HandlerTable<Box<dyn FnMut(PublicKey, &OwnedMacCommand)>>,
+    transmitted_handlers: HandlerTable<Box<dyn FnMut(&[u8])>>,
     ack_received_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
     ack_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
     pfs_established_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pfs_ended_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    pong_handlers: HandlerTable<Box<dyn FnMut(PublicKey, u64)>>,
+    ping_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    pending_pings: Vec<PendingPing>,
     peer_subscriptions: Vec<PeerSubscriptions>,
     #[cfg(feature = "software-crypto")]
     pfs: PfsSessionManager,
@@ -162,10 +176,14 @@ impl LocalNodeState {
             node_discovered_handlers: HandlerTable::default(),
             beacon_handlers: HandlerTable::default(),
             mac_command_handlers: HandlerTable::default(),
+            transmitted_handlers: HandlerTable::default(),
             ack_received_handlers: HandlerTable::default(),
             ack_timeout_handlers: HandlerTable::default(),
             pfs_established_handlers: HandlerTable::default(),
             pfs_ended_handlers: HandlerTable::default(),
+            pong_handlers: HandlerTable::default(),
+            ping_timeout_handlers: HandlerTable::default(),
+            pending_pings: Vec::new(),
             peer_subscriptions: Vec::new(),
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
@@ -342,6 +360,22 @@ impl<M: MacBackend> LocalNode<M> {
         Ok(PeerConnection::new(self.clone(), key))
     }
 
+    /// Return the live TX frame counter for this node's identity, if available.
+    pub async fn frame_counter(&self) -> Option<u32> {
+        self.mac.frame_counter(self.identity_id).await
+    }
+
+    /// Return the persisted TX frame-counter boundary for this node's identity.
+    pub async fn persisted_frame_counter(&self) -> Option<u32> {
+        self.mac.persisted_frame_counter(self.identity_id).await
+    }
+
+    /// Invoke `f` for each peer with established crypto state, passing the
+    /// peer's public key, last-accepted RX counter, and persisted RX boundary.
+    pub async fn for_each_peer_counter(&self, f: &mut dyn FnMut(PublicKey, u32, u32)) {
+        self.mac.for_each_peer_counter(self.identity_id, f).await
+    }
+
     fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
@@ -418,6 +452,26 @@ impl<M: MacBackend> LocalNode<M> {
         Subscription::new(move || state.borrow_mut().mac_command_handlers.remove(handle))
     }
 
+    fn add_transmitted_handler<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(&[u8]) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .transmitted_handlers
+            .insert(Box::new(handler))
+    }
+
+    /// Subscribe to raw on-wire bytes of every frame successfully handed to the radio.
+    pub fn on_transmitted<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(&[u8]) + 'static,
+    {
+        let handle = self.add_transmitted_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().transmitted_handlers.remove(handle))
+    }
+
     fn add_ack_received_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey, SendToken) + 'static,
@@ -492,6 +546,117 @@ impl<M: MacBackend> LocalNode<M> {
         let handle = self.add_pfs_ended_handler(handler);
         let state = self.state.clone();
         Subscription::new(move || state.borrow_mut().pfs_ended_handlers.remove(handle))
+    }
+
+    fn add_pong_handler<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, u64) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .pong_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn on_pong<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, u64) + 'static,
+    {
+        let handle = self.add_pong_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().pong_handlers.remove(handle))
+    }
+
+    fn add_ping_timeout_handler<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .ping_timeout_handlers
+            .insert(Box::new(handler))
+    }
+
+    pub fn on_ping_timeout<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey) + 'static,
+    {
+        let handle = self.add_ping_timeout_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().ping_timeout_handlers.remove(handle))
+    }
+
+    pub(crate) fn record_ping(
+        &self,
+        nonce: u16,
+        peer: PublicKey,
+        sent_at_ms: u64,
+        deadline_ms: u64,
+    ) {
+        self.state.borrow_mut().pending_pings.push(PendingPing {
+            nonce,
+            peer,
+            sent_at_ms,
+            deadline_ms,
+        });
+    }
+
+    pub(crate) async fn now_ms(&self) -> u64 {
+        self.mac.now_ms().await
+    }
+
+    pub(crate) async fn fill_random(&self, dest: &mut [u8]) {
+        self.mac.fill_random(dest).await
+    }
+
+    /// Called when an EchoResponse arrives. Matches against pending pings and fires pong handlers.
+    pub(crate) fn match_pong(&self, from: PublicKey, data: &[u8], now_ms: u64) {
+        if data.len() < 2 {
+            return;
+        }
+        let nonce = u16::from_be_bytes([data[0], data[1]]);
+        let mut state = self.state.borrow_mut();
+        let idx = state
+            .pending_pings
+            .iter()
+            .position(|p| p.nonce == nonce && p.peer == from);
+        if let Some(idx) = idx {
+            let ping = state.pending_pings.swap_remove(idx);
+            let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
+            if let Some(entry) = state
+                .peer_subscriptions
+                .iter_mut()
+                .find(|e| e.peer == from)
+            {
+                entry
+                    .pong_handlers
+                    .for_each_mut(|h| h(rtt_ms));
+            }
+            state.pong_handlers.for_each_mut(|h| h(from, rtt_ms));
+        }
+    }
+
+    /// Called periodically (from Host::pump_once). Fires timeout handlers for expired pings.
+    pub(crate) fn expire_pings(&self, now_ms: u64) {
+        let mut state = self.state.borrow_mut();
+        let mut i = 0;
+        while i < state.pending_pings.len() {
+            if now_ms >= state.pending_pings[i].deadline_ms {
+                let ping = state.pending_pings.swap_remove(i);
+                if let Some(entry) = state
+                    .peer_subscriptions
+                    .iter_mut()
+                    .find(|e| e.peer == ping.peer)
+                {
+                    entry.ping_timeout_handlers.for_each_mut(|h| h());
+                }
+                state
+                    .ping_timeout_handlers
+                    .for_each_mut(|h| h(ping.peer));
+            } else {
+                i += 1;
+            }
+        }
     }
 
     #[cfg(feature = "software-crypto")]
@@ -790,6 +955,13 @@ impl<M: MacBackend> LocalNode<M> {
             .borrow_mut()
             .mac_command_handlers
             .for_each_mut(|handler| handler(from, command));
+    }
+
+    pub(crate) fn dispatch_transmitted(&self, wire_bytes: &[u8]) {
+        self.state
+            .borrow_mut()
+            .transmitted_handlers
+            .for_each_mut(|handler| handler(wire_bytes));
     }
 
     pub(crate) fn dispatch_ack_received(&self, peer: PublicKey, token: SendToken) {

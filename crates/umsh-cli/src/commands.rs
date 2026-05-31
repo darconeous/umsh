@@ -12,6 +12,7 @@ pub enum Command<'a> {
     WhoAmI,
 
     PeerAdd { pubkey: &'a str, alias: Option<&'a str> },
+    PeerAlias { peer: &'a str, alias: &'a str },
     PeerRm { peer: &'a str },
     Peers,
 
@@ -34,12 +35,14 @@ pub enum Command<'a> {
     Channels,
 
     Stats,
+    Counters,
     Log { level: &'a str },
     SetShow,                              // `/set` (no args)
     Set { var: &'a str, val: &'a str },
     Raw { peer: &'a str, hex: &'a str },
 
     PowerOff,
+    Reboot,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -97,6 +100,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, ParseError> {
         "channel" => parse_channel(rest),
         "channels" => Ok(Command::Channels),
         "stats" => Ok(Command::Stats),
+        "counters" => Ok(Command::Counters),
         "log" => {
             require(rest, "level")?;
             Ok(Command::Log { level: rest })
@@ -117,6 +121,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, ParseError> {
             Ok(Command::Raw { peer, hex })
         }
         "poweroff" | "off" => Ok(Command::PowerOff),
+        "reboot" => Ok(Command::Reboot),
 
         other => {
             let mut s = String::new();
@@ -134,6 +139,12 @@ fn parse_peer(rest: &str) -> Result<Command<'_>, ParseError> {
             require(pubkey, "pubkey")?;
             let alias = if alias_part.is_empty() { None } else { Some(alias_part) };
             Ok(Command::PeerAdd { pubkey, alias })
+        }
+        "alias" => {
+            let (peer, alias) = split_one(tail);
+            require(peer, "peer-ref")?;
+            require(alias, "alias")?;
+            Ok(Command::PeerAlias { peer, alias })
         }
         "rm" | "remove" => {
             let (peer, _) = split_one(tail);
@@ -243,6 +254,14 @@ mod tests {
     }
 
     #[test]
+    fn peer_alias() {
+        assert_eq!(
+            parse("/peer alias bob alice"),
+            Ok(Command::PeerAlias { peer: "bob", alias: "alice" })
+        );
+    }
+
+    #[test]
     fn ping_with_bytes() {
         assert_eq!(
             parse("/ping bob 64"),
@@ -255,6 +274,16 @@ mod tests {
         assert_eq!(parse("/set"), Ok(Command::SetShow));
         assert_eq!(parse("/set flood_hops 3"),
                    Ok(Command::Set { var: "flood_hops", val: "3" }));
+    }
+
+    #[test]
+    fn counters() {
+        assert_eq!(parse("/counters"), Ok(Command::Counters));
+    }
+
+    #[test]
+    fn reboot() {
+        assert_eq!(parse("/reboot"), Ok(Command::Reboot));
     }
 
     #[test]

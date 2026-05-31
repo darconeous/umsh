@@ -20,6 +20,27 @@ use umsh_crypto::{
 };
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
+/// Helper that produces a 32-byte `PublicKey` test peers can pass to
+/// `add_peer` without tripping the Ed25519 curve validator.
+///
+/// When the `software-crypto` feature is enabled (which it is when these
+/// tests share a build graph with `umsh-node` and friends), the `seed`
+/// byte pattern is run through Ed25519 derivation so the resulting key
+/// lies on the curve. Otherwise — for example in pure-`alloc` test
+/// builds where the validator is compiled out — the seed bytes are
+/// returned verbatim, preserving the previous test wire-image where
+/// callers expected `[0xAB; 32]` literally.
+fn test_pubkey(seed: u8) -> PublicKey {
+    #[cfg(feature = "software-crypto")]
+    {
+        *umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32]).public_key()
+    }
+    #[cfg(not(feature = "software-crypto"))]
+    {
+        PublicKey([seed; 32])
+    }
+}
+
 #[test]
 fn duplicate_cache_evicts_oldest_entry() {
     let mut cache = DuplicateCache::<2>::new();
@@ -354,7 +375,7 @@ fn receive_one_auto_replies_to_echo_request() {
 #[test]
 fn peer_registry_looks_up_by_hint_and_updates_route() {
     let mut registry = PeerRegistry::<4>::new();
-    let key = PublicKey([0xA1; 32]);
+    let key = test_pubkey(0xA1);
     let peer_id = registry.try_insert_or_update(key).unwrap();
 
     let matches: heapless::Vec<PeerId, 4> = registry
@@ -424,7 +445,7 @@ fn send_options_copy_source_route_and_reject_oversize_routes() {
 #[test]
 fn direct_ack_requested_starts_awaiting_ack() {
     let resend: ResendRecord = ResendRecord::try_new(b"hello", None).unwrap();
-    let pending = PendingAck::direct([0xAA; 8], PublicKey([0x11; 32]), resend);
+    let pending = PendingAck::direct([0xAA; 8], test_pubkey(0x11), resend);
     assert_eq!(
         pending.state,
         AckState::Queued {
@@ -437,7 +458,7 @@ fn direct_ack_requested_starts_awaiting_ack() {
 fn forwarded_ack_requested_starts_awaiting_forward() {
     let resend: ResendRecord =
         ResendRecord::try_new(b"hello", Some(&[RouterHint([1, 2])])).unwrap();
-    let pending = PendingAck::forwarded([0xBB; 8], PublicKey([0x22; 32]), resend);
+    let pending = PendingAck::forwarded([0xBB; 8], test_pubkey(0x22), resend);
     assert_eq!(
         pending.state,
         AckState::Queued {
@@ -498,7 +519,7 @@ fn mac_adds_identities_peers_and_channels() {
 
     let id_a = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let id_b = mac.add_identity(DummyIdentity::new([0x20; 32])).unwrap();
-    let peer = mac.add_peer(PublicKey([0xAB; 32])).unwrap();
+    let peer = mac.add_peer(test_pubkey(0xAB)).unwrap();
     mac.add_channel(ChannelKey([0x5A; 32])).unwrap();
 
     assert_eq!(id_a, LocalIdentityId(0));
@@ -510,7 +531,7 @@ fn mac_adds_identities_peers_and_channels() {
     );
     assert_eq!(
         mac.peer_registry().get(peer).unwrap().public_key,
-        PublicKey([0xAB; 32])
+        test_pubkey(0xAB)
     );
     assert_eq!(mac.channels().len(), 1);
 }
@@ -572,7 +593,7 @@ fn new_ephemeral_identity_starts_with_random_frame_counter() {
 fn queue_unicast_requires_installed_pairwise_keys() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let _peer_id = mac.add_peer(peer_key).unwrap();
 
     assert_eq!(
@@ -585,7 +606,7 @@ fn queue_unicast_requires_installed_pairwise_keys() {
 fn queue_unicast_enqueues_frame_and_pending_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -627,7 +648,7 @@ fn mac_handle_clones_share_send_queue_state() {
             .add_identity(DummyIdentity::new([0x10; 32]))
             .await
             .unwrap();
-        let peer_key = PublicKey([0xAB; 32]);
+        let peer_key = test_pubkey(0xAB);
         let peer_id = handle_clone.add_peer(peer_key).await.unwrap();
         handle
             .install_pairwise_keys(
@@ -671,7 +692,7 @@ fn mac_handle_clones_share_send_queue_state() {
 fn send_unicast_auto_derives_pairwise_state_on_first_contact() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
 
     let receipt = block_on(mac.send_unicast(
@@ -696,7 +717,7 @@ fn send_unicast_auto_derives_pairwise_state_on_first_contact() {
 fn queue_blind_unicast_requires_known_channel() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -728,7 +749,7 @@ fn licensed_only_mode_rejects_encrypted_unicast() {
         Some(HamAddr::try_from_callsign("KZ2X").unwrap());
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -759,7 +780,7 @@ fn licensed_only_mode_rejects_encrypted_blind_unicast() {
         Some(HamAddr::try_from_callsign("KZ2X").unwrap());
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -794,7 +815,7 @@ fn licensed_only_mode_allows_unencrypted_blind_unicast_with_operator_callsign() 
         Some(HamAddr::try_from_callsign("KZ2X").unwrap());
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -827,7 +848,7 @@ fn hybrid_mode_allows_encrypted_unicast_without_operator_callsign() {
     mac.operating_policy_mut().amateur_radio_mode = AmateurRadioMode::Hybrid;
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -856,7 +877,7 @@ fn unlicensed_mode_allows_blind_unicast_without_operator_callsign() {
     mac.operating_policy_mut().amateur_radio_mode = AmateurRadioMode::Unlicensed;
 
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -1082,7 +1103,7 @@ fn channel_policy_rejects_excess_flood_hops() {
 fn queue_blind_unicast_enqueues_frame_and_pending_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -1157,7 +1178,7 @@ fn first_secure_send_schedules_counter_persist() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let initial_counter = mac.identity(local_id).unwrap().frame_counter();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1194,7 +1215,7 @@ fn first_secure_send_schedules_counter_persist() {
 fn counter_persist_threshold_schedules_next_block() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1241,7 +1262,7 @@ fn counter_persist_threshold_schedules_next_block() {
 fn service_counter_persistence_writes_and_clears_pending_targets() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1281,7 +1302,7 @@ fn service_counter_persistence_writes_and_clears_pending_targets() {
 fn secure_send_continues_after_future_boundary_is_persisted() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1340,7 +1361,7 @@ fn secure_send_blocks_when_counter_window_exhausted() {
         .unwrap()
         .load_persisted_counter(0);
     mac.identity_mut(local_id).unwrap().set_frame_counter(128);
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1489,7 +1510,7 @@ fn queue_mac_ack_builds_immediate_ack_frame() {
 #[test]
 fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
     let mut mac = make_mac();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.peer_registry_mut().update_route(
         peer_id,
@@ -1516,7 +1537,7 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
 #[test]
 fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
     let mut mac = make_mac();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.peer_registry_mut().update_route(
         peer_id,
@@ -1565,7 +1586,7 @@ fn queued_mac_ack_transmits_before_application_traffic() {
 fn receive_one_emits_ack_received_for_matching_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1622,7 +1643,7 @@ fn receive_one_emits_ack_received_for_matching_mac_ack() {
 fn receive_one_ignores_unmatched_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -1673,7 +1694,7 @@ fn receive_one_ignores_unmatched_mac_ack() {
 fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -2126,7 +2147,7 @@ fn receive_one_full_key_unicast_auto_registers_when_enabled() {
 fn auto_registered_unicast_peer_does_not_displace_pinned_peer_when_registry_is_full() {
     let mut mac = make_small_peer_mac::<1>();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let pinned_key = PublicKey([0xCD; 32]);
+    let pinned_key = test_pubkey(0xCD);
     let _pinned_id = mac.add_peer(pinned_key).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_key = *remote.public_key();
@@ -2918,7 +2939,7 @@ fn receive_one_ignores_multicast_for_unknown_channel() {
 fn receive_one_multicast_with_full_registry_still_delivers_unknown_sender() {
     let mut mac = make_small_peer_mac::<1>();
     let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let known_peer = PublicKey([0xCD; 32]);
+    let known_peer = test_pubkey(0xCD);
     let _peer_id = mac.add_peer(known_peer).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
     let channel_key = ChannelKey([0x5A; 32]);
@@ -3149,7 +3170,7 @@ fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
 fn receive_one_confirms_forwarded_send_when_same_frame_is_overheard() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -3744,7 +3765,7 @@ fn receive_one_drops_pending_forward_after_max_duplicate_deferrals() {
 fn poll_cycle_holds_application_tx_while_forward_listen_is_active() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5254,7 +5275,7 @@ fn poll_cycle_drains_tx_receives_unicast_and_sends_immediate_ack() {
 fn poll_cycle_emits_ack_timeout_after_receive_phase() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5305,7 +5326,7 @@ fn poll_cycle_emits_ack_timeout_after_receive_phase() {
 fn confirmed_forwarded_send_no_longer_retries_on_confirmation_timeout() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5356,7 +5377,7 @@ fn confirmed_forwarded_send_no_longer_retries_on_confirmation_timeout() {
 fn forwarded_send_can_confirm_then_complete_on_later_mac_ack() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5437,7 +5458,7 @@ fn forwarded_send_can_confirm_then_complete_on_later_mac_ack() {
 fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5504,7 +5525,7 @@ fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
 fn send_receipts_wrap_from_u32_max_back_to_zero() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5558,7 +5579,7 @@ fn send_receipts_wrap_from_u32_max_back_to_zero() {
 fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5609,7 +5630,7 @@ fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
 fn service_pending_ack_timeouts_requeues_forwarded_retry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5662,7 +5683,7 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
 fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5744,7 +5765,7 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
 fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -5795,7 +5816,7 @@ fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
 fn complete_ack_matches_receipt_and_clears_pending_entry() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let peer_key = PublicKey([0xAB; 32]);
+    let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.install_pairwise_keys(
         local_id,
@@ -6290,10 +6311,25 @@ struct DummyIdentity {
     public_key: PublicKey,
 }
 impl DummyIdentity {
-    fn new(bytes: [u8; 32]) -> Self {
-        Self {
-            public_key: PublicKey(bytes),
-        }
+    /// Construct a dummy identity whose public key is a valid Ed25519
+    /// point on the curve.
+    ///
+    /// `seed` is used as the Ed25519 secret-key bytes when the
+    /// `software-crypto` feature is active (which it is during workspace
+    /// tests via feature unification). This means callers can keep passing
+    /// arbitrary 32-byte arrays as test fingerprints and the resulting
+    /// public keys will pass `is_valid_ed25519_public_key`. Without the
+    /// feature, the raw bytes are used directly (preserving the previous
+    /// behavior for builds that don't include the curve validator).
+    fn new(seed: [u8; 32]) -> Self {
+        #[cfg(feature = "software-crypto")]
+        let public_key = {
+            use umsh_crypto::software::SoftwareIdentity;
+            *SoftwareIdentity::from_secret_bytes(&seed).public_key()
+        };
+        #[cfg(not(feature = "software-crypto"))]
+        let public_key = PublicKey(seed);
+        Self { public_key }
     }
 }
 

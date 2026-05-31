@@ -12,6 +12,8 @@ use umsh_core::{NodeHint, PublicKey};
 pub const EVENT_PAYLOAD_MAX: usize = 64;
 /// Maximum length of a formatted output line buffered for writing.
 pub const EVENT_LINE_MAX: usize = 256;
+/// Maximum raw on-wire frame bytes recorded per RawTx/RawRx event.
+pub const EVENT_RAW_MAX: usize = 256;
 
 #[derive(Debug)]
 pub enum CliEvent {
@@ -46,13 +48,22 @@ pub enum CliEvent {
     PfsEnded {
         peer: PublicKey,
     },
-    EchoResponseIn {
+    Pong {
         peer: PublicKey,
-        data: Vec<u8, EVENT_PAYLOAD_MAX>,
+        rtt_ms: u64,
+    },
+    PingTimeout {
+        peer: PublicKey,
     },
     UnknownMacCmdIn {
         peer: PublicKey,
         cmd_id: u8,
+    },
+    RawTx {
+        bytes: Vec<u8, EVENT_RAW_MAX>,
+    },
+    RawRx {
+        bytes: Vec<u8, EVENT_RAW_MAX>,
     },
 
     // ─── Outbound ────────────────────────────────────────────────────────────
@@ -68,11 +79,6 @@ pub enum CliEvent {
     SendText {
         peer: PublicKey,
         body: String<EVENT_LINE_MAX>,
-    },
-    SendPing {
-        peer: PublicKey,
-        nonce: u16,
-        data: Vec<u8, EVENT_PAYLOAD_MAX>,
     },
     StartPfs {
         peer: PublicKey,

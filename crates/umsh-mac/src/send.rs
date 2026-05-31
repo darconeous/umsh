@@ -998,6 +998,7 @@ pub enum MacEventRef<'a> {
     Transmitted {
         identity_id: LocalIdentityId,
         receipt: Option<SendReceipt>,
+        wire_bytes: &'a [u8],
     },
     /// A repeater was overheard forwarding this frame
     /// (AwaitingForward → AwaitingAck transition).

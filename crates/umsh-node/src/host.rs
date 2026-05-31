@@ -158,6 +158,7 @@ impl<
     pub async fn pump_once(
         &mut self,
     ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+        let now_ms = self.mac.now_ms().await;
         let pending_pfs = Rc::new(RefCell::new(Vec::<(
             LocalIdentityId,
             umsh_core::PublicKey,
@@ -184,7 +185,13 @@ impl<
                                 node.dispatch_beacon(from_hint, packet.from_key());
                             }
                         } else if let Some(from) = packet.from_key() {
-                            dispatch_payload_callbacks(&node, &packet, from, &pending_pfs_ref);
+                            dispatch_payload_callbacks(
+                                &node,
+                                &packet,
+                                from,
+                                &pending_pfs_ref,
+                                now_ms,
+                            );
                         }
                     }
                     umsh_mac::MacEventRef::AckReceived { peer, receipt } => {
@@ -199,8 +206,10 @@ impl<
                             crate::SendToken::new(identity_id, receipt),
                         );
                     }
-                    umsh_mac::MacEventRef::Transmitted { .. }
-                    | umsh_mac::MacEventRef::Forwarded { .. } => {}
+                    umsh_mac::MacEventRef::Transmitted { wire_bytes, .. } => {
+                        node.dispatch_transmitted(wire_bytes);
+                    }
+                    umsh_mac::MacEventRef::Forwarded { .. } => {}
                 }
             })
             .await
@@ -219,6 +228,10 @@ impl<
                     node.dispatch_pfs_ended(peer);
                 }
             }
+        }
+
+        for (_, node) in &self.nodes {
+            node.expire_pings(now_ms);
         }
 
         Ok(())
@@ -303,6 +316,7 @@ fn dispatch_payload_callbacks<
     packet: &ReceivedPacketRef<'_>,
     from: umsh_core::PublicKey,
     pending_pfs: &Rc<RefCell<Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>>>,
+    now_ms: u64,
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
@@ -313,6 +327,10 @@ fn dispatch_payload_callbacks<
 
     if packet.payload_type() == PayloadType::MacCommand {
         if let Ok(command) = mac_command::parse(packet.payload()) {
+            // Match EchoResponse before converting to owned, so we can borrow data.
+            if let mac_command::MacCommand::EchoResponse { data } = command {
+                node.match_pong(from, data, now_ms);
+            }
             let owned = OwnedMacCommand::from(command);
             node.dispatch_mac_command(from, &owned);
             if matches!(

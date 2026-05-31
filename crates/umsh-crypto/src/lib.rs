@@ -691,6 +691,13 @@ pub mod software {
         let mont: MontgomeryPoint = edwards.to_montgomery();
         Ok(x25519_dalek::PublicKey::from(mont.to_bytes()))
     }
+
+    /// Return `true` if `pk`'s bytes decode to a valid Ed25519 compressed
+    /// public-key point on the curve. Used by the MAC layer and CLI to reject
+    /// malformed peer keys before they can poison the peer registry.
+    pub fn is_valid_ed25519_public_key(pk: &PublicKey) -> bool {
+        CompressedEdwardsY(pk.0).decompress().is_some()
+    }
 }
 
 #[cfg(feature = "software-crypto")]
@@ -1287,5 +1294,39 @@ mod tests {
             b'A'..=b'F' => byte - b'A' + 10,
             _ => panic!("invalid hex"),
         }
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn is_valid_ed25519_public_key_accepts_real_key() {
+        // Any verifying key produced by a SigningKey is by construction a
+        // valid Ed25519 point — the validator must accept it.
+        let identity = SoftwareIdentity::from_secret_bytes(&[0x11; 32]);
+        assert!(is_valid_ed25519_public_key(identity.public_key()));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn is_valid_ed25519_public_key_rejects_non_curve_bytes() {
+        // Y = 2 (little-endian) is not on the Ed25519 curve: the
+        // recovered x^2 from the curve equation has no square root in
+        // GF(2^255 - 19). Confirm the validator rejects it — this is
+        // the exact failure mode a user typo trips when they paste a
+        // mistyped hex pubkey on the CLI.
+        let mut bytes = [0u8; 32];
+        bytes[0] = 2;
+        let bogus = PublicKey(bytes);
+        assert!(!is_valid_ed25519_public_key(&bogus));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn is_valid_ed25519_public_key_handles_all_zero() {
+        // The all-zero compressed Y value decompresses to the curve
+        // identity point. Whatever the library's actual behavior is,
+        // pin it so a curve25519-dalek update can't silently flip the
+        // contract. (Today: accepted as a valid point.)
+        let zero = PublicKey([0u8; 32]);
+        assert!(is_valid_ed25519_public_key(&zero));
     }
 }

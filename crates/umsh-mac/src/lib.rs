@@ -208,6 +208,21 @@ pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapacityError;
 
+/// Error returned when adding a peer to the MAC peer registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddPeerError {
+    /// The peer-registry table is full.
+    Capacity,
+    /// The public-key bytes do not decode to a valid Ed25519 point on the curve.
+    InvalidPublicKey,
+}
+
+impl From<CapacityError> for AddPeerError {
+    fn from(_: CapacityError) -> Self {
+        AddPeerError::Capacity
+    }
+}
+
 /// Bundle of platform-specific associated types used by the higher layers.
 pub trait Platform {
     /// Local identity implementation.
