@@ -52,6 +52,7 @@ pub enum ButtonEvent {
     Single,
     Double,
     Triple,
+    Quad,
     Long,
 }
 
@@ -74,7 +75,7 @@ impl Default for ButtonTimings {
         Self {
             max_click_hold: Duration::from_millis(500),
             inter_click_gap: Duration::from_millis(400),
-            long_press: Duration::from_secs(5),
+            long_press: Duration::from_secs(3),
         }
     }
 }
@@ -165,9 +166,10 @@ impl ButtonFsm {
                 Some(ButtonEvent::Long)
             }
 
-            State::WaitingForNext { released_at, clicks }
-                if elapsed(released_at, now_ms) >= self.timings.inter_click_gap =>
-            {
+            State::WaitingForNext {
+                released_at,
+                clicks,
+            } if elapsed(released_at, now_ms) >= self.timings.inter_click_gap => {
                 self.state = State::Idle;
                 click_count_to_event(clicks)
             }
@@ -214,9 +216,9 @@ impl ButtonFsm {
 
         // Valid click.
         let clicks = prior_clicks.saturating_add(1);
-        if clicks >= 3 {
+        if clicks >= 4 {
             self.state = State::Idle;
-            return Some(ButtonEvent::Triple);
+            return Some(ButtonEvent::Quad);
         }
         self.state = State::WaitingForNext {
             released_at: now_ms,
@@ -235,6 +237,7 @@ fn click_count_to_event(clicks: u8) -> Option<ButtonEvent> {
         1 => Some(ButtonEvent::Single),
         2 => Some(ButtonEvent::Double),
         3 => Some(ButtonEvent::Triple),
+        4 => Some(ButtonEvent::Quad),
         _ => None,
     }
 }
@@ -251,7 +254,11 @@ mod tests {
     /// intervening polls. Returns the edge events plus the result of a
     /// final `poll` at `up_ms + 500ms` (which is past the inter-click
     /// gap, so any pending single/double/triple should fire).
-    fn click(fsm: &mut ButtonFsm, down_ms: u64, up_ms: u64) -> (Option<ButtonEvent>, Option<ButtonEvent>) {
+    fn click(
+        fsm: &mut ButtonFsm,
+        down_ms: u64,
+        up_ms: u64,
+    ) -> (Option<ButtonEvent>, Option<ButtonEvent>) {
         let on_press = fsm.on_edge(ButtonEdge::Press, down_ms);
         let on_release = fsm.on_edge(ButtonEdge::Release, up_ms);
         (on_press, on_release)
@@ -332,7 +339,10 @@ mod tests {
         let mut fsm = fsm();
         fsm.on_edge(ButtonEdge::Press, 0);
         // No poll. Release after the long-press threshold.
-        assert_eq!(fsm.on_edge(ButtonEdge::Release, 6_000), Some(ButtonEvent::Long));
+        assert_eq!(
+            fsm.on_edge(ButtonEdge::Release, 6_000),
+            Some(ButtonEvent::Long)
+        );
     }
 
     #[test]

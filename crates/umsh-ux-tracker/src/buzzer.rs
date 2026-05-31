@@ -187,7 +187,7 @@ impl BuzzerEngine {
     /// No-op if no melody is active.
     ///
     /// Buzzer drivers that need an inaudible warmup period (e.g. the
-    /// T1000-E's piezo driver chip needs ~80 ms of PWM activity before
+    /// T1000-E's piezo driver chip needs ~20 ms of PWM activity before
     /// it starts emitting) should run that warmup with the engine
     /// already loaded, then call this to drop the warmup interval out
     /// of the engine's perceived clock so the first note gets its full

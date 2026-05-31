@@ -113,11 +113,12 @@ mod firmware {
     use lora_phy::LoRa;
     use lora_phy::iv::GenericLr1110InterfaceVariant;
     use lora_phy::lr1110::{
-        Config as LoraConfig, Lr1110, TcxoCtrlVoltage,
-        radio_kind_params::PaSelection,
+        Config as LoraConfig, Lr1110, TcxoCtrlVoltage, radio_kind_params::PaSelection,
         variant::Lr1110 as Lr1110Chip,
     };
-    use lora_phy::mod_params::{Bandwidth, CodingRate, ModulationParams, PacketParams, SpreadingFactor};
+    use lora_phy::mod_params::{
+        Bandwidth, CodingRate, ModulationParams, PacketParams, SpreadingFactor,
+    };
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::flash_store::{
@@ -126,11 +127,11 @@ mod firmware {
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
     use umsh_bsp_t1000e::{PowerSignaler, RF_SWITCH, SHUTDOWN_SIGNAL, T1000EMac, T1000EPlatform};
+    use umsh_core::PublicKey;
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_core::PublicKey;
     use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
     use umsh_node::{Host, LocalNode};
     use umsh_sync::AsyncRefCell;
@@ -152,8 +153,6 @@ mod firmware {
     // ─── Constants ───────────────────────────────────────────────────────────
 
     /// TX power for the LR1110 HP PA at max output (+22 dBm).
-    /// Using HP PA at max while debugging on-air TX to rule out power as
-    /// the cause of other devices not seeing our transmissions.
     const TX_POWER_DBM: i32 = 22;
 
     const DEBOUNCE: Duration = Duration::from_millis(10);
@@ -176,9 +175,9 @@ mod firmware {
     // ─── Concrete radio types ─────────────────────────────────────────────────
 
     type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
-    type RadioIv     = GenericLr1110InterfaceVariant<Output<'static>, Input<'static>>;
-    type RadioKindT  = Lr1110<RadioSpiBus, RadioIv, Lr1110Chip>;
-    type LoraRadio   = LoRa<RadioKindT, Delay>;
+    type RadioIv = GenericLr1110InterfaceVariant<Output<'static>, Input<'static>>;
+    type RadioKindT = Lr1110<RadioSpiBus, RadioIv, Lr1110Chip>;
+    type LoraRadio = LoRa<RadioKindT, Delay>;
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
@@ -188,7 +187,7 @@ mod firmware {
     static RADIO_CH: RadioCh = RadioCh::new();
 
     static MAC_CELL: StaticCell<AsyncRefCell<T1000EMac>> = StaticCell::new();
-    static STORAGE:  StaticCell<NvmcStorage>              = StaticCell::new();
+    static STORAGE: StaticCell<NvmcStorage> = StaticCell::new();
 
     // SHUTDOWN_SIGNAL and PowerSignaler now live in `umsh-bsp-t1000e::power`;
     // this firmware imports `SHUTDOWN_SIGNAL` for the long-press button source
@@ -204,8 +203,8 @@ mod firmware {
     // ─── USB types ────────────────────────────────────────────────────────────
 
     type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
-    type T1000eSender    = Sender<'static, T1000eUsbDriver>;
-    type T1000eRescue    = CdcAcmRescue<'static, T1000eUsbDriver>;
+    type T1000eSender = Sender<'static, T1000eUsbDriver>;
+    type T1000eRescue = CdcAcmRescue<'static, T1000eUsbDriver>;
 
     // ─── RF switch config ─────────────────────────────────────────────────────
 
@@ -280,14 +279,13 @@ mod firmware {
         use umsh_cli::logger::NullLogger;
 
         let mut input = cli_io::CdcInput::new(rx);
-        let mut out   = cli_io::CdcOutput::new();
+        let mut out = cli_io::CdcOutput::new();
 
         // Pre-load persisted state.
         let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
             heapless::Vec::new();
         let _ = storage.load_all_peers(&mut peer_buf).await;
-        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> =
-            heapless::Vec::new();
+        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> = heapless::Vec::new();
         let _ = storage.load_all_channels(&mut ch_buf).await;
 
         // Wait for the host to open the CDC port before emitting the banner.
@@ -303,7 +301,7 @@ mod firmware {
             }
         }
 
-        let peer_store    = NvmcPeerStore::new(storage);
+        let peer_store = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
         let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
@@ -366,19 +364,16 @@ mod firmware {
                 Some(ButtonEvent::Double) => {
                     umsh_bsp_t1000e::BUZZER_SILENCE_TOGGLE.signal(());
                 }
+                Some(ButtonEvent::Triple) => {
+                    umsh_bsp_nrf52840::gpregret::enter_dfu_uf2();
+                }
+                Some(ButtonEvent::Quad) => {
+                    // No action defined for Quad yet
+                }
                 Some(ButtonEvent::Long) => {
-                    // Wait for button release before signalling shutdown.
-                    // If we fire while the button is still HIGH, shutdown_task
-                    // arms SENSE=High on a pin that is already HIGH, causing an
-                    // instant DETECT wake — observable as an immediate reboot.
-                    button.wait_for_low().await;
-                    Timer::after(DEBOUNCE).await;
                     pressed = false;
                     fsm = ButtonFsm::new(ButtonTimings::default());
                     SHUTDOWN_SIGNAL.signal(());
-                }
-                Some(ButtonEvent::Triple) => {
-                    umsh_bsp_nrf52840::gpregret::enter_dfu_uf2();
                 }
                 _ => {}
             }
@@ -405,7 +400,11 @@ mod firmware {
         loop {
             wdt.pet();
             let decision = engine.tick(Instant::now().as_millis());
-            if decision.on { led.set_high() } else { led.set_low() }
+            if decision.on {
+                led.set_high()
+            } else {
+                led.set_low()
+            }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
     }
@@ -491,12 +490,15 @@ mod firmware {
             Ok(None) => {
                 let mut sk = [0u8; 32];
                 rng.fill_bytes(&mut sk);
-                storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
+                storage
+                    .store_sk(&sk)
+                    .await
+                    .unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
             Err(_) => panic!("storage init failed"),
         };
-        let identity  = SoftwareIdentity::from_secret_bytes(&sk_bytes);
+        let identity = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key = *identity.public_key();
 
         // ── LR1110 LoRa radio ─────────────────────────────────────────────────
@@ -514,19 +516,18 @@ mod firmware {
             let mut cfg = SpimConfig::default();
             cfg.frequency = Frequency::M8;
             let radio_bus = Spim::new(
-                p.TWISPI0, Irqs,
-                p.P0_11, // SCK
+                p.TWISPI0, Irqs, p.P0_11, // SCK
                 p.P1_08, // MISO
                 p.P1_09, // MOSI
                 cfg,
             );
-            let radio_cs  = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
+            let radio_cs = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
             let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
 
             // Pull::Down on DIO1: the LR1110's IRQ output is push-pull active-high,
             // so a pull-down prevents floating reads when IRQ is de-asserted.
             let radio_interrupt = Input::new(p.P1_01, Pull::Down);
-            let radio_busy      = Input::new(p.P0_07, Pull::None);
+            let radio_busy = Input::new(p.P0_07, Pull::None);
 
             let iv = GenericLr1110InterfaceVariant::new(
                 radio_rst,
@@ -541,10 +542,10 @@ mod firmware {
                 // HP PA — SetTx will route through tx_hp (0x0A = DIO6+DIO8)
                 // on our RF-switch table. Combined with TX_POWER_DBM=22 this
                 // is the maximum output the chip + board can produce.
-                chip:      Lr1110Chip::with_pa(PaSelection::Hp),
+                chip: Lr1110Chip::with_pa(PaSelection::Hp),
                 tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V6),
-                use_dcdc:  false, // T1000-E module has no external inductor for BST
-                rx_boost:  true,
+                use_dcdc: false, // T1000-E module has no external inductor for BST
+                rx_boost: true,
                 rf_switch: Some(RF_SWITCH),
             };
 
@@ -596,8 +597,8 @@ mod firmware {
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
-        let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let mut mac      = T1000EMac::new(
+        let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let mut mac = T1000EMac::new(
             radio_handle,
             crypto,
             EmbassyClock,
@@ -606,29 +607,30 @@ mod firmware {
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         );
-        let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        let identity_id = mac
+            .add_identity(identity)
+            .unwrap_or_else(|_| panic!("identity"));
         // Restore TX frame-counter boundary so the counter never rewinds.
         mac.load_persisted_counter(identity_id)
             .await
             .unwrap_or_else(|_| panic!("tx counter load"));
-        let mac_cell: &'static AsyncRefCell<T1000EMac> =
-            MAC_CELL.init(AsyncRefCell::new(mac));
+        let mac_cell: &'static AsyncRefCell<T1000EMac> = MAC_CELL.init(AsyncRefCell::new(mac));
 
         // ── USB stack ─────────────────────────────────────────────────────────
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 
         let mut config = Config::new(0x2886, 0x0057);
-        config.manufacturer  = Some("Seeed");
-        config.product       = Some("T1000-E UMSH CLI");
+        config.manufacturer = Some("Seeed");
+        config.product = Some("T1000-E UMSH CLI");
         config.serial_number = Some("umsh-t1000e");
-        config.max_power         = 100;
+        config.max_power = 100;
         config.max_packet_size_0 = 64;
 
         static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-        static BOS_DESC:    StaticCell<[u8; 256]> = StaticCell::new();
-        static MSOS_DESC:   StaticCell<[u8; 0]>   = StaticCell::new();
-        static CONTROL_BUF: StaticCell<[u8; 64]>  = StaticCell::new();
-        static STATE:       StaticCell<State>      = StaticCell::new();
+        static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+        static MSOS_DESC: StaticCell<[u8; 0]> = StaticCell::new();
+        static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+        static STATE: StaticCell<State> = StaticCell::new();
 
         let mut builder = Builder::new(
             driver,
@@ -679,17 +681,7 @@ mod firmware {
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());
         spawner
-            .spawn(
-                cli_task(
-                    node,
-                    local_key,
-                    storage,
-                    rx,
-                    prev_panic_buf,
-                    prev_panic_len,
-                )
-                .unwrap(),
-            );
+            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
 
         join(usb.run(), heartbeat(led, wdt_handle)).await;
     }

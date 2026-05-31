@@ -63,6 +63,7 @@ pub struct WakePin {
 const P0_BASE: usize = 0x5000_0000;
 const P1_BASE: usize = 0x5000_0300;
 const PIN_CNF_OFFSET: usize = 0x700;
+const IN_OFFSET: usize = 0x510;
 const OUTSET_OFFSET: usize = 0x508;
 const OUTCLR_OFFSET: usize = 0x50C;
 const POWER_SYSTEMOFF: *mut u32 = 0x4000_0500 as *mut u32;
@@ -85,6 +86,18 @@ fn port_base(port: Port) -> usize {
         Port::P0 => P0_BASE,
         Port::P1 => P1_BASE,
     }
+}
+
+/// Read the current logical level of a pin from the GPIO IN register.
+///
+/// Works regardless of the pin's DIR/PULL/DRIVE configuration. Useful for
+/// polling an input pin during shutdown without holding an `embassy_nrf::gpio`
+/// handle (which may have already been tristated or dropped).
+pub fn read_pin(port: Port, pin: u8) -> bool {
+    let base = port_base(port);
+    let in_addr: *const u32 = (base + IN_OFFSET) as *const u32;
+    let bits = unsafe { core::ptr::read_volatile(in_addr) };
+    (bits >> pin as u32) & 1 != 0
 }
 
 /// Drive a pin LOW as a push-pull output. Useful for asserting an

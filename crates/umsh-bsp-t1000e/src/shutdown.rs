@@ -9,7 +9,7 @@
 
 use embassy_time::{Duration, Timer};
 use umsh_bsp_nrf52840::system_off::{
-    Port, WakePin, WakeSense, drive_pin_low, power_off, tristate_pin,
+    Port, WakePin, WakeSense, drive_pin_low, power_off, read_pin, tristate_pin,
 };
 use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
 
@@ -29,6 +29,16 @@ pub async fn run() -> ! {
     BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_OFF);
     Timer::after(Duration::from_millis(320)).await;
 
+    // If the shutdown was triggered by a long-press, the button (P0.06,
+    // active-high) may still be held. Arming WakeSense::High on an already-HIGH
+    // pin fires DETECT immediately → the chip wakes right back up. Poll until
+    // the button is released before entering System OFF.
+    while read_pin(Port::P0, 6) {
+        Timer::after(Duration::from_millis(50)).await;
+    }
+
+    Timer::after(Duration::from_millis(50)).await;
+
     // Hold LR1110 in reset (active-low). Stops chip clocks and collapses
     // current draw to the reset-state minimum.
     drive_pin_low(Port::P1, 10);
@@ -43,16 +53,20 @@ pub async fn run() -> ! {
     // P1.10 (LR1110 RESET) is left driving LOW intentionally.
     tristate_pin(Port::P0, 24); // LED
     tristate_pin(Port::P0, 25); // Buzzer PWM
-    tristate_pin(Port::P1,  5); // Buzzer enable
-    tristate_pin(Port::P1,  6); // Sensor rail enable
-    tristate_pin(Port::P0,  2); // Battery ADC (AIN0)
+    tristate_pin(Port::P1, 5); // Buzzer enable
+    tristate_pin(Port::P1, 6); // Sensor rail enable
+    tristate_pin(Port::P0, 2); // Battery ADC (AIN0)
     tristate_pin(Port::P0, 11); // SPI SCK
     tristate_pin(Port::P0, 12); // SPI CS
-    tristate_pin(Port::P0,  7); // LR1110 BUSY
-    tristate_pin(Port::P1,  1); // LR1110 DIO1/IRQ
-    tristate_pin(Port::P1,  8); // SPI MISO
-    tristate_pin(Port::P1,  9); // SPI MOSI
+    tristate_pin(Port::P0, 7); // LR1110 BUSY
+    tristate_pin(Port::P1, 1); // LR1110 DIO1/IRQ
+    tristate_pin(Port::P1, 8); // SPI MISO
+    tristate_pin(Port::P1, 9); // SPI MOSI
 
     // Button is active-high with pull-down → wake on rising edge.
-    power_off(&[WakePin { port: Port::P0, pin: 6, sense: WakeSense::High }])
+    power_off(&[WakePin {
+        port: Port::P0,
+        pin: 6,
+        sense: WakeSense::High,
+    }])
 }
