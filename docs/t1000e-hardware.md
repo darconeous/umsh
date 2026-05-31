@@ -214,6 +214,62 @@ Reference: MeshCore (RadioLib) calls `setRegulatorLDO()` unconditionally on
 this board — it never enables DCDC. Match this in any LR1110-using firmware
 for the T1000-E. In `lora-phy` terms: `Config::use_dcdc = false`.
 
+## LR1110 firmware driver quirks
+
+The following behaviors were discovered during Phase 2.5–3 bringup of UMSH firmware on the T1000-E. They are specific to the LR1110 and differ from the SX126x family; treat them as required workarounds for any lora-phy-based LR1110 driver.
+
+### WriteBuffer8 takes no offset
+
+The LR1110 `WriteBuffer` command (`0x0109`) is documented as `[opcode_hi, opcode_lo, data_byte_0, data_byte_1, ...]`. It does **not** have a buffer-offset field before the payload, unlike the SX1262 `WriteBuffer` command (`0x0E offset data...`). The lora-phy abstraction passes an offset byte for both chips; for the LR1110 this prepends a phantom `0x00` byte as the first byte of the transmitted payload. Every packet CRC fails on every receiver, and the root cause is invisible at the RX side. Fix: strip the offset from the LR1110 `WriteBuffer` implementation so the SPI transfer is exactly `[0x01, 0x09, payload_bytes...]`.
+
+### IRQ flag must be cleared explicitly after process_irq_event
+
+`LoRa::process_irq_event()` calls the LR1110 `GetIrqStatus` command with `clear_interrupts = false`. The DIO1 interrupt line therefore **remains asserted** after `process_irq_event` returns. If the next call to `wait_for_irq` relies on a falling/rising edge detect (GPIOTE in edge mode), it will return immediately on every iteration, spinning the CPU and preventing any real RX work. Fix: always call `lora.clear_irq_status().await` immediately after every `process_irq_event` call.
+
+### Preamble length: 16 required (not 8)
+
+The LR1110 requires a preamble length of at least **16** symbols for reliable packet detection with the LoRa modem configured for SF7 / 62.5 kHz / CR 4/5. Using the SX126x default of 8 symbols produces intermittent or zero packet detection. Both the RX and TX packet-parameter structs must use `preamble_length = 16` for interoperability between LR1110 nodes.
+
+SX126x-based boards (T-Echo, Wio Tracker L1) use preamble 8 and work reliably between each other. Cross-chip interoperability requires preamble 16 on both sides, or adapting the SX126x firmware to also use 16 (8 is accepted by SX126x as a receiver when the transmitter uses 16).
+
+### lora.rx()-in-select is unsafe for LR1110
+
+Calling `lora.rx()` inside an `embassy-futures::select` (or any async cancellation boundary) is safe for the SX126x but **not** for the LR1110. The `rx()` future wraps `complete_rx`, which drives the DIO1 wait and then reads the FIFO; if the future is dropped mid-execution the LR1110 radio state machine is left in an undefined state that usually requires a full re-initialization to recover.
+
+Working pattern for the LR1110:
+
+```rust
+lora.prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt).await;
+lora.start_rx().await;
+loop {
+    match select(lora.wait_for_irq(), tx_channel.receive()).await {
+        Either::First(Ok(())) => {
+            let result = lora.process_irq_event().await;
+            let _ = lora.clear_irq_status().await;  // REQUIRED — see above
+            if let Ok(Some(IrqState::Done)) = result {
+                let (len, _) = lora.get_rx_result().await?;
+                // read FIFO, dispatch packet ...
+                lora.start_rx().await;              // re-arm in-place
+            }
+        }
+        Either::Second(tx_req) => {
+            lora.prepare_for_tx(...).await;
+            lora.tx().await;
+            lora.prepare_for_rx(...).await;         // full re-arm after TX
+            lora.start_rx().await;
+        }
+    }
+}
+```
+
+### HP PA must be used
+
+The T1000-E routes the LR1110 RF output through the high-power (HP) PA path. Selecting the low-power (LP) PA in firmware (`PaSelection::Lp`) produces a significantly weaker signal. Always configure `PaSelection::Hp` and the matching maximum output power (22 dBm).
+
+## Buzzer driver quirks
+
+The T1000-E buzzer is driven by a magnetic driver IC enabled via `P1.05`. The enable pin must be asserted high before PWM is applied. The driver chip requires approximately **20 ms** to energize before the buzzer begins producing audible sound; tones shorter than ~60 ms will be inaudible or nearly silent. Melody notes for the T1000-E should be at least 60–80 ms long.
+
 ## What remains unknown without a schematic
 
 The firmware does **not** reveal:
