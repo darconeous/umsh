@@ -53,7 +53,7 @@ lora-phy           = { workspace = true }
 embedded-hal-bus   = { version = "0.3", default-features = false, features = ["async"] }
 # lora-phy 3.x has a hard dep on `defmt`. We supply a no-op global logger
 # inside the firmware so this stays a zero-overhead pass-through (matches
-# hello-techo).
+# companion-cli-techo).
 defmt              = { version = "0.3", default-features = false }
 
 # UMSH MAC coordinator + software crypto (Phase 3: CLI + MAC integration).

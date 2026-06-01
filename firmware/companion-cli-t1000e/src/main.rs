@@ -9,7 +9,7 @@
 // calibration mask 0x3F, RadioLib-matching init sequence).
 //
 // Phase 3 wires CliSession over USB-CDC using the same MAC + radio_runner
-// pattern as hello-techo (T-Echo Phase 6). Changes from Phase 2.5:
+// pattern as companion-cli-techo (T-Echo Phase 6). Changes from Phase 2.5:
 //   - echo_task replaced by umsh_task (Host::run + CliSession::run)
 //   - radio_task replaced by radio_runner_task (umsh_radio_loraphy::runner)
 //   - output_task upgraded to cli_io::drain_to_sender (64-byte chunk drain)
@@ -66,7 +66,7 @@ mod cli_io;
 
 // lora-phy 3.x unconditionally depends on defmt. A zero-overhead no-op global
 // logger satisfies the link without adding any debug transport — every log
-// call compiles out at release. Same pattern as hello-techo.
+// call compiles out at release. Same pattern as companion-cli-techo.
 #[cfg(target_os = "none")]
 mod defmt_logger {
     #[defmt::global_logger]

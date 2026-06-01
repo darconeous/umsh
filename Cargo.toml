@@ -18,8 +18,8 @@ members = [
     "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
     "firmware/companion-cli-t1000e",
-    "firmware/hello-techo",
-    "firmware/hello-wio-tracker-l1",
+    "firmware/companion-cli-techo",
+    "firmware/companion-cli-wio-tracker-l1",
     "umsh",
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
