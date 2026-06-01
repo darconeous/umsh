@@ -161,6 +161,7 @@ pub(crate) struct LocalNodeState {
     ack_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey, SendToken)>>,
     pfs_established_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pfs_ended_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
+    pfs_failed_handlers: HandlerTable<Box<dyn FnMut(PublicKey, PfsFailure)>>,
     pong_handlers: HandlerTable<Box<dyn FnMut(PublicKey, u64)>>,
     ping_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pending_pings: Vec<PendingPing>,
@@ -181,6 +182,7 @@ impl LocalNodeState {
             ack_timeout_handlers: HandlerTable::default(),
             pfs_established_handlers: HandlerTable::default(),
             pfs_ended_handlers: HandlerTable::default(),
+            pfs_failed_handlers: HandlerTable::default(),
             pong_handlers: HandlerTable::default(),
             ping_timeout_handlers: HandlerTable::default(),
             pending_pings: Vec::new(),
@@ -232,6 +234,28 @@ pub(crate) enum PfsLifecycle {
     Ended(PublicKey),
 }
 
+/// Why a local PFS negotiation step failed. Surfaced to applications via
+/// [`LocalNode::on_pfs_failed`] so a failed/stalled negotiation reports a
+/// reason instead of silently doing nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PfsFailure {
+    /// No free identity or peer slot to activate the ephemeral session —
+    /// e.g. the MAC `IDENTITIES`/peer table is exhausted, or more concurrent
+    /// PFS sessions were requested than there are ephemeral identity slots.
+    Capacity,
+    /// A PFS response or teardown referenced a session that does not exist.
+    SessionMissing,
+    /// Crypto failure while deriving the ephemeral session keys.
+    Crypto,
+    /// Failed to transmit a PFS control frame to the peer.
+    Send,
+    /// A sent PFS request was not answered before its deadline (the peer never
+    /// responded, or its response was lost).
+    Timeout,
+    /// Any other node-layer failure during PFS processing.
+    Other,
+}
+
 #[cfg(feature = "software-crypto")]
 pub(crate) struct ChannelMembershipEntry {
     pub channel: Channel,
@@ -271,6 +295,26 @@ pub enum NodeError<M: MacBackend> {
     /// Crypto failure during PFS processing.
     #[cfg(feature = "software-crypto")]
     Crypto(umsh_crypto::CryptoError),
+}
+
+impl<M: MacBackend> NodeError<M> {
+    /// Coarse classification of this error for surfacing PFS failures to
+    /// applications (the concrete error type is generic over `M`, so callers
+    /// that just want to report a failure use this instead).
+    pub(crate) fn pfs_failure(&self) -> PfsFailure {
+        use crate::mac::MacBackendError;
+        match self {
+            NodeError::Mac(MacBackendError::Capacity(_)) => PfsFailure::Capacity,
+            NodeError::Mac(MacBackendError::Send(_)) => PfsFailure::Send,
+            #[cfg(feature = "software-crypto")]
+            NodeError::PfsSessionTableFull => PfsFailure::Capacity,
+            #[cfg(feature = "software-crypto")]
+            NodeError::PfsSessionMissing => PfsFailure::SessionMissing,
+            #[cfg(feature = "software-crypto")]
+            NodeError::Crypto(_) => PfsFailure::Crypto,
+            _ => PfsFailure::Other,
+        }
+    }
 }
 
 impl<M> core::fmt::Debug for NodeError<M>
@@ -546,6 +590,30 @@ impl<M: MacBackend> LocalNode<M> {
         let handle = self.add_pfs_ended_handler(handler);
         let state = self.state.clone();
         Subscription::new(move || state.borrow_mut().pfs_ended_handlers.remove(handle))
+    }
+
+    fn add_pfs_failed_handler<F>(&self, handler: F) -> SubscriptionHandle
+    where
+        F: FnMut(PublicKey, PfsFailure) + 'static,
+    {
+        self.state
+            .borrow_mut()
+            .pfs_failed_handlers
+            .insert(Box::new(handler))
+    }
+
+    /// Subscribe to PFS negotiation failures for any peer. The handler is
+    /// invoked with the peer's long-term key and a coarse [`PfsFailure`]
+    /// reason whenever a local PFS step (accepting a request, completing a
+    /// response, or tearing down) fails — so a stalled negotiation reports a
+    /// reason instead of silently doing nothing.
+    pub fn on_pfs_failed<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, PfsFailure) + 'static,
+    {
+        let handle = self.add_pfs_failed_handler(handler);
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().pfs_failed_handlers.remove(handle))
     }
 
     fn add_pong_handler<F>(&self, handler: F) -> SubscriptionHandle
@@ -1030,6 +1098,14 @@ impl<M: MacBackend> LocalNode<M> {
             .for_each_mut(|handler| handler(peer));
     }
 
+    pub(crate) fn dispatch_pfs_failed(&self, peer: PublicKey, reason: PfsFailure) {
+        let mut state = self.state.borrow_mut();
+        let peer = canonical_peer(&state, peer);
+        state
+            .pfs_failed_handlers
+            .for_each_mut(|handler| handler(peer, reason));
+    }
+
     pub(crate) async fn expire_pfs_sessions(&self) -> Result<Vec<PublicKey>, NodeError<M>> {
         #[cfg(feature = "software-crypto")]
         {
@@ -1045,6 +1121,13 @@ impl<M: MacBackend> LocalNode<M> {
         {
             Ok(Vec::new())
         }
+    }
+
+    /// Drop any sent PFS requests that were not answered before their deadline,
+    /// returning the peers so the caller can report a [`PfsFailure::Timeout`].
+    #[cfg(feature = "software-crypto")]
+    pub(crate) fn expire_pfs_requests(&self, now_ms: u64) -> Vec<PublicKey> {
+        self.state.borrow_mut().pfs.expire_requests(now_ms)
     }
 }
 

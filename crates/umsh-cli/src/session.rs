@@ -478,6 +478,18 @@ where
                 self.out.write_line(&line).await?;
             }
 
+            CliEvent::PfsFailed { peer, reason } => {
+                let alias = self.peer_alias_display(&peer);
+                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let _ = write!(
+                    &mut line,
+                    "[pfs failed with {}: {}]",
+                    alias,
+                    pfs_failure_str(reason)
+                );
+                self.out.write_line(&line).await?;
+            }
+
             CliEvent::Pong { peer, rtt_ms } => {
                 let alias = self.peer_alias_display(&peer);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
@@ -1593,6 +1605,16 @@ where
         }));
     }
 
+    // on_pfs_failed
+    {
+        let ev = events.clone();
+        let dr = dropped.clone();
+        let wk = wake.clone();
+        subs.push(node.on_pfs_failed(move |peer, reason| {
+            push_event(&ev, &dr, &wk, CliEvent::PfsFailed { peer, reason });
+        }));
+    }
+
     // on_mac_command — EchoRequest and EchoResponse are both silently ignored
     // here. EchoRequest is auto-replied by the MAC coordinator. EchoResponse
     // is handled by on_pong below (match_pong is called in host.rs before
@@ -1636,6 +1658,18 @@ where
     }
 
     subs
+}
+
+fn pfs_failure_str(reason: umsh_node::PfsFailure) -> &'static str {
+    use umsh_node::PfsFailure;
+    match reason {
+        PfsFailure::Capacity => "no ephemeral identity slot",
+        PfsFailure::SessionMissing => "no matching session",
+        PfsFailure::Crypto => "crypto error",
+        PfsFailure::Send => "send failed",
+        PfsFailure::Timeout => "no response (timed out)",
+        PfsFailure::Other => "error",
+    }
 }
 
 fn mac_cmd_id(cmd: &OwnedMacCommand) -> u8 {
