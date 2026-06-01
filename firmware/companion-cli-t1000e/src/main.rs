@@ -168,9 +168,9 @@ mod firmware {
     // depend on `umsh-node` (alloc + software-crypto), which the BSP doesn't
     // pull in, so the firmware owns those two aliases.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
-    type T1000EHost = Host<'static, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
+    type T1000EHost = Host<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>;
     /// LocalNode handle. Cheap to clone — passed to `cli_task` and `beacon_task`.
-    type T1000ENode = LocalNode<MacHandle<'static, T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>>;
+    type T1000ENode = LocalNode<MacHandle<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 
     // ─── Concrete radio types ─────────────────────────────────────────────────
 
@@ -266,10 +266,13 @@ mod firmware {
     /// blocks on a host terminal connection — everything else (radio, MAC,
     /// button, buzzer, beacon) runs without it.
     #[embassy_executor::task]
+    #[allow(clippy::too_many_arguments)]
     async fn cli_task(
         node: T1000ENode,
         local_key: PublicKey,
         storage: &'static NvmcStorage,
+        peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8>,
+        ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2>,
         rx: T1000eRescue,
         prev_panic_buf: &'static [u8; 256],
         prev_panic_len: usize,
@@ -281,12 +284,10 @@ mod firmware {
         let mut input = cli_io::CdcInput::new(rx);
         let mut out = cli_io::CdcOutput::new();
 
-        // Pre-load persisted state.
-        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
-            heapless::Vec::new();
-        let _ = storage.load_all_peers(&mut peer_buf).await;
-        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> = heapless::Vec::new();
-        let _ = storage.load_all_channels(&mut ch_buf).await;
+        // Peers and channels were already registered into the MAC at boot (see
+        // `main`); `peer_buf`/`ch_buf` arrive here only to populate the CLI's
+        // own display tables (aliases, channel names). The `register_*` calls
+        // below re-hit the MAC, which is idempotent.
 
         // Wait for the host to open the CDC port before emitting the banner.
         input.wait_connection().await;
@@ -667,8 +668,32 @@ mod firmware {
         let mut host: T1000EHost = Host::new(handle);
         let node = host.add_node(identity_id);
         let beacon_node = node.clone();
+
+        // Load persisted peers and channels and register their keys into the
+        // MAC *now*, at boot — independent of USB. This used to live in the CLI
+        // task, which only registers after a host opens the CDC port; until
+        // then the coordinator had no peer/channel keys, so it could not
+        // authenticate inbound secure frames and silently dropped every ping
+        // until a serial client attached. Aliases/names are carried along to
+        // the CLI for display only; the MAC needs just the keys.
+        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
+            heapless::Vec::new();
+        let _ = storage.load_all_peers(&mut peer_buf).await;
+        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> = heapless::Vec::new();
+        let _ = storage.load_all_channels(&mut ch_buf).await;
+        for (pk, _alias) in peer_buf.iter() {
+            let _ = node.peer(PublicKey(*pk)).await;
+        }
+        for (name, key_bytes) in ch_buf.iter() {
+            let channel =
+                umsh_node::Channel::private(umsh_core::ChannelKey(*key_bytes), name.as_str());
+            let _ = node.join(&channel).await;
+        }
+
         // Restore RX counter boundaries before the MAC starts processing
         // packets so the replay window starts above the last accepted frame.
+        // Runs after the peer registration above so the persisted boundaries
+        // actually land on registered peers.
         MacHandle::new(mac_cell)
             .load_all_persisted_rx_counters()
             .await
@@ -680,8 +705,12 @@ mod firmware {
         spawner.spawn(power_task(saadc, sensor_rail).unwrap());
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());
-        spawner
-            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
+        spawner.spawn(
+            cli_task(
+                node, local_key, storage, peer_buf, ch_buf, rx, prev_panic_buf, prev_panic_len,
+            )
+            .unwrap(),
+        );
 
         join(usb.run(), heartbeat(led, wdt_handle)).await;
     }

@@ -37,6 +37,6 @@ impl Platform for T1000EPlatform {
 }
 
 /// Default-capacity MAC coordinator for the T1000-E firmware:
-/// 1 identity, 8 peers, 4 channels, 4 pending ACKs, 8 TX queue slots,
-/// 255-byte frame buffer, 32-entry dup cache.
-pub type T1000EMac = umsh_mac::Mac<T1000EPlatform, 1, 8, 4, 4, 8, 255, 32>;
+/// 2 identities (1 long-term + 1 PFS ephemeral session), 8 peers, 4 channels,
+/// 4 pending ACKs, 8 TX queue slots, 255-byte frame buffer, 32-entry dup cache.
+pub type T1000EMac = umsh_mac::Mac<T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>;
