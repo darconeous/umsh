@@ -191,6 +191,19 @@ The firmware defines:
 - `LR11X0_DIO_AS_RF_SWITCH`
 - RF switch table handling in MeshCore
 
+### LR1110 built-in geolocation is not used on this board
+
+The LR1110 is a combo part: in addition to the sub-GHz LoRa transceiver, the
+silicon contains GNSS and WiFi passive-scanning engines for cloud-assisted
+geolocation. **None of that is wired up or used on the T1000-E.** Positioning is
+handled entirely by the discrete AG3335 / Airoha GNSS module on UART1 (see the
+GNSS / GPS control section); the LR1110 is used purely as a LoRa radio.
+
+A practical consequence: the DIO3-gated 1.6 V TCXO exists only to serve the LoRa
+transceiver's frequency reference — it is **not** there to support LR1110 GNSS/WiFi
+scanning (which would otherwise be the usual motivation for fitting a TCXO over a
+plain crystal on an LR11xx design).
+
 ### LR1110 internal regulator: LDO only (no DCDC)
 
 The T1000-E module does **not** populate the external switching inductor
@@ -265,6 +278,24 @@ loop {
 ### HP PA must be used
 
 The T1000-E routes the LR1110 RF output through the high-power (HP) PA path. Selecting the low-power (LP) PA in firmware (`PaSelection::Lp`) produces a significantly weaker signal. Always configure `PaSelection::Hp` and the matching maximum output power (22 dBm).
+
+### Unverified observation: keeping the TCXO warm (StandbyXOSC) seemed to break replies
+
+This is an **observation, not a confirmed finding** — record it as a caution, not as established fact.
+
+While chasing LoRa reliability issues we experimented with resting the LR1110 in `StandbyXOSC` (reference oscillator left running) instead of the default `StandbyRC` (oscillator powered down between operations), with the intent of avoiding the per-operation TCXO warm-up. With that configuration we *appeared* to see the following on the T1000-E:
+
+- It could still **initiate** a ping to an SX126x peer (T-Echo / Wio) and receive the reply.
+- But a reply it **transmitted immediately after receiving** a frame did not appear to be decoded by the SX126x receivers.
+- Switching back to `StandbyRC` *appeared* to restore two-way operation.
+
+Important caveats:
+
+- We do **not** understand the mechanism. The leading guess — that the short `StandbyRC` warm-up also gives the synthesizer settling time that a fast receive→transmit turnaround needs — is unverified speculation.
+- There were **several confounding changes in flight** at the same time (peer-registration timing, a separate `do_tx` TCXO change), so the `StandbyRC` vs `StandbyXOSC` variable was not cleanly isolated beyond a single A/B firmware flip late in the session.
+- The diagnosis was end-to-end ping behavior only; there was **no RF measurement** (SDR capture, spectrum, SNR of the failing frames) to confirm what actually went wrong on air.
+
+Practical takeaway for now: prefer `StandbyRC` for the LR1110 on this board, and treat any "keep the oscillator warm" optimization as something that needs proper RF characterization before being trusted.
 
 ## Buzzer driver quirks
 
