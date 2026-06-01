@@ -228,6 +228,11 @@ impl<
                     node.dispatch_pfs_ended(peer);
                 }
             }
+            // Abandon sent PFS requests that were never answered, so the
+            // requester reports a timeout instead of sitting in `Requested`.
+            for peer in node.expire_pfs_requests(now_ms) {
+                node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
+            }
         }
 
         for (_, node) in &self.nodes {
@@ -260,14 +265,17 @@ impl<
             return;
         };
 
-        if let Ok(Some(lifecycle)) = node
+        match node
             .handle_pfs_command(&from, &command, &self.pfs_control_options)
             .await
         {
-            match lifecycle {
-                PfsLifecycle::Established(peer) => node.dispatch_pfs_established(peer),
-                PfsLifecycle::Ended(peer) => node.dispatch_pfs_ended(peer),
-            }
+            Ok(Some(PfsLifecycle::Established(peer))) => node.dispatch_pfs_established(peer),
+            Ok(Some(PfsLifecycle::Ended(peer))) => node.dispatch_pfs_ended(peer),
+            Ok(None) => {}
+            // Previously the error was dropped here, so a failed negotiation
+            // (e.g. no ephemeral identity slot) left both sides silently stuck.
+            // Surface it so applications can report the failure.
+            Err(err) => node.dispatch_pfs_failed(from, err.pfs_failure()),
         }
     }
 }

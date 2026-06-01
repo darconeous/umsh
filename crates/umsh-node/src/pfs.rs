@@ -16,6 +16,13 @@ use crate::{MacCommand, mac::MacBackend, mac_command, node::NodeError};
 #[cfg(feature = "software-crypto")]
 const DEFAULT_MAX_PFS_SESSIONS: usize = 4;
 
+/// How long a sent PFS request waits for a response before it is abandoned and
+/// reported as a [`PfsFailure::Timeout`](crate::PfsFailure::Timeout). A
+/// `Requested` session holds no MAC resources (the ephemeral identity is only
+/// registered once a response arrives), so timing one out just drops the entry.
+#[cfg(feature = "software-crypto")]
+const PFS_REQUEST_TIMEOUT_MS: u64 = 30_000;
+
 #[cfg(feature = "software-crypto")]
 /// Lifecycle state for a PFS session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +50,9 @@ pub(crate) struct PfsSession {
     pub expires_ms: u64,
     /// Session lifecycle state.
     pub state: PfsState,
+    /// Deadline by which a [`Requested`](PfsState::Requested) session must
+    /// receive its response, after which it is abandoned. Unused once `Active`.
+    pub request_deadline_ms: u64,
     pending_local: Option<SoftwareIdentity>,
 }
 
@@ -55,6 +65,7 @@ impl core::fmt::Debug for PfsSession {
             .field("peer_ephemeral", &self.peer_ephemeral)
             .field("expires_ms", &self.expires_ms)
             .field("state", &self.state)
+            .field("request_deadline_ms", &self.request_deadline_ms)
             .finish()
     }
 }
@@ -136,6 +147,7 @@ impl PfsSessionManager {
             peer_ephemeral: PublicKey([0u8; 32]),
             expires_ms: now_ms.saturating_add(u64::from(duration_minutes) * 60_000),
             state: PfsState::Requested,
+            request_deadline_ms: now_ms.saturating_add(PFS_REQUEST_TIMEOUT_MS),
             pending_local: Some(local_ephemeral),
         });
         Ok(receipt)
@@ -181,6 +193,7 @@ impl PfsSessionManager {
             peer_ephemeral,
             expires_ms: active.expires_ms,
             state: PfsState::Active,
+            request_deadline_ms: u64::MAX,
             pending_local: None,
         });
         Ok(())
@@ -269,6 +282,23 @@ impl PfsSessionManager {
             expired.push(session.peer_long_term);
         }
         Ok(expired)
+    }
+
+    /// Drop any `Requested` sessions whose response deadline has passed and
+    /// return their peers. These hold no MAC resources (no ephemeral identity
+    /// is registered until a response arrives), so no `mac` cleanup is needed.
+    pub(crate) fn expire_requests(&mut self, now_ms: u64) -> Vec<PublicKey> {
+        let mut timed_out = Vec::new();
+        let mut index = 0usize;
+        while index < self.sessions.len() {
+            let session = &self.sessions[index];
+            if session.state == PfsState::Requested && session.request_deadline_ms <= now_ms {
+                timed_out.push(self.sessions.swap_remove(index).peer_long_term);
+            } else {
+                index += 1;
+            }
+        }
+        timed_out
     }
 
     async fn remove_existing<M: MacBackend>(

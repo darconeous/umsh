@@ -170,7 +170,7 @@ pub use mac_command::{CommandId, MacCommand};
 pub use node::BoundChannel;
 #[cfg(feature = "software-crypto")]
 pub use node::PfsStatus;
-pub use node::{LocalNode, NodeError, Subscription};
+pub use node::{LocalNode, NodeError, PfsFailure, Subscription};
 pub use peer::PeerConnection;
 pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};

@@ -48,6 +48,10 @@ pub enum CliEvent {
     PfsEnded {
         peer: PublicKey,
     },
+    PfsFailed {
+        peer: PublicKey,
+        reason: umsh_node::PfsFailure,
+    },
     Pong {
         peer: PublicKey,
         rtt_ms: u64,
