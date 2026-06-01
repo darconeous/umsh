@@ -1,6 +1,6 @@
-//! Panic handler for the hello-wio-tracker-l1 bringup firmware.
+//! Panic handler for the companion-cli-wio-tracker-l1 bringup firmware.
 //!
-//! Identical in structure to hello-techo's panic handler — wires
+//! Identical in structure to companion-cli-techo's panic handler — wires
 //! together the three BSP pieces that must be glued in a binary:
 //!
 //! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit` — the `.uninit`

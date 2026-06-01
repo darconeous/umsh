@@ -507,7 +507,7 @@ mod firmware {
         let mut config = Config::new(0x2886, 0x1667);
         config.manufacturer      = Some("UMSH");
         config.product           = Some("Seeed Wio Tracker L1 Bringup");
-        config.serial_number     = Some("hello-wio-tracker-l1");
+        config.serial_number     = Some("companion-cli-wio-tracker-l1");
         config.max_power         = 100;
         config.max_packet_size_0 = 64;
 

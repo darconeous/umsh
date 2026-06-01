@@ -1,30 +1,40 @@
 [package]
-name = "firmware-hello-wio-tracker-l1"
-description = "Seeed Wio Tracker L1 / L1 Pro bringup firmware (USB-CDC + OLED + LoRa + MAC)"
+name = "firmware-companion-cli-techo"
+description = "LilyGO T-Echo bringup firmware (USB-CDC + heartbeat + e-paper hello-world)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Bringup firmware for the Seeed Wio Tracker L1 family.
-# See docs/firmware-plan-wio-tracker-l1.md for the full plan.
+# Minimal bringup firmware for the LilyGO T-Echo. Does not pretend to
+# be a "real" companion-radio or repeater — it is a stepping stone
+# whose only jobs are to validate the embassy / UF2 / flash workflow
+# and prove out the safety primitives (1200-baud reset, escape rescue,
+# panic-persist, WDT) on a recoverable device before pointing the same
+# patterns at the sealed T1000-E.
+#
+# See docs/firmware-plan-techo.md for the full plan.
 #
 # Like the other firmware crates, this is in `workspace.members` but
 # NOT in `default-members`, so root-level `cargo check` does not try
 # to cross-compile it on the developer's host.
 
 [[bin]]
-name = "firmware-hello-wio-tracker-l1"
+name = "firmware-companion-cli-techo"
 path = "src/main.rs"
 
 [dependencies]
-umsh-bsp-wio-tracker-l1 = { path = "../../crates/umsh-bsp-wio-tracker-l1", default-features = false }
+umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
-umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 
+# Embedded-only deps. Gated on `target_os = "none"` so this crate still
+# parses and trivially compiles on host as an empty `fn main()`. The
+# real firmware build uses the embedded target via the .cargo/config.toml
+# in this directory.
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
@@ -33,17 +43,17 @@ embassy-time = { version = "0.5", default-features = false, features = ["tick-hz
 embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
-embassy-sync = { version = "0.6", default-features = false }
 static_cell = "2"
-# SX1262 LoRa radio driver and supporting crates. Pinned via workspace dep
-# so the patched lora-rs fork applies uniformly across all firmware.
+# SX1262 LoRa radio driver and supporting crates.
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
-# lora-phy 3.0.x unconditionally depends on defmt 0.3; provide a no-op
-# global logger so the firmware links without a debug transport.
+# embassy-sync for the static radio channels.
+embassy-sync = { version = "0.6", default-features = false }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
+# no-op global logger so the firmware links without a debug transport.
 defmt = "0.3"
-# UMSH MAC coordinator and software crypto (Phase 4: MAC integration).
-# embedded-alloc provides the global heap required by umsh-sync (alloc).
+# UMSH MAC coordinator and software crypto (Phase 6: MAC integration).
+# embedded-alloc provides the global heap required by umsh-sync (used by MacHandle).
 embedded-alloc = { version = "0.5", default-features = false }
 umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }

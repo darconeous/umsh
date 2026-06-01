@@ -849,7 +849,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-hello-techo"
+name = "firmware-companion-cli-techo"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -882,7 +882,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-hello-wio-tracker-l1"
+name = "firmware-companion-cli-wio-tracker-l1"
 version = "0.1.0"
 dependencies = [
  "cortex-m",

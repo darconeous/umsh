@@ -1,6 +1,6 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages \
-	build-hello-techo flash-hello-techo \
-	build-hello-wio-tracker-l1 flash-hello-wio-tracker-l1 \
+	build-companion-cli-techo flash-companion-cli-techo \
+	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
 	flash-companion-cli-t1000e-serial
 
@@ -19,19 +19,19 @@
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
-build-hello-techo:
-	cd firmware/hello-techo && cargo build --release
+build-companion-cli-techo:
+	cd firmware/companion-cli-techo && cargo build --release
 
-flash-hello-techo: build-hello-techo
+flash-companion-cli-techo: build-companion-cli-techo
 	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-hello-techo
+		$(TARGET_DIR)/firmware-companion-cli-techo
 
-build-hello-wio-tracker-l1:
-	cd firmware/hello-wio-tracker-l1 && cargo build --release
+build-companion-cli-wio-tracker-l1:
+	cd firmware/companion-cli-wio-tracker-l1 && cargo build --release
 
-flash-hello-wio-tracker-l1: build-hello-wio-tracker-l1
+flash-companion-cli-wio-tracker-l1: build-companion-cli-wio-tracker-l1
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
-		$(TARGET_DIR)/firmware-hello-wio-tracker-l1
+		$(TARGET_DIR)/firmware-companion-cli-wio-tracker-l1
 
 build-companion-cli-t1000e:
 	cd firmware/companion-cli-t1000e && cargo build --release

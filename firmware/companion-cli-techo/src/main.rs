@@ -727,7 +727,7 @@ mod firmware {
         let mut config = Config::new(0x16c0, 0x27dd);
         config.manufacturer      = Some("UMSH");
         config.product           = Some("T-Echo Bringup");
-        config.serial_number     = Some("hello-techo");
+        config.serial_number     = Some("companion-cli-techo");
         config.max_power         = 100;
         config.max_packet_size_0 = 64;
 

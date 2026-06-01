@@ -1,4 +1,4 @@
-//! Panic handler for the hello-techo bringup firmware.
+//! Panic handler for the companion-cli-techo bringup firmware.
 //!
 //! Wires together three BSP pieces that are each unit-testable in
 //! isolation but must be glued together in the binary:
