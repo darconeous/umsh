@@ -31,6 +31,6 @@ impl Platform for TechoPlatform {
 }
 
 /// Default-capacity MAC coordinator for the T-Echo bringup firmware:
-/// 1 identity, 8 peers, 4 channels, 4 pending ACKs, 8 TX queue slots,
-/// 255-byte frame buffer, 32-entry dup cache.
-pub type TechoMac = umsh_mac::Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>;
+/// 2 identities (1 long-term + 1 PFS ephemeral session), 8 peers, 4 channels,
+/// 4 pending ACKs, 8 TX queue slots, 255-byte frame buffer, 32-entry dup cache.
+pub type TechoMac = umsh_mac::Mac<TechoPlatform, 2, 8, 4, 4, 8, 255, 32>;

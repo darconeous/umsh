@@ -113,9 +113,9 @@ mod firmware {
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_core::{PayloadType, PublicKey};
+    use umsh_core::{ChannelKey, PayloadType, PublicKey};
     use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, RepeaterConfig};
-    use umsh_node::Host;
+    use umsh_node::{Channel, Host, LocalNode};
     use umsh_sync::AsyncRefCell;
 
     use super::cli_io;
@@ -159,6 +159,13 @@ mod firmware {
     type RadioIv     = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
     type RadioKind   = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
     type LoraRadio   = LoRa<RadioKind, Delay>;
+
+    // Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
+    // firmware owns them). The const params match `TechoMac`'s capacities.
+    /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
+    type TechoHost = Host<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>;
+    /// LocalNode handle. Cheap to clone — passed to `cli_task`.
+    type TechoNode = LocalNode<MacHandle<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
@@ -256,16 +263,43 @@ mod firmware {
         }
     }
 
-    /// Combined task: drives the MAC via `Host::run` and runs the `CliSession`
-    /// concurrently via `select`. The shared `AsyncRefCell<Mac>` (held via
-    /// `MacHandle`) serialises MAC access between the host driver and the
-    /// CLI's send-side calls.
+    /// Drives the MAC coordinator and owns the identity-relay subscription.
+    /// Independent of USB so radio RX/TX and the MAC pump (including ping
+    /// auto-replies) keep running whether or not a host terminal is attached.
     #[embassy_executor::task]
-    async fn umsh_task(
-        mac_cell: &'static AsyncRefCell<TechoMac>,
-        identity_id: LocalIdentityId,
+    async fn mac_task(mut host: TechoHost, identity_id: LocalIdentityId) {
+        // Subscribe to raw packets so NodeIdentity payloads from known peers
+        // can be relayed to identity_persist_task for durable storage.
+        // The guard must remain live for the duration of the task.
+        let sub_node = host.node(identity_id).expect("node just added");
+        let _identity_sub = sub_node.on_receive(|pkt| {
+            if pkt.payload_type() != PayloadType::NodeIdentity { return false; }
+            let Some(from) = pkt.from_key() else { return false; };
+            let raw = pkt.payload();
+            let len = raw.len().min(256);
+            let mut buf = [0u8; 256];
+            buf[..len].copy_from_slice(&raw[..len]);
+            IDENTITY_SIGNAL.signal((from.0, buf, len));
+            false // don't consume — let other handlers see it too
+        });
+
+        let _ = host.run().await;
+        panic!("host exited");
+    }
+
+    /// Runs the `CliSession` over USB-CDC. The only task that blocks on a host
+    /// terminal connection — the radio, MAC pump, and identity relay all run
+    /// without it. Peers/channels are already registered into the MAC at boot
+    /// (see `main`); the buffers passed here only populate the CLI's own
+    /// display tables.
+    #[embassy_executor::task]
+    #[allow(clippy::too_many_arguments)]
+    async fn cli_task(
+        node: TechoNode,
         local_key: PublicKey,
         storage: &'static NvmcStorage,
+        peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8>,
+        ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2>,
         rx: TechoRescue,
         prev_panic_buf: &'static [u8; 256],
         prev_panic_len: usize,
@@ -274,20 +308,8 @@ mod firmware {
         use umsh_cli::io::CliOutput;
         use umsh_cli::logger::NullLogger;
 
-        let handle = MacHandle::new(mac_cell);
-        let mut host: Host<'_, TechoPlatform, 1, 8, 4, 4, 8, 255, 32> = Host::new(handle);
-        let node = host.add_node(identity_id);
-
         let mut input = cli_io::CdcInput::new(rx);
         let mut out = cli_io::CdcOutput::new();
-
-        // Load persisted peers and channels before `out` is moved into the CLI.
-        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
-            heapless::Vec::new();
-        let _ = storage.load_all_peers(&mut peer_buf).await;
-        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> =
-            heapless::Vec::new();
-        let _ = storage.load_all_channels(&mut ch_buf).await;
 
         // Wait for the host to open the CDC port before writing the banner.
         input.wait_connection().await;
@@ -314,42 +336,17 @@ mod firmware {
             PowerSignaler,
         );
 
-        // Re-register loaded peers and channels into the CLI session tables.
+        // Populate the CLI display tables (aliases, channel names). The MAC was
+        // already registered at boot, so these re-registrations are idempotent.
         for (pk, alias) in peer_buf.iter() {
-            let key = PublicKey(*pk);
-            let _ = cli.register_peer(key, alias.as_deref()).await;
+            let _ = cli.register_peer(PublicKey(*pk), alias.as_deref()).await;
         }
-        // Load RX counter boundaries so the replay window starts above any
-        // frames accepted before the last reboot.
-        MacHandle::new(mac_cell)
-            .load_all_persisted_rx_counters()
-            .await
-            .ok();
         for (name, key_bytes) in ch_buf.iter() {
             let _ = cli.register_channel(name.as_str(), *key_bytes).await;
         }
 
-        // Subscribe to raw packets so NodeIdentity payloads from known peers
-        // can be relayed to identity_persist_task for durable storage.
-        // The guard must remain live for the duration of the task.
-        let sub_node = host.node(identity_id).expect("node just added");
-        let _identity_sub = sub_node.on_receive(|pkt| {
-            if pkt.payload_type() != PayloadType::NodeIdentity { return false; }
-            let Some(from) = pkt.from_key() else { return false; };
-            let raw = pkt.payload();
-            let len = raw.len().min(256);
-            let mut buf = [0u8; 256];
-            buf[..len].copy_from_slice(&raw[..len]);
-            IDENTITY_SIGNAL.signal((from.0, buf, len));
-            false // don't consume — let other handlers see it too
-        });
-
-        loop {
-            match select(host.run(), cli.run(&mut input)).await {
-                Either::First(_) => panic!("host exited"),
-                Either::Second(_) => {}
-            }
-        }
+        let _ = cli.run(&mut input).await;
+        panic!("cli exited");
     }
 
     /// Owns the e-paper SPI bus and pins. Renders the boot screen on
@@ -692,6 +689,37 @@ mod firmware {
         let mac_cell: &'static AsyncRefCell<TechoMac> =
             MAC_CELL.init(AsyncRefCell::new(mac));
 
+        // ── Host + node + boot-time peer/channel registration ─────────────────
+        // Build the Host/node here so the MAC pump (`mac_task`) is independent
+        // of USB, and register persisted peer/channel keys into the MAC now —
+        // not from the CLI task, which only runs after a host opens the CDC
+        // port. Without this the coordinator had no keys until a serial client
+        // attached, so it couldn't authenticate inbound secure frames and
+        // silently dropped every ping. Aliases/names ride along to the CLI for
+        // display; the MAC needs only the keys.
+        let handle = MacHandle::new(mac_cell);
+        let mut host: TechoHost = Host::new(handle);
+        let node = host.add_node(identity_id);
+
+        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
+            heapless::Vec::new();
+        let _ = storage.load_all_peers(&mut peer_buf).await;
+        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> = heapless::Vec::new();
+        let _ = storage.load_all_channels(&mut ch_buf).await;
+        for (pk, _alias) in peer_buf.iter() {
+            let _ = node.peer(PublicKey(*pk)).await;
+        }
+        for (name, key_bytes) in ch_buf.iter() {
+            let channel = Channel::private(ChannelKey(*key_bytes), name.as_str());
+            let _ = node.join(&channel).await;
+        }
+        // Restore RX counter boundaries after peer registration so the persisted
+        // boundaries land on registered peers.
+        MacHandle::new(mac_cell)
+            .load_all_persisted_rx_counters()
+            .await
+            .ok();
+
         // ── USB stack + steady-state services ────────────────────────────────
         let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
@@ -726,9 +754,12 @@ mod firmware {
 
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(identity_persist_task(storage).unwrap());
+        spawner.spawn(mac_task(host, identity_id).unwrap());
         spawner.spawn(
-            umsh_task(mac_cell, identity_id, local_key, storage, rx, prev_panic_buf, prev_panic_len)
-                .unwrap()
+            cli_task(
+                node, local_key, storage, peer_buf, ch_buf, rx, prev_panic_buf, prev_panic_len,
+            )
+            .unwrap(),
         );
 
         // User button (P1.10, active-low). Pull-up so DETECT can wake from
