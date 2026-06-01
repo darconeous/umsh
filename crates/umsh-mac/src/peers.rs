@@ -86,6 +86,14 @@ impl<const N: usize> PeerRegistry<N> {
             .map(|(index, peer)| (PeerId(index as u8), peer))
     }
 
+    /// Iterate over all registered peers.
+    pub fn iter(&self) -> impl Iterator<Item = (PeerId, &PeerInfo)> {
+        self.peers
+            .iter()
+            .enumerate()
+            .map(|(index, peer)| (PeerId(index as u8), peer))
+    }
+
     /// Borrow peer metadata by identifier.
     pub fn get(&self, id: PeerId) -> Option<&PeerInfo> {
         self.peers.get(id.0 as usize)
