@@ -268,17 +268,12 @@ mod firmware {
 
     /// Runs the `CliSession` over USB-CDC. The only task that blocks on a host
     /// terminal connection — the radio, MAC pump, and identity relay all run
-    /// without it. Peers/channels are already registered into the MAC at boot
-    /// (see `main`); the buffers passed here only populate the CLI's own
-    /// display tables.
+    /// without it.
     #[embassy_executor::task]
-    #[allow(clippy::too_many_arguments)]
     async fn cli_task(
         node: WioNode,
         local_key: PublicKey,
         storage: &'static NvmcStorage,
-        peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8>,
-        ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2>,
         rx: WioRescue,
         prev_panic_buf: &'static [u8; 256],
         prev_panic_len: usize,
@@ -316,15 +311,8 @@ mod firmware {
             PowerSignaler,
         );
 
-        // Populate the CLI display tables (aliases, channel names). The MAC was
-        // already registered at boot, so these re-registrations are idempotent.
-        for (pk, alias) in peer_buf.iter() {
-            let _ = cli.register_peer(PublicKey(*pk), alias.as_deref()).await;
-        }
-        for (name, key_bytes) in ch_buf.iter() {
-            let _ = cli.register_channel(name.as_str(), *key_bytes).await;
-        }
-
+        // `run` loads peers/channels from storage and registers them with the
+        // MAC (idempotent) and the CLI display tables before entering the loop.
         let _ = cli.run(&mut input).await;
         panic!("cli exited");
     }
@@ -475,23 +463,25 @@ mod firmware {
         // not from the CLI task, which only runs after a host opens the CDC
         // port. Without this the coordinator had no keys until a serial client
         // attached, so it couldn't authenticate inbound secure frames and
-        // silently dropped every ping. Aliases/names ride along to the CLI for
-        // display; the MAC needs only the keys.
+        // silently dropped every ping.
         let handle = MacHandle::new(mac_cell);
         let mut host: WioHost = Host::new(handle);
         let node = host.add_node(identity_id);
 
-        let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
-            heapless::Vec::new();
-        let _ = storage.load_all_peers(&mut peer_buf).await;
-        let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> = heapless::Vec::new();
-        let _ = storage.load_all_channels(&mut ch_buf).await;
-        for (pk, _alias) in peer_buf.iter() {
-            let _ = node.peer(PublicKey(*pk)).await;
-        }
-        for (name, key_bytes) in ch_buf.iter() {
-            let channel = Channel::private(ChannelKey(*key_bytes), name.as_str());
-            let _ = node.join(&channel).await;
+        {
+            let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =
+                heapless::Vec::new();
+            let _ = storage.load_all_peers(&mut peer_buf).await;
+            let mut ch_buf: heapless::Vec<(heapless::String<16>, [u8; 32]), 2> =
+                heapless::Vec::new();
+            let _ = storage.load_all_channels(&mut ch_buf).await;
+            for (pk, _alias) in peer_buf.iter() {
+                let _ = node.peer(PublicKey(*pk)).await;
+            }
+            for (name, key_bytes) in ch_buf.iter() {
+                let channel = Channel::private(ChannelKey(*key_bytes), name.as_str());
+                let _ = node.join(&channel).await;
+            }
         }
         // Restore RX counter boundaries after peer registration so the persisted
         // boundaries land on registered peers.
@@ -535,10 +525,7 @@ mod firmware {
         spawner.spawn(identity_persist_task(storage).unwrap());
         spawner.spawn(mac_task(host, identity_id).unwrap());
         spawner.spawn(
-            cli_task(
-                node, local_key, storage, peer_buf, ch_buf, rx, prev_panic_buf, prev_panic_len,
-            )
-            .unwrap(),
+            cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap(),
         );
 
         join(

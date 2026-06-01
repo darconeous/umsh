@@ -403,6 +403,16 @@ impl<
             .map(|slot| slot.persisted_counter())
     }
 
+    /// Invoke `f` for every peer currently registered in the shared registry.
+    ///
+    /// This covers all known peers, not just those with an active crypto session.
+    pub async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
+        let mac = self.mac.borrow_mut().await;
+        for (_, info) in mac.peer_registry().iter() {
+            f(info.public_key);
+        }
+    }
+
     /// Invoke `f` for each peer with an established crypto state for `id`,
     /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
     pub async fn for_each_peer_counter(

@@ -414,6 +414,13 @@ impl<M: MacBackend> LocalNode<M> {
         self.mac.persisted_frame_counter(self.identity_id).await
     }
 
+    /// Invoke `f` for every peer currently registered in the MAC-layer peer registry.
+    ///
+    /// Covers all known peers, not just those with an active crypto session.
+    pub async fn for_each_peer(&self, f: &mut dyn FnMut(PublicKey)) {
+        self.mac.for_each_peer(f).await
+    }
+
     /// Invoke `f` for each peer with established crypto state, passing the
     /// peer's public key, last-accepted RX counter, and persisted RX boundary.
     pub async fn for_each_peer_counter(&self, f: &mut dyn FnMut(PublicKey, u32, u32)) {

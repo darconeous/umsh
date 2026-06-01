@@ -163,6 +163,16 @@ pub trait PeerStore {
 
     /// Remove the peer record for `key`. A no-op if the key is not present.
     async fn delete_peer(&self, key: &[u8; 32]) -> Result<(), Self::Error>;
+
+    /// Invoke `f` for every persisted peer record.
+    ///
+    /// `alias` is `None` when no alias was stored for that key. Callers that
+    /// cannot handle an error mid-iteration should collect into a local buffer
+    /// first, then process asynchronously.
+    async fn for_each_peer(
+        &self,
+        f: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
+    ) -> Result<(), Self::Error>;
 }
 
 /// No-op peer store — use when peer persistence is not needed.
@@ -176,6 +186,13 @@ impl PeerStore for NoPeerStore {
     }
 
     async fn delete_peer(&self, _: &[u8; 32]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn for_each_peer(
+        &self,
+        _: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -192,6 +209,14 @@ pub trait ChannelStore {
 
     /// Remove the channel record for `name`. A no-op if not present.
     async fn delete_channel(&self, name: &[u8]) -> Result<(), Self::Error>;
+
+    /// Invoke `f` for every persisted channel record.
+    ///
+    /// `name` is UTF-8 channel name bytes; `key` is the 32-byte channel key.
+    async fn for_each_channel(
+        &self,
+        f: &mut dyn FnMut(&[u8], &[u8; 32]),
+    ) -> Result<(), Self::Error>;
 }
 
 /// No-op channel store — use when channel persistence is not needed.
@@ -205,6 +230,13 @@ impl ChannelStore for NoChannelStore {
     }
 
     async fn delete_channel(&self, _: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn for_each_channel(
+        &self,
+        _: &mut dyn FnMut(&[u8], &[u8; 32]),
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }

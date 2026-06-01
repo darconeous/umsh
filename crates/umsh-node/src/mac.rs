@@ -88,6 +88,13 @@ pub trait MacBackend: Clone {
         None
     }
 
+    /// Invoke `f` for every peer registered in the MAC-layer peer registry.
+    ///
+    /// Covers all known peers, not just those with an active crypto session.
+    async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
+        let _ = f;
+    }
+
     /// Invoke `f` for each peer with established crypto state for `from`.
     /// Arguments are `(peer public key, last-accepted RX counter, persisted RX boundary)`.
     async fn for_each_peer_counter(
@@ -231,6 +238,10 @@ impl<
 
     async fn persisted_frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
         self.persisted_frame_counter(from).await
+    }
+
+    async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
+        self.for_each_peer(f).await
     }
 
     async fn for_each_peer_counter(

@@ -605,6 +605,21 @@ impl umsh_hal::ChannelStore for NvmcChannelStore {
     async fn delete_channel(&self, name: &[u8]) -> Result<(), Self::Error> {
         self.storage.delete_channel_entry(name).await
     }
+
+    async fn for_each_channel(
+        &self,
+        f: &mut dyn FnMut(&[u8], &[u8; 32]),
+    ) -> Result<(), Self::Error> {
+        let mut buf: heapless::Vec<
+            (heapless::String<MAX_CHANNEL_NAME_LEN>, [u8; 32]),
+            MAX_CHANNELS,
+        > = heapless::Vec::new();
+        self.storage.load_all_channels(&mut buf).await?;
+        for (name, key) in buf.iter() {
+            f(name.as_bytes(), key);
+        }
+        Ok(())
+    }
 }
 
 /// View implementing [`umsh_hal::PeerStore`] on top of a shared
@@ -630,6 +645,21 @@ impl umsh_hal::PeerStore for NvmcPeerStore {
 
     async fn delete_peer(&self, key: &[u8; 32]) -> Result<(), Self::Error> {
         self.storage.delete_peer_entry(key).await
+    }
+
+    async fn for_each_peer(
+        &self,
+        f: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
+    ) -> Result<(), Self::Error> {
+        let mut buf: heapless::Vec<
+            ([u8; 32], Option<heapless::String<MAX_ALIAS_LEN>>),
+            MAX_PEERS,
+        > = heapless::Vec::new();
+        self.storage.load_all_peers(&mut buf).await?;
+        for (pk, alias) in buf.iter() {
+            f(pk, alias.as_ref().map(|s| s.as_bytes()));
+        }
+        Ok(())
     }
 }
 

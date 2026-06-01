@@ -297,6 +297,50 @@ where
         true
     }
 
+    /// Populate the in-session peer and channel tables from persistent storage.
+    ///
+    /// Loads every peer and channel record from the backing stores and registers
+    /// them with both the MAC layer (idempotent) and the CLI display tables.
+    /// Call this once before [`run`](Self::run), or rely on `run` calling it
+    /// automatically at startup.
+    pub async fn load_from_stores(&mut self) {
+        // Collect into a local Vec first — the callback is sync, but
+        // `register_peer`/`register_channel` are async.
+        let mut peers: Vec<([u8; 32], Option<HString<16>>)> = Vec::new();
+        let _ = self
+            .peer_store
+            .for_each_peer(&mut |pk, alias| {
+                let alias_str = alias
+                    .and_then(|a| core::str::from_utf8(a).ok())
+                    .and_then(|s| HString::<16>::try_from(s).ok());
+                let _ = peers.push((*pk, alias_str));
+            })
+            .await;
+        for (pk, alias) in peers {
+            let _ = self
+                .register_peer(PublicKey(pk), alias.as_ref().map(|s| s.as_str()))
+                .await;
+        }
+
+        #[cfg(feature = "software-crypto")]
+        {
+            let mut channels: Vec<(HString<16>, [u8; 32])> = Vec::new();
+            let _ = self
+                .channel_store
+                .for_each_channel(&mut |name, key| {
+                    if let Ok(s) = core::str::from_utf8(name) {
+                        if let Ok(h) = HString::<16>::try_from(s) {
+                            let _ = channels.push((h, *key));
+                        }
+                    }
+                })
+                .await;
+            for (name, key_bytes) in channels {
+                let _ = self.register_channel(name.as_str(), key_bytes).await;
+            }
+        }
+    }
+
     /// Build `SendOptions` from current CLI preferences.
     fn send_opts(&self) -> SendOptions {
         SendOptions::default()
@@ -320,6 +364,8 @@ where
         IN: CliInput<Error = OUT::Error>,
     {
         use futures::future::{Either, select};
+
+        self.load_from_stores().await;
 
         // Service any events that arrived before first user input
         // (e.g. from a previously started host).
