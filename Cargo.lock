@@ -2056,6 +2056,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-companion"
+version = "0.1.0"
+
+[[package]]
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [
