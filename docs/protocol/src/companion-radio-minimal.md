@@ -1,13 +1,15 @@
 # Minimal Companion Radio Protocol
 
-The companion radio protocol is loosely based on the Spinel protocol from
-OpenThread. The protocol assumes reliable, in-order delivery of frames, as well
-as a way to assert flow control. The exact framing mechanism that can be used is
-flexible, for example:
+The companion radio protocol is inspired by the Spinel protocol from
+OpenThread, but it is not Spinel and does not aim for wire compatibility with
+it. The protocol assumes reliable, in-order delivery of frames, as well as a
+way to assert flow control. The framing mechanism depends on the underlying
+transport:
 
-* [HDLC-Lite](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite)
-* [Spinel SPI](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#spi-framing-protocol)
-* BLE GATT
+* Asynchronous serial links (UART, USB-CDC) use
+  [HDLC-Lite](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite),
+  exactly as used by Spinel.
+* BLE will use a framing scheme to be defined separately.
 
 The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
@@ -63,7 +65,7 @@ the most significant bit clear.
 
 ## Frame Format
 
-A Spinel frame is the concatenation of the following elements:
+A companion-radio frame is the concatenation of the following elements:
 
 * A header comprising a single byte.
 * A command identifier.
@@ -76,7 +78,7 @@ A Spinel frame is the concatenation of the following elements:
 |     HEADER    |  COMMAND ID   | PAYLOAD ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~
-Figure: Structure of a typical Spinel frame
+Figure: Structure of a typical companion-radio frame
 
 Since the size of the frame is part of the framing mechanism, it is omitted
 from the frame.
@@ -88,7 +90,7 @@ Each frame has the following format:
 ~~~
   0   1   2   3   4   5   6   7
 +---+---+---+---+---+---+---+---+
-|  FLG  |  RESERVED |    TID    |
+|  FLG  | RESERVED  |    TID    |
 +---+---+---+---+---+---+---+---+
 ~~~
 Figure: Header Format
@@ -101,14 +103,16 @@ bits set to any other value SHALL NOT be considered a companion-radio frame.
 
 #### `RESERVED`: Reserved
 
-These bits must always be set to zero and the entire frame ignored if set to
-any other value.
+These three bits must always be set to zero and the entire frame ignored if
+set to any other value. They may be assigned a meaning (such as an interface
+identifier) in a future version of this protocol.
 
 #### `TID`: Transaction Identifier
 
-The Transaction Identifier (TID) field in the four least significant bits of
+The Transaction Identifier (TID) field in the three least significant bits of
 the header is used for correlating responses to the commands which generated
-them.
+them. This allows for up to seven host-issued commands to be in flight at
+once.
 
 When a command is sent from the host, any reply to that command sent by the NCP
 will use the same value for the TID. When the host receives a frame that
@@ -132,7 +136,7 @@ most significant bit is not set and the frame must be ignored if it is set.
 
 ### Payload
 
-The command payload follows the command identifier in a Spinel frame,
+The command payload follows the command identifier in a companion-radio frame,
 containing the serialization of any arguments that the indicated command may
 require. The exact composition of a command payload is determined by the
 specific command identifier being used and **MUST** be empty if the command has
@@ -151,6 +155,10 @@ Id | Mnemonic         | Dir       | Description
 6  | `CMD_PROP_IS`    | NCP->Host | Property value notification
 9  | `CMD_STR_SEND`   | Host->NCP | Send data to a stream
 10 | `CMD_STR_RECV`   | NCP->Host | Receive data from a stream
+
+Command identifiers 4, 5, 7, and 8 are reserved for property insert/remove
+operations and their corresponding notifications, which may be added in a
+future version of this protocol.
 
 ### CMD 0: (Host -> NCP) `CMD_NOP` {#cmd-noop}
 
@@ -381,8 +389,8 @@ See (#status-codes) for the complete list of status codes.
 * Value Type: UINT8, UINT8
 * Post-Reset Value: 6, 0
 
-Describes the Spinel protocol version information. This property contains two
-fields:
+Describes the companion-radio protocol version information. This property
+contains two fields:
 
 ~~~
   0                   1
