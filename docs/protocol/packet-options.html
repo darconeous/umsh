@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -334,7 +334,7 @@
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
-<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with it’s own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
+<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with its own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -359,7 +359,7 @@
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.</p>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.</p>
 <p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>

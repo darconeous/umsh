@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>//!
 <a href=#65 id=65 data-nosnippet>65</a>//! # Control payload types
 <a href=#66 id=66 data-nosnippet>66</a>//!
-<a href=#67 id=67 data-nosnippet>67</a>//! [`umsh_text::OwnedTextMessage`], [`OwnedNodeIdentityPayload`], and [`OwnedMacCommand`] are
+<a href=#67 id=67 data-nosnippet>67</a>//! [`umsh_text::OwnedTextMessage`], [`NodeIdentityPayload`], and [`OwnedMacCommand`] are
 <a href=#68 id=68 data-nosnippet>68</a>//! optional heap-allocated conveniences for callers that need
 <a href=#69 id=69 data-nosnippet>69</a>//! to retain parsed payloads across task boundaries. Most receive-side code should prefer the
 <a href=#70 id=70 data-nosnippet>70</a>//! borrowed views from the payload crates and [`ReceivedPacketRef`].
@@ -170,7 +170,7 @@
 <a href=#170 id=170 data-nosnippet>170</a></span><span class="kw">pub use </span>node::BoundChannel;
 <a href=#171 id=171 data-nosnippet>171</a><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
 <a href=#172 id=172 data-nosnippet>172</a></span><span class="kw">pub use </span>node::PfsStatus;
-<a href=#173 id=173 data-nosnippet>173</a><span class="kw">pub use </span>node::{LocalNode, NodeError, Subscription};
+<a href=#173 id=173 data-nosnippet>173</a><span class="kw">pub use </span>node::{LocalNode, NodeError, PfsFailure, Subscription};
 <a href=#174 id=174 data-nosnippet>174</a><span class="kw">pub use </span>peer::PeerConnection;
 <a href=#175 id=175 data-nosnippet>175</a><span class="kw">pub use </span>receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 <a href=#176 id=176 data-nosnippet>176</a><span class="kw">pub use </span>ticket::{SendProgressTicket, SendToken};

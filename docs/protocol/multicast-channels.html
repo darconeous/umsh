@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -209,9 +209,20 @@
 </code></pre>
 <p>Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
 <p>The channel key is derived from the channel name using HKDF-Extract:</p>
-<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = canonical_name)
 </code></pre>
-<p>Where <code>channel_name</code> is the name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>), after percent-decoding, encoded as a UTF-8 byte string. For example, given <code>umsh:cs:Public</code>, the input is the UTF-8 encoding of <code>Public</code>. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<p>Where <code>canonical_name</code> is the canonicalized name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>). Canonicalization is defined as follows:</p>
+<ol>
+<li>Percent-decode the name portion of the URI.</li>
+<li>The decoded name MUST consist only of ASCII characters (letters, digits, and symbols). Non-ASCII (multi-byte UTF-8) names are not currently supported and MUST be rejected. Any character that is not URI-safe is carried through percent-encoding in the URI and recovered by step 1.</li>
+<li>Fold ASCII letters <code>A</code>–<code>Z</code> to lowercase <code>a</code>–<code>z</code>. No other characters are altered.</li>
+<li>Encode the result as an ASCII byte string; this is <code>canonical_name</code>.</li>
+</ol>
+<p>For example, given <code>umsh:cs:Public</code>, the input to canonicalization is <code>Public</code>, which folds to <code>public</code>, and the key is derived over the bytes of <code>public</code>. Because folding is applied before derivation, <code>umsh:cs:Public</code>, <code>umsh:cs:public</code>, and <code>umsh:cs:PUBLIC</code> all derive the <strong>same</strong> channel key. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Until then, a name that must display non-ASCII characters should carry them percent-encoded and be treated as case-sensitive in its encoded form.</p>
+</blockquote>
 <p>HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.</p>
 <h3 id="private-channels"><a class="header" href="#private-channels">Private Channels</a></h3>
 <p>For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="uri-formats.html#channel-uris">URI Formats</a>), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.</p>
@@ -234,7 +245,7 @@
 <li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>must not</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
 </ul>
 <h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
-<p>The <code>EMERGENCY</code> channel (derived from <code>umsh:cs:EMERGENCY</code>, case-sensitive) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>
+<p>The emergency channel (written <code>EMERGENCY</code> here for emphasis, but derived from <code>umsh:cs:emergency</code> after the ASCII case-folding described in <a href="#named-channels">Named Channels</a>, so <code>umsh:cs:EMERGENCY</code> and <code>umsh:cs:emergency</code> derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>
 <ul>
 <li>Maximum flood hops: <strong>5</strong> without a region code, <strong>7</strong> with a region code.</li>
 <li>Chat messages <strong>must not</strong> be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.</li>

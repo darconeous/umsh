@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -180,14 +180,14 @@
 <p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
 <p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
-<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatability.</p>
+<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatibility.</p>
 <p>Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker when a PAYLOAD follows the options block; packets with no payload omit the marker.</p>
 <p>This encoding appears in:</p>
 <ul>
 <li><strong>MAC-layer packet options</strong> — routing, signal-quality thresholds, callsigns (see <a href="packet-options.html">Packet Options</a>)</li>
 <li><strong>Text message options</strong> — message type, sender handle, fragmentation, colors (see <a href="app-text-messages.html">Text Messages</a>)</li>
 <li><strong>Chat room payloads</strong> — room info responses, login parameters (see <a href="app-chat-rooms.html">Chat Rooms</a>)</li>
-<li><strong>Node identity metadata</strong> — location, battery, uptime (see <a href="node-identity.html">Node Identity</a>)</li>
+<li><strong>Node identity metadata</strong> — name, location, altitude, timestamp, supported regions (see <a href="node-identity.html">Node Identity</a>)</li>
 </ul>
 <p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="packet-structure.html#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
 <h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
@@ -203,7 +203,6 @@
 <ul>
 <li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
 <li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>
-<li>In node identity payloads, the node name is NUL-terminated (<code>0x00</code>).</li>
 </ul>
 <h2 id="base58-encoding"><a class="header" href="#base58-encoding">Base58 Encoding</a></h2>
 <p>Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.</p>

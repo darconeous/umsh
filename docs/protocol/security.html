@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -234,7 +234,7 @@
 <h3 id="frame-counter"><a class="header" href="#frame-counter">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
-<p>The exact mechanism for how the frame counter is handled is implementation specitic,
+<p>The exact mechanism for how the frame counter is handled is implementation specific,
 assuming that it always increases. For example, the frame counter may be unique for
 each source+destination node pair, or it may be a single frame counter for the entire
 device. On constrained devices, it may make sense to use a combination of the two:
@@ -259,7 +259,7 @@ number of writes.</p>
 <h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
 <p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="mac-commands.html#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
-<p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
+<p>The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
 <h3 id="unicast-key-agreement"><a class="header" href="#unicast-key-agreement">Unicast Key Agreement</a></h3>
 <p>For unicast and blind unicast:</p>
@@ -377,7 +377,7 @@ K_mic = okm[16..31]
 </thead>
 <tbody>
 <tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = MIC)</td></tr>
-<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4 or 2</td></tr>
+<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4</td></tr>
 <tr><td style="text-align: right">8 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
 <tr><td style="text-align: right">4 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
 </tbody>
@@ -391,8 +391,8 @@ K_mic = okm[16..31]
 <ol>
 <li><strong>FCF</strong> (1 byte)</li>
 <li><strong>Static options</strong> — re-encoded as type-length-value (see below)</li>
-<li><strong>DST</strong> (2 bytes, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
-<li><strong>SRC</strong> (2 or 32 bytes) — included only when the source field is outside the ciphertext</li>
+<li><strong>DST</strong> (3-byte destination hint, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
+<li><strong>SRC</strong> (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
 <p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>

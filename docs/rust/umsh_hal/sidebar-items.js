@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["TxError"],"struct":["RxInfo","Snr","TxOptions"],"trait":["Clock","CounterStore","KeyValueStore","Radio"]};
+window.SIDEBAR_ITEMS = {"enum":["TxError"],"struct":["NoChannelStore","NoPeerStore","NoPowerControl","RxInfo","Snr","TxOptions"],"trait":["ChannelStore","Clock","CounterStore","KeyValueStore","PeerStore","PowerControl","Radio"]};

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -211,6 +211,10 @@ higher-layer content.</p>
 <p><strong>Layer separation.</strong> The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.</p>
 <p><strong>Minimal mandatory state.</strong> Basic operation should require only a node’s own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.</p>
 <p><strong>Graceful extensibility.</strong> The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Regarding layer separation… There is a case to be made that having the payload type be non-opaque could be a benefit to the mesh as a whole, because you could then do things like prioritize text chat messages over other types of messages at the repeater level. This would help to ensure that there is a minimum-level of text service always available, even if there is lots of other traffic present. I am not yet convinced this is a good idea yet, but it is worth thinking about.</p>
+</blockquote>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
 <p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
 <p><strong>Intended use cases include:</strong></p>

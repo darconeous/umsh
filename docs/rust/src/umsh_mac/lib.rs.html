@@ -208,54 +208,69 @@
 <a href=#208 id=208 data-nosnippet>208</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 <a href=#209 id=209 data-nosnippet>209</a></span><span class="kw">pub struct </span>CapacityError;
 <a href=#210 id=210 data-nosnippet>210</a>
-<a href=#211 id=211 data-nosnippet>211</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
-<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">pub trait </span>Platform {
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="doccomment">/// Local identity implementation.
-<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// AES provider implementation.
-<a href=#216 id=216 data-nosnippet>216</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
-<a href=#218 id=218 data-nosnippet>218</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="doccomment">/// Radio implementation.
-<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="doccomment">/// Async delay implementation.
-<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">type </span>Delay: DelayNs;
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="doccomment">/// Monotonic clock implementation.
-<a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="doccomment">/// Random-number generator implementation.
-<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
-<a href=#228 id=228 data-nosnippet>228</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
-<a href=#229 id=229 data-nosnippet>229</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
-<a href=#230 id=230 data-nosnippet>230</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
-<a href=#231 id=231 data-nosnippet>231</a>}
-<a href=#232 id=232 data-nosnippet>232</a>
-<a href=#233 id=233 data-nosnippet>233</a><span class="kw">mod </span>cache;
-<a href=#234 id=234 data-nosnippet>234</a><span class="kw">mod </span>coordinator;
-<a href=#235 id=235 data-nosnippet>235</a><span class="kw">mod </span>handle;
-<a href=#236 id=236 data-nosnippet>236</a><span class="kw">mod </span>peers;
-<a href=#237 id=237 data-nosnippet>237</a><span class="kw">mod </span>send;
-<a href=#238 id=238 data-nosnippet>238</a>
-<a href=#239 id=239 data-nosnippet>239</a><span class="kw">pub use </span>cache::{DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow};
-<a href=#240 id=240 data-nosnippet>240</a><span class="kw">pub use </span>coordinator::{
-<a href=#241 id=241 data-nosnippet>241</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-<a href=#242 id=242 data-nosnippet>242</a>    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,
-<a href=#243 id=243 data-nosnippet>243</a>};
-<a href=#244 id=244 data-nosnippet>244</a><span class="kw">pub use </span>handle::MacHandle;
-<a href=#245 id=245 data-nosnippet>245</a><span class="kw">pub use </span>peers::{
-<a href=#246 id=246 data-nosnippet>246</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-<a href=#247 id=247 data-nosnippet>247</a>    PeerId, PeerInfo, PeerRegistry,
-<a href=#248 id=248 data-nosnippet>248</a>};
-<a href=#249 id=249 data-nosnippet>249</a><span class="kw">pub use </span>send::{
-<a href=#250 id=250 data-nosnippet>250</a>    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
-<a href=#251 id=251 data-nosnippet>251</a>    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
-<a href=#252 id=252 data-nosnippet>252</a>    TxQueue,
-<a href=#253 id=253 data-nosnippet>253</a>};
-<a href=#254 id=254 data-nosnippet>254</a><span class="kw">pub use </span>umsh_hal::Snr;
-<a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
-<a href=#257 id=257 data-nosnippet>257</a></span><span class="kw">pub mod </span>test_support;
-<a href=#258 id=258 data-nosnippet>258</a>
-<a href=#259 id=259 data-nosnippet>259</a><span class="attr">#[cfg(test)]
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">mod </span>tests;
+<a href=#211 id=211 data-nosnippet>211</a><span class="doccomment">/// Error returned when adding a peer to the MAC peer registry.
+<a href=#212 id=212 data-nosnippet>212</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#213 id=213 data-nosnippet>213</a></span><span class="kw">pub enum </span>AddPeerError {
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="doccomment">/// The peer-registry table is full.
+<a href=#215 id=215 data-nosnippet>215</a>    </span>Capacity,
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="doccomment">/// The public-key bytes do not decode to a valid Ed25519 point on the curve.
+<a href=#217 id=217 data-nosnippet>217</a>    </span>InvalidPublicKey,
+<a href=#218 id=218 data-nosnippet>218</a>}
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddPeerError {
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
+<a href=#222 id=222 data-nosnippet>222</a>        AddPeerError::Capacity
+<a href=#223 id=223 data-nosnippet>223</a>    }
+<a href=#224 id=224 data-nosnippet>224</a>}
+<a href=#225 id=225 data-nosnippet>225</a>
+<a href=#226 id=226 data-nosnippet>226</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
+<a href=#227 id=227 data-nosnippet>227</a></span><span class="kw">pub trait </span>Platform {
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// Local identity implementation.
+<a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// AES provider implementation.
+<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
+<a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
+<a href=#234 id=234 data-nosnippet>234</a>    <span class="doccomment">/// Radio implementation.
+<a href=#235 id=235 data-nosnippet>235</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="doccomment">/// Async delay implementation.
+<a href=#237 id=237 data-nosnippet>237</a>    </span><span class="kw">type </span>Delay: DelayNs;
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// Monotonic clock implementation.
+<a href=#239 id=239 data-nosnippet>239</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="doccomment">/// Random-number generator implementation.
+<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
+<a href=#243 id=243 data-nosnippet>243</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
+<a href=#245 id=245 data-nosnippet>245</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
+<a href=#246 id=246 data-nosnippet>246</a>}
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a><span class="kw">mod </span>cache;
+<a href=#249 id=249 data-nosnippet>249</a><span class="kw">mod </span>coordinator;
+<a href=#250 id=250 data-nosnippet>250</a><span class="kw">mod </span>handle;
+<a href=#251 id=251 data-nosnippet>251</a><span class="kw">mod </span>peers;
+<a href=#252 id=252 data-nosnippet>252</a><span class="kw">mod </span>send;
+<a href=#253 id=253 data-nosnippet>253</a>
+<a href=#254 id=254 data-nosnippet>254</a><span class="kw">pub use </span>cache::{DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow};
+<a href=#255 id=255 data-nosnippet>255</a><span class="kw">pub use </span>coordinator::{
+<a href=#256 id=256 data-nosnippet>256</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
+<a href=#257 id=257 data-nosnippet>257</a>    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,
+<a href=#258 id=258 data-nosnippet>258</a>};
+<a href=#259 id=259 data-nosnippet>259</a><span class="kw">pub use </span>handle::MacHandle;
+<a href=#260 id=260 data-nosnippet>260</a><span class="kw">pub use </span>peers::{
+<a href=#261 id=261 data-nosnippet>261</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
+<a href=#262 id=262 data-nosnippet>262</a>    PeerId, PeerInfo, PeerRegistry,
+<a href=#263 id=263 data-nosnippet>263</a>};
+<a href=#264 id=264 data-nosnippet>264</a><span class="kw">pub use </span>send::{
+<a href=#265 id=265 data-nosnippet>265</a>    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
+<a href=#266 id=266 data-nosnippet>266</a>    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
+<a href=#267 id=267 data-nosnippet>267</a>    TxQueue,
+<a href=#268 id=268 data-nosnippet>268</a>};
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub use </span>umsh_hal::Snr;
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">pub mod </span>test_support;
+<a href=#273 id=273 data-nosnippet>273</a>
+<a href=#274 id=274 data-nosnippet>274</a><span class="attr">#[cfg(test)]
+<a href=#275 id=275 data-nosnippet>275</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

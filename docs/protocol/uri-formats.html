@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -192,7 +192,7 @@
 <pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP
 </code></pre>
 <p>Additional metadata may be attached as URI parameters:</p>
-<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugine
+<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugene
 </code></pre>
 <p>Where, for example:</p>
 <ul>
@@ -201,8 +201,9 @@
 <li><code>r</code> = recommended region</li>
 </ul>
 <p>A channel may also be identified by a string from which the channel key is derived:</p>
-<pre><code class="language-text">umsh:cs:Public
+<pre><code class="language-text">umsh:cs:public
 </code></pre>
+<p>The name that follows <code>umsh:cs:</code> is canonicalized before key derivation: it is percent-decoded, required to be ASCII, and folded to lowercase (see <a href="multicast-channels.html#named-channels">Named Channels</a>). Because of the fold, <code>umsh:cs:public</code>, <code>umsh:cs:Public</code>, and <code>umsh:cs:PUBLIC</code> all identify the same channel.</p>
 <h2 id="coap-over-umsh-uris"><a class="header" href="#coap-over-umsh-uris">CoAP-over-UMSH URIs</a></h2>
 <p>CoAP resources on a node use the <code>coap-umsh</code> scheme, with the node public key as the authority component.</p>
 <p>Example:</p>

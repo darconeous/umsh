@@ -1,0 +1,34 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-companion-ncp/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_companion_ncp" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_companion_ncp/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="attr">#![cfg_attr(not(test), no_std)]
+<a href=#2 id=2 data-nosnippet>2</a>
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! NCP-side session engine for the minimal companion-radio protocol.
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! [`Session`] is a pure state machine: it consumes decoded
+<a href=#6 id=6 data-nosnippet>6</a>//! companion-link frames (framing such as HDLC-Lite is handled by the
+<a href=#7 id=7 data-nosnippet>7</a>//! caller), emits response frames through a caller-provided sink, and
+<a href=#8 id=8 data-nosnippet>8</a>//! returns radio side effects ([`Effect`]) for the caller to execute.
+<a href=#9 id=9 data-nosnippet>9</a>//! It performs no I/O and takes time as a parameter, so the whole
+<a href=#10 id=10 data-nosnippet>10</a>//! protocol surface is testable on the host; firmware only supplies
+<a href=#11 id=11 data-nosnippet>11</a>//! the byte pipes and the radio.
+<a href=#12 id=12 data-nosnippet>12</a>//!
+<a href=#13 id=13 data-nosnippet>13</a>//! Design constraints from the spec
+<a href=#14 id=14 data-nosnippet>14</a>//! (`docs/protocol/src/companion-radio-minimal.md`):
+<a href=#15 id=15 data-nosnippet>15</a>//!
+<a href=#16 id=16 data-nosnippet>16</a>//! - one confirmed transmit in flight at a time (`STATUS_BUSY`);
+<a href=#17 id=17 data-nosnippet>17</a>//! - transmits never wait for duty-cycle allowance
+<a href=#18 id=18 data-nosnippet>18</a>//!   (`STATUS_DUTY_LIMIT` unless the `NODUTY` flag is set);
+<a href=#19 id=19 data-nosnippet>19</a>//! - `CMD_RST` is a protocol-level reset: all session state returns to
+<a href=#20 id=20 data-nosnippet>20</a>//!   post-reset defaults and the radio is re-applied, but the MCU (and
+<a href=#21 id=21 data-nosnippet>21</a>//!   therefore the USB link) stays up.
+<a href=#22 id=22 data-nosnippet>22</a>//!
+<a href=#23 id=23 data-nosnippet>23</a>//! v0 limitations (all surfaced through defined status codes):
+<a href=#24 id=24 data-nosnippet>24</a>//! `PROP_PHY_RSSI` is unimplemented, the sync word only accepts the
+<a href=#25 id=25 data-nosnippet>25</a>//! value the firmware was built with, and the CCA transmit flag is
+<a href=#26 id=26 data-nosnippet>26</a>//! ignored (frames transmit without a clear-channel check, matching
+<a href=#27 id=27 data-nosnippet>27</a>//! the existing firmware radio path).
+<a href=#28 id=28 data-nosnippet>28</a>
+<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub mod </span>duty;
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub mod </span>session;
+<a href=#31 id=31 data-nosnippet>31</a>
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub use </span>duty::DutyTracker;
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">pub use </span>session::{Effect, RadioSettings, Session, SessionConfig, TxPower};
+</code></pre></div></section></main></body></html>

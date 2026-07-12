@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -185,7 +185,7 @@
 <p>Where:</p>
 <ul>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
-<li><code>DST</code> is a 3-byte destination hint (2 bytes in MAC Ack packets)</li>
+<li><code>DST</code> is a 3-byte destination hint (in MAC Ack packets it is a 3-byte prefix of the original sender’s public key)</li>
 <li><code>CHAN</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a compact 3-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast and blind unicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
@@ -282,6 +282,7 @@ Source routed hops do not increment this number.</p>
 </tbody>
 </table>
 </div>
+<p>The value 15 is legal only as part of the <code>0xFF</code> end-of-options marker, where <em>both</em> nibbles are 15. Any other appearance of nibble value 15 — a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record — is malformed, and the packet MUST be dropped.</p>
 <p>The option delta is the difference between this option’s number and the previous option’s number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).</p>
 <h4 id="end-of-options-marker"><a class="header" href="#end-of-options-marker">End-of-Options Marker</a></h4>
 <p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.</p>

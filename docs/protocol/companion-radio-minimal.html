@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -175,14 +175,16 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="minimal-companion-radio-protocol"><a class="header" href="#minimal-companion-radio-protocol">Minimal Companion Radio Protocol</a></h1>
-<p>The companion radio protocol is loosely based on the Spinel protocol from
-OpenThread. The protocol assumes reliable, in-order delivery of frames, as well
-as a way to assert flow control. The exact framing mechanism that can be used is
-flexible, for example:</p>
+<p>The companion radio protocol is inspired by the Spinel protocol from
+OpenThread, but it is not Spinel and does not aim for wire compatibility with
+it. The protocol assumes reliable, in-order delivery of frames, as well as a
+way to assert flow control. The framing mechanism depends on the underlying
+transport:</p>
 <ul>
-<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a></li>
-<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#spi-framing-protocol">Spinel SPI</a></li>
-<li>BLE GATT</li>
+<li>Asynchronous serial links (UART, USB-CDC) use
+<a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>,
+exactly as used by Spinel.</li>
+<li>BLE will use a framing scheme to be defined separately.</li>
 </ul>
 <p>The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
@@ -225,7 +227,7 @@ given value.</p>
 <p>To decode the value, you collect the 7-bit chunks until you find a byte with
 the most significant bit clear.</p>
 <h2 id="frame-format"><a class="header" href="#frame-format">Frame Format</a></h2>
-<p>A Spinel frame is the concatenation of the following elements:</p>
+<p>A companion-radio frame is the concatenation of the following elements:</p>
 <ul>
 <li>A header comprising a single byte.</li>
 <li>A command identifier.</li>
@@ -237,14 +239,14 @@ the most significant bit clear.</p>
 |     HEADER    |  COMMAND ID   | PAYLOAD ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 </code></pre>
-<p>Figure: Structure of a typical Spinel frame</p>
+<p>Figure: Structure of a typical companion-radio frame</p>
 <p>Since the size of the frame is part of the framing mechanism, it is omitted
 from the frame.</p>
 <h3 id="frame-header"><a class="header" href="#frame-header">Frame Header</a></h3>
 <p>Each frame has the following format:</p>
 <pre><code>  0   1   2   3   4   5   6   7
 +---+---+---+---+---+---+---+---+
-|  FLG  |  RESERVED |    TID    |
+|  FLG  | RESERVED  |    TID    |
 +---+---+---+---+---+---+---+---+
 </code></pre>
 <p>Figure: Header Format</p>
@@ -253,12 +255,14 @@ from the frame.</p>
 always set to the value two (or <code>10</code> in binary). Any frame received with these
 bits set to any other value SHALL NOT be considered a companion-radio frame.</p>
 <h4 id="reserved-reserved"><a class="header" href="#reserved-reserved"><code>RESERVED</code>: Reserved</a></h4>
-<p>These bits must always be set to zero and the entire frame ignored if set to
-any other value.</p>
+<p>These three bits must always be set to zero and the entire frame ignored if
+set to any other value. They may be assigned a meaning (such as an interface
+identifier) in a future version of this protocol.</p>
 <h4 id="tid-transaction-identifier"><a class="header" href="#tid-transaction-identifier"><code>TID</code>: Transaction Identifier</a></h4>
-<p>The Transaction Identifier (TID) field in the four least significant bits of
+<p>The Transaction Identifier (TID) field in the three least significant bits of
 the header is used for correlating responses to the commands which generated
-them.</p>
+them. This allows for up to seven host-issued commands to be in flight at
+once.</p>
 <p>When a command is sent from the host, any reply to that command sent by the NCP
 will use the same value for the TID. When the host receives a frame that
 matches the TID of the command it sent, it can easily recognize that frame as
@@ -275,7 +279,7 @@ commands originating from the NCP <strong>MUST</strong> use TID zero (0).</p>
 <p>The command identifier is a 7-bit unsigned integer encoded from 0 to 127. The
 most significant bit is not set and the frame must be ignored if it is set.</p>
 <h3 id="payload"><a class="header" href="#payload">Payload</a></h3>
-<p>The command payload follows the command identifier in a Spinel frame,
+<p>The command payload follows the command identifier in a companion-radio frame,
 containing the serialization of any arguments that the indicated command may
 require. The exact composition of a command payload is determined by the
 specific command identifier being used and <strong>MUST</strong> be empty if the command has
@@ -298,6 +302,9 @@ no arguments.</p>
 </tbody>
 </table>
 </div>
+<p>Command identifiers 4, 5, 7, and 8 are reserved for property insert/remove
+operations and their corresponding notifications, which may be added in a
+future version of this protocol.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; NCP) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -448,6 +455,7 @@ an <code>Is</code> to respond with the current/new value of that property.</p>
 <tr><td>40</td><td><code>PROP_PHY_LORA_SF</code></td><td>Get, Set</td><td>LoRa spreading factor</td></tr>
 <tr><td>41</td><td><code>PROP_PHY_LORA_CR</code></td><td>Get, Set</td><td>LoRa coding rate</td></tr>
 <tr><td>42</td><td><code>PROP_PHY_MTU</code></td><td>Get</td><td>Max size of a frame</td></tr>
+<tr><td>43</td><td><code>PROP_PHY_LORA_SW</code></td><td>Get, Set</td><td>LoRa sync word (16-bit style)</td></tr>
 <tr><td>113</td><td><code>STR_PHY_RAW</code></td><td>Send, Recv</td><td>Raw radio frame stream</td></tr>
 <tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
 <tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
@@ -484,8 +492,8 @@ that all properties have reverted to their defined after-reset values.</p>
 <li>Value Type: UINT8, UINT8</li>
 <li>Post-Reset Value: 6, 0</li>
 </ul>
-<p>Describes the Spinel protocol version information. This property contains two
-fields:</p>
+<p>Describes the companion-radio protocol version information. This property
+contains two fields:</p>
 <pre><code>  0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -639,6 +647,16 @@ floor for the operating environment.</p>
 <li>Post-Reset Value: Implementation-Specific</li>
 </ul>
 <p>Maximum size of the <code>DATA</code> field that may be supplied to <code>STR_PHY_RAW</code>.</p>
+<h3 id="prop-phy-lora-sw"><a class="header" href="#prop-phy-lora-sw">PROP 43: <code>PROP_PHY_LORA_SW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT16</li>
+<li>Post-Reset Value: Implementation-Specific, but 0x1424 is a good suggestion.</li>
+</ul>
+<p>Value is the 16-bit (SX126x-style) LoRa sync-word.</p>
 <h3 id="str-radio-raw"><a class="header" href="#str-radio-raw">STREAM 113: <code>STR_PHY_RAW</code></a></h3>
 <ul>
 <li>Type: Packet-Stream, Input/Output</li>
@@ -666,7 +684,7 @@ and will have the following format:</p>
 default, <code>0x7E</code> indicates to transmit at maximum power)</li>
 <li><code>TX_FLAGS</code> (<code>u8</code>): Transmit flags
 <ul>
-<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent
+<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent LoRa
 mechanism)</li>
 <li><code>TX_FLAG_NODUTY</code> Bit 1: If set, send the packet even if it would push us
 over the duty-cycle limit</li>
@@ -692,7 +710,9 @@ still decodes and 255 is perfect reception.
 </li>
 <li><code>RX_SNR</code> (<code>i16</code>): Signal-to-noise ratio in centibels, or 1/10 of a decibel.
 <ul>
-<li>If <code>0xFFFF</code>, SNR is not supported.</li>
+<li>If <code>0x8000</code> (<code>i16::MIN</code>), SNR is not supported. This sentinel is chosen
+because it is <code>-3276.8 dB</code>, a value no real link can report, so it never
+collides with a genuine measurement (unlike <code>0xFFFF</code>, which is <code>-0.1 dB</code>).</li>
 </ul>
 </li>
 </ul>

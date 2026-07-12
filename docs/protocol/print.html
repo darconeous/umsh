@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4398d13.js";
+            window.path_to_searchindex_js = "searchindex-812ca648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-afe8cd7c.js"></script>
@@ -212,6 +212,10 @@ higher-layer content.</p>
 <p><strong>Layer separation.</strong> The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.</p>
 <p><strong>Minimal mandatory state.</strong> Basic operation should require only a node’s own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.</p>
 <p><strong>Graceful extensibility.</strong> The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Regarding layer separation… There is a case to be made that having the payload type be non-opaque could be a benefit to the mesh as a whole, because you could then do things like prioritize text chat messages over other types of messages at the repeater level. This would help to ensure that there is a minimum-level of text service always available, even if there is lots of other traffic present. I am not yet convinced this is a good idea yet, but it is worth thinking about.</p>
+</blockquote>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
 <p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
 <p><strong>Intended use cases include:</strong></p>
@@ -368,14 +372,14 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
 <p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
-<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatability.</p>
+<p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatibility.</p>
 <p>Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker when a PAYLOAD follows the options block; packets with no payload omit the marker.</p>
 <p>This encoding appears in:</p>
 <ul>
 <li><strong>MAC-layer packet options</strong> — routing, signal-quality thresholds, callsigns (see <a href="#packet-options">Packet Options</a>)</li>
 <li><strong>Text message options</strong> — message type, sender handle, fragmentation, colors (see <a href="#text-messages">Text Messages</a>)</li>
 <li><strong>Chat room payloads</strong> — room info responses, login parameters (see <a href="#chat-rooms">Chat Rooms</a>)</li>
-<li><strong>Node identity metadata</strong> — location, battery, uptime (see <a href="#node-identity">Node Identity</a>)</li>
+<li><strong>Node identity metadata</strong> — name, location, altitude, timestamp, supported regions (see <a href="#node-identity">Node Identity</a>)</li>
 </ul>
 <p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
 <h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
@@ -391,7 +395,6 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <ul>
 <li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
 <li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>
-<li>In node identity payloads, the node name is NUL-terminated (<code>0x00</code>).</li>
 </ul>
 <h2 id="base58-encoding"><a class="header" href="#base58-encoding">Base58 Encoding</a></h2>
 <p>Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.</p>
@@ -439,7 +442,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <p>Where:</p>
 <ul>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
-<li><code>DST</code> is a 3-byte destination hint (2 bytes in MAC Ack packets)</li>
+<li><code>DST</code> is a 3-byte destination hint (in MAC Ack packets it is a 3-byte prefix of the original sender’s public key)</li>
 <li><code>CHAN</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a compact 3-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast and blind unicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
@@ -536,6 +539,7 @@ Source routed hops do not increment this number.</p>
 </tbody>
 </table>
 </div>
+<p>The value 15 is legal only as part of the <code>0xFF</code> end-of-options marker, where <em>both</em> nibbles are 15. Any other appearance of nibble value 15 — a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record — is malformed, and the packet MUST be dropped.</p>
 <p>The option delta is the difference between this option’s number and the previous option’s number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).</p>
 <h4 id="end-of-options-marker"><a class="header" href="#end-of-options-marker">End-of-Options Marker</a></h4>
 <p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.</p>
@@ -580,7 +584,7 @@ Source routed hops do not increment this number.</p>
 </ul>
 <p>Because the ack tag requires knowledge of the pairwise <code>K_enc</code>, it cannot be forged by a passive observer — even one who received the original packet in its entirety.</p>
 <p>The ack is routed back to the original sender using whatever routing state is available — a cached source route, a cached flood response scoped by <code>FHOPS_ACC</code> and any learned region-code options, or both. See <a href="#route-learning">Route Learning</a> for how nodes learn and cache routing information from incoming packets. For reliable ack delivery over long source-routed paths, the original sender should include a trace-route option.</p>
-<p>Because the ACK TAG is a known length, the options field may omit the 0xFF terminator.</p>
+<p>Because the ACK TAG is a known length and no payload follows, the options field MUST be followed immediately by the ACK TAG with no intervening bytes. The <code>0xFF</code> end-of-options marker MAY be omitted (the trailer length is what bounds the options region). If the marker is present it MUST be the last byte of the options region — receivers MUST reject packets that carry trailing bytes between the marker and the ACK TAG.</p>
 <h2 id="unicast-packet"><a class="header" href="#unicast-packet">Unicast Packet</a></h2>
 <p>Unicast packets are addressed by destination hint and carry the source address.</p>
 <pre><code class="language-text">+-----+-------+-----+-----+---------+---------+---------+------+
@@ -826,7 +830,7 @@ unicast semantics without encryption.</p>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
-<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with it’s own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
+<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with its own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -851,7 +855,7 @@ unicast semantics without encryption.</p>
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.</p>
+<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.</p>
 <p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -956,7 +960,7 @@ to be immediately renderable in user interfaces.</p>
 <h3 id="frame-counter-1"><a class="header" href="#frame-counter-1">Frame Counter</a></h3>
 <p>The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.</p>
-<p>The exact mechanism for how the frame counter is handled is implementation specitic,
+<p>The exact mechanism for how the frame counter is handled is implementation specific,
 assuming that it always increases. For example, the frame counter may be unique for
 each source+destination node pair, or it may be a single frame counter for the entire
 device. On constrained devices, it may make sense to use a combination of the two:
@@ -981,7 +985,7 @@ number of writes.</p>
 <h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
 <p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
-<p>The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.</p>
+<p>The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
 <h3 id="unicast-key-agreement"><a class="header" href="#unicast-key-agreement">Unicast Key Agreement</a></h3>
 <p>For unicast and blind unicast:</p>
@@ -1099,7 +1103,7 @@ K_mic = okm[16..31]
 </thead>
 <tbody>
 <tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = MIC)</td></tr>
-<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4 or 2</td></tr>
+<tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4</td></tr>
 <tr><td style="text-align: right">8 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
 <tr><td style="text-align: right">4 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
 </tbody>
@@ -1113,8 +1117,8 @@ K_mic = okm[16..31]
 <ol>
 <li><strong>FCF</strong> (1 byte)</li>
 <li><strong>Static options</strong> — re-encoded as type-length-value (see below)</li>
-<li><strong>DST</strong> (2 bytes, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
-<li><strong>SRC</strong> (2 or 32 bytes) — included only when the source field is outside the ciphertext</li>
+<li><strong>DST</strong> (3-byte destination hint, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
+<li><strong>SRC</strong> (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
 <p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
@@ -1354,9 +1358,20 @@ of packets which transit the bridge.</p>
 </code></pre>
 <p>Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.</p>
 <p>The channel key is derived from the channel name using HKDF-Extract:</p>
-<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+<pre><code class="language-text">channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = canonical_name)
 </code></pre>
-<p>Where <code>channel_name</code> is the name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>), after percent-decoding, encoded as a UTF-8 byte string. For example, given <code>umsh:cs:Public</code>, the input is the UTF-8 encoding of <code>Public</code>. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<p>Where <code>canonical_name</code> is the canonicalized name portion of the <code>umsh:cs:</code> URI (everything after <code>umsh:cs:</code>). Canonicalization is defined as follows:</p>
+<ol>
+<li>Percent-decode the name portion of the URI.</li>
+<li>The decoded name MUST consist only of ASCII characters (letters, digits, and symbols). Non-ASCII (multi-byte UTF-8) names are not currently supported and MUST be rejected. Any character that is not URI-safe is carried through percent-encoding in the URI and recovered by step 1.</li>
+<li>Fold ASCII letters <code>A</code>–<code>Z</code> to lowercase <code>a</code>–<code>z</code>. No other characters are altered.</li>
+<li>Encode the result as an ASCII byte string; this is <code>canonical_name</code>.</li>
+</ol>
+<p>For example, given <code>umsh:cs:Public</code>, the input to canonicalization is <code>Public</code>, which folds to <code>public</code>, and the key is derived over the bytes of <code>public</code>. Because folding is applied before derivation, <code>umsh:cs:Public</code>, <code>umsh:cs:public</code>, and <code>umsh:cs:PUBLIC</code> all derive the <strong>same</strong> channel key. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Until then, a name that must display non-ASCII characters should carry them percent-encoded and be treated as case-sensitive in its encoded form.</p>
+</blockquote>
 <p>HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.</p>
 <h3 id="private-channels"><a class="header" href="#private-channels">Private Channels</a></h3>
 <p>For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, <code>umsh:ck:</code> URIs (see <a href="#channel-uris">URI Formats</a>), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.</p>
@@ -1379,7 +1394,7 @@ of packets which transit the bridge.</p>
 <li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>must not</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
 </ul>
 <h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
-<p>The <code>EMERGENCY</code> channel (derived from <code>umsh:cs:EMERGENCY</code>, case-sensitive) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>
+<p>The emergency channel (written <code>EMERGENCY</code> here for emphasis, but derived from <code>umsh:cs:emergency</code> after the ASCII case-folding described in <a href="#named-channels">Named Channels</a>, so <code>umsh:cs:EMERGENCY</code> and <code>umsh:cs:emergency</code> derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>
 <ul>
 <li>Maximum flood hops: <strong>5</strong> without a region code, <strong>7</strong> with a region code.</li>
 <li>Chat messages <strong>must not</strong> be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.</li>
@@ -1818,7 +1833,7 @@ delay = uniform_random(0, W)
 </thead>
 <tbody>
 <tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
-<tr><td style="text-align: right">1</td><td>Node Location</td><td>1-8 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
+<tr><td style="text-align: right">1</td><td>Node Location</td><td>1-7 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
 <tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
@@ -2056,7 +2071,7 @@ delay = uniform_random(0, W)
 <p>This command does nothing, however it will produce an UACK when sent via a packet
 type that requests an ACK.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="node-manament-protocol"><a class="header" href="#node-manament-protocol">Node Manament Protocol</a></h1>
+<h1 id="node-management-protocol"><a class="header" href="#node-management-protocol">Node Management Protocol</a></h1>
 <p>TBD</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="text-messages"><a class="header" href="#text-messages">Text Messages</a></h1>
@@ -2310,7 +2325,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP
 </code></pre>
 <p>Additional metadata may be attached as URI parameters:</p>
-<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugine
+<pre><code class="language-text">umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugene
 </code></pre>
 <p>Where, for example:</p>
 <ul>
@@ -2319,8 +2334,9 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <li><code>r</code> = recommended region</li>
 </ul>
 <p>A channel may also be identified by a string from which the channel key is derived:</p>
-<pre><code class="language-text">umsh:cs:Public
+<pre><code class="language-text">umsh:cs:public
 </code></pre>
+<p>The name that follows <code>umsh:cs:</code> is canonicalized before key derivation: it is percent-decoded, required to be ASCII, and folded to lowercase (see <a href="#named-channels">Named Channels</a>). Because of the fold, <code>umsh:cs:public</code>, <code>umsh:cs:Public</code>, and <code>umsh:cs:PUBLIC</code> all identify the same channel.</p>
 <h2 id="coap-over-umsh-uris"><a class="header" href="#coap-over-umsh-uris">CoAP-over-UMSH URIs</a></h2>
 <p>CoAP resources on a node use the <code>coap-umsh</code> scheme, with the node public key as the authority component.</p>
 <p>Example:</p>
@@ -3207,14 +3223,16 @@ host keeps authority over long-term identity, while the radio contributes:</p>
 low-power, phone-connected radios practical.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="minimal-companion-radio-protocol"><a class="header" href="#minimal-companion-radio-protocol">Minimal Companion Radio Protocol</a></h1>
-<p>The companion radio protocol is loosely based on the Spinel protocol from
-OpenThread. The protocol assumes reliable, in-order delivery of frames, as well
-as a way to assert flow control. The exact framing mechanism that can be used is
-flexible, for example:</p>
+<p>The companion radio protocol is inspired by the Spinel protocol from
+OpenThread, but it is not Spinel and does not aim for wire compatibility with
+it. The protocol assumes reliable, in-order delivery of frames, as well as a
+way to assert flow control. The framing mechanism depends on the underlying
+transport:</p>
 <ul>
-<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a></li>
-<li><a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#spi-framing-protocol">Spinel SPI</a></li>
-<li>BLE GATT</li>
+<li>Asynchronous serial links (UART, USB-CDC) use
+<a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>,
+exactly as used by Spinel.</li>
+<li>BLE will use a framing scheme to be defined separately.</li>
 </ul>
 <p>The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
@@ -3257,7 +3275,7 @@ given value.</p>
 <p>To decode the value, you collect the 7-bit chunks until you find a byte with
 the most significant bit clear.</p>
 <h2 id="frame-format"><a class="header" href="#frame-format">Frame Format</a></h2>
-<p>A Spinel frame is the concatenation of the following elements:</p>
+<p>A companion-radio frame is the concatenation of the following elements:</p>
 <ul>
 <li>A header comprising a single byte.</li>
 <li>A command identifier.</li>
@@ -3269,14 +3287,14 @@ the most significant bit clear.</p>
 |     HEADER    |  COMMAND ID   | PAYLOAD ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 </code></pre>
-<p>Figure: Structure of a typical Spinel frame</p>
+<p>Figure: Structure of a typical companion-radio frame</p>
 <p>Since the size of the frame is part of the framing mechanism, it is omitted
 from the frame.</p>
 <h3 id="frame-header"><a class="header" href="#frame-header">Frame Header</a></h3>
 <p>Each frame has the following format:</p>
 <pre><code>  0   1   2   3   4   5   6   7
 +---+---+---+---+---+---+---+---+
-|  FLG  |  RESERVED |    TID    |
+|  FLG  | RESERVED  |    TID    |
 +---+---+---+---+---+---+---+---+
 </code></pre>
 <p>Figure: Header Format</p>
@@ -3285,12 +3303,14 @@ from the frame.</p>
 always set to the value two (or <code>10</code> in binary). Any frame received with these
 bits set to any other value SHALL NOT be considered a companion-radio frame.</p>
 <h4 id="reserved-reserved"><a class="header" href="#reserved-reserved"><code>RESERVED</code>: Reserved</a></h4>
-<p>These bits must always be set to zero and the entire frame ignored if set to
-any other value.</p>
+<p>These three bits must always be set to zero and the entire frame ignored if
+set to any other value. They may be assigned a meaning (such as an interface
+identifier) in a future version of this protocol.</p>
 <h4 id="tid-transaction-identifier"><a class="header" href="#tid-transaction-identifier"><code>TID</code>: Transaction Identifier</a></h4>
-<p>The Transaction Identifier (TID) field in the four least significant bits of
+<p>The Transaction Identifier (TID) field in the three least significant bits of
 the header is used for correlating responses to the commands which generated
-them.</p>
+them. This allows for up to seven host-issued commands to be in flight at
+once.</p>
 <p>When a command is sent from the host, any reply to that command sent by the NCP
 will use the same value for the TID. When the host receives a frame that
 matches the TID of the command it sent, it can easily recognize that frame as
@@ -3307,7 +3327,7 @@ commands originating from the NCP <strong>MUST</strong> use TID zero (0).</p>
 <p>The command identifier is a 7-bit unsigned integer encoded from 0 to 127. The
 most significant bit is not set and the frame must be ignored if it is set.</p>
 <h3 id="payload"><a class="header" href="#payload">Payload</a></h3>
-<p>The command payload follows the command identifier in a Spinel frame,
+<p>The command payload follows the command identifier in a companion-radio frame,
 containing the serialization of any arguments that the indicated command may
 require. The exact composition of a command payload is determined by the
 specific command identifier being used and <strong>MUST</strong> be empty if the command has
@@ -3330,6 +3350,9 @@ no arguments.</p>
 </tbody>
 </table>
 </div>
+<p>Command identifiers 4, 5, 7, and 8 are reserved for property insert/remove
+operations and their corresponding notifications, which may be added in a
+future version of this protocol.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; NCP) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -3480,6 +3503,7 @@ an <code>Is</code> to respond with the current/new value of that property.</p>
 <tr><td>40</td><td><code>PROP_PHY_LORA_SF</code></td><td>Get, Set</td><td>LoRa spreading factor</td></tr>
 <tr><td>41</td><td><code>PROP_PHY_LORA_CR</code></td><td>Get, Set</td><td>LoRa coding rate</td></tr>
 <tr><td>42</td><td><code>PROP_PHY_MTU</code></td><td>Get</td><td>Max size of a frame</td></tr>
+<tr><td>43</td><td><code>PROP_PHY_LORA_SW</code></td><td>Get, Set</td><td>LoRa sync word (16-bit style)</td></tr>
 <tr><td>113</td><td><code>STR_PHY_RAW</code></td><td>Send, Recv</td><td>Raw radio frame stream</td></tr>
 <tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
 <tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
@@ -3516,8 +3540,8 @@ that all properties have reverted to their defined after-reset values.</p>
 <li>Value Type: UINT8, UINT8</li>
 <li>Post-Reset Value: 6, 0</li>
 </ul>
-<p>Describes the Spinel protocol version information. This property contains two
-fields:</p>
+<p>Describes the companion-radio protocol version information. This property
+contains two fields:</p>
 <pre><code>  0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -3671,6 +3695,16 @@ floor for the operating environment.</p>
 <li>Post-Reset Value: Implementation-Specific</li>
 </ul>
 <p>Maximum size of the <code>DATA</code> field that may be supplied to <code>STR_PHY_RAW</code>.</p>
+<h3 id="prop-phy-lora-sw"><a class="header" href="#prop-phy-lora-sw">PROP 43: <code>PROP_PHY_LORA_SW</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_PHY_LORA</code></li>
+<li>Scope: NLI</li>
+<li>Value Type: UINT16</li>
+<li>Post-Reset Value: Implementation-Specific, but 0x1424 is a good suggestion.</li>
+</ul>
+<p>Value is the 16-bit (SX126x-style) LoRa sync-word.</p>
 <h3 id="str-radio-raw"><a class="header" href="#str-radio-raw">STREAM 113: <code>STR_PHY_RAW</code></a></h3>
 <ul>
 <li>Type: Packet-Stream, Input/Output</li>
@@ -3698,7 +3732,7 @@ and will have the following format:</p>
 default, <code>0x7E</code> indicates to transmit at maximum power)</li>
 <li><code>TX_FLAGS</code> (<code>u8</code>): Transmit flags
 <ul>
-<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent
+<li><code>TX_FLAG_NOCCA</code> Bit 0: If set, do not use CCA (or the equivalent LoRa
 mechanism)</li>
 <li><code>TX_FLAG_NODUTY</code> Bit 1: If set, send the packet even if it would push us
 over the duty-cycle limit</li>
@@ -3724,7 +3758,9 @@ still decodes and 255 is perfect reception.
 </li>
 <li><code>RX_SNR</code> (<code>i16</code>): Signal-to-noise ratio in centibels, or 1/10 of a decibel.
 <ul>
-<li>If <code>0xFFFF</code>, SNR is not supported.</li>
+<li>If <code>0x8000</code> (<code>i16::MIN</code>), SNR is not supported. This sentinel is chosen
+because it is <code>-3276.8 dB</code>, a value no real link can report, so it never
+collides with a genuine measurement (unlike <code>0xFFFF</code>, which is <code>-0.1 dB</code>).</li>
 </ul>
 </li>
 </ul>
