@@ -1,0 +1,10 @@
+[package]
+name = "umsh-companion-ncp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NCP-side session engine for the minimal UMSH companion-radio protocol"
+
+[dependencies]
+umsh-companion = { path = "../umsh-companion" }
