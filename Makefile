@@ -2,7 +2,8 @@
 	build-companion-cli-techo flash-companion-cli-techo \
 	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
-	flash-companion-cli-t1000e-serial
+	flash-companion-cli-t1000e-serial \
+	build-companion-ncp-techo flash-companion-ncp-techo
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -25,6 +26,13 @@ build-companion-cli-techo:
 flash-companion-cli-techo: build-companion-cli-techo
 	scripts/flash.py --board techo --copy-default \
 		$(TARGET_DIR)/firmware-companion-cli-techo
+
+build-companion-ncp-techo:
+	cd firmware/companion-ncp-techo && cargo build --release
+
+flash-companion-ncp-techo: build-companion-ncp-techo
+	scripts/flash.py --board techo --copy-default \
+		$(TARGET_DIR)/firmware-companion-ncp-techo
 
 build-companion-cli-wio-tracker-l1:
 	cd firmware/companion-cli-wio-tracker-l1 && cargo build --release

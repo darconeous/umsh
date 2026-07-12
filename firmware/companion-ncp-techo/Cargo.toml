@@ -1,0 +1,50 @@
+[package]
+name = "firmware-companion-ncp-techo"
+description = "LilyGO T-Echo companion-radio NCP firmware (minimal companion-radio protocol over USB-CDC)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Companion-radio NCP firmware for the LilyGO T-Echo: exposes the
+# SX1262 as a host-controlled PHY speaking the minimal companion-radio
+# protocol (docs/protocol/src/companion-radio-minimal.md) with
+# HDLC-Lite framing over USB-CDC. The UMSH MAC does not run on the
+# device in this role — the host owns it via `umsh::companion_radio`.
+#
+# Like the other firmware crates, this is in `workspace.members` but
+# NOT in `default-members`, so root-level `cargo check` does not try
+# to cross-compile it on the developer's host.
+
+[[bin]]
+name = "firmware-companion-ncp-techo"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
+umsh-companion = { path = "../../crates/umsh-companion" }
+umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
+umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+heapless = { version = "0.8", default-features = false }
+
+# Embedded-only deps. Gated on `target_os = "none"` so this crate still
+# parses and trivially compiles on host as an empty `fn main()`. The
+# real firmware build uses the embedded target via the .cargo/config.toml
+# in this directory.
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.6", default-features = false }
+static_cell = "2"
+lora-phy = { workspace = true }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
+# no-op global logger so the firmware links without a debug transport.
+defmt = "0.3"
