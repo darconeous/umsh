@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/umsh-core",
+    "crates/umsh-companion",
     "crates/umsh-crypto",
     "crates/umsh-hal",
     "crates/umsh-uri",
@@ -28,6 +29,7 @@ members = [
 # (or by running cargo from inside the firmware directory).
 default-members = [
     "crates/umsh-core",
+    "crates/umsh-companion",
     "crates/umsh-crypto",
     "crates/umsh-hal",
     "crates/umsh-uri",
