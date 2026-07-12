@@ -1,0 +1,18 @@
+# Per-firmware cargo config. Only applied when cargo is invoked from
+# within this directory (or a subdirectory). Workspace-root `cargo check`
+# does not inherit this — that's intentional and is why this firmware
+# crate is excluded from `default-members`.
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Probe-rs is the standard SWD runner. Unlike the sealed T1000-E, the
+# T-Echo can be opened and an SWD probe attached if the user has one;
+# developers without a probe rely on UF2 + serial DFU via the
+# bootloader. A `just flash` recipe (TBD) wraps the UF2 flow.
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+]

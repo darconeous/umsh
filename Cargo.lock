@@ -915,6 +915,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-companion-ncp-techo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.6.2",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "lora-phy",
+ "static_cell",
+ "umsh-bsp-nrf52840",
+ "umsh-companion",
+ "umsh-companion-ncp",
+ "umsh-hal",
+ "umsh-radio-loraphy",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "fixed"
 version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
