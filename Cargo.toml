@@ -2,6 +2,7 @@
 members = [
     "crates/umsh-core",
     "crates/umsh-companion",
+    "crates/umsh-companion-ncp",
     "crates/umsh-crypto",
     "crates/umsh-hal",
     "crates/umsh-uri",
@@ -30,6 +31,7 @@ members = [
 default-members = [
     "crates/umsh-core",
     "crates/umsh-companion",
+    "crates/umsh-companion-ncp",
     "crates/umsh-crypto",
     "crates/umsh-hal",
     "crates/umsh-uri",
