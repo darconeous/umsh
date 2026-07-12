@@ -22,6 +22,7 @@ embedded-hal-async.workspace = true
 heapless.workspace = true
 rand_core.workspace = true
 umsh-chat-room = { path = "../crates/umsh-chat-room", default-features = false, optional = true }
+umsh-companion = { path = "../crates/umsh-companion" }
 umsh-core = { path = "../crates/umsh-core", default-features = false }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
@@ -41,6 +42,10 @@ umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-st
 [[example]]
 name = "cli_udp"
 required-features = ["cli"]
+
+[[example]]
+name = "companion_probe"
+required-features = ["serial-radio"]
 
 [[example]]
 name = "generate_phase1_vectors"
