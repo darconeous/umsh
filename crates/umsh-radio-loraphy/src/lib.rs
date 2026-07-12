@@ -65,6 +65,9 @@ pub struct RxFrame {
 /// A queued transmit request from the MAC to the runner task.
 pub struct TxRequest {
     pub data: Vec<u8, MAX_PAYLOAD>,
+    /// Per-frame TX power override in dBm; `None` uses the runner's
+    /// configured power.
+    pub power_dbm: Option<i32>,
 }
 
 // ─── Channels ────────────────────────────────────────────────────────────────
@@ -127,7 +130,13 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
         frame_data
             .extend_from_slice(data)
             .map_err(|_| TxError::Io(RadioError::PayloadSizeUnexpected(data.len())))?;
-        self.ch.tx.send(TxRequest { data: frame_data }).await;
+        self.ch
+            .tx
+            .send(TxRequest {
+                data: frame_data,
+                power_dbm: None,
+            })
+            .await;
         self.ch.tx_done.wait().await.map_err(TxError::Io)
     }
 
@@ -252,14 +261,226 @@ where
                 Either::Second(tx_req) => {
                     // TX is also NOT cancel-safe — run prepare_for_tx + tx
                     // to completion outside any select.
+                    let power = tx_req.power_dbm.unwrap_or(power_dbm);
                     let result = async {
-                        lora.prepare_for_tx(&mdltn, &mut tx_pkt, power_dbm, &tx_req.data)
+                        lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
                             .await?;
                         lora.tx().await
                     }
                     .await;
                     ch.tx_done.signal(result);
                     continue 'outer; // tx() leaves the chip in standby — re-prepare RX
+                }
+            }
+        }
+    }
+}
+
+// ─── NCP (companion-radio) runner ────────────────────────────────────────────
+
+/// Radio settings applied at runtime by the NCP session.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NcpSettings {
+    pub enabled: bool,
+    pub freq_hz: u32,
+    pub sf: SpreadingFactor,
+    pub bw: Bandwidth,
+    pub cr: CodingRate,
+    pub power_dbm: i32,
+}
+
+/// Control handle for [`ncp_runner`]: latest-wins settings updates.
+/// Place in a `static` next to the [`Channels`].
+pub struct NcpControl<M: RawMutex> {
+    settings: Signal<M, NcpSettings>,
+}
+
+impl<M: RawMutex> NcpControl<M> {
+    pub const fn new() -> Self {
+        Self {
+            settings: Signal::new(),
+        }
+    }
+
+    /// Apply new settings. The runner picks them up at its next await
+    /// point and rebuilds modulation/packet params.
+    pub fn apply(&self, settings: NcpSettings) {
+        self.settings.signal(settings);
+    }
+}
+
+impl<M: RawMutex> Default for NcpControl<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Convert a bandwidth in Hz (the companion-protocol representation)
+/// to the lora-phy enum. Returns `None` for unsupported values.
+pub fn bandwidth_from_hz(hz: u32) -> Option<Bandwidth> {
+    Some(match hz {
+        7_810 => Bandwidth::_7KHz,
+        10_420 => Bandwidth::_10KHz,
+        15_630 => Bandwidth::_15KHz,
+        20_830 => Bandwidth::_20KHz,
+        31_250 => Bandwidth::_31KHz,
+        41_670 => Bandwidth::_41KHz,
+        62_500 => Bandwidth::_62KHz,
+        125_000 => Bandwidth::_125KHz,
+        250_000 => Bandwidth::_250KHz,
+        500_000 => Bandwidth::_500KHz,
+        _ => return None,
+    })
+}
+
+/// Convert a numeric spreading factor (5-12) to the lora-phy enum.
+pub fn spreading_factor_from_u8(sf: u8) -> Option<SpreadingFactor> {
+    Some(match sf {
+        5 => SpreadingFactor::_5,
+        6 => SpreadingFactor::_6,
+        7 => SpreadingFactor::_7,
+        8 => SpreadingFactor::_8,
+        9 => SpreadingFactor::_9,
+        10 => SpreadingFactor::_10,
+        11 => SpreadingFactor::_11,
+        12 => SpreadingFactor::_12,
+        _ => return None,
+    })
+}
+
+/// Convert a coding-rate denominator (5 for 4/5 .. 8 for 4/8) to the
+/// lora-phy enum.
+pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
+    Some(match cr {
+        5 => CodingRate::_4_5,
+        6 => CodingRate::_4_6,
+        7 => CodingRate::_4_7,
+        8 => CodingRate::_4_8,
+        _ => return None,
+    })
+}
+
+/// NCP variant of [`runner`]: same RX/TX state machine, but the
+/// modulation parameters, frequency, and power come from an
+/// [`NcpControl`] at runtime instead of being fixed at spawn.
+///
+/// The radio starts idle (in standby) until the first enabled settings
+/// arrive. While disabled, TX requests stay queued — the NCP session
+/// rejects transmits with `STATUS_INVALID_STATE` before they reach
+/// this queue, so nothing accumulates in practice.
+///
+/// Cancellation-safety analysis is identical to [`runner`]: only
+/// `wait_for_irq` and the two channel/signal waits are cancelled by the
+/// select; IRQ processing and TX always run to completion.
+pub async fn ncp_runner<RK, DLY, M, const RX: usize, const TX: usize>(
+    mut lora: LoRa<RK, DLY>,
+    ch: &'static Channels<M, RX, TX>,
+    ctl: &'static NcpControl<M>,
+    rx_preamble: u16,
+    tx_preamble: u16,
+) -> !
+where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+    M: RawMutex,
+{
+    use embassy_futures::select::{Either3, select3};
+
+    let mut rx_buf = [0u8; MAX_PAYLOAD];
+    let mut settings: Option<NcpSettings> = None;
+
+    'reconfigure: loop {
+        // Idle until we have an enabled configuration.
+        let active = loop {
+            match settings {
+                Some(current) if current.enabled => break current,
+                _ => settings = Some(ctl.settings.wait().await),
+            }
+        };
+
+        // Build params for the active settings. The session validates
+        // values before applying, so failures here indicate a
+        // chip-level rejection: drop back to idle until new settings
+        // arrive rather than hot-looping.
+        let params = (|| {
+            let mdltn =
+                lora.create_modulation_params(active.sf, active.bw, active.cr, active.freq_hz)?;
+            let rx_pkt = lora.create_rx_packet_params(
+                rx_preamble,
+                false, // explicit header
+                MAX_PAYLOAD as u8,
+                true,  // CRC on
+                false, // IQ normal
+                &mdltn,
+            )?;
+            let tx_pkt =
+                lora.create_tx_packet_params(tx_preamble, false, true, false, &mdltn)?;
+            Ok::<_, RadioError>((mdltn, rx_pkt, tx_pkt))
+        })();
+        let Ok((mdltn, rx_pkt, mut tx_pkt)) = params else {
+            settings = Some(ctl.settings.wait().await);
+            continue 'reconfigure;
+        };
+
+        'rx: loop {
+            if lora
+                .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            if lora.start_rx().await.is_err() {
+                continue;
+            }
+
+            loop {
+                match select3(lora.wait_for_irq(), ch.tx.receive(), ctl.settings.wait()).await {
+                    Either3::First(Ok(())) => {
+                        // Same discipline as `runner`: process_irq_event
+                        // must run to completion, then clear interrupts.
+                        let irq_result = lora.process_irq_event().await;
+                        let _ = lora.clear_irq_status().await;
+
+                        match irq_result {
+                            Ok(Some(IrqState::Done)) => {
+                                if let Ok((len, status)) =
+                                    lora.get_rx_result(&rx_pkt, &mut rx_buf).await
+                                {
+                                    let mut data: Vec<u8, MAX_PAYLOAD> = Vec::new();
+                                    let _ = data.extend_from_slice(&rx_buf[..len as usize]);
+                                    let info = RxInfo {
+                                        len: len as usize,
+                                        rssi: status.rssi,
+                                        snr: Snr::from_decibels(status.snr as i8),
+                                        lqi: None,
+                                    };
+                                    if ch.rx.try_send(RxFrame { data, info }).is_ok() {
+                                        ch.rx_waker.wake();
+                                    }
+                                }
+                                continue 'rx;
+                            }
+                            Ok(_) => continue,
+                            Err(_) => continue 'rx,
+                        }
+                    }
+                    Either3::First(Err(_)) => continue 'rx,
+                    Either3::Second(tx_req) => {
+                        let power = tx_req.power_dbm.unwrap_or(active.power_dbm);
+                        let result = async {
+                            lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
+                                .await?;
+                            lora.tx().await
+                        }
+                        .await;
+                        ch.tx_done.signal(result);
+                        continue 'rx;
+                    }
+                    Either3::Third(new_settings) => {
+                        settings = Some(new_settings);
+                        continue 'reconfigure;
+                    }
                 }
             }
         }
