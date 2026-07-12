@@ -11,9 +11,6 @@ use rand::{Rng, rng};
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use umsh_sync::AsyncRefCell;
 
-#[cfg(feature = "serial-radio")]
-#[path = "support/draft_serial_radio.rs"]
-mod draft_serial_radio;
 
 use umsh::{
     core::PublicKey,
@@ -35,7 +32,7 @@ use umsh::{
 };
 
 #[cfg(feature = "serial-radio")]
-use draft_serial_radio::DraftSerialRadio;
+use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig};
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -320,14 +317,20 @@ async fn run_serial_chat(
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "serial-radio")]
     {
-        // The serial draft path follows the same API story as UDP mode. Only the concrete
-        // radio transport differs.
+        // The companion-radio path follows the same API story as UDP mode. Only the
+        // concrete radio transport differs: the NCP owns the LoRa PHY and this host
+        // owns the MAC, linked by the minimal companion-radio protocol over serial.
         let local_identity = load_or_create_identity(&identity_path)?;
         let local_key = *local_identity.public_key();
         let counter_root = counter_store_root(&identity_path);
-        let radio = DraftSerialRadio::open_tokio(serial_path, baud_rate)
+        // RF profile matching the companion-ncp firmware defaults
+        // (MeshCore-US bringup: 910.525 MHz / SF7 / BW62.5 kHz / CR4-5).
+        let mut radio_config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+        radio_config.tx_power_dbm = 14;
+        let radio = CompanionRadio::open_serial(&serial_path, baud_rate, radio_config)
             .await
-            .map_err(|error| std::io::Error::other(format!("serial open failed: {error:?}")))?;
+            .map_err(|error| std::io::Error::other(format!("companion attach failed: {error:?}")))?;
+        println!("companion radio: {}", radio.ncp_version());
         let local_mac = AsyncRefCell::new(build_mac(radio, counter_root)?);
         let local_handle = MacHandle::new(&local_mac);
         let local_id = local_handle
@@ -352,16 +355,13 @@ async fn run_serial_chat(
         let outputs = OutputQueue::new();
         let _subscriptions = register_peer_callbacks(&node, &chat, &peer, outputs.sink());
 
-        print_banner("serial-draft", local_key, Some(peer_key));
+        print_banner("companion-radio", local_key, Some(peer_key));
         if skip_counter_load {
             println!("counter load: skipped (--skip-counter-load)");
         }
         let mut stdin = BufReader::new(io::stdin()).lines();
         println!("Type a message and press enter, or /quit to exit.");
         println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
-        println!(
-            "This serial mode uses an example-only draft transport shim and is not a specified UMSH companion-radio protocol."
-        );
 
         loop {
             // As above, `pump_once()` is the right primitive when UMSH is being multiplexed
@@ -405,7 +405,7 @@ async fn run_serial_chat(
             baud_rate,
             peer_key,
         );
-        Err("serial-radio feature is required for the example-only serial draft mode".into())
+        Err("serial-radio feature is required for companion-radio serial mode".into())
     }
 }
 
