@@ -2,9 +2,10 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use umsh_mac::{LocalIdentityId, MacError, MacHandle, Platform, SendOptions};
+use umsh_mac::{LocalIdentityId, SendOptions};
 
 use crate::dispatch::EventDispatcher;
+use crate::mac::MacBackend;
 use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 use crate::receive::ReceivedPacketRef;
 use crate::{NodeIdentityPayload, OwnedMacCommand, mac_command};
@@ -31,40 +32,26 @@ pub enum HostError<E> {
 ///
 /// `run()` is the preferred long-lived driver. `pump_once()` exists for callers that need to
 /// multiplex UMSH progress with other async work using `select!`.
-pub struct Host<
-    'a,
-    P: Platform,
-    const IDENTITIES: usize,
-    const PEERS: usize,
-    const CHANNELS: usize,
-    const ACKS: usize,
-    const TX: usize,
-    const FRAME: usize,
-    const DUP: usize,
-> {
-    mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>,
+///
+/// # Callback re-entrancy
+///
+/// Receive and control callbacks (`on_receive`, `on_text`, `on_ack_received`, …) are invoked
+/// synchronously from inside [`pump_once`](Self::pump_once) while the coordinator borrow is
+/// held. A callback therefore MUST NOT call back into the MAC — it cannot `await` a `send`,
+/// and a blocking or re-entrant borrow of the coordinator would deadlock. Keep callbacks
+/// short and side-effect-free with respect to the MAC: record what you need (e.g. push to a
+/// queue or set a flag) and perform any follow-up sends after `pump_once` / `run` returns
+/// control to your own task.
+pub struct Host<M: MacBackend> {
+    mac: M,
     dispatcher: Rc<RefCell<EventDispatcher>>,
-    nodes: Vec<(
-        LocalIdentityId,
-        LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
-    )>,
+    nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
     pfs_control_options: SendOptions,
 }
 
-impl<
-    'a,
-    P: Platform,
-    const IDENTITIES: usize,
-    const PEERS: usize,
-    const CHANNELS: usize,
-    const ACKS: usize,
-    const TX: usize,
-    const FRAME: usize,
-    const DUP: usize,
-> Host<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
-{
-    /// Create a host around a shared MAC handle.
-    pub fn new(mac: MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>) -> Self {
+impl<M: MacBackend> Host<M> {
+    /// Create a host around a shared MAC backend.
+    pub fn new(mac: M) -> Self {
         Self {
             mac,
             dispatcher: Rc::new(RefCell::new(EventDispatcher::new())),
@@ -75,9 +62,9 @@ impl<
         }
     }
 
-    /// Return the underlying shared MAC handle.
-    pub fn mac(&self) -> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP> {
-        self.mac
+    /// Return a clone of the underlying shared MAC backend.
+    pub fn mac(&self) -> M {
+        self.mac.clone()
     }
 
     /// Borrow the send options used for node-managed PFS control messages.
@@ -94,15 +81,12 @@ impl<
     ///
     /// The returned handle is cheap to clone and becomes the application-facing entry point
     /// for sending traffic and attaching callbacks for that identity.
-    pub fn add_node(
-        &mut self,
-        identity_id: LocalIdentityId,
-    ) -> LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>> {
+    pub fn add_node(&mut self, identity_id: LocalIdentityId) -> LocalNode<M> {
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
         let node = LocalNode::new(
             identity_id,
-            self.mac,
+            self.mac.clone(),
             self.dispatcher.clone(),
             membership,
             state,
@@ -112,22 +96,14 @@ impl<
     }
 
     /// Look up a previously added node by identity id.
-    pub fn node(
-        &self,
-        identity_id: LocalIdentityId,
-    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>>
-    {
+    pub fn node(&self, identity_id: LocalIdentityId) -> Option<LocalNode<M>> {
         self.nodes
             .iter()
             .find(|(id, _)| *id == identity_id)
             .map(|(_, node)| node.clone())
     }
 
-    fn route_node(
-        &self,
-        identity_id: LocalIdentityId,
-    ) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>>
-    {
+    fn route_node(&self, identity_id: LocalIdentityId) -> Option<LocalNode<M>> {
         if let Some(node) = self.node(identity_id) {
             return Some(node);
         }
@@ -155,9 +131,7 @@ impl<
     ///
     /// Use this when you need to multiplex UMSH progress with other async sources using
     /// `select!`. If UMSH owns the task, prefer [`run`](Self::run).
-    pub async fn pump_once(
-        &mut self,
-    ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+    pub async fn pump_once(&mut self) -> Result<(), HostError<M::RunError>> {
         let now_ms = self.mac.now_ms().await;
         let pending_pfs = Rc::new(RefCell::new(Vec::<(
             LocalIdentityId,
@@ -247,9 +221,7 @@ impl<
     /// This is the preferred long-lived driver for node-based applications. It keeps the
     /// runtime wake policy inside the MAC/Host stack rather than requiring callers to write
     /// poll/sleep loops themselves.
-    pub async fn run(
-        &mut self,
-    ) -> Result<(), HostError<MacError<<P::Radio as umsh_hal::Radio>::Error>>> {
+    pub async fn run(&mut self) -> Result<(), HostError<M::RunError>> {
         loop {
             self.pump_once().await?;
         }
@@ -280,23 +252,10 @@ impl<
     }
 }
 
-fn route_node<
-    'a,
-    P: Platform,
-    const IDENTITIES: usize,
-    const PEERS: usize,
-    const CHANNELS: usize,
-    const ACKS: usize,
-    const TX: usize,
-    const FRAME: usize,
-    const DUP: usize,
->(
-    nodes: &[(
-        LocalIdentityId,
-        LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
-    )],
+fn route_node<M: MacBackend>(
+    nodes: &[(LocalIdentityId, LocalNode<M>)],
     identity_id: LocalIdentityId,
-) -> Option<LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>> {
+) -> Option<LocalNode<M>> {
     nodes
         .iter()
         .find(|(id, _)| *id == identity_id)
@@ -309,18 +268,8 @@ fn route_node<
         })
 }
 
-fn dispatch_payload_callbacks<
-    'a,
-    P: Platform,
-    const IDENTITIES: usize,
-    const PEERS: usize,
-    const CHANNELS: usize,
-    const ACKS: usize,
-    const TX: usize,
-    const FRAME: usize,
-    const DUP: usize,
->(
-    node: &LocalNode<MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+fn dispatch_payload_callbacks<M: MacBackend>(
+    node: &LocalNode<M>,
     packet: &ReceivedPacketRef<'_>,
     from: umsh_core::PublicKey,
     pending_pfs: &Rc<RefCell<Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>>>,

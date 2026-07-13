@@ -128,7 +128,7 @@ mod firmware {
     // Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
     // firmware owns them). Const params match `WioMac`'s capacities.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
-    type WioHost = Host<'static, WioTrackerPlatform, 2, 8, 4, 4, 8, 255, 32>;
+    type WioHost = Host<MacHandle<'static, WioTrackerPlatform, 2, 8, 4, 4, 8, 255, 32>>;
     /// LocalNode handle. Cheap to clone — passed to `cli_task`.
     type WioNode = LocalNode<MacHandle<'static, WioTrackerPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 

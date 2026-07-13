@@ -49,7 +49,7 @@ type ChatMac<R> = Mac<ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FR
 type ChatHandle<'a, R> =
     MacHandle<'a, ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 
-type ChatHost<'a, R> = Host<'a, ChatPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
+type ChatHost<'a, R> = Host<ChatHandle<'a, R>>;
 
 type ChatNode<'a, R> = umsh::node::LocalNode<ChatHandle<'a, R>>;
 type ChatPeer<'a, R> = PeerConnection<umsh::node::LocalNode<ChatHandle<'a, R>>>;

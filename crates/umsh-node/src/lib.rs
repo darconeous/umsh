@@ -614,6 +614,16 @@ mod tests {
     impl MacBackend for FakeMac {
         type SendError = SendError;
         type CapacityError = CapacityError;
+        type RunError = core::convert::Infallible;
+
+        async fn next_event(
+            &self,
+            _on_event: impl FnMut(LocalIdentityId, umsh_mac::MacEventRef<'_>),
+        ) -> Result<(), Self::RunError> {
+            // FakeMac is used to drive LocalNode directly in tests, never as a
+            // Host run loop, so this stub is never invoked.
+            Ok(())
+        }
 
         async fn add_peer(
             &self,

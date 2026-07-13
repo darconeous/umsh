@@ -163,7 +163,7 @@ mod firmware {
     // Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
     // firmware owns them). The const params match `TechoMac`'s capacities.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
-    type TechoHost = Host<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>;
+    type TechoHost = Host<MacHandle<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>>;
     /// LocalNode handle. Cheap to clone — passed to `cli_task`.
     type TechoNode = LocalNode<MacHandle<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 

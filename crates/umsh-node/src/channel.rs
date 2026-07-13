@@ -2,7 +2,7 @@ use alloc::string::String;
 
 use umsh_core::{ChannelId, ChannelKey};
 use umsh_crypto::{
-    CryptoEngine,
+    ChannelNameError, CryptoEngine,
     software::{SoftwareAes, SoftwareSha256},
 };
 
@@ -29,17 +29,20 @@ impl core::fmt::Debug for Channel {
 impl Channel {
     /// Create a named channel whose key is derived from the name.
     ///
-    /// Uses the same derivation as the MAC layer's `add_named_channel`.
-    pub fn named(name: &str) -> Self {
+    /// Uses the same derivation as the MAC layer's `add_named_channel`: the
+    /// name is canonicalized (ASCII lowercase fold) before derivation, so
+    /// `Public` and `public` are the same channel. The display name keeps the
+    /// caller's original casing. Fails if the name is non-ASCII or too long.
+    pub fn named(name: &str) -> Result<Self, ChannelNameError> {
         let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = crypto.derive_named_channel_key(name);
+        let key = crypto.derive_named_channel_key(name)?;
         let channel_id = crypto.derive_channel_id(&key);
 
-        Self {
+        Ok(Self {
             key,
             channel_id,
             name: String::from(name),
-        }
+        })
     }
 
     /// Create a private channel with an explicit key.
