@@ -18,4 +18,4 @@ pub mod async_condition;
 pub mod async_refcell;
 
 pub use async_condition::{AsyncCondition, AsyncConditionTicket, AsyncConditionWait};
-pub use async_refcell::{AsyncRefCell, Ref, RefMut};
+pub use async_refcell::{AsyncRefCell, Ref, RefMut, ScopedTicket};

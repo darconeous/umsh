@@ -11,8 +11,9 @@
 use core::cell::{self, RefCell};
 use core::fmt;
 use core::ops::{Deref, DerefMut};
+use core::task::{Context, Poll};
 
-use crate::AsyncCondition;
+use crate::{AsyncCondition, AsyncConditionTicket};
 
 /// Single-threaded async-aware interior-mutability cell.
 ///
@@ -87,6 +88,68 @@ impl<T: ?Sized> AsyncRefCell<T> {
         })
     }
 
+    /// Poll `f` with a short-lived exclusive borrow, staying registered on the
+    /// cell's wake condition across `Pending` polls.
+    ///
+    /// This is the primitive for `poll_fn`-style drivers that need to race a
+    /// borrow attempt against other wake sources (radio I/O, a timer) *and* be
+    /// re-polled whenever a guard is released — for example when a second
+    /// handle mutates the cell and drops its borrow.
+    ///
+    /// Behavior per poll:
+    ///
+    /// 1. Deregister this task's waker from the wake condition. Every guard
+    ///    drop triggers the condition, so a waker registered *before* taking
+    ///    the borrow would be woken by our **own** guard drop in step 2,
+    ///    re-polling the task in a busy loop. This crate is single-threaded,
+    ///    so nothing can trigger between this step and step 3 — no wakeup can
+    ///    be lost to the gap.
+    /// 2. If the cell is free, take the exclusive borrow and run `f` (which
+    ///    may register other wakers, e.g. radio or timer). The guard is
+    ///    dropped — waking *other* waiters — before step 3.
+    /// 3. If `f` returned `Pending` (or the cell was busy), re-register on the
+    ///    condition so a later guard release re-polls this task.
+    ///
+    /// `ticket` must be obtained from [`scoped_ticket`](Self::scoped_ticket)
+    /// once before the wait begins and reused across every poll of that wait.
+    /// The ticket deregisters itself on drop, so a wait that is cancelled
+    /// mid-`Pending` (e.g. losing a `select!` race) cannot leak its waker
+    /// registration.
+    pub fn poll_with_mut<R>(
+        &self,
+        cx: &mut Context<'_>,
+        ticket: &mut ScopedTicket<'_>,
+        f: impl FnOnce(&mut T, &mut Context<'_>) -> Poll<R>,
+    ) -> Poll<R> {
+        debug_assert!(
+            core::ptr::eq(ticket.cond, &self.cond),
+            "ScopedTicket used with a different AsyncRefCell than it was created from"
+        );
+        ticket.cond.forget_ticket(&mut ticket.ticket);
+        let result = match self.try_borrow_mut() {
+            // The guard drops at the end of this arm — while this task is
+            // deregistered — so our own release never wakes us.
+            Some(mut guard) => f(&mut guard, cx),
+            None => Poll::Pending,
+        };
+        if result.is_pending() {
+            ticket.ticket = ticket.cond.ticket();
+            let _ = ticket.cond.poll_wait(cx, &mut ticket.ticket);
+        }
+        result
+    }
+
+    /// Create an RAII ticket for use with [`poll_with_mut`](Self::poll_with_mut).
+    ///
+    /// The ticket deregisters from the cell's wake condition when dropped, so
+    /// waits abandoned before completion do not leak waker slots.
+    pub fn scoped_ticket(&self) -> ScopedTicket<'_> {
+        ScopedTicket {
+            cond: &self.cond,
+            ticket: self.cond.ticket(),
+        }
+    }
+
     /// Borrow the underlying wake condition.
     ///
     /// Each guard drop triggers this condition, waking any task currently
@@ -110,6 +173,22 @@ impl<T: fmt::Debug> fmt::Debug for AsyncRefCell<T> {
         f.debug_struct("AsyncRefCell")
             .field("inner", &self.inner)
             .finish()
+    }
+}
+
+/// RAII condition ticket vended by [`AsyncRefCell::scoped_ticket`].
+///
+/// Deregisters its waker slot from the cell's wake condition on drop, so a
+/// wait that is cancelled mid-flight (a dropped `poll_fn` future) cannot leak
+/// its registration.
+pub struct ScopedTicket<'a> {
+    cond: &'a AsyncCondition,
+    ticket: AsyncConditionTicket,
+}
+
+impl Drop for ScopedTicket<'_> {
+    fn drop(&mut self) {
+        self.cond.forget_ticket(&mut self.ticket);
     }
 }
 
@@ -233,6 +312,106 @@ mod tests {
             .now_or_never()
             .expect("cell should be free");
         drop(w2);
+    }
+
+    /// A waker that counts how many times it is woken.
+    struct WakeCounter(core::sync::atomic::AtomicUsize);
+
+    impl futures::task::ArcWake for WakeCounter {
+        fn wake_by_ref(arc_self: &alloc::sync::Arc<Self>) {
+            arc_self
+                .0
+                .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl WakeCounter {
+        fn count(&self) -> usize {
+            self.0.load(core::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    fn counting_waker() -> (core::task::Waker, alloc::sync::Arc<WakeCounter>) {
+        let counter = alloc::sync::Arc::new(WakeCounter(core::sync::atomic::AtomicUsize::new(0)));
+        let waker = futures::task::waker(counter.clone());
+        (waker, counter)
+    }
+
+    /// `poll_with_mut` runs the closure when the cell is free, is `Pending`
+    /// while a guard is held, and wakes when that guard is released.
+    #[test]
+    fn poll_with_mut_waits_for_release() {
+        use core::future::poll_fn;
+        use core::task::Poll;
+
+        let cell = AsyncRefCell::new(5u32);
+        let mut ticket = cell.scoped_ticket();
+        let guard = cell.borrow_mut().now_or_never().unwrap();
+
+        let mut fut = Box::pin(poll_fn(|cx| {
+            cell.poll_with_mut(cx, &mut ticket, |value, _cx| Poll::Ready(*value))
+        }));
+        // Held exclusively elsewhere: not ready.
+        assert!((&mut fut).now_or_never().is_none());
+        drop(guard);
+        // Released: the condition wake re-polls and the closure runs.
+        assert_eq!(fut.now_or_never(), Some(5));
+    }
+
+    /// Regression test: a `Pending` poll of `poll_with_mut` must not be woken
+    /// by its **own** guard drop. The pre-`poll_with_mut` pattern registered
+    /// on the condition before taking the borrow, so the guard drop at the end
+    /// of each poll re-woke the task — a permanent executor spin.
+    #[test]
+    fn poll_with_mut_own_guard_drop_does_not_self_wake() {
+        use core::task::{Context, Poll};
+
+        let (waker, wakes) = counting_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let cell = AsyncRefCell::new(0u32);
+        let mut ticket = cell.scoped_ticket();
+
+        // Borrow succeeds, closure returns Pending (like a radio with no
+        // frame ready), guard drops inside the call.
+        let result: Poll<()> = cell.poll_with_mut(&mut cx, &mut ticket, |_value, _cx| Poll::Pending);
+        assert!(result.is_pending());
+        assert_eq!(
+            wakes.count(),
+            0,
+            "own guard drop must not wake the polling task"
+        );
+
+        // But another holder's release *does* wake us.
+        drop(cell.borrow_mut().now_or_never().unwrap());
+        assert_eq!(wakes.count(), 1);
+    }
+
+    /// Regression test: dropping a `ScopedTicket` mid-`Pending` (a wait
+    /// cancelled by losing a `select!` race) deregisters its waker slot, so
+    /// repeated cancelled waits do not leak slab entries or receive wakes.
+    #[test]
+    fn scoped_ticket_drop_deregisters() {
+        use core::task::{Context, Poll};
+
+        let (waker, wakes) = counting_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let cell = AsyncRefCell::new(0u32);
+        {
+            let mut ticket = cell.scoped_ticket();
+            let result: Poll<()> =
+                cell.poll_with_mut(&mut cx, &mut ticket, |_value, _cx| Poll::Pending);
+            assert!(result.is_pending());
+            // Wait cancelled here: ticket dropped while registered.
+        }
+        // A later guard release must not wake the abandoned waiter.
+        drop(cell.borrow_mut().now_or_never().unwrap());
+        assert_eq!(
+            wakes.count(),
+            0,
+            "cancelled wait must deregister its waker"
+        );
     }
 
     /// Race: holder releases between a waiter's `wait()` registration and
