@@ -88,6 +88,25 @@ pub enum CryptoError {
     AuthenticationFailed,
 }
 
+/// Maximum channel-name length accepted by
+/// [`CryptoEngine::derive_named_channel_key`].
+///
+/// This is an implementation limit of the no-alloc canonicalization buffer,
+/// not a protocol constant; the spec places no length bound on named
+/// channels.
+pub const MAX_CHANNEL_NAME_LEN: usize = 64;
+
+/// Error returned when a channel name cannot be canonicalized for key
+/// derivation (see multicast-channels.md § Named Channels).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelNameError {
+    /// The name contains non-ASCII characters. UTF-8 names are deferred by
+    /// the spec because Unicode case-folding is non-trivial.
+    NotAscii,
+    /// The name exceeds [`MAX_CHANNEL_NAME_LEN`].
+    TooLong,
+}
+
 /// Derived pairwise transport keys.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct PairwiseKeys {
@@ -270,8 +289,30 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Derive a channel key from a human-readable channel name.
-    pub fn derive_named_channel_key(&self, name: &str) -> ChannelKey {
-        ChannelKey(self.sha.hmac(b"UMSH-CHANNEL-V1", &[name.as_bytes()]))
+    ///
+    /// The name is canonicalized first, per the spec (multicast-channels.md
+    /// § Named Channels): it must be ASCII, and ASCII letters are folded to
+    /// lowercase before derivation — so `Public`, `public`, and `PUBLIC` all
+    /// derive the same key. Non-ASCII names are rejected (UTF-8 case-folding
+    /// is deferred by the spec). Names longer than
+    /// [`MAX_CHANNEL_NAME_LEN`] are rejected as an implementation limit of
+    /// the no-alloc canonicalization buffer.
+    pub fn derive_named_channel_key(&self, name: &str) -> Result<ChannelKey, ChannelNameError> {
+        let bytes = name.as_bytes();
+        if bytes.len() > MAX_CHANNEL_NAME_LEN {
+            return Err(ChannelNameError::TooLong);
+        }
+        if !name.is_ascii() {
+            return Err(ChannelNameError::NotAscii);
+        }
+        let mut canonical = [0u8; MAX_CHANNEL_NAME_LEN];
+        for (dst, byte) in canonical.iter_mut().zip(bytes) {
+            *dst = byte.to_ascii_lowercase();
+        }
+        Ok(ChannelKey(
+            self.sha
+                .hmac(b"UMSH-CHANNEL-V1", &[&canonical[..bytes.len()]]),
+        ))
     }
 
     /// Seal a unicast or multicast packet in place.
@@ -1058,12 +1099,44 @@ mod tests {
     #[test]
     fn derive_named_channel_key_is_deterministic() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let k1 = engine.derive_named_channel_key("lobby");
-        let k2 = engine.derive_named_channel_key("lobby");
-        let k3 = engine.derive_named_channel_key("other");
+        let k1 = engine.derive_named_channel_key("lobby").unwrap();
+        let k2 = engine.derive_named_channel_key("lobby").unwrap();
+        let k3 = engine.derive_named_channel_key("other").unwrap();
         assert_eq!(k1, k2);
         assert_ne!(k1, k3);
         assert_ne!(k1, ChannelKey([0u8; 32]));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn derive_named_channel_key_folds_ascii_case() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let lower = engine.derive_named_channel_key("public").unwrap();
+        assert_eq!(engine.derive_named_channel_key("Public").unwrap(), lower);
+        assert_eq!(engine.derive_named_channel_key("PUBLIC").unwrap(), lower);
+        // Digits and symbols are untouched by the fold.
+        assert_eq!(
+            engine.derive_named_channel_key("Mesh-42!").unwrap(),
+            engine.derive_named_channel_key("mesh-42!").unwrap()
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn derive_named_channel_key_rejects_invalid_names() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        assert_eq!(
+            engine.derive_named_channel_key("caf\u{e9}"),
+            Err(ChannelNameError::NotAscii)
+        );
+        let too_long = "x".repeat(MAX_CHANNEL_NAME_LEN + 1);
+        assert_eq!(
+            engine.derive_named_channel_key(&too_long),
+            Err(ChannelNameError::TooLong)
+        );
+        // Exactly at the limit is fine.
+        let at_limit = "x".repeat(MAX_CHANNEL_NAME_LEN);
+        assert!(engine.derive_named_channel_key(&at_limit).is_ok());
     }
 
     // ── SoftwareIdentity::generate ────────────────────────────────────────────
