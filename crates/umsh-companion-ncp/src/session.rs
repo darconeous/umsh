@@ -76,6 +76,11 @@ pub enum Effect {
     /// [`Session::tx_power`]; report completion with
     /// [`Session::on_tx_result`].
     StartTransmit,
+    /// Sample the current instantaneous RSSI from the radio and feed the
+    /// result back with [`Session::respond_rssi`], quoting this `tid`. Emitted
+    /// for a `PROP_PHY_RSSI` get while the PHY is enabled, because the session
+    /// itself has no live view of the radio.
+    SampleRssi { tid: u8 },
 }
 
 struct PendingTx {
@@ -177,13 +182,13 @@ impl Session {
                 None
             }
             Some(Cmd::Reset) => Some(self.reset(Status::RESET_SOFTWARE, emit)),
-            Some(Cmd::PropGet) => {
-                match PropPayload::parse(received.payload) {
-                    Ok(payload) => self.prop_get(tid, payload.key, now_ms, emit),
-                    Err(_) => self.fail(tid, Status::PARSE_ERROR, emit),
+            Some(Cmd::PropGet) => match PropPayload::parse(received.payload) {
+                Ok(payload) => self.prop_get(tid, payload.key, now_ms, emit),
+                Err(_) => {
+                    self.fail(tid, Status::PARSE_ERROR, emit);
+                    None
                 }
-                None
-            }
+            },
             Some(Cmd::PropSet) => match PropPayload::parse(received.payload) {
                 Ok(payload) => self.prop_set(tid, payload.key, payload.value, now_ms, emit),
                 Err(_) => {
@@ -266,12 +271,42 @@ impl Session {
 
     // ─── Command implementations ─────────────────────────────────────
 
-    fn prop_get(&mut self, tid: u8, key: u32, now_ms: u64, emit: &mut impl FnMut(&[u8])) {
+    fn prop_get(
+        &mut self,
+        tid: u8,
+        key: u32,
+        now_ms: u64,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        // PROP_PHY_RSSI is an instantaneous radio reading the session cannot
+        // produce on its own. While the PHY is enabled (in RX), defer to the
+        // caller to sample it; while disabled there is no ambient RSSI to read.
+        if key == prop::PHY_RSSI {
+            if self.settings.enabled {
+                return Some(Effect::SampleRssi { tid });
+            }
+            self.fail(tid, Status::INVALID_STATE, emit);
+            return None;
+        }
         let mut value = [0u8; 96];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
             PropValue::Unimplemented => self.fail(tid, Status::UNIMPLEMENTED, emit),
             PropValue::Unknown => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+        }
+        None
+    }
+
+    /// Complete a deferred `PROP_PHY_RSSI` read requested via
+    /// [`Effect::SampleRssi`]. `rssi` is the sampled value in dBm, or `Err` if
+    /// the radio read failed. Quote the same `tid` the effect carried.
+    pub fn respond_rssi(&mut self, tid: u8, rssi: Result<i16, ()>, emit: &mut impl FnMut(&[u8])) {
+        match rssi {
+            Ok(dbm) => {
+                let clamped = dbm.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8;
+                self.send_prop_is(tid, prop::PHY_RSSI, &[clamped as u8], emit);
+            }
+            Err(()) => self.fail(tid, Status::FAILURE, emit),
         }
     }
 
@@ -738,9 +773,37 @@ mod tests {
         let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
         expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
 
+        // PHY_RSSI while the PHY is disabled: no ambient RSSI to read.
         let len = frame::prop_get(&mut buf, 1, prop::PHY_RSSI).unwrap();
-        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
-        expect_status(&emitted[0], 1, Status::UNIMPLEMENTED);
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 1, Status::INVALID_STATE);
+    }
+
+    #[test]
+    fn phy_rssi_defers_to_radio_when_enabled() {
+        let mut session = test_session();
+        enable(&mut session);
+
+        // A GET while enabled defers instead of answering inline.
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 3, prop::PHY_RSSI).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response until the radio is sampled");
+        assert_eq!(effect, Some(Effect::SampleRssi { tid: 3 }));
+
+        // The caller feeds the sample back; the session emits PROP_IS.
+        let mut out = Vec::new();
+        session.respond_rssi(3, Ok(-91), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!(tid, 3);
+        assert_eq!(key, prop::PHY_RSSI);
+        assert_eq!(value, [(-91i8) as u8]);
+
+        // A failed radio read surfaces as STATUS_FAILURE.
+        let mut out = Vec::new();
+        session.respond_rssi(4, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        expect_status(&out[0], 4, Status::FAILURE);
     }
 
     #[test]

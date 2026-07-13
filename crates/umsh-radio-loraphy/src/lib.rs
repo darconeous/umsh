@@ -72,7 +72,7 @@ pub struct TxRequest {
 
 // ─── Channels ────────────────────────────────────────────────────────────────
 
-/// Shared state between [`Sx1262Radio`] and [`runner`]. Place in a `static`.
+/// Shared state between [`LoraphyRadio`] and [`runner`]. Place in a `static`.
 ///
 /// - `M`: raw mutex type (e.g. `ThreadModeRawMutex` for single-core Embassy).
 /// - `RX`: depth of the receive queue.
@@ -289,16 +289,21 @@ pub struct NcpSettings {
     pub power_dbm: i32,
 }
 
-/// Control handle for [`ncp_runner`]: latest-wins settings updates.
-/// Place in a `static` next to the [`Channels`].
+/// Control handle for [`ncp_runner`]: latest-wins settings updates and
+/// on-demand instantaneous-RSSI sampling. Place in a `static` next to the
+/// [`Channels`].
 pub struct NcpControl<M: RawMutex> {
     settings: Signal<M, NcpSettings>,
+    rssi_req: Signal<M, ()>,
+    rssi_resp: Signal<M, Result<i16, ()>>,
 }
 
 impl<M: RawMutex> NcpControl<M> {
     pub const fn new() -> Self {
         Self {
             settings: Signal::new(),
+            rssi_req: Signal::new(),
+            rssi_resp: Signal::new(),
         }
     }
 
@@ -306,6 +311,20 @@ impl<M: RawMutex> NcpControl<M> {
     /// point and rebuilds modulation/packet params.
     pub fn apply(&self, settings: NcpSettings) {
         self.settings.signal(settings);
+    }
+
+    /// Request an instantaneous-RSSI sample from the runner. Pair with
+    /// [`wait_rssi`](Self::wait_rssi). Only meaningful while the radio is in RX
+    /// (i.e. enabled); the caller is responsible for that gating.
+    pub fn request_rssi(&self) {
+        self.rssi_resp.reset();
+        self.rssi_req.signal(());
+    }
+
+    /// Await the RSSI sample requested via [`request_rssi`](Self::request_rssi),
+    /// in dBm. `Err(())` means the read failed at the radio.
+    pub async fn wait_rssi(&self) -> Result<i16, ()> {
+        self.rssi_resp.wait().await
     }
 }
 
@@ -384,17 +403,31 @@ where
     DLY: embedded_hal_async::delay::DelayNs,
     M: RawMutex,
 {
-    use embassy_futures::select::{Either3, select3};
+    use embassy_futures::select::{Either4, select4};
 
     let mut rx_buf = [0u8; MAX_PAYLOAD];
     let mut settings: Option<NcpSettings> = None;
+
+    // Wait for new settings while idle, failing any RSSI request that
+    // arrives meanwhile so the requester never hangs. The session gates
+    // RSSI reads on `enabled`, but enable→RX is asynchronous (and the
+    // params-failure path below idles while the session still believes
+    // the radio is enabled), so a request can race into an idle window.
+    async fn wait_settings_while_idle<M: RawMutex>(ctl: &NcpControl<M>) -> NcpSettings {
+        loop {
+            match select(ctl.settings.wait(), ctl.rssi_req.wait()).await {
+                Either::First(new_settings) => return new_settings,
+                Either::Second(()) => ctl.rssi_resp.signal(Err(())),
+            }
+        }
+    }
 
     'reconfigure: loop {
         // Idle until we have an enabled configuration.
         let active = loop {
             match settings {
                 Some(current) if current.enabled => break current,
-                _ => settings = Some(ctl.settings.wait().await),
+                _ => settings = Some(wait_settings_while_idle(ctl).await),
             }
         };
 
@@ -418,7 +451,7 @@ where
             Ok::<_, RadioError>((mdltn, rx_pkt, tx_pkt))
         })();
         let Ok((mdltn, rx_pkt, mut tx_pkt)) = params else {
-            settings = Some(ctl.settings.wait().await);
+            settings = Some(wait_settings_while_idle(ctl).await);
             continue 'reconfigure;
         };
 
@@ -435,8 +468,15 @@ where
             }
 
             loop {
-                match select3(lora.wait_for_irq(), ch.tx.receive(), ctl.settings.wait()).await {
-                    Either3::First(Ok(())) => {
+                match select4(
+                    lora.wait_for_irq(),
+                    ch.tx.receive(),
+                    ctl.settings.wait(),
+                    ctl.rssi_req.wait(),
+                )
+                .await
+                {
+                    Either4::First(Ok(())) => {
                         // Same discipline as `runner`: process_irq_event
                         // must run to completion, then clear interrupts.
                         let irq_result = lora.process_irq_event().await;
@@ -465,8 +505,8 @@ where
                             Err(_) => continue 'rx,
                         }
                     }
-                    Either3::First(Err(_)) => continue 'rx,
-                    Either3::Second(tx_req) => {
+                    Either4::First(Err(_)) => continue 'rx,
+                    Either4::Second(tx_req) => {
                         let power = tx_req.power_dbm.unwrap_or(active.power_dbm);
                         let result = async {
                             lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
@@ -477,9 +517,19 @@ where
                         ch.tx_done.signal(result);
                         continue 'rx;
                     }
-                    Either3::Third(new_settings) => {
+                    Either4::Third(new_settings) => {
                         settings = Some(new_settings);
                         continue 'reconfigure;
+                    }
+                    Either4::Fourth(()) => {
+                        // Sample the instantaneous channel RSSI. We are in
+                        // continuous RX here, so GetRssiInst is valid. Like TX,
+                        // `get_rssi` runs to completion outside the select
+                        // (only `wait_for_irq` and the channel/signal waits are
+                        // cancel-safe). Reading RSSI does not disturb RX, so we
+                        // stay in the inner loop rather than re-preparing.
+                        let sample = lora.get_rssi().await.map_err(|_| ());
+                        ctl.rssi_resp.signal(sample);
                     }
                 }
             }

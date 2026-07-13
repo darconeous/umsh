@@ -200,12 +200,25 @@ mod firmware {
         }
 
         /// HDLC-encode one companion frame into the next slot.
+        ///
+        /// The session is expected to emit at most `bufs.len()` frames per call
+        /// and every frame is expected to fit `WIRE_MAX`. Both invariants are
+        /// asserted in debug builds so a future session change that violates
+        /// them is caught rather than silently dropping a response.
         fn push(&mut self, frame: &[u8]) {
-            if self.count < self.bufs.len()
-                && let Ok(len) = hdlc::encode_frame(frame, &mut self.bufs[self.count])
-            {
-                self.lens[self.count] = len;
-                self.count += 1;
+            if self.count >= self.bufs.len() {
+                debug_assert!(
+                    false,
+                    "Emitter overflow: session emitted more frames per call than staging slots"
+                );
+                return;
+            }
+            match hdlc::encode_frame(frame, &mut self.bufs[self.count]) {
+                Ok(len) => {
+                    self.lens[self.count] = len;
+                    self.count += 1;
+                }
+                Err(_) => debug_assert!(false, "Emitter: HDLC encode failed (frame exceeds WIRE_MAX)"),
             }
         }
 
@@ -255,7 +268,9 @@ mod firmware {
                 };
                 RADIO_CH.tx.send(TxRequest { data, power_dbm }).await;
             }
-            None => {}
+            // SampleRssi needs `&mut Session` + the emitter, so it is handled
+            // inline in ncp_task rather than here.
+            Some(Effect::SampleRssi { .. }) | None => {}
         }
     }
 
@@ -344,7 +359,20 @@ mod firmware {
                                 emitter.push(frame)
                             });
                         emitter.flush().await;
-                        apply_effect(&session, effect).await;
+                        match effect {
+                            Some(Effect::SampleRssi { tid }) => {
+                                // Round-trip to the radio runner for an
+                                // instantaneous RSSI sample, then answer the
+                                // deferred PROP_PHY_RSSI get.
+                                NCP_CTL.request_rssi();
+                                let sample = NCP_CTL.wait_rssi().await;
+                                session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush().await;
+                            }
+                            other => apply_effect(&session, other).await,
+                        }
                     }
                 }
                 Either3::Second(RxFrame { data, info }) => {
