@@ -21,10 +21,10 @@ use embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::Pixel;
 
-pub const WIDTH:    usize = 128;
-pub const HEIGHT:   usize = 64;
-const PAGES:        usize = HEIGHT / 8;
-pub const BUF_SIZE: usize = WIDTH * PAGES;  // 1024 bytes
+pub const WIDTH: usize = 128;
+pub const HEIGHT: usize = 64;
+const PAGES: usize = HEIGHT / 8;
+pub const BUF_SIZE: usize = WIDTH * PAGES; // 1024 bytes
 
 const OLED_ADDR: u8 = 0x3D;
 
@@ -43,8 +43,8 @@ impl<'d> Sh1106<'d> {
     /// Maximum 17 command bytes per call (covers all SH1106 sequences
     /// we need; split into two calls if a sequence is longer).
     async fn cmds(&mut self, bytes: &[u8]) {
-        let mut buf = [0u8; 18];  // 1 control + ≤17 command bytes
-        buf[0] = 0x00;            // control byte: command stream
+        let mut buf = [0u8; 18]; // 1 control + ≤17 command bytes
+        buf[0] = 0x00; // control byte: command stream
         let n = bytes.len().min(buf.len() - 1);
         buf[1..=n].copy_from_slice(&bytes[..n]);
         let _ = self.0.write(OLED_ADDR, &buf[..=n]).await;
@@ -52,22 +52,24 @@ impl<'d> Sh1106<'d> {
 
     pub async fn init(&mut self) {
         self.cmds(&[
-            0xAE,        // display off
-            0xA8, 0x3F,  // multiplex ratio = 64
-            0xD3, 0x00,  // display offset = 0
-            0x40,        // display start line = 0
-            0xA1,        // segment remap: col 127 → SEG0
-            0xC8,        // COM scan: remapped (top-to-bottom)
-            0xDA, 0x12,  // COM pins: alternative, no LR remap (128×64)
-            0x81, 0x7F,  // contrast = 127
-            0xA4,        // display from GDDRAM
-            0xA6,        // normal (non-inverted)
-            0xD5, 0x80,  // clock: div=1, fosc=8
-        ]).await;
+            0xAE, // display off
+            0xA8, 0x3F, // multiplex ratio = 64
+            0xD3, 0x00, // display offset = 0
+            0x40, // display start line = 0
+            0xA1, // segment remap: col 127 → SEG0
+            0xC8, // COM scan: remapped (top-to-bottom)
+            0xDA, 0x12, // COM pins: alternative, no LR remap (128×64)
+            0x81, 0x7F, // contrast = 127
+            0xA4, // display from GDDRAM
+            0xA6, // normal (non-inverted)
+            0xD5, 0x80, // clock: div=1, fosc=8
+        ])
+        .await;
         self.cmds(&[
-            0x8D, 0x14,  // charge pump: enable
-            0xAF,        // display on
-        ]).await;
+            0x8D, 0x14, // charge pump: enable
+            0xAF, // display on
+        ])
+        .await;
     }
 
     /// Push a full 1024-byte frame buffer to the panel.
@@ -78,10 +80,11 @@ impl<'d> Sh1106<'d> {
     pub async fn flush(&mut self, fb: &Sh1106Fb) {
         for page in 0..PAGES {
             self.cmds(&[
-                0xB0 | page as u8,  // set page address (0xB0..0xB7)
-                0x02,               // low column = 2 (SH1106 internal offset)
-                0x10,               // high column = 0
-            ]).await;
+                0xB0 | page as u8, // set page address (0xB0..0xB7)
+                0x02,              // low column = 2 (SH1106 internal offset)
+                0x10,              // high column = 0
+            ])
+            .await;
 
             // Prepend control byte 0x40 (data stream) on the stack so
             // we can hand a single contiguous slice to write().
@@ -119,8 +122,8 @@ impl DrawTarget for Sh1106Fb {
         for Pixel(Point { x, y }, color) in pixels {
             if (0..WIDTH as i32).contains(&x) && (0..HEIGHT as i32).contains(&y) {
                 let page = y as usize / 8;
-                let col  = x as usize;
-                let bit  = y as usize % 8;
+                let col = x as usize;
+                let bit = y as usize % 8;
                 let byte = &mut self.0[page * WIDTH + col];
                 if color.is_on() {
                     *byte |= 1 << bit;
@@ -134,5 +137,7 @@ impl DrawTarget for Sh1106Fb {
 }
 
 impl OriginDimensions for Sh1106Fb {
-    fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
+    fn size(&self) -> Size {
+        Size::new(WIDTH as u32, HEIGHT as u32)
+    }
 }

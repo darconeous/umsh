@@ -125,7 +125,9 @@ mod tests {
     /// test time so the constant cannot silently drift away from a
     /// valid point on the curve.
     fn valid_key() -> [u8; 32] {
-        SoftwareIdentity::from_secret_bytes(&[0x11; 32]).public_key().0
+        SoftwareIdentity::from_secret_bytes(&[0x11; 32])
+            .public_key()
+            .0
     }
 
     fn hex_encode(bytes: &[u8; 32]) -> std::string::String {

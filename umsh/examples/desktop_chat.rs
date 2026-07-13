@@ -11,7 +11,6 @@ use rand::{Rng, rng};
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use umsh_sync::AsyncRefCell;
 
-
 use umsh::{
     core::PublicKey,
     crypto::{
@@ -31,8 +30,8 @@ use umsh::{
     uri::{encode_public_key_base58, parse_public_key_base58},
 };
 
-#[cfg(feature = "serial-radio")]
-use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig};
+#[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
+use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, FrameLink};
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -99,6 +98,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.skip_counter_load,
                 path,
                 baud,
+                peer,
+            )
+            .await?
+        }
+        Mode::Ble { selector, peer } => {
+            run_ble_chat(
+                config.identity_path,
+                config.skip_counter_load,
+                selector,
                 peer,
             )
             .await?
@@ -320,80 +328,17 @@ async fn run_serial_chat(
         // The companion-radio path follows the same API story as UDP mode. Only the
         // concrete radio transport differs: the NCP owns the LoRa PHY and this host
         // owns the MAC, linked by the minimal companion-radio protocol over serial.
-        let local_identity = load_or_create_identity(&identity_path)?;
-        let local_key = *local_identity.public_key();
-        let counter_root = counter_store_root(&identity_path);
         // RF profile matching the companion-ncp firmware defaults
         // (MeshCore-US bringup: 910.525 MHz / SF7 / BW62.5 kHz / CR4-5).
         let mut radio_config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
         radio_config.tx_power_dbm = 14;
         let radio = CompanionRadio::open_serial(&serial_path, baud_rate, radio_config)
             .await
-            .map_err(|error| std::io::Error::other(format!("companion attach failed: {error:?}")))?;
+            .map_err(|error| {
+                std::io::Error::other(format!("companion attach failed: {error:?}"))
+            })?;
         println!("companion radio: {}", radio.ncp_version());
-        let local_mac = AsyncRefCell::new(build_mac(radio, counter_root)?);
-        let local_handle = MacHandle::new(&local_mac);
-        let local_id = local_handle
-            .add_identity(local_identity)
-            .await
-            .expect("local identity should fit");
-        if !skip_counter_load {
-            let _ = local_handle
-                .load_persisted_counter(local_id)
-                .await
-                .map_err(|error| {
-                    std::io::Error::other(format!("load persisted counter failed: {error:?}"))
-                })?;
-        }
-        let mut host = ChatHost::new(local_handle);
-        let node = host.add_node(local_id);
-        let peer = node
-            .peer(peer_key)
-            .await
-            .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
-        let chat = ChatText::from_peer(&peer);
-        let outputs = OutputQueue::new();
-        let _subscriptions = register_peer_callbacks(&node, &chat, &peer, outputs.sink());
-
-        print_banner("companion-radio", local_key, Some(peer_key));
-        if skip_counter_load {
-            println!("counter load: skipped (--skip-counter-load)");
-        }
-        let mut stdin = BufReader::new(io::stdin()).lines();
-        println!("Type a message and press enter, or /quit to exit.");
-        println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
-
-        loop {
-            // As above, `pump_once()` is the right primitive when UMSH is being multiplexed
-            // with another async source.
-            tokio::select! {
-                line = stdin.next_line() => {
-                    match line {
-                        Ok(Some(line)) => {
-                            match handle_user_input(&chat, &peer, &line).await? {
-                                UserInputOutcome::Continue(Some(message)) => println!("{message}"),
-                                UserInputOutcome::Continue(None) => {}
-                                UserInputOutcome::Quit => break,
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(error) => return Err(Box::new(error)),
-                    }
-                }
-                result = host.pump_once() => {
-                    result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
-                }
-            }
-            let _ = local_handle
-                .service_counter_persistence()
-                .await
-                .map_err(|error| {
-                    std::io::Error::other(format!("counter persistence failed: {error:?}"))
-                })?;
-            outputs.flush();
-        }
-
-        return Ok(());
+        return run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await;
     }
 
     #[cfg(not(feature = "serial-radio"))]
@@ -407,6 +352,103 @@ async fn run_serial_chat(
         );
         Err("serial-radio feature is required for companion-radio serial mode".into())
     }
+}
+
+async fn run_ble_chat(
+    identity_path: PathBuf,
+    skip_counter_load: bool,
+    selector: Option<String>,
+    peer_key: PublicKey,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "ble-radio")]
+    {
+        #[cfg(target_os = "linux")]
+        eprintln!(
+            "Linux pairing is OS-mediated. Pair/trust with `bluetoothctl` and an enabled agent if the security-gated subscription is rejected."
+        );
+        let mut radio_config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+        radio_config.tx_power_dbm = 14;
+        let radio = CompanionRadio::open_ble(selector.as_deref(), radio_config)
+            .await
+            .map_err(|error| std::io::Error::other(format!("BLE attach failed: {error:?}")))?;
+        println!("companion radio: {}", radio.ncp_version());
+        return run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await;
+    }
+    #[cfg(not(feature = "ble-radio"))]
+    {
+        let _ = (identity_path, skip_counter_load, selector, peer_key);
+        Err("ble-radio feature is required for companion-radio BLE mode".into())
+    }
+}
+
+#[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
+async fn run_companion_chat<L: FrameLink>(
+    identity_path: PathBuf,
+    skip_counter_load: bool,
+    peer_key: PublicKey,
+    radio: CompanionRadio<L>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_identity = load_or_create_identity(&identity_path)?;
+    let local_key = *local_identity.public_key();
+    let counter_root = counter_store_root(&identity_path);
+    let local_mac = AsyncRefCell::new(build_mac(radio, counter_root)?);
+    let local_handle = MacHandle::new(&local_mac);
+    let local_id = local_handle
+        .add_identity(local_identity)
+        .await
+        .expect("local identity should fit");
+    if !skip_counter_load {
+        let _ = local_handle
+            .load_persisted_counter(local_id)
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("load persisted counter failed: {error:?}"))
+            })?;
+    }
+    let mut host = ChatHost::new(local_handle);
+    let node = host.add_node(local_id);
+    let peer = node
+        .peer(peer_key)
+        .await
+        .map_err(|error| std::io::Error::other(format!("peer setup failed: {error:?}")))?;
+    let chat = ChatText::from_peer(&peer);
+    let outputs = OutputQueue::new();
+    let _subscriptions = register_peer_callbacks(&node, &chat, &peer, outputs.sink());
+
+    print_banner("companion-radio", local_key, Some(peer_key));
+    if skip_counter_load {
+        println!("counter load: skipped (--skip-counter-load)");
+    }
+    let mut stdin = BufReader::new(io::stdin()).lines();
+    println!("Type a message and press enter, or /quit to exit.");
+    println!("Use /pfs, /pfs <minutes>, /pfs status, or /pfs end.");
+
+    loop {
+        tokio::select! {
+            line = stdin.next_line() => {
+                match line {
+                    Ok(Some(line)) => match handle_user_input(&chat, &peer, &line).await? {
+                        UserInputOutcome::Continue(Some(message)) => println!("{message}"),
+                        UserInputOutcome::Continue(None) => {}
+                        UserInputOutcome::Quit => break,
+                    },
+                    Ok(None) => break,
+                    Err(error) => return Err(Box::new(error)),
+                }
+            }
+            result = host.pump_once() => {
+                result.map_err(|error| std::io::Error::other(format!("host pump failed: {error:?}")))?;
+            }
+        }
+        let _ = local_handle
+            .service_counter_persistence()
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("counter persistence failed: {error:?}"))
+            })?;
+        outputs.flush();
+    }
+    Ok(())
 }
 
 enum UserInputOutcome {
@@ -459,23 +501,22 @@ async fn handle_pfs_command<'a, R: Radio>(
             ))))
         }
         "status" => {
-            let message = match peer
-                .pfs_status()
-                .await
-                .map_err(|error| std::io::Error::other(format!("pfs status failed: {error:?}")))?
-            {
-                umsh::node::PfsStatus::Inactive => String::from("pfs inactive"),
-                umsh::node::PfsStatus::Requested => String::from("pfs requested"),
-                umsh::node::PfsStatus::Active {
-                    local_ephemeral_id,
-                    peer_ephemeral,
-                    ..
-                } => format!(
-                    "pfs active: local slot {} -> {}",
-                    local_ephemeral_id.0,
-                    full_key(&peer_ephemeral)
-                ),
-            };
+            let message =
+                match peer.pfs_status().await.map_err(|error| {
+                    std::io::Error::other(format!("pfs status failed: {error:?}"))
+                })? {
+                    umsh::node::PfsStatus::Inactive => String::from("pfs inactive"),
+                    umsh::node::PfsStatus::Requested => String::from("pfs requested"),
+                    umsh::node::PfsStatus::Active {
+                        local_ephemeral_id,
+                        peer_ephemeral,
+                        ..
+                    } => format!(
+                        "pfs active: local slot {} -> {}",
+                        local_ephemeral_id.0,
+                        full_key(&peer_ephemeral)
+                    ),
+                };
             Ok(UserInputOutcome::Continue(Some(message)))
         }
         minutes => {
@@ -743,6 +784,10 @@ enum Mode {
         baud: u32,
         peer: PublicKey,
     },
+    Ble {
+        selector: Option<String>,
+        peer: PublicKey,
+    },
 }
 
 impl CliConfig {
@@ -792,6 +837,19 @@ impl CliConfig {
                         peer: PublicKey([0u8; 32]),
                     };
                 }
+                "--ble" => {
+                    let selector = args
+                        .get(index + 1)
+                        .filter(|value| !value.starts_with("--"))
+                        .cloned();
+                    if selector.is_some() {
+                        index += 1;
+                    }
+                    mode = Mode::Ble {
+                        selector,
+                        peer: PublicKey([0u8; 32]),
+                    };
+                }
                 "--baud" => {
                     index += 1;
                     baud = args.get(index).ok_or("missing value for --baud")?.parse()?;
@@ -819,6 +877,10 @@ impl CliConfig {
                 path,
                 baud,
                 peer: peer.ok_or("--peer is required in serial mode")?,
+            },
+            Mode::Ble { selector, .. } => Mode::Ble {
+                selector,
+                peer: peer.ok_or("--peer is required in BLE mode")?,
             },
         };
 

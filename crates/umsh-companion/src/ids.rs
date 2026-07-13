@@ -43,6 +43,8 @@ pub mod prop {
     pub const PHY_DUTY_NOW: u32 = 4820;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
     pub const PHY_DUTY_LIMIT: u32 = 4822;
+    /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
+    pub const BLE_PAIRING_PIN: u32 = 4864;
 }
 
 /// Stream identifiers.

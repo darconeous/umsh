@@ -90,7 +90,8 @@ mod tests {
     fn expect_correct_type_returns_body() {
         // MacCommand is allowed for Unicast.
         let payload = &[0x02u8, 0x01]; // MacCommand prefix + body byte
-        let body = expect_payload_type(PacketType::Unicast, payload, PayloadType::MacCommand).unwrap();
+        let body =
+            expect_payload_type(PacketType::Unicast, payload, PayloadType::MacCommand).unwrap();
         assert_eq!(body, &[0x01u8]);
     }
 
@@ -98,8 +99,8 @@ mod tests {
     fn expect_wrong_type_returns_invalid_payload_type() {
         // Payload carries NodeIdentity (0x01) but caller expects MacCommand.
         let payload = &[0x01u8, 0x02, 0x00];
-        let err = expect_payload_type(PacketType::Unicast, payload, PayloadType::MacCommand)
-            .unwrap_err();
+        let err =
+            expect_payload_type(PacketType::Unicast, payload, PayloadType::MacCommand).unwrap_err();
         assert!(matches!(err, AppParseError::InvalidPayloadType(0x01)));
     }
 
@@ -107,9 +108,8 @@ mod tests {
     fn expect_disallowed_for_packet_type_returns_error() {
         // MacCommand is not allowed in a Broadcast packet.
         let payload = &[0x02u8, 0x01];
-        let err =
-            expect_payload_type(PacketType::Broadcast, payload, PayloadType::MacCommand)
-                .unwrap_err();
+        let err = expect_payload_type(PacketType::Broadcast, payload, PayloadType::MacCommand)
+            .unwrap_err();
         assert!(matches!(err, AppParseError::PayloadTypeNotAllowed { .. }));
     }
 }

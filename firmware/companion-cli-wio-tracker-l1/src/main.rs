@@ -79,8 +79,8 @@ mod firmware {
     use embassy_nrf::peripherals;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::twim::{self, Config as TwimConfig, Twim};
-    use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::usb::Driver;
+    use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::signal::Signal;
@@ -88,18 +88,23 @@ mod firmware {
     use embassy_usb::class::cdc_acm::{CdcAcmClass, Sender, State};
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
+    use lora_phy::LoRa;
     use lora_phy::iv::GenericSx126xInterfaceVariant;
     use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
-    use lora_phy::LoRa;
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{
+        NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage,
+    };
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
     use umsh_bsp_wio_tracker_l1::{PowerSignaler, WioMac, WioTrackerPlatform};
-    use umsh_crypto::{CryptoEngine, NodeIdentity, software::{SoftwareAes, SoftwareIdentity, SoftwareSha256}};
     use umsh_core::{ChannelKey, PayloadType, PublicKey};
+    use umsh_crypto::{
+        CryptoEngine, NodeIdentity,
+        software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
+    };
     use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, RepeaterConfig};
     use umsh_node::{Channel, Host, LocalNode};
     use umsh_sync::AsyncRefCell;
@@ -121,9 +126,9 @@ mod firmware {
     // ─── Concrete types ───────────────────────────────────────────────────────
 
     type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
-    type RadioIv     = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
-    type RadioKind   = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
-    type LoraRadio   = LoRa<RadioKind, Delay>;
+    type RadioIv = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
+    type RadioKind = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
+    type LoraRadio = LoRa<RadioKind, Delay>;
 
     // Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
     // firmware owns them). Const params match `WioMac`'s capacities.
@@ -142,8 +147,8 @@ mod firmware {
     // ('static lifetime, VbusDetect = HardwareVbusDetect.) Used by `umsh_task`
     // and `output_task`.
     type WioUsbDriver = Driver<'static, HardwareVbusDetect>;
-    type WioSender    = Sender<'static, WioUsbDriver>;
-    type WioRescue    = CdcAcmRescue<'static, WioUsbDriver>;
+    type WioSender = Sender<'static, WioUsbDriver>;
+    type WioRescue = CdcAcmRescue<'static, WioUsbDriver>;
 
     // ─── Shared state ────────────────────────────────────────────────────────
 
@@ -159,8 +164,8 @@ mod firmware {
     /// `Send` (since `WioMac: Send`); `MacHandle` and `CliSession` are `!Send`
     /// but that's fine — Embassy's local `Spawner::spawn` accepts `!Send`
     /// tasks (only `SendSpawner` requires `Send`).
-    static MAC_CELL:  StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
-    static STORAGE:   StaticCell<NvmcStorage>           = StaticCell::new();
+    static MAC_CELL: StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
+    static STORAGE: StaticCell<NvmcStorage> = StaticCell::new();
 
     /// Relay from the sync `on_receive` callback to the async
     /// `identity_persist_task`. Carries (pk, payload_body, len).
@@ -171,24 +176,25 @@ mod firmware {
 
     #[embassy_executor::task]
     async fn display_task(i2c: Twim<'static>) {
+        use embedded_graphics::Drawable;
         use embedded_graphics::geometry::Point;
-        use embedded_graphics::mono_font::ascii::FONT_6X10;
         use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_6X10;
         use embedded_graphics::pixelcolor::BinaryColor;
         use embedded_graphics::text::{Baseline, Text};
-        use embedded_graphics::Drawable;
         use heapless::String;
 
         let mut oled = display::Sh1106::new(i2c);
         oled.init().await;
 
-        let sha   = env!("GIT_SHORT_SHA");
+        let sha = env!("GIT_SHORT_SHA");
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
 
         let render = |fb: &mut display::Sh1106Fb, count: u32| {
             fb.clear();
-            let _ = Text::with_baseline("UMSH bringup", Point::new(0, 0),  style, Baseline::Top).draw(fb);
-            let _ = Text::with_baseline(sha,             Point::new(0, 16), style, Baseline::Top).draw(fb);
+            let _ = Text::with_baseline("UMSH bringup", Point::new(0, 0), style, Baseline::Top)
+                .draw(fb);
+            let _ = Text::with_baseline(sha, Point::new(0, 16), style, Baseline::Top).draw(fb);
             let mut s: String<16> = String::new();
             let _ = core::fmt::write(&mut s, format_args!("MAC: {}", count));
             let _ = Text::with_baseline(&s, Point::new(0, 32), style, Baseline::Top).draw(fb);
@@ -208,8 +214,8 @@ mod firmware {
 
     #[embassy_executor::task]
     async fn radio_runner_task(
-        lora:   LoraRadio,
-        mdltn:  ModulationParams,
+        lora: LoraRadio,
+        mdltn: ModulationParams,
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
@@ -252,8 +258,12 @@ mod firmware {
         // can be relayed to identity_persist_task for durable storage.
         let sub_node = host.node(identity_id).expect("node just added");
         let _identity_sub = sub_node.on_receive(|pkt| {
-            if pkt.payload_type() != PayloadType::NodeIdentity { return false; }
-            let Some(from) = pkt.from_key() else { return false; };
+            if pkt.payload_type() != PayloadType::NodeIdentity {
+                return false;
+            }
+            let Some(from) = pkt.from_key() else {
+                return false;
+            };
             let raw = pkt.payload();
             let len = raw.len().min(256);
             let mut buf = [0u8; 256];
@@ -299,7 +309,7 @@ mod firmware {
             }
         }
 
-        let peer_store    = NvmcPeerStore::new(storage);
+        let peer_store = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
         let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
@@ -361,8 +371,12 @@ mod firmware {
             let mut twim_cfg = TwimConfig::default();
             twim_cfg.frequency = twim::Frequency::K400;
             let i2c = Twim::new(
-                p.TWISPI0, Irqs, p.P0_06, p.P0_05,
-                twim_cfg, TWIM0_BUF.init([0; 256]),
+                p.TWISPI0,
+                Irqs,
+                p.P0_06,
+                p.P0_05,
+                twim_cfg,
+                TWIM0_BUF.init([0; 256]),
             );
             spawner.spawn(display_task(i2c).unwrap());
         }
@@ -377,25 +391,27 @@ mod firmware {
             let mut spi_cfg = SpimConfig::default();
             spi_cfg.frequency = Frequency::M16;
             let radio_bus = Spim::new(
-                p.TWISPI1, Irqs,
-                p.P0_30,  // SCK
-                p.P0_03,  // MISO
-                p.P0_28,  // MOSI
+                p.TWISPI1, Irqs, p.P0_30, // SCK
+                p.P0_03, // MISO
+                p.P0_28, // MOSI
                 spi_cfg,
             );
-            let radio_cs  = Output::new(p.P1_14, Level::High, OutputDrive::Standard);
+            let radio_cs = Output::new(p.P1_14, Level::High, OutputDrive::Standard);
             let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
 
-            let radio_rst  = Output::new(p.P1_07, Level::High, OutputDrive::Standard);
+            let radio_rst = Output::new(p.P1_07, Level::High, OutputDrive::Standard);
             let radio_dio1 = Input::new(p.P0_07, Pull::None);
             let radio_busy = Input::new(p.P1_10, Pull::None);
             let radio_rxen = Output::new(p.P1_08, Level::Low, OutputDrive::Standard);
 
             let iv = GenericSx126xInterfaceVariant::new(
-                radio_rst, radio_dio1, radio_busy,
+                radio_rst,
+                radio_dio1,
+                radio_busy,
                 Some(radio_rxen), // rf_switch_rx: lora-phy drives HIGH in RX, LOW in TX
                 None,             // rf_switch_tx: no separate TX enable
-            ).unwrap();
+            )
+            .unwrap();
 
             let lora_config = LoraConfig {
                 chip: Sx1262,
@@ -415,8 +431,7 @@ mod firmware {
         }
 
         // ── NV storage ────────────────────────────────────────────────────────
-        let storage: &'static NvmcStorage =
-            STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+        let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
@@ -432,30 +447,38 @@ mod firmware {
             Ok(None) => {
                 let mut sk = [0u8; 32];
                 rng.fill_bytes(&mut sk);
-                storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
+                storage
+                    .store_sk(&sk)
+                    .await
+                    .unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
             Err(_) => panic!("storage init failed"),
         };
-        let identity   = SoftwareIdentity::from_secret_bytes(&sk_bytes);
-        let local_key  = *identity.public_key();
+        let identity = SoftwareIdentity::from_secret_bytes(&sk_bytes);
+        let local_key = *identity.public_key();
 
         let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
-        let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac = WioMac::new(
-            radio_handle, crypto, EmbassyClock, rng,
+            radio_handle,
+            crypto,
+            EmbassyClock,
+            rng,
             NvmcCounterStore::new(storage),
-            RepeaterConfig::default(), OperatingPolicy::default(),
+            RepeaterConfig::default(),
+            OperatingPolicy::default(),
         );
-        let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        let identity_id = mac
+            .add_identity(identity)
+            .unwrap_or_else(|_| panic!("identity"));
         mac.load_persisted_counter(identity_id)
             .await
             .unwrap_or_else(|_| panic!("tx counter load"));
 
         // Hand ownership of the MAC to a 'static AsyncRefCell so `umsh_task`
         // can build MacHandle/Host/CliSession off of it.
-        let mac_cell: &'static AsyncRefCell<WioMac> =
-            MAC_CELL.init(AsyncRefCell::new(mac));
+        let mac_cell: &'static AsyncRefCell<WioMac> = MAC_CELL.init(AsyncRefCell::new(mac));
 
         // ── Host + node + boot-time peer/channel registration ─────────────────
         // Build the Host/node here so the MAC pump (`mac_task`) is independent
@@ -491,24 +514,25 @@ mod firmware {
             .ok();
 
         // ── USB stack + steady-state services ────────────────────────────────
-        let led    = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
+        let led = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 
         let mut config = Config::new(0x2886, 0x1667);
-        config.manufacturer      = Some("UMSH");
-        config.product           = Some("Seeed Wio Tracker L1 Bringup");
-        config.serial_number     = Some("companion-cli-wio-tracker-l1");
-        config.max_power         = 100;
+        config.manufacturer = Some("UMSH");
+        config.product = Some("Seeed Wio Tracker L1 Bringup");
+        config.serial_number = Some("companion-cli-wio-tracker-l1");
+        config.max_power = 100;
         config.max_packet_size_0 = 64;
 
         static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-        static BOS_DESC:    StaticCell<[u8; 256]> = StaticCell::new();
-        static MSOS_DESC:   StaticCell<[u8; 0]>   = StaticCell::new();
-        static CONTROL_BUF: StaticCell<[u8; 64]>  = StaticCell::new();
-        static STATE:       StaticCell<State>      = StaticCell::new();
+        static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+        static MSOS_DESC: StaticCell<[u8; 0]> = StaticCell::new();
+        static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+        static STATE: StaticCell<State> = StaticCell::new();
 
         let mut builder = Builder::new(
-            driver, config,
+            driver,
+            config,
             CONFIG_DESC.init([0; 256]),
             BOS_DESC.init([0; 256]),
             MSOS_DESC.init([0; 0]),
@@ -524,14 +548,10 @@ mod firmware {
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(identity_persist_task(storage).unwrap());
         spawner.spawn(mac_task(host, identity_id).unwrap());
-        spawner.spawn(
-            cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap(),
-        );
+        spawner
+            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
 
-        join(
-            usb.run(),
-            heartbeat(led, wdt_handle),
-        ).await;
+        join(usb.run(), heartbeat(led, wdt_handle)).await;
     }
 
     // ─── Heartbeat ────────────────────────────────────────────────────────────
@@ -541,9 +561,12 @@ mod firmware {
         loop {
             wdt.pet();
             let decision = engine.tick(Instant::now().as_millis());
-            if decision.on { led.set_high() } else { led.set_low() }
+            if decision.on {
+                led.set_high()
+            } else {
+                led.set_low()
+            }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
     }
-
 }

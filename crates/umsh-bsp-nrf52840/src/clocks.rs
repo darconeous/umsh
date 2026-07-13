@@ -32,3 +32,25 @@ pub fn default_config() -> Config {
     config.lfclk_source = LfclkSource::InternalRC;
     config
 }
+
+/// Return the nRF52840 configuration required by BLE-capable firmware.
+///
+/// BLE uses the board's external 32.768 kHz crystal for the accuracy required
+/// by connection timing. Existing non-BLE firmware intentionally remains on
+/// [`default_config`]'s always-available RC oscillator.
+pub fn ble_config() -> Config {
+    let mut config = default_config();
+    config.lfclk_source = LfclkSource::ExternalXtal;
+    config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ble_uses_external_low_frequency_crystal() {
+        assert_eq!(ble_config().lfclk_source, LfclkSource::ExternalXtal);
+        assert_eq!(default_config().lfclk_source, LfclkSource::InternalRC);
+    }
+}

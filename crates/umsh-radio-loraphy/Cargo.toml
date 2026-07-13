@@ -32,8 +32,8 @@ lora-phy = { workspace = true }
 embedded-hal-async = { version = "1", default-features = false }
 
 # embassy-sync: channels, signals, and AtomicWaker for poll_receive.
-# Version pinned to what embassy-nrf 0.10 pulls in transitively.
-embassy-sync = { version = "0.6", default-features = false }
+# Version pinned to what embassy-nrf 0.11 pulls in transitively.
+embassy-sync = { version = "0.8", default-features = false }
 
 # embassy-futures: select! for the TX/RX interleaving in the runner task.
 embassy-futures = { version = "0.1", default-features = false }

@@ -366,10 +366,7 @@ mod tests {
         w.observe_slice(b"\x03\x03\x03\x03"); // 4 Ctrl-Cs
         // Currently in Ctrl1 (4th Ctrl-C reset from Armed back to Ctrl1).
         // Need two more Ctrl-Cs to re-arm.
-        assert_eq!(
-            w.observe_slice(b"\x03\x03dfu\r"),
-            RescueAction::TriggerDfu
-        );
+        assert_eq!(w.observe_slice(b"\x03\x03dfu\r"), RescueAction::TriggerDfu);
     }
 
     #[test]

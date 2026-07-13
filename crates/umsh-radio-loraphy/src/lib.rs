@@ -36,10 +36,7 @@ use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex,
-    channel::Channel,
-    signal::Signal,
-    waitqueue::AtomicWaker,
+    blocking_mutex::raw::RawMutex, channel::Channel, signal::Signal, waitqueue::AtomicWaker,
 };
 use heapless::Vec;
 use lora_phy::{
@@ -78,18 +75,18 @@ pub struct TxRequest {
 /// - `RX`: depth of the receive queue.
 /// - `TX`: depth of the transmit-request queue.
 pub struct Channels<M: RawMutex, const RX: usize, const TX: usize> {
-    pub rx:       Channel<M, RxFrame, RX>,
-    pub tx:       Channel<M, TxRequest, TX>,
-    pub tx_done:  Signal<M, Result<(), RadioError>>,
+    pub rx: Channel<M, RxFrame, RX>,
+    pub tx: Channel<M, TxRequest, TX>,
+    pub tx_done: Signal<M, Result<(), RadioError>>,
     pub rx_waker: AtomicWaker,
 }
 
 impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
     pub const fn new() -> Self {
         Self {
-            rx:       Channel::new(),
-            tx:       Channel::new(),
-            tx_done:  Signal::new(),
+            rx: Channel::new(),
+            tx: Channel::new(),
+            tx_done: Signal::new(),
             rx_waker: AtomicWaker::new(),
         }
     }
@@ -446,8 +443,7 @@ where
                 false, // IQ normal
                 &mdltn,
             )?;
-            let tx_pkt =
-                lora.create_tx_packet_params(tx_preamble, false, true, false, &mdltn)?;
+            let tx_pkt = lora.create_tx_packet_params(tx_preamble, false, true, false, &mdltn)?;
             Ok::<_, RadioError>((mdltn, rx_pkt, tx_pkt))
         })();
         let Ok((mdltn, rx_pkt, mut tx_pkt)) = params else {
@@ -554,7 +550,14 @@ where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
 {
-    build_params(lora, SpreadingFactor::_7, Bandwidth::_125KHz, UMSH_FREQUENCY_HZ, 8, 8)
+    build_params(
+        lora,
+        SpreadingFactor::_7,
+        Bandwidth::_125KHz,
+        UMSH_FREQUENCY_HZ,
+        8,
+        8,
+    )
 }
 
 /// MeshCore US band frequency (confirmed from MeshCore source).
@@ -579,7 +582,14 @@ where
     // RX preamble detection uses 8 symbols (MeshCore TX sends 16; the SX1262
     // starts decoding after detecting the minimum threshold, so setting 8 here
     // is correct and robust against slight timing variations).
-    build_params(lora, SpreadingFactor::_7, Bandwidth::_62KHz, MESHCORE_US_FREQUENCY_HZ, 8, 16)
+    build_params(
+        lora,
+        SpreadingFactor::_7,
+        Bandwidth::_62KHz,
+        MESHCORE_US_FREQUENCY_HZ,
+        8,
+        16,
+    )
 }
 
 /// Shared helper: build modulation + RX/TX packet params.
@@ -602,10 +612,10 @@ where
 
     let rx_pkt = lora.create_rx_packet_params(
         rx_preamble,
-        false,         // explicit (variable-length) header
+        false, // explicit (variable-length) header
         MAX_PAYLOAD as u8,
-        true,          // CRC on
-        false,         // IQ normal
+        true,  // CRC on
+        false, // IQ normal
         &mdltn,
     )?;
 
@@ -629,26 +639,26 @@ where
 /// `t_frame_ms`.
 pub fn airtime_ms(sf: SpreadingFactor, bw: Bandwidth, payload_bytes: usize) -> u32 {
     let sf_val: u32 = match sf {
-        SpreadingFactor::_5  =>  5,
-        SpreadingFactor::_6  =>  6,
-        SpreadingFactor::_7  =>  7,
-        SpreadingFactor::_8  =>  8,
-        SpreadingFactor::_9  =>  9,
+        SpreadingFactor::_5 => 5,
+        SpreadingFactor::_6 => 6,
+        SpreadingFactor::_7 => 7,
+        SpreadingFactor::_8 => 8,
+        SpreadingFactor::_9 => 9,
         SpreadingFactor::_10 => 10,
         SpreadingFactor::_11 => 11,
         SpreadingFactor::_12 => 12,
     };
     let bw_hz: u64 = match bw {
-        Bandwidth::_7KHz   =>    7_810,
-        Bandwidth::_10KHz  =>   10_420,
-        Bandwidth::_15KHz  =>   15_630,
-        Bandwidth::_20KHz  =>   20_830,
-        Bandwidth::_31KHz  =>   31_250,
-        Bandwidth::_41KHz  =>   41_670,
-        Bandwidth::_62KHz  =>   62_500,
-        Bandwidth::_125KHz =>  125_000,
-        Bandwidth::_250KHz =>  250_000,
-        Bandwidth::_500KHz =>  500_000,
+        Bandwidth::_7KHz => 7_810,
+        Bandwidth::_10KHz => 10_420,
+        Bandwidth::_15KHz => 15_630,
+        Bandwidth::_20KHz => 20_830,
+        Bandwidth::_31KHz => 31_250,
+        Bandwidth::_41KHz => 41_670,
+        Bandwidth::_62KHz => 62_500,
+        Bandwidth::_125KHz => 125_000,
+        Bandwidth::_250KHz => 250_000,
+        Bandwidth::_500KHz => 500_000,
     };
 
     // Symbol duration in microseconds: t_sym = 2^SF / BW.
@@ -660,7 +670,7 @@ pub fn airtime_ms(sf: SpreadingFactor, bw: Bandwidth, payload_bytes: usize) -> u
     // Number of payload symbols (LoRa spec, CR=4/5, explicit header, CRC on).
     let sf = sf_val as i64;
     let pl = payload_bytes as i64;
-    let num   = (8 * pl - 4 * sf + 44 + 20 - 16 * ldro as i64).max(0);
+    let num = (8 * pl - 4 * sf + 44 + 20 - 16 * ldro as i64).max(0);
     let denom = 4 * (sf - 2 * ldro as i64);
     // Manual ceiling division for i64 (div_ceil is still nightly-only).
     let ceil = (num + denom - 1) / denom;

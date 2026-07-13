@@ -5987,8 +5987,7 @@ fn build_received_unicast_frame(
     let mut packet = builder.payload(payload).build().unwrap();
     if let Some((remaining, accumulated)) = flood_hops {
         packet.header().unwrap();
-        packet.as_bytes_mut()[1] =
-            FloodHops::new(remaining, accumulated).unwrap().0;
+        packet.as_bytes_mut()[1] = FloodHops::new(remaining, accumulated).unwrap().0;
     }
     CryptoEngine::new(DummyAes, DummySha)
         .seal_packet(&mut packet, keys)
@@ -6576,8 +6575,7 @@ impl DummyRadio {
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
             packet.header().unwrap();
-            packet.as_bytes_mut()[1] =
-                FloodHops::new(remaining, accumulated).unwrap().0;
+            packet.as_bytes_mut()[1] = FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha)
             .seal_packet(&mut packet, keys)
@@ -6762,8 +6760,7 @@ impl DummyRadio {
         let mut packet = builder.payload(payload).build().unwrap();
         if let Some((remaining, accumulated)) = flood_hops {
             packet.header().unwrap();
-            packet.as_bytes_mut()[1] =
-                FloodHops::new(remaining, accumulated).unwrap().0;
+            packet.as_bytes_mut()[1] = FloodHops::new(remaining, accumulated).unwrap().0;
         }
         CryptoEngine::new(DummyAes, DummySha)
             .seal_packet(&mut packet, keys)

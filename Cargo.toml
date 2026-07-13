@@ -23,6 +23,7 @@ members = [
     "firmware/companion-cli-techo",
     "firmware/companion-cli-wio-tracker-l1",
     "firmware/companion-ncp-techo",
+    "firmware/ble-spike-techo",
     "umsh",
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
@@ -58,14 +59,15 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/darconeous/umsh"
 
-# Override the published `lora-phy` (and its sibling `lora-modulation`) with our
-# fork at ../lora-rs. The fork adds `RfSwitchConfig` to `lr1110::Config` so the
-# T1000-E (and similar boards with custom DIO5–DIO8 RF-switch tables) can
-# initialize the LR1110 correctly. Tracking branch: `umsh/lr1110-rf-switch-config`.
-# Plan: upstream as a PR; drop this patch when the change lands in a release.
+# Override dependencies for the two audited forks carried by UMSH. Trouble is
+# pinned to the pairing-policy gate revision; nrf-sdc/nrf-mpsl are pinned to the
+# controller revision audited with it. Pins move only after deliberate review.
 [patch.crates-io]
 lora-phy        = { path = "../lora-rs/lora-phy" }
 lora-modulation = { path = "../lora-rs/lora-modulation" }
+trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "fef9a7a95283be3103e638463a08d355077e2500" }
+nrf-sdc         = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
+nrf-mpsl        = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
 
 [workspace.dependencies]
 aes = { version = "0.8", default-features = false }

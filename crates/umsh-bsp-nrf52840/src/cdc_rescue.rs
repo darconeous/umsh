@@ -67,7 +67,11 @@ pub struct CdcAcmRescue<'d, D: Driver<'d>> {
 
 impl<'d, D: Driver<'d>> CdcAcmRescue<'d, D> {
     pub fn new(rx: Receiver<'d, D>, ctrl: ControlChanged<'d>) -> Self {
-        Self { rx, ctrl, escape: EscapeWatcher::new() }
+        Self {
+            rx,
+            ctrl,
+            escape: EscapeWatcher::new(),
+        }
     }
 
     /// Wait until the host asserts DTR (opens the port).
@@ -93,9 +97,7 @@ impl<'d, D: Driver<'d>> CdcAcmRescue<'d, D> {
             match select(self.rx.read_packet(buf), self.ctrl.control_changed()).await {
                 Either::First(result) => {
                     let n = result?;
-                    if n > 0
-                        && self.escape.observe_slice(&buf[..n]) == RescueAction::TriggerDfu
-                    {
+                    if n > 0 && self.escape.observe_slice(&buf[..n]) == RescueAction::TriggerDfu {
                         gpregret::enter_dfu_uf2();
                     }
                     return Ok(n);

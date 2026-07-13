@@ -16,7 +16,9 @@ pub use events::CliEvent;
 pub use io::{CliInput, CliOutput};
 pub use logger::{CliLogger, LogLevel, NullLogger};
 pub use session::{CliError, CliSession};
-pub use umsh_hal::{ChannelStore, NoChannelStore, NoPeerStore, NoPowerControl, PeerStore, PowerControl};
+pub use umsh_hal::{
+    ChannelStore, NoChannelStore, NoPeerStore, NoPowerControl, PeerStore, PowerControl,
+};
 
 /// [`CliSession`] sized for typical desktop and tracker-class targets.
 ///

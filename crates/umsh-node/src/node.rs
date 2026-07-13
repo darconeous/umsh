@@ -698,14 +698,8 @@ impl<M: MacBackend> LocalNode<M> {
         if let Some(idx) = idx {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
-            if let Some(entry) = state
-                .peer_subscriptions
-                .iter_mut()
-                .find(|e| e.peer == from)
-            {
-                entry
-                    .pong_handlers
-                    .for_each_mut(|h| h(rtt_ms));
+            if let Some(entry) = state.peer_subscriptions.iter_mut().find(|e| e.peer == from) {
+                entry.pong_handlers.for_each_mut(|h| h(rtt_ms));
             }
             state.pong_handlers.for_each_mut(|h| h(from, rtt_ms));
         }
@@ -725,9 +719,7 @@ impl<M: MacBackend> LocalNode<M> {
                 {
                     entry.ping_timeout_handlers.for_each_mut(|h| h());
                 }
-                state
-                    .ping_timeout_handlers
-                    .for_each_mut(|h| h(ping.peer));
+                state.ping_timeout_handlers.for_each_mut(|h| h(ping.peer));
             } else {
                 i += 1;
             }

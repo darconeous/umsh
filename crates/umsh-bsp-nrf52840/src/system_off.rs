@@ -157,7 +157,7 @@ pub fn configure_wake(pin: WakePin) {
     let addr = pin_cnf_addr(pin.port, pin.pin);
     let sense_bits = match pin.sense {
         WakeSense::High => PIN_CNF_SENSE_HIGH,
-        WakeSense::Low  => PIN_CNF_SENSE_LOW,
+        WakeSense::Low => PIN_CNF_SENSE_LOW,
     };
     // SAFETY: PIN_CNF[n] is a memory-mapped register guaranteed by the
     // datasheet (§22 GPIO). Read-modify-write preserves DIR/INPUT/PULL/DRIVE.
@@ -170,7 +170,10 @@ pub fn configure_wake(pin: WakePin) {
 
 /// Convenience wrapper for [`configure_wake`] with [`WakeSense::Low`].
 pub fn configure_wake_low(pin: WakePin) {
-    configure_wake(WakePin { sense: WakeSense::Low, ..pin });
+    configure_wake(WakePin {
+        sense: WakeSense::Low,
+        ..pin
+    });
 }
 
 /// Enter System OFF. Diverges — the chip either powers down (and later

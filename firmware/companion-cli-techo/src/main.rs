@@ -89,8 +89,8 @@ mod firmware {
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
-    use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::usb::Driver;
+    use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::signal::Signal;
@@ -98,22 +98,24 @@ mod firmware {
     use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
+    use lora_phy::LoRa;
     use lora_phy::iv::GenericSx126xInterfaceVariant;
     use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
-    use lora_phy::LoRa;
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_bsp_nrf52840::flash_store::{NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage};
+    use umsh_bsp_nrf52840::flash_store::{
+        NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage,
+    };
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    use umsh_bsp_nrf52840::system_off::{power_off, tristate_pin, Port, WakePin, WakeSense};
+    use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
     use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
     use umsh_bsp_techo::{PowerSignaler, SHUTDOWN_SIGNAL, TechoMac, TechoPlatform};
+    use umsh_core::{ChannelKey, PayloadType, PublicKey};
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     };
-    use umsh_core::{ChannelKey, PayloadType, PublicKey};
     use umsh_mac::{LocalIdentityId, MacHandle, OperatingPolicy, RepeaterConfig};
     use umsh_node::{Channel, Host, LocalNode};
     use umsh_sync::AsyncRefCell;
@@ -142,8 +144,8 @@ mod firmware {
     const FONT_W: i32 = 10;
 
     /// Vertical positions of the three boot-screen text lines, in pixels.
-    const TITLE_Y: i32 =  70;
-    const SHA_Y:   i32 = 100;
+    const TITLE_Y: i32 = 70;
+    const SHA_Y: i32 = 100;
     const COUNT_Y: i32 = 130;
 
     /// Per-frame TX power in dBm. SX1262 PA range is roughly -9..+22.
@@ -156,9 +158,9 @@ mod firmware {
     // signature, so we name them once here.
 
     type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
-    type RadioIv     = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
-    type RadioKind   = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
-    type LoraRadio   = LoRa<RadioKind, Delay>;
+    type RadioIv = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
+    type RadioKind = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
+    type LoraRadio = LoRa<RadioKind, Delay>;
 
     // Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
     // firmware owns them). The const params match `TechoMac`'s capacities.
@@ -187,7 +189,7 @@ mod firmware {
     /// reference can be handed to the spawned `umsh_task` (which builds
     /// `MacHandle` / `Host` / `CliSession` off of it).
     static MAC_CELL: StaticCell<AsyncRefCell<TechoMac>> = StaticCell::new();
-    static STORAGE:  StaticCell<NvmcStorage>             = StaticCell::new();
+    static STORAGE: StaticCell<NvmcStorage> = StaticCell::new();
 
     /// Relay from the sync `on_receive` callback to the async
     /// `identity_persist_task`. Carries (pk, payload_body, len).
@@ -237,8 +239,8 @@ mod firmware {
     // ('static lifetime, VbusDetect = HardwareVbusDetect.) Used by `umsh_task`
     // and `output_task`.
     type TechoUsbDriver = Driver<'static, HardwareVbusDetect>;
-    type TechoSender    = embassy_usb::class::cdc_acm::Sender<'static, TechoUsbDriver>;
-    type TechoRescue    = umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue<'static, TechoUsbDriver>;
+    type TechoSender = embassy_usb::class::cdc_acm::Sender<'static, TechoUsbDriver>;
+    type TechoRescue = umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue<'static, TechoUsbDriver>;
 
     // ─── CliSession-backed combined task ─────────────────────────────────────
 
@@ -273,8 +275,12 @@ mod firmware {
         // The guard must remain live for the duration of the task.
         let sub_node = host.node(identity_id).expect("node just added");
         let _identity_sub = sub_node.on_receive(|pkt| {
-            if pkt.payload_type() != PayloadType::NodeIdentity { return false; }
-            let Some(from) = pkt.from_key() else { return false; };
+            if pkt.payload_type() != PayloadType::NodeIdentity {
+                return false;
+            }
+            let Some(from) = pkt.from_key() else {
+                return false;
+            };
             let raw = pkt.payload();
             let len = raw.len().min(256);
             let mut buf = [0u8; 256];
@@ -319,7 +325,7 @@ mod firmware {
             }
         }
 
-        let peer_store    = NvmcPeerStore::new(storage);
+        let peer_store = NvmcPeerStore::new(storage);
         let channel_store = NvmcChannelStore::new(storage);
         let mut cli: CliSession<_, _, _, _, _, _, 4, 4, 2, 8, 128> = CliSession::new(
             node,
@@ -346,40 +352,54 @@ mod firmware {
     /// change. `DISPLAY_THROTTLE` caps the visible refresh rate.
     #[embassy_executor::task]
     async fn display_task(
-        mut spi:  Spim<'static>,
-        mut cs:   Output<'static>,
-        mut dc:   Output<'static>,
-        mut rst:  Output<'static>,
+        mut spi: Spim<'static>,
+        mut cs: Output<'static>,
+        mut dc: Output<'static>,
+        mut rst: Output<'static>,
         mut busy: Input<'static>,
     ) {
         use core::fmt::Write as _;
+        use embedded_graphics::Drawable;
         use embedded_graphics::geometry::Point;
-        use embedded_graphics::mono_font::ascii::FONT_10X20;
         use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_10X20;
         use embedded_graphics::pixelcolor::BinaryColor;
         use embedded_graphics::text::{Baseline, Text};
-        use embedded_graphics::Drawable;
         use heapless::String;
 
-        let sha   = env!("GIT_SHORT_SHA");
+        let sha = env!("GIT_SHORT_SHA");
         let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
 
         // Fill `buf` with a frame containing the boot text and the supplied count.
         let mut buf = [0xFFu8; display::BUF_SIZE];
         let render = |buf: &mut [u8; display::BUF_SIZE], count: u32| {
-            buf.fill(0xFF);  // all-white background
+            buf.fill(0xFF); // all-white background
             let mut fb = display::EpdFb(buf);
 
             // Center each line by its glyph count.
             let center_x = |text: &str| (display::WIDTH as i32 - text.len() as i32 * FONT_W) / 2;
 
             let title = "UMSH bringup";
-            let _ = Text::with_baseline(title, Point::new(center_x(title), TITLE_Y), style, Baseline::Top).draw(&mut fb);
-            let _ = Text::with_baseline(sha,   Point::new(center_x(sha),   SHA_Y),   style, Baseline::Top).draw(&mut fb);
+            let _ = Text::with_baseline(
+                title,
+                Point::new(center_x(title), TITLE_Y),
+                style,
+                Baseline::Top,
+            )
+            .draw(&mut fb);
+            let _ =
+                Text::with_baseline(sha, Point::new(center_x(sha), SHA_Y), style, Baseline::Top)
+                    .draw(&mut fb);
 
             let mut count_str: String<16> = String::new();
             let _ = write!(count_str, "MAC: {}", count);
-            let _ = Text::with_baseline(&count_str, Point::new(center_x(&count_str), COUNT_Y), style, Baseline::Top).draw(&mut fb);
+            let _ = Text::with_baseline(
+                &count_str,
+                Point::new(center_x(&count_str), COUNT_Y),
+                style,
+                Baseline::Top,
+            )
+            .draw(&mut fb);
         };
 
         // Renders centred lines (one per slice element) onto an all-white frame.
@@ -492,12 +512,12 @@ mod firmware {
         // Radio control:           CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
         for (port, pin) in [
             (Port::P0, 31u8), // e-paper SCK
-            (Port::P1,  7u8), // e-paper MOSI
+            (Port::P1, 7u8),  // e-paper MOSI
             (Port::P0, 29u8), // e-paper MISO
             (Port::P0, 30u8), // e-paper CS
             (Port::P0, 28u8), // e-paper DC
-            (Port::P0,  2u8), // e-paper RST
-            (Port::P0,  3u8), // e-paper BUSY
+            (Port::P0, 2u8),  // e-paper RST
+            (Port::P0, 3u8),  // e-paper BUSY
             (Port::P0, 19u8), // radio SCK
             (Port::P0, 22u8), // radio MOSI
             (Port::P0, 23u8), // radio MISO
@@ -514,7 +534,11 @@ mod firmware {
         drop(peripheral_power);
 
         // P1.10 is the side user button. Active-low, pull-up → DETECT-low wakes.
-        power_off(&[WakePin { port: Port::P1, pin: 10, sense: WakeSense::Low }])
+        power_off(&[WakePin {
+            port: Port::P1,
+            pin: 10,
+            sense: WakeSense::Low,
+        }])
     }
 
     // ─── Main ────────────────────────────────────────────────────────────────
@@ -568,10 +592,10 @@ mod firmware {
         {
             let mut cfg = SpimConfig::default();
             cfg.frequency = Frequency::M4;
-            let disp_spi  = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, cfg);
-            let disp_cs   = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
-            let disp_dc   = Output::new(p.P0_28, Level::Low,  OutputDrive::Standard);
-            let disp_rst  = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
+            let disp_spi = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, cfg);
+            let disp_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
+            let disp_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
+            let disp_rst = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
             let disp_busy = Input::new(p.P0_03, Pull::None);
             spawner.spawn(display_task(disp_spi, disp_cs, disp_dc, disp_rst, disp_busy).unwrap());
         }
@@ -592,32 +616,30 @@ mod firmware {
             // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0 (CPOL=0, CPHA=0).
             cfg.frequency = Frequency::M16;
             let radio_bus = Spim::new(
-                p.TWISPI1, Irqs,
-                p.P0_19,  // SCK
-                p.P0_23,  // MISO
-                p.P0_22,  // MOSI
+                p.TWISPI1, Irqs, p.P0_19, // SCK
+                p.P0_23, // MISO
+                p.P0_22, // MOSI
                 cfg,
             );
-            let radio_cs  = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
+            let radio_cs = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
             let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
 
-            let radio_rst  = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
+            let radio_rst = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
             let radio_dio1 = Input::new(p.P0_20, Pull::None);
             let radio_busy = Input::new(p.P0_17, Pull::None);
 
             let iv = GenericSx126xInterfaceVariant::new(
-                radio_rst,
-                radio_dio1,
-                radio_busy,
-                None,   // rf_switch_rx: DIO2 wired internally on the T-Echo module
-                None,   // rf_switch_tx: same
-            ).unwrap();
+                radio_rst, radio_dio1, radio_busy,
+                None, // rf_switch_rx: DIO2 wired internally on the T-Echo module
+                None, // rf_switch_tx: same
+            )
+            .unwrap();
 
             let lora_config = LoraConfig {
                 chip: Sx1262,
-                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),  // DIO3 → 1.8 V TCXO
-                use_dcdc: true,   // T-Echo SX1262 module has DC-DC converter
-                rx_boost: true,   // boosted LNA gain per MeshCore SX126X_RX_BOOSTED_GAIN=1
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8), // DIO3 → 1.8 V TCXO
+                use_dcdc: true, // T-Echo SX1262 module has DC-DC converter
+                rx_boost: true, // boosted LNA gain per MeshCore SX126X_RX_BOOSTED_GAIN=1
             };
 
             // enable_public_network=false → sync word 0x1424 (private),
@@ -633,8 +655,7 @@ mod firmware {
         }
 
         // ── NV storage ────────────────────────────────────────────────────────
-        let storage: &'static NvmcStorage =
-            STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+        let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
@@ -650,16 +671,19 @@ mod firmware {
             Ok(None) => {
                 let mut sk = [0u8; 32];
                 rng.fill_bytes(&mut sk);
-                storage.store_sk(&sk).await.unwrap_or_else(|_| panic!("identity persist"));
+                storage
+                    .store_sk(&sk)
+                    .await
+                    .unwrap_or_else(|_| panic!("identity persist"));
                 sk
             }
             Err(_) => panic!("storage init failed"),
         };
-        let identity  = SoftwareIdentity::from_secret_bytes(&sk_bytes);
+        let identity = SoftwareIdentity::from_secret_bytes(&sk_bytes);
         let local_key = *identity.public_key();
 
         let radio_handle = umsh_radio_loraphy::LoraphyRadio::new(&RADIO_CH, t_frame_ms);
-        let crypto       = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let mut mac = TechoMac::new(
             radio_handle,
             crypto,
@@ -669,13 +693,14 @@ mod firmware {
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         );
-        let identity_id = mac.add_identity(identity).unwrap_or_else(|_| panic!("identity"));
+        let identity_id = mac
+            .add_identity(identity)
+            .unwrap_or_else(|_| panic!("identity"));
         // Restore the TX frame-counter boundary so the counter never rewinds.
         mac.load_persisted_counter(identity_id)
             .await
             .unwrap_or_else(|_| panic!("tx counter load"));
-        let mac_cell: &'static AsyncRefCell<TechoMac> =
-            MAC_CELL.init(AsyncRefCell::new(mac));
+        let mac_cell: &'static AsyncRefCell<TechoMac> = MAC_CELL.init(AsyncRefCell::new(mac));
 
         // ── Host + node + boot-time peer/channel registration ─────────────────
         // Build the Host/node here so the MAC pump (`mac_task`) is independent
@@ -711,21 +736,21 @@ mod firmware {
             .ok();
 
         // ── USB stack + steady-state services ────────────────────────────────
-        let led    = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
+        let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 
         let mut config = Config::new(0x16c0, 0x27dd);
-        config.manufacturer      = Some("UMSH");
-        config.product           = Some("T-Echo Bringup");
-        config.serial_number     = Some("companion-cli-techo");
-        config.max_power         = 100;
+        config.manufacturer = Some("UMSH");
+        config.product = Some("T-Echo Bringup");
+        config.serial_number = Some("companion-cli-techo");
+        config.max_power = 100;
         config.max_packet_size_0 = 64;
 
         static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-        static BOS_DESC:    StaticCell<[u8; 256]> = StaticCell::new();
-        static MSOS_DESC:   StaticCell<[u8; 0]>   = StaticCell::new();
-        static CONTROL_BUF: StaticCell<[u8; 64]>  = StaticCell::new();
-        static STATE:       StaticCell<State>     = StaticCell::new();
+        static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+        static MSOS_DESC: StaticCell<[u8; 0]> = StaticCell::new();
+        static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+        static STATE: StaticCell<State> = StaticCell::new();
 
         let mut builder = Builder::new(
             driver,
@@ -745,9 +770,8 @@ mod firmware {
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(identity_persist_task(storage).unwrap());
         spawner.spawn(mac_task(host, identity_id).unwrap());
-        spawner.spawn(
-            cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap(),
-        );
+        spawner
+            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
 
         // User button (P1.10, active-low). Pull-up so DETECT can wake from
         // System OFF on the falling edge.
@@ -755,10 +779,7 @@ mod firmware {
         spawner.spawn(button_task(button).unwrap());
         spawner.spawn(shutdown_task(mac_cell, peripheral_power).unwrap());
 
-        join(
-            usb.run(),
-            heartbeat(led, wdt_handle),
-        ).await;
+        join(usb.run(), heartbeat(led, wdt_handle)).await;
     }
 
     // ─── Heartbeat + WDT pet ─────────────────────────────────────────────────
@@ -769,9 +790,12 @@ mod firmware {
             wdt.pet();
             let decision = engine.tick(Instant::now().as_millis());
             // P0.14 is active-low: set_low() = LED on.
-            if decision.on { led.set_low() } else { led.set_high() }
+            if decision.on {
+                led.set_low()
+            } else {
+                led.set_high()
+            }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
     }
-
 }

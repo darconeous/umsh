@@ -203,7 +203,10 @@ impl<'a> FrameWriter<'a> {
     }
 
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), WriteError> {
-        let end = self.len.checked_add(bytes.len()).ok_or(WriteError::BufferTooSmall)?;
+        let end = self
+            .len
+            .checked_add(bytes.len())
+            .ok_or(WriteError::BufferTooSmall)?;
         if end > self.buf.len() {
             return Err(WriteError::BufferTooSmall);
         }

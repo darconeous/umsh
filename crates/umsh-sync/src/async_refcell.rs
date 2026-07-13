@@ -374,7 +374,8 @@ mod tests {
 
         // Borrow succeeds, closure returns Pending (like a radio with no
         // frame ready), guard drops inside the call.
-        let result: Poll<()> = cell.poll_with_mut(&mut cx, &mut ticket, |_value, _cx| Poll::Pending);
+        let result: Poll<()> =
+            cell.poll_with_mut(&mut cx, &mut ticket, |_value, _cx| Poll::Pending);
         assert!(result.is_pending());
         assert_eq!(
             wakes.count(),
@@ -407,11 +408,7 @@ mod tests {
         }
         // A later guard release must not wake the abandoned waiter.
         drop(cell.borrow_mut().now_or_never().unwrap());
-        assert_eq!(
-            wakes.count(),
-            0,
-            "cancelled wait must deregister its waker"
-        );
+        assert_eq!(wakes.count(), 0, "cancelled wait must deregister its waker");
     }
 
     /// Race: holder releases between a waiter's `wait()` registration and

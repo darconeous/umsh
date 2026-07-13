@@ -137,11 +137,7 @@ pub struct Fcf(pub u8);
 
 impl Fcf {
     /// Build an FCF from structured flags.
-    pub const fn new(
-        packet_type: PacketType,
-        full_source: bool,
-        flood_hops_present: bool,
-    ) -> Self {
+    pub const fn new(packet_type: PacketType, full_source: bool, flood_hops_present: bool) -> Self {
         Self(
             (UMSH_VERSION << 6)
                 | ((packet_type as u8) << 3)
@@ -557,10 +553,7 @@ impl PacketHeader {
                 ack_dst = Some(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]));
                 cursor += 3;
                 let options_start = cursor;
-                let options_end = buf
-                    .len()
-                    .checked_sub(8)
-                    .ok_or(ParseError::Truncated)?;
+                let options_end = buf.len().checked_sub(8).ok_or(ParseError::Truncated)?;
                 if options_end < options_start {
                     return Err(ParseError::Truncated);
                 }
@@ -618,8 +611,7 @@ impl PacketHeader {
                     return Err(ParseError::Truncated);
                 }
                 let options_start = cursor;
-                let (consumed, has_marker) =
-                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
                 let options_range = options_start..options_start + consumed;
                 let body_start = options_start + consumed;
                 let body_end = if has_marker { mic_start } else { body_start };
@@ -654,8 +646,7 @@ impl PacketHeader {
                     return Err(ParseError::Truncated);
                 }
                 let options_start = cursor;
-                let (consumed, has_marker) =
-                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
                 let options_range = options_start..options_start + consumed;
                 cursor = options_start + consumed;
                 if parsed_sec.scf.encrypted() {
@@ -725,8 +716,7 @@ impl PacketHeader {
                     return Err(ParseError::Truncated);
                 }
                 let options_start = cursor;
-                let (consumed, has_marker) =
-                    scan_options_bounded(&buf[options_start..mic_start])?;
+                let (consumed, has_marker) = scan_options_bounded(&buf[options_start..mic_start])?;
                 let options_range = options_start..options_start + consumed;
                 cursor = options_start + consumed;
                 let src_len = source_len(fcf.full_source());

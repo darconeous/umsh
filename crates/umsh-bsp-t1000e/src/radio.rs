@@ -18,10 +18,10 @@ use lora_phy::lr1110::RfSwitchConfig;
 /// `rf_switch: Some(umsh_bsp_t1000e::RF_SWITCH)`.
 pub const RF_SWITCH: RfSwitchConfig = RfSwitchConfig {
     standby: 0x00,
-    rx:      0x09,
-    tx:      0x0B,
-    tx_hp:   0x0A,
-    tx_hf:   0x00,
-    gnss:    0x04,
-    wifi:    0x00,
+    rx: 0x09,
+    tx: 0x0B,
+    tx_hp: 0x0A,
+    tx_hf: 0x00,
+    gnss: 0x04,
+    wifi: 0x00,
 };

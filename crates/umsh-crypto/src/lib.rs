@@ -1150,8 +1150,13 @@ mod tests {
         // strong, but sufficient to exercise the generate() code path.
         struct CounterRng(u64);
         impl RngCore for CounterRng {
-            fn next_u32(&mut self) -> u32 { self.next_u64() as u32 }
-            fn next_u64(&mut self) -> u64 { self.0 = self.0.wrapping_add(1); self.0 }
+            fn next_u32(&mut self) -> u32 {
+                self.next_u64() as u32
+            }
+            fn next_u64(&mut self) -> u64 {
+                self.0 = self.0.wrapping_add(1);
+                self.0
+            }
             fn fill_bytes(&mut self, dest: &mut [u8]) {
                 for chunk in dest.chunks_mut(8) {
                     let bytes = self.next_u64().to_le_bytes();
@@ -1261,11 +1266,14 @@ mod tests {
             .payload(b"hi")
             .build()
             .unwrap();
-        engine.seal_blind_packet(&mut packet, &blind_keys, &channel).unwrap();
+        engine
+            .seal_blind_packet(&mut packet, &blind_keys, &channel)
+            .unwrap();
         let mut wire = packet.as_bytes().to_vec();
         let header = PacketHeader::parse(&wire).unwrap();
-        let (decoded_dst, decoded_src) =
-            engine.decrypt_blind_addr(&mut wire, &header, &channel).unwrap();
+        let (decoded_dst, decoded_src) = engine
+            .decrypt_blind_addr(&mut wire, &header, &channel)
+            .unwrap();
         assert_eq!(decoded_dst, dst);
         assert_eq!(decoded_src, SourceAddrRef::Hint(src.hint()));
     }
