@@ -52,10 +52,20 @@ Named channels are effectively public — anyone who knows the name can derive t
 The channel key is derived from the channel name using HKDF-Extract:
 
 ```text
-channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = UTF-8(channel_name))
+channel_key = HKDF-Extract-SHA256(salt = "UMSH-CHANNEL-V1", ikm = canonical_name)
 ```
 
-Where `channel_name` is the name portion of the `umsh:cs:` URI (everything after `umsh:cs:`), after percent-decoding, encoded as a UTF-8 byte string. For example, given `umsh:cs:Public`, the input is the UTF-8 encoding of `Public`. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard [Multicast Packet Keys](security.md#multicast-packet-keys) derivation to produce `K_enc` and `K_mic`.
+Where `canonical_name` is the canonicalized name portion of the `umsh:cs:` URI (everything after `umsh:cs:`). Canonicalization is defined as follows:
+
+1. Percent-decode the name portion of the URI.
+2. The decoded name MUST consist only of ASCII characters (letters, digits, and symbols). Non-ASCII (multi-byte UTF-8) names are not currently supported and MUST be rejected. Any character that is not URI-safe is carried through percent-encoding in the URI and recovered by step 1.
+3. Fold ASCII letters `A`–`Z` to lowercase `a`–`z`. No other characters are altered.
+4. Encode the result as an ASCII byte string; this is `canonical_name`.
+
+For example, given `umsh:cs:Public`, the input to canonicalization is `Public`, which folds to `public`, and the key is derived over the bytes of `public`. Because folding is applied before derivation, `umsh:cs:Public`, `umsh:cs:public`, and `umsh:cs:PUBLIC` all derive the **same** channel key. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard [Multicast Packet Keys](security.md#multicast-packet-keys) derivation to produce `K_enc` and `K_mic`.
+
+> [!NOTE]
+> Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Note that percent-encoding does not provide a workaround: canonicalization operates on the *decoded* name, so a percent-encoded non-ASCII name still decodes to non-ASCII and is rejected. A group that wants a non-ASCII display name should use a private channel (`umsh:ck:`) with an explicit key and carry the display name as a URI parameter.
 
 HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.
 
@@ -91,7 +101,7 @@ The `public` channel (derived from `umsh:cs:public`) is the default flooded grou
 
 ### `EMERGENCY`
 
-The `EMERGENCY` channel (derived from `umsh:cs:EMERGENCY`, case-sensitive) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.
+The emergency channel (written `EMERGENCY` here for emphasis, but derived from `umsh:cs:emergency` after the ASCII case-folding described in [Named Channels](#named-channels), so `umsh:cs:EMERGENCY` and `umsh:cs:emergency` derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.
 
 - Maximum flood hops: **5** without a region code, **7** with a region code.
 - Chat messages **must not** be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.

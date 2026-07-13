@@ -1,3 +1,3 @@
-# Node Manament Protocol
+# Node Management Protocol
 
 TBD

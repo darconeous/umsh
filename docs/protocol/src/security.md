@@ -64,7 +64,7 @@ As a general principle: the longer the keys will be in use and the higher the va
 The 4-byte frame counter must increase monotonically for a given shared secret and
 traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
 
-The exact mechanism for how the frame counter is handled is implementation specitic,
+The exact mechanism for how the frame counter is handled is implementation specific,
 assuming that it always increases. For example, the frame counter may be unique for
 each source+destination node pair, or it may be a single frame counter for the entire
 device. On constrained devices, it may make sense to use a combination of the two:
@@ -102,7 +102,7 @@ On first contact with a new peer, the received frame counter is accepted at face
 
 ### Salt
 
-The optional 2-byte salt is chosen randomly to reduce the liklihood of a nonce collision.
+The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.
 
 ## Cryptographic Processing
 
@@ -268,7 +268,7 @@ For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MI
 | MIC Length | SECINFO (5 B) | SECINFO (7 B) | SECINFO bytes in IV |
 |---:|---|---|---|
 | 16 B | truncate to 16 | truncate to 16 | 0 (IV = MIC) |
-| 12 B | truncate to 16 | truncate to 16 | 4 or 2 |
+| 12 B | truncate to 16 | truncate to 16 | 4 |
 | 8 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
 | 4 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
 
@@ -284,8 +284,8 @@ The AAD is constructed by concatenating the following fields in order:
 
 1. **FCF** (1 byte)
 2. **Static options** — re-encoded as type-length-value (see below)
-3. **DST** (2 bytes, unicast) or **CHANNEL** (2 bytes, multicast)
-4. **SRC** (2 or 32 bytes) — included only when the source field is outside the ciphertext
+3. **DST** (3-byte destination hint, unicast) or **CHANNEL** (2 bytes, multicast)
+4. **SRC** (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext
 5. **SECINFO** (5 or 7 bytes)
 
 Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.

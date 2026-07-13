@@ -514,6 +514,11 @@ floor for the operating environment.
 
 Zero dBm represents one milliwatt of power.
 
+Sampling ambient RSSI requires the radio to be actively receiving. If
+`PROP_PHY_ENABLED` is false, getting this property fails with
+`STATUS_INVALID_STATE`. A get may also fail with `STATUS_FAILURE` if the
+radio cannot service the read (for example, mid-reconfiguration).
+
 ### PROP 39: `PROP_PHY_LORA_BW` {#prop-phy-lora-bw}
 
 * Type: Single-Value, Read-Write
@@ -620,7 +625,9 @@ The `Recv` metadata is the following fields in order:
   still decodes and 255 is perfect reception.
   * If `0x00`, LQI is not supported.
 * `RX_SNR` (`i16`): Signal-to-noise ratio in centibels, or 1/10 of a decibel.
-  * If `0xFFFF`, SNR is not supported.
+  * If `0x8000` (`i16::MIN`), SNR is not supported. This sentinel is chosen
+    because it is `-3276.8 dB`, a value no real link can report, so it never
+    collides with a genuine measurement (unlike `0xFFFF`, which is `-0.1 dB`).
 
 ### PROP 4820: `PROP_PHY_DUTY_NOW` {#prop-phy-duty-now}
 

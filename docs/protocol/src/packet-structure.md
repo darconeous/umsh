@@ -14,7 +14,7 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 Where:
 
 - `FHOPS` is present if the FCF flood hop count flag is set
-- `DST` is a 3-byte destination hint (2 bytes in MAC Ack packets)
+- `DST` is a 3-byte destination hint (in MAC Ack packets it is a 3-byte prefix of the original sender's public key)
 - `CHAN` is a 2-byte channel identifier
 - `SRC` is a compact 3-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast and blind unicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
 - `SECINFO` is present on authenticated/encrypted packet types
@@ -120,6 +120,8 @@ Followed by optional extended delta bytes, optional extended length bytes, and t
 | 13 | One extended byte follows; value = byte + 13 |
 | 14 | Two extended bytes follow; value = uint16 (big-endian) + 269 |
 | 15 | Reserved — used only in the delta field to indicate the `0xFF` end-of-options marker |
+
+The value 15 is legal only as part of the `0xFF` end-of-options marker, where *both* nibbles are 15. Any other appearance of nibble value 15 — a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record — is malformed, and the packet MUST be dropped.
 
 The option delta is the difference between this option's number and the previous option's number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).
 
