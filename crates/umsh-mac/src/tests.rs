@@ -525,9 +525,14 @@ fn mac_adds_identities_peers_and_channels() {
     assert_eq!(id_a, LocalIdentityId(0));
     assert_eq!(id_b, LocalIdentityId(1));
     assert_eq!(mac.identity_count(), 2);
+    // The hint is the first three bytes of the identity's public key.
+    // (Compute the expectation from the actual key rather than the seed:
+    // under `software-crypto` the DummyIdentity seed derives a real Ed25519
+    // public key rather than being used verbatim.)
+    let id_b_key = *mac.identity(id_b).unwrap().identity().public_key();
     assert_eq!(
         mac.identity(id_b).unwrap().identity().hint(),
-        umsh_core::NodeHint([0x20; 3])
+        umsh_core::NodeHint([id_b_key.0[0], id_b_key.0[1], id_b_key.0[2]])
     );
     assert_eq!(
         mac.peer_registry().get(peer).unwrap().public_key,
@@ -563,10 +568,16 @@ fn persisted_counter_load_overrides_random_initial_counter() {
         u32::from_le_bytes([7, 8, 9, 10])
     );
 
-    mac.counter_store()
-        .loaded
-        .borrow_mut()
-        .insert(vec![0x10; 32], 128);
+    // The persistence context is the identity's actual public key (which
+    // under `software-crypto` is derived from the seed, not the seed itself).
+    let context = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .0
+        .to_vec();
+    mac.counter_store().loaded.borrow_mut().insert(context, 128);
 
     let loaded = block_on(mac.load_persisted_counter(local_id)).unwrap();
 
@@ -1341,10 +1352,16 @@ fn secure_send_continues_after_future_boundary_is_persisted() {
 fn load_persisted_counter_aligns_to_block_boundary() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    mac.counter_store()
-        .loaded
-        .borrow_mut()
-        .insert(vec![0x10; 32], 255);
+    // Key the store entry by the identity's actual public key — the
+    // persistence context — rather than the DummyIdentity seed.
+    let context = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .0
+        .to_vec();
+    mac.counter_store().loaded.borrow_mut().insert(context, 255);
 
     let loaded = block_on(mac.load_persisted_counter(local_id)).unwrap();
 
@@ -2016,16 +2033,7 @@ fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
 fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let candidate_a = PublicKey([
-        0xAB, 0xAB, 0xAB, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]);
-    let candidate_b = PublicKey([
-        0xAB, 0xAB, 0xAB, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]);
+    let (candidate_a, candidate_b) = colliding_hint_peer_keys();
     let _peer_a = mac.add_peer(candidate_a).unwrap();
     let peer_b = mac.add_peer(candidate_b).unwrap();
     let keys = PairwiseKeys {
@@ -2701,16 +2709,7 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
 fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    let candidate_a = PublicKey([
-        0xAB, 0xAB, 0xAB, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]);
-    let candidate_b = PublicKey([
-        0xAB, 0xAB, 0xAB, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]);
+    let (candidate_a, candidate_b) = colliding_hint_peer_keys();
     let _peer_a = mac.add_peer(candidate_a).unwrap();
     let peer_b = mac.add_peer(candidate_b).unwrap();
     let pairwise = PairwiseKeys {
@@ -6331,6 +6330,32 @@ impl DummyIdentity {
         let public_key = PublicKey(seed);
         Self { public_key }
     }
+}
+
+/// Two distinct peer public keys whose 3-byte node hints collide in **both**
+/// cfg paths, for exercising ambiguous-hint candidate iteration.
+///
+/// The seeds share the prefix `AB AB AB`, so without `software-crypto`
+/// (where `DummyIdentity` uses the seed bytes verbatim as the public key)
+/// the hints collide trivially. With `software-crypto` the seeds derive real
+/// Ed25519 points — the pair below was found by a one-off birthday search
+/// over seeds of the form `AB AB AB || u64-LE counter || zeros`
+/// (counters 1222 and 3291), whose derived public keys share the prefix
+/// `FB 24 12`. The assertions re-verify the collision at runtime so a change
+/// in key derivation cannot silently turn these tests into non-tests.
+fn colliding_hint_peer_keys() -> (PublicKey, PublicKey) {
+    let mut seed_a = [0u8; 32];
+    seed_a[..3].copy_from_slice(&[0xAB, 0xAB, 0xAB]);
+    seed_a[3..11].copy_from_slice(&1222u64.to_le_bytes());
+    let mut seed_b = [0u8; 32];
+    seed_b[..3].copy_from_slice(&[0xAB, 0xAB, 0xAB]);
+    seed_b[3..11].copy_from_slice(&3291u64.to_le_bytes());
+
+    let key_a = *DummyIdentity::new(seed_a).public_key();
+    let key_b = *DummyIdentity::new(seed_b).public_key();
+    assert_ne!(key_a, key_b, "candidate keys must be distinct");
+    assert_eq!(key_a.hint(), key_b.hint(), "candidate hints must collide");
+    (key_a, key_b)
 }
 
 impl NodeIdentity for DummyIdentity {
