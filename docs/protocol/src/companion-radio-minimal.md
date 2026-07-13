@@ -9,7 +9,8 @@ transport:
 * Asynchronous serial links (UART, USB-CDC) use
   [HDLC-Lite](https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite),
   exactly as used by Spinel.
-* BLE will use a framing scheme to be defined separately.
+* BLE uses the GATT frame transport defined in
+  [Companion Radio over BLE](companion-radio-ble.md).
 
 The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
