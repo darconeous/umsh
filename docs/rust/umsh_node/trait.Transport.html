@@ -4,14 +4,14 @@
     // Required methods
     async fn <a href="#tymethod.send" class="fn">send</a>(
         &amp;self,
-        to: &amp;PublicKey,
+        to: &amp;<a class="struct" href="../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>,
         payload: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-        options: &amp;SendOptions,
+        options: &amp;<a class="struct" href="../umsh_mac/send/struct.SendOptions.html" title="struct umsh_mac::send::SendOptions">SendOptions</a>,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket">SendProgressTicket</a>, Self::<a class="associatedtype" href="trait.Transport.html#associatedtype.Error" title="type umsh_node::Transport::Error">Error</a>&gt;;
 <span class="item-spacer"></span>    async fn <a href="#tymethod.send_all" class="fn">send_all</a>(
         &amp;self,
         payload: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-        options: &amp;SendOptions,
+        options: &amp;<a class="struct" href="../umsh_mac/send/struct.SendOptions.html" title="struct umsh_mac::send::SendOptions">SendOptions</a>,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket">SendProgressTicket</a>, Self::<a class="associatedtype" href="trait.Transport.html#associatedtype.Error" title="type umsh_node::Transport::Error">Error</a>&gt;;
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A context through which UMSH frames can be sent.</p>
 <p>Both <code>LocalNode</code> and <code>BoundChannel</code> implement this trait, allowing
@@ -24,9 +24,9 @@ channel key can decrypt). Generic code over <code>Transport</code> must not assu
 identical delivery or privacy properties.</p>
 </div></details><h2 id="required-associated-types" class="section-header">Required Associated Types<a href="#required-associated-types" class="anchor">§</a></h2><div class="methods"><section id="associatedtype.Error" class="method"><a class="src rightside" href="../src/umsh_node/transport.rs.html#18">Source</a><h4 class="code-header">type <a href="#associatedtype.Error" class="associatedtype">Error</a></h4></section></div><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.send" class="method"><a class="src rightside" href="../src/umsh_node/transport.rs.html#24-29">Source</a><h4 class="code-header">async fn <a href="#tymethod.send" class="fn">send</a>(
     &amp;self,
-    to: &amp;PublicKey,
+    to: &amp;<a class="struct" href="../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>,
     payload: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-    options: &amp;SendOptions,
+    options: &amp;<a class="struct" href="../umsh_mac/send/struct.SendOptions.html" title="struct umsh_mac::send::SendOptions">SendOptions</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket">SendProgressTicket</a>, Self::<a class="associatedtype" href="trait.Transport.html#associatedtype.Error" title="type umsh_node::Transport::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Send a payload to a specific destination.</p>
 <ul>
 <li>On <code>LocalNode</code>: unicast (destination-encrypted)</li>
@@ -35,7 +35,7 @@ identical delivery or privacy properties.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="tymethod.send_all" class="method"><a class="src rightside" href="../src/umsh_node/transport.rs.html#35-39">Source</a><h4 class="code-header">async fn <a href="#tymethod.send_all" class="fn">send_all</a>(
     &amp;self,
     payload: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-    options: &amp;SendOptions,
+    options: &amp;<a class="struct" href="../umsh_mac/send/struct.SendOptions.html" title="struct umsh_mac::send::SendOptions">SendOptions</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.SendProgressTicket.html" title="struct umsh_node::SendProgressTicket">SendProgressTicket</a>, Self::<a class="associatedtype" href="trait.Transport.html#associatedtype.Error" title="type umsh_node::Transport::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Send a payload to all reachable nodes in this transport’s scope.</p>
 <ul>
 <li>On <code>LocalNode</code>: broadcast (unauthenticated)</li>

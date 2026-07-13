@@ -163,7 +163,7 @@
 <a href=#163 id=163 data-nosnippet>163</a>    <span class="comment">// Host/node aliases (need `umsh-node`, which the BSP doesn't pull in, so the
 <a href=#164 id=164 data-nosnippet>164</a>    // firmware owns them). The const params match `TechoMac`'s capacities.
 <a href=#165 id=165 data-nosnippet>165</a>    </span><span class="doccomment">/// Host bound to the `'static` mac_cell. Owned by `mac_task`.
-<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">type </span>TechoHost = Host&lt;<span class="lifetime">'static</span>, TechoPlatform, <span class="number">2</span>, <span class="number">8</span>, <span class="number">4</span>, <span class="number">4</span>, <span class="number">8</span>, <span class="number">255</span>, <span class="number">32</span>&gt;;
+<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">type </span>TechoHost = Host&lt;MacHandle&lt;<span class="lifetime">'static</span>, TechoPlatform, <span class="number">2</span>, <span class="number">8</span>, <span class="number">4</span>, <span class="number">4</span>, <span class="number">8</span>, <span class="number">255</span>, <span class="number">32</span>&gt;&gt;;
 <a href=#167 id=167 data-nosnippet>167</a>    <span class="doccomment">/// LocalNode handle. Cheap to clone — passed to `cli_task`.
 <a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">type </span>TechoNode = LocalNode&lt;MacHandle&lt;<span class="lifetime">'static</span>, TechoPlatform, <span class="number">2</span>, <span class="number">8</span>, <span class="number">4</span>, <span class="number">4</span>, <span class="number">8</span>, <span class="number">255</span>, <span class="number">32</span>&gt;&gt;;
 <a href=#169 id=169 data-nosnippet>169</a>

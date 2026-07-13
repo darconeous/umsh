@@ -1,0 +1,555 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Companion Radio over BLE - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-1226d456.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="companion-radio-over-ble"><a class="header" href="#companion-radio-over-ble">Companion Radio over BLE</a></h1>
+<p>This chapter defines the normative binding of the companion-radio
+protocol (see <a href="companion-radio-minimal.html">Minimal Companion Radio
+Protocol</a>) onto Bluetooth Low Energy. It
+covers the <strong>tethered</strong> case only: one host device driving its own
+companion radio over a BLE connection, exactly as it would over UART or
+USB-CDC.</p>
+<p>Using BLE as a shared local bearer — nearby devices exchanging UMSH
+frames over BLE as peers, or reaching the UMSH network through a
+BLE-LoRa bridge — is a separate bearer design and is out of scope here.
+See <a href="companion-radio.html#ble-as-a-local-bearer">BLE As A Local Bearer</a>
+for the design space. This chapter reserves identifier space for that
+future work (see (#uuid-allocation)) but does not specify it.</p>
+<p>The companion-radio protocol is transport-agnostic: frames are carried
+opaquely and unchanged. This binding replaces only the framing layer.
+HDLC-Lite framing (flags, escaping, and the FCS) is <strong>not</strong> used over
+BLE; ATT already provides reliable, ordered, integrity-protected
+delivery, and frame boundaries are recovered by the segmentation scheme
+below.</p>
+<h2 id="gatt-frame-transport"><a class="header" href="#gatt-frame-transport">GATT Frame Transport</a></h2>
+<p>This section defines a generic, service-agnostic pattern for carrying
+delimited frames over GATT. The Companion Link Service
+(see (#companion-link-service)) instantiates it; a future local-bearer
+service may instantiate it independently.</p>
+<p>A service using this pattern exposes a pair of characteristics:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Characteristic</th><th>Direction</th><th>GATT Properties</th></tr>
+</thead>
+<tbody>
+<tr><td>Frame In</td><td>Client→Server</td><td>Write; Write Without Response (optional)</td></tr>
+<tr><td>Frame Out</td><td>Server→Client</td><td>Notify</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each characteristic carries a sequence of <strong>segments</strong>. A segment is
+one ATT value: a single write to Frame In, or a single notification
+from Frame Out. One or more consecutive segments reassemble into
+exactly one frame. Segments of different frames are never interleaved
+on the same characteristic.</p>
+<h3 id="segment-format"><a class="header" href="#segment-format">Segment Format</a></h3>
+<p>Every segment begins with a single header octet, followed by zero or
+more octets of frame data:</p>
+<pre><code>  0   1   2   3   4   5   6   7
++---+---+---+---+---+---+---+---+
+|  SAR  |       RESERVED        |
++---+---+---+---+---+---+---+---+
+</code></pre>
+<p>Figure: Segment Header Format</p>
+<h4 id="sar-segmentation-and-reassembly"><a class="header" href="#sar-segmentation-and-reassembly"><code>SAR</code>: Segmentation and Reassembly</a></h4>
+<p>The two most significant bits indicate the segment’s position within
+its frame:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>SAR_COMPLETE</code></td><td>The segment contains a complete frame</td></tr>
+<tr><td>1</td><td><code>SAR_FIRST</code></td><td>First segment of a segmented frame</td></tr>
+<tr><td>2</td><td><code>SAR_CONT</code></td><td>Continuation segment of a segmented frame</td></tr>
+<tr><td>3</td><td><code>SAR_LAST</code></td><td>Last segment of a segmented frame</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="reserved-reserved"><a class="header" href="#reserved-reserved"><code>RESERVED</code>: Reserved</a></h4>
+<p>The six least significant bits <strong>MUST</strong> be transmitted as zero. A
+receiver encountering a nonzero value <strong>MUST</strong> discard the segment and
+reset reassembly on that characteristic (see (#reassembly)).</p>
+<h3 id="segmentation"><a class="header" href="#segmentation">Segmentation</a></h3>
+<p>A sender <strong>MUST NOT</strong> produce a segment larger than the current usable
+ATT payload (ATT_MTU minus 3 octets for the ATT opcode and handle).
+When a frame plus its one-octet segment header fits in a single ATT
+value, the sender <strong>SHOULD</strong> emit it as one <code>SAR_COMPLETE</code> segment.
+Otherwise the frame is split, in order, into one <code>SAR_FIRST</code> segment,
+zero or more <code>SAR_CONT</code> segments, and one <code>SAR_LAST</code> segment.</p>
+<p>All segments of a frame <strong>MUST</strong> be sent before any segment of the
+next frame on the same characteristic.</p>
+<h3 id="reassembly"><a class="header" href="#reassembly">Reassembly</a></h3>
+<p>The receiver maintains one reassembly buffer per characteristic:</p>
+<ul>
+<li><code>SAR_COMPLETE</code>: any partially reassembled frame is discarded; the
+segment payload is delivered as a complete frame.</li>
+<li><code>SAR_FIRST</code>: any partially reassembled frame is discarded; the
+segment payload starts a new reassembly.</li>
+<li><code>SAR_CONT</code>, <code>SAR_LAST</code>: the segment payload is appended to the
+reassembly in progress. If no reassembly is in progress, the segment
+<strong>MUST</strong> be discarded. On <code>SAR_LAST</code>, the reassembled octets are
+delivered as one complete frame.</li>
+</ul>
+<p>The service instantiating this pattern defines the maximum reassembled
+frame size. If a reassembly exceeds it, the receiver <strong>MUST</strong> discard
+the partial frame and ignore subsequent <code>SAR_CONT</code>/<code>SAR_LAST</code> segments
+until the next <code>SAR_COMPLETE</code> or <code>SAR_FIRST</code> segment.</p>
+<p>An ATT value of zero length contains no segment header and is not a
+valid segment; the receiver <strong>MUST</strong> discard it and reset reassembly
+on that characteristic.</p>
+<p>Reassembly state is reset whenever the connection drops or the link
+detaches (see (#attach-semantics)).</p>
+<p>Discarded segments and frames are transport-level events; they do not
+generate protocol-level error responses.</p>
+<h3 id="gatt-flow-control"><a class="header" href="#gatt-flow-control">Flow Control</a></h3>
+<p>Client-to-server flow control uses the ATT write mechanism: a client
+using Write (with response) <strong>SHOULD NOT</strong> issue the next write until
+the previous response arrives. The server’s write response is its
+assertion that it has accepted the segment. A client <strong>MAY</strong> use Write
+Without Response where supported, in which case it relies on
+link-layer backpressure; servers <strong>MUST</strong> process such segments in
+order but <strong>MAY</strong> stall the bearer while doing so.</p>
+<p>Server-to-client flow control is provided by the notification
+mechanism: the server’s stack paces notifications to the connection,
+and the server <strong>MUST NOT</strong> drop segments of a frame it has begun to
+send.</p>
+<h3 id="mtu-considerations"><a class="header" href="#mtu-considerations">MTU Considerations</a></h3>
+<p>The scheme is correct at any ATT_MTU, including the 23-octet minimum.
+Clients <strong>SHOULD</strong> negotiate the largest ATT_MTU they support before
+attaching; servers <strong>SHOULD</strong> support an ATT_MTU of at least 247.
+Larger MTUs only reduce segment count — they never change frame
+semantics.</p>
+<h2 id="companion-link-service"><a class="header" href="#companion-link-service">Companion Link Service</a></h2>
+<p>The Companion Link Service carries companion-radio protocol frames
+using the GATT frame transport defined above. One reassembled frame is
+exactly one companion-radio frame as defined in
+<a href="companion-radio-minimal.html#frame-format">Frame Format</a>; the transport
+never inspects or modifies frame contents.</p>
+<p>The maximum reassembled frame size for this service is 512 octets.</p>
+<h3 id="uuid-allocation"><a class="header" href="#uuid-allocation">UUID Allocation</a></h3>
+<p>UMSH GATT identifiers are allocated from the randomly generated UMSH
+base UUID <code>21EB6B15-XXXX-4CCF-92E4-A079171BEC97</code>, where <code>XXXX</code> is the
+assignment slot.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Slot</th><th>UUID</th><th>Assignment</th></tr>
+</thead>
+<tbody>
+<tr><td><code>0x0001</code></td><td><code>21EB6B15-0001-4CCF-92E4-A079171BEC97</code></td><td>Companion Link Service</td></tr>
+<tr><td><code>0x0002</code></td><td><code>21EB6B15-0002-4CCF-92E4-A079171BEC97</code></td><td>Frame In characteristic</td></tr>
+<tr><td><code>0x0003</code></td><td><code>21EB6B15-0003-4CCF-92E4-A079171BEC97</code></td><td>Frame Out characteristic</td></tr>
+<tr><td><code>0x0100</code>+</td><td>—</td><td>Reserved: BLE local bearer</td></tr>
+</tbody>
+</table>
+</div>
+<p>Slots <code>0x0100</code> and above are reserved for the future BLE local-bearer
+service family and <strong>MUST NOT</strong> be used for tethered companion-link
+purposes.</p>
+<h3 id="attach-semantics"><a class="header" href="#attach-semantics">Attach Semantics</a></h3>
+<p>A host is <strong>attached</strong> once it has enabled notifications on Frame Out
+(by writing the Client Characteristic Configuration Descriptor) over a
+connection meeting the security requirements in (#ble-security).
+Connection alone does not attach.</p>
+<p>On attach, the NCP <strong>MUST</strong> silently reset its protocol session to
+post-reset defaults, exactly as specified for host attach on serial
+transports: no unsolicited reset notification is emitted, so the host
+never races a stray notice during its own reset handshake. The NCP
+<strong>MUST NOT</strong> emit any frame before attach.</p>
+<p>A host <strong>detaches</strong> by disabling notifications or by disconnecting.
+Partially reassembled frames are discarded on detach.</p>
+<p>The NCP supports one attached host at a time, across all transports it
+exposes. If a new host attaches — over BLE or over another transport
+such as USB — the NCP <strong>MUST</strong> detach any previously attached host and
+reset the session for the new one. An NCP <strong>MAY</strong> instead reject new
+connections while a host is attached.</p>
+<h3 id="connection-parameters"><a class="header" href="#connection-parameters">Connection Parameters</a></h3>
+<p>The transport is latency-tolerant; any standard connection parameters
+work. NCPs <strong>SHOULD</strong> accept connection intervals in the 15–50 ms
+range so that transmit confirmations and received-frame delivery do
+not dominate MAC-layer timing budgets.</p>
+<h2 id="ble-advertising"><a class="header" href="#ble-advertising">Advertising and Discovery</a></h2>
+<p>While powered and not attached, the NCP <strong>SHOULD</strong> advertise as
+connectable and include the Companion Link Service UUID in its
+advertising data or scan response, so hosts can discover companion
+radios by service rather than by name. The advertised local name is
+implementation-specific.</p>
+<p>While a host is attached over another transport (for example, an open
+companion session over USB-CDC), the NCP <strong>SHOULD</strong> suspend
+advertising, and <strong>SHOULD</strong> resume it when that host detaches.</p>
+<p>Advertising content <strong>MUST NOT</strong> reveal whether the NCP holds bonds or
+identify previously bonded hosts. NCPs <strong>SHOULD</strong> use resolvable
+private addresses.</p>
+<p>Pairing mode (see (#pairing-mode)) governs only the acceptance of
+pairing requests; it does not affect advertising. In particular, a
+bonded NCP continues to advertise outside pairing mode so that its
+bonded hosts can reconnect.</p>
+<h2 id="ble-security"><a class="header" href="#ble-security">Security</a></h2>
+<p>The companion-radio protocol is a privileged interface: an attached
+host commands transmission with arbitrary content, timing, and power
+under the operator’s regulatory responsibility, observes all traffic
+metadata the radio receives, and can deny service to the legitimate
+host. On serial transports this interface is implicitly protected by
+physical possession of the device. The BLE binding <strong>MUST</strong> provide at
+least an equivalent barrier, and its cryptographic strength <strong>MUST
+NOT</strong> fall below that of UMSH itself (approximately 128-bit; see
+<a href="security.html">Security &amp; Cryptography</a>).</p>
+<h3 id="pairing-requirements"><a class="header" href="#pairing-requirements">Pairing Requirements</a></h3>
+<ul>
+<li>Pairing <strong>MUST</strong> use LE Secure Connections (LESC). Legacy pairing
+<strong>MUST</strong> be rejected; NCPs <strong>SHOULD</strong> operate in Secure Connections
+Only mode.</li>
+<li>Bonding is <strong>REQUIRED</strong>. The NCP <strong>MUST NOT</strong> attach a host over an
+unbonded link.</li>
+<li>The Frame In and Frame Out characteristics, including the Frame Out
+CCCD, <strong>MUST</strong> be readable and writable only over an encrypted link
+keyed by a stored LESC bond. Access over any other link <strong>MUST</strong> be
+refused with the appropriate ATT security error.</li>
+</ul>
+<p>LESC pairing (P-256 ECDH) meets the 128-bit strength requirement. The
+remaining risk is man-in-the-middle interception during the pairing
+ceremony itself, which the following requirements bound.</p>
+<h3 id="pairing-mode"><a class="header" href="#pairing-mode">Pairing Mode</a></h3>
+<p>Except as provided for configured-PIN and OOB pairing below, the NCP
+accepts pairing requests from unbonded devices only while in <strong>pairing
+mode</strong>; at all other times such requests <strong>MUST</strong> be rejected.</p>
+<p>Entering pairing mode:</p>
+<ul>
+<li>While the NCP holds no bonds, it <strong>SHOULD</strong> enter pairing mode
+automatically at power-on for a short window (15–30 seconds
+<strong>RECOMMENDED</strong>).</li>
+<li>Once the NCP holds one or more bonds, it <strong>MUST NOT</strong> enter pairing
+mode automatically. Entering pairing mode then requires a deliberate
+physical gesture distinct from normal power-on — for example,
+holding the user button through power-on until the device signals
+that pairing mode is active.</li>
+</ul>
+<p>Pairing mode <strong>MUST</strong> end when any of the following occurs:</p>
+<ul>
+<li>a new bond completes;</li>
+<li>an already-bonded host establishes an encrypted connection;</li>
+<li>an implementation-defined timeout expires.</li>
+</ul>
+<p>The NCP <strong>SHOULD</strong> give a perceptible indication (LED pattern, tone,
+or display) while pairing mode is active.</p>
+<p>A physical-presence-gated ceremony reduces the pairing trust decision
+to possession of the device — the same property that protects the
+serial transports.</p>
+<h3 id="association-models"><a class="header" href="#association-models">Association Models</a></h3>
+<ul>
+<li>Devices with a display and a confirmation input <strong>SHOULD</strong> use an
+authenticated association model (numeric comparison, or passkey
+display) for new bonds.</li>
+<li>Devices without a display, and with no pairing PIN configured, use
+Just Works, accepted only in pairing mode. This model is
+unauthenticated; the pairing-mode gesture is the entire trust
+decision.</li>
+<li>Devices with a pairing PIN configured (see (#pairing-pin)) use LESC
+Passkey Entry with the configured PIN as a static passkey. Such
+pairing <strong>MAY</strong> be accepted outside pairing mode. The NCP <strong>MUST</strong>
+count consecutive passkey authentication failures — pairing
+attempts that fail the LESC confirm-value or DHKey check — since
+power-on; the counter resets on a successful pairing or a power
+cycle. Rejections that never reach passkey authentication
+(legacy-pairing attempts, pairing refused outside pairing mode,
+malformed pairing requests) <strong>MUST NOT</strong> increment the counter, so
+they cannot be used to lock out pairing remotely. After a small
+limit (<strong>MUST NOT</strong> exceed 5; 3 <strong>RECOMMENDED</strong>), the NCP <strong>MUST</strong>
+reject all further pairing attempts until it is power cycled.</li>
+<li>NCPs <strong>MAY</strong> additionally support LESC Out-of-Band pairing (for
+example, OOB data conveyed by a QR code affixed to or displayed by
+the device). OOB pairing is authenticated and <strong>MAY</strong> be accepted at
+any time. The conveyance and provisioning of OOB data is out of
+scope for this document.</li>
+</ul>
+<p>The failed-attempt lockout is load-bearing, not defensive polish: LESC
+Passkey Entry discloses the passkey one bit per protocol round, so an
+active attacker learns roughly one PIN bit per failed pairing attempt,
+and a passive eavesdropper on one <em>successful</em> pairing learns the
+entire PIN. A static passkey therefore provides bounded, not absolute,
+authentication: the lockout caps active extraction at a few bits per
+power cycle performed by the operator, and operators <strong>SHOULD</strong> change
+the PIN if a pairing exchange may have been observed.</p>
+<h3 id="pairing-pin"><a class="header" href="#pairing-pin">Pairing PIN Configuration</a></h3>
+<h4 id="prop-ble-pairing-pin"><a class="header" href="#prop-ble-pairing-pin">PROP 4864: <code>PROP_BLE_PAIRING_PIN</code></a></h4>
+<ul>
+<li>Type: Single-Value, Write-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>OPTIONAL</strong> (meaningful only on NCPs exposing this
+transport)</li>
+<li>Value Type: UINT32_LE, or empty</li>
+<li>Units: LESC passkey, decimal 0–999999</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>Sets the static passkey used by the configured-PIN association model
+above. Writing an empty value clears the PIN, returning the device to
+the Just Works model. Values outside 0–999999 fail with
+<code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>As an exception to the usual <code>CMD_PROP_SET</code> behavior, a successful
+set of this property is acknowledged with <code>CMD_PROP_IS</code> for
+<code>PROP_LAST_STATUS</code> carrying <code>STATUS_OK</code> and the command’s TID; the
+NCP <strong>MUST NOT</strong> emit <code>CMD_PROP_IS</code> for this property itself. Success
+<strong>MUST NOT</strong> be reported before the new value is in effect for
+subsequent pairing attempts and, where the device supports
+persistence, durably stored; a value that cannot be applied or stored
+is reported with an appropriate error status and leaves the previous
+PIN state unchanged.</p>
+<p>The PIN persists across resets and power cycles. It is write-only:
+<code>CMD_PROP_GET</code> for this property <strong>MUST</strong> fail with
+<code>STATUS_UNIMPLEMENTED</code> and <strong>MUST NOT</strong> disclose the value or whether
+a PIN is configured.</p>
+<p>Because this property is only reachable through an attached session,
+it is always protected by the transport that carried it: physical
+possession on serial transports, or an existing bonded LESC link on
+BLE.</p>
+<h3 id="bond-management"><a class="header" href="#bond-management">Bond Management</a></h3>
+<ul>
+<li>NCPs <strong>MUST</strong> provide a local mechanism to delete stored bonds. The
+mechanism is implementation-specific but <strong>MUST NOT</strong> be invocable
+through the companion-radio protocol itself over an unauthenticated
+path.</li>
+<li>NCPs <strong>MAY</strong> limit the number of stored bonds; when full, new
+pairing attempts fail until a bond is deleted locally.</li>
+</ul>
+<h3 id="layering-note"><a class="header" href="#layering-note">Layering Note</a></h3>
+<p>BLE link security protects the <em>transport</em>. It does not alter the UMSH
+security model: MAC-layer keys remain on the host, frames crossing
+this link remain UMSH ciphertext where UMSH encrypts them, and a
+compromised NCP still cannot impersonate host identities. Conversely,
+future companion-protocol extensions that provision keying material to
+the NCP (see <a href="companion-radio.html#security-boundary">Companion Radio</a>)
+<strong>MUST NOT</strong> be carried over a link that does not meet the
+requirements of this section.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="companion-radio-minimal.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="security-considerations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="companion-radio-minimal.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="security-considerations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CompanionRadioError"],"struct":["CompanionRadio","CompanionRadioConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["CompanionRadioError"],"struct":["BleFrameLink","BleFrameLinkConfig","CompanionRadio","CompanionRadioConfig","SerialFrameLink"],"trait":["FrameLink"]};

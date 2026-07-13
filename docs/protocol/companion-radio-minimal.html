@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-812ca648.js";
+            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-afe8cd7c.js"></script>
+        <script src="toc-1226d456.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,7 +184,8 @@ transport:</p>
 <li>Asynchronous serial links (UART, USB-CDC) use
 <a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>,
 exactly as used by Spinel.</li>
-<li>BLE will use a framing scheme to be defined separately.</li>
+<li>BLE uses the GATT frame transport defined in
+<a href="companion-radio-ble.html">Companion Radio over BLE</a>.</li>
 </ul>
 <p>The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
@@ -605,6 +606,10 @@ sniffers.</p>
 This value can be used in energy scans and for determining the ambient noise
 floor for the operating environment.</p>
 <p>Zero dBm represents one milliwatt of power.</p>
+<p>Sampling ambient RSSI requires the radio to be actively receiving. If
+<code>PROP_PHY_ENABLED</code> is false, getting this property fails with
+<code>STATUS_INVALID_STATE</code>. A get may also fail with <code>STATUS_FAILURE</code> if the
+radio cannot service the read (for example, mid-reconfiguration).</p>
 <h3 id="prop-phy-lora-bw"><a class="header" href="#prop-phy-lora-bw">PROP 39: <code>PROP_PHY_LORA_BW</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -898,7 +903,7 @@ functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="security-considerations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="companion-radio-ble.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -912,7 +917,7 @@ functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="security-considerations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="companion-radio-ble.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

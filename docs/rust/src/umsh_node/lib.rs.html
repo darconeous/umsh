@@ -614,145 +614,155 @@
 <a href=#614 id=614 data-nosnippet>614</a>    </span><span class="kw">impl </span>MacBackend <span class="kw">for </span>FakeMac {
 <a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">type </span>SendError = SendError;
 <a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">type </span>CapacityError = CapacityError;
-<a href=#617 id=617 data-nosnippet>617</a>
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">async fn </span>add_peer(
-<a href=#619 id=619 data-nosnippet>619</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#620 id=620 data-nosnippet>620</a>            key: PublicKey,
-<a href=#621 id=621 data-nosnippet>621</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;PeerId, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
-<a href=#622 id=622 data-nosnippet>622</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
-<a href=#623 id=623 data-nosnippet>623</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, existing)) = state
-<a href=#624 id=624 data-nosnippet>624</a>                .peers
-<a href=#625 id=625 data-nosnippet>625</a>                .iter()
-<a href=#626 id=626 data-nosnippet>626</a>                .find(|(existing_key, <span class="kw">_</span>)| <span class="kw-2">*</span>existing_key == key)
-<a href=#627 id=627 data-nosnippet>627</a>            {
-<a href=#628 id=628 data-nosnippet>628</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>existing);
-<a href=#629 id=629 data-nosnippet>629</a>            }
-<a href=#630 id=630 data-nosnippet>630</a>            <span class="kw">let </span>peer_id = PeerId(state.next_peer_id);
-<a href=#631 id=631 data-nosnippet>631</a>            state.next_peer_id = state.next_peer_id.wrapping_add(<span class="number">1</span>);
-<a href=#632 id=632 data-nosnippet>632</a>            state.peers.push((key, peer_id));
-<a href=#633 id=633 data-nosnippet>633</a>            <span class="prelude-val">Ok</span>(peer_id)
-<a href=#634 id=634 data-nosnippet>634</a>        }
-<a href=#635 id=635 data-nosnippet>635</a>
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="kw">async fn </span>add_private_channel(
-<a href=#637 id=637 data-nosnippet>637</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#638 id=638 data-nosnippet>638</a>            _key: umsh_core::ChannelKey,
-<a href=#639 id=639 data-nosnippet>639</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
-<a href=#640 id=640 data-nosnippet>640</a>            <span class="prelude-val">Ok</span>(())
-<a href=#641 id=641 data-nosnippet>641</a>        }
-<a href=#642 id=642 data-nosnippet>642</a>
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">async fn </span>add_named_channel(
-<a href=#644 id=644 data-nosnippet>644</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#645 id=645 data-nosnippet>645</a>            _name: <span class="kw-2">&amp;</span>str,
-<a href=#646 id=646 data-nosnippet>646</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
-<a href=#647 id=647 data-nosnippet>647</a>            <span class="prelude-val">Ok</span>(())
-<a href=#648 id=648 data-nosnippet>648</a>        }
-<a href=#649 id=649 data-nosnippet>649</a>
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">async fn </span>send_broadcast(
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#652 id=652 data-nosnippet>652</a>            _from: LocalIdentityId,
-<a href=#653 id=653 data-nosnippet>653</a>            _payload: <span class="kw-2">&amp;</span>[u8],
-<a href=#654 id=654 data-nosnippet>654</a>            _options: <span class="kw-2">&amp;</span>SendOptions,
-<a href=#655 id=655 data-nosnippet>655</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;SendReceipt, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
-<a href=#656 id=656 data-nosnippet>656</a>            <span class="prelude-val">Ok</span>(SendReceipt(<span class="number">99</span>))
-<a href=#657 id=657 data-nosnippet>657</a>        }
-<a href=#658 id=658 data-nosnippet>658</a>
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">async fn </span>send_multicast(
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#661 id=661 data-nosnippet>661</a>            _from: LocalIdentityId,
-<a href=#662 id=662 data-nosnippet>662</a>            _channel: <span class="kw-2">&amp;</span>ChannelId,
+<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">type </span>RunError = core::convert::Infallible;
+<a href=#618 id=618 data-nosnippet>618</a>
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">async fn </span>next_event(
+<a href=#620 id=620 data-nosnippet>620</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#621 id=621 data-nosnippet>621</a>            _on_event: <span class="kw">impl </span>FnMut(LocalIdentityId, umsh_mac::MacEventRef&lt;<span class="lifetime">'_</span>&gt;),
+<a href=#622 id=622 data-nosnippet>622</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::RunError&gt; {
+<a href=#623 id=623 data-nosnippet>623</a>            <span class="comment">// FakeMac is used to drive LocalNode directly in tests, never as a
+<a href=#624 id=624 data-nosnippet>624</a>            // Host run loop, so this stub is never invoked.
+<a href=#625 id=625 data-nosnippet>625</a>            </span><span class="prelude-val">Ok</span>(())
+<a href=#626 id=626 data-nosnippet>626</a>        }
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">async fn </span>add_peer(
+<a href=#629 id=629 data-nosnippet>629</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#630 id=630 data-nosnippet>630</a>            key: PublicKey,
+<a href=#631 id=631 data-nosnippet>631</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;PeerId, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
+<a href=#632 id=632 data-nosnippet>632</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, existing)) = state
+<a href=#634 id=634 data-nosnippet>634</a>                .peers
+<a href=#635 id=635 data-nosnippet>635</a>                .iter()
+<a href=#636 id=636 data-nosnippet>636</a>                .find(|(existing_key, <span class="kw">_</span>)| <span class="kw-2">*</span>existing_key == key)
+<a href=#637 id=637 data-nosnippet>637</a>            {
+<a href=#638 id=638 data-nosnippet>638</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>existing);
+<a href=#639 id=639 data-nosnippet>639</a>            }
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="kw">let </span>peer_id = PeerId(state.next_peer_id);
+<a href=#641 id=641 data-nosnippet>641</a>            state.next_peer_id = state.next_peer_id.wrapping_add(<span class="number">1</span>);
+<a href=#642 id=642 data-nosnippet>642</a>            state.peers.push((key, peer_id));
+<a href=#643 id=643 data-nosnippet>643</a>            <span class="prelude-val">Ok</span>(peer_id)
+<a href=#644 id=644 data-nosnippet>644</a>        }
+<a href=#645 id=645 data-nosnippet>645</a>
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">async fn </span>add_private_channel(
+<a href=#647 id=647 data-nosnippet>647</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#648 id=648 data-nosnippet>648</a>            _key: umsh_core::ChannelKey,
+<a href=#649 id=649 data-nosnippet>649</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
+<a href=#650 id=650 data-nosnippet>650</a>            <span class="prelude-val">Ok</span>(())
+<a href=#651 id=651 data-nosnippet>651</a>        }
+<a href=#652 id=652 data-nosnippet>652</a>
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">async fn </span>add_named_channel(
+<a href=#654 id=654 data-nosnippet>654</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#655 id=655 data-nosnippet>655</a>            _name: <span class="kw-2">&amp;</span>str,
+<a href=#656 id=656 data-nosnippet>656</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
+<a href=#657 id=657 data-nosnippet>657</a>            <span class="prelude-val">Ok</span>(())
+<a href=#658 id=658 data-nosnippet>658</a>        }
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">async fn </span>send_broadcast(
+<a href=#661 id=661 data-nosnippet>661</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#662 id=662 data-nosnippet>662</a>            _from: LocalIdentityId,
 <a href=#663 id=663 data-nosnippet>663</a>            _payload: <span class="kw-2">&amp;</span>[u8],
 <a href=#664 id=664 data-nosnippet>664</a>            _options: <span class="kw-2">&amp;</span>SendOptions,
 <a href=#665 id=665 data-nosnippet>665</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;SendReceipt, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
 <a href=#666 id=666 data-nosnippet>666</a>            <span class="prelude-val">Ok</span>(SendReceipt(<span class="number">99</span>))
 <a href=#667 id=667 data-nosnippet>667</a>        }
 <a href=#668 id=668 data-nosnippet>668</a>
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">async fn </span>send_unicast(
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">async fn </span>send_multicast(
 <a href=#670 id=670 data-nosnippet>670</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#671 id=671 data-nosnippet>671</a>            from: LocalIdentityId,
-<a href=#672 id=672 data-nosnippet>672</a>            dst: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#673 id=673 data-nosnippet>673</a>            payload: <span class="kw-2">&amp;</span>[u8],
-<a href=#674 id=674 data-nosnippet>674</a>            options: <span class="kw-2">&amp;</span>SendOptions,
-<a href=#675 id=675 data-nosnippet>675</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SendReceipt&gt;, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
-<a href=#676 id=676 data-nosnippet>676</a>        {
-<a href=#677 id=677 data-nosnippet>677</a>            <span class="self">self</span>.state.borrow_mut().unicasts.push(SentUnicast {
-<a href=#678 id=678 data-nosnippet>678</a>                from,
-<a href=#679 id=679 data-nosnippet>679</a>                to: <span class="kw-2">*</span>dst,
-<a href=#680 id=680 data-nosnippet>680</a>                payload: payload.to_vec(),
-<a href=#681 id=681 data-nosnippet>681</a>                options: options.clone(),
-<a href=#682 id=682 data-nosnippet>682</a>            });
-<a href=#683 id=683 data-nosnippet>683</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(SendReceipt(<span class="number">42</span>)))
-<a href=#684 id=684 data-nosnippet>684</a>        }
-<a href=#685 id=685 data-nosnippet>685</a>
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">async fn </span>send_blind_unicast(
-<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#688 id=688 data-nosnippet>688</a>            from: LocalIdentityId,
-<a href=#689 id=689 data-nosnippet>689</a>            dst: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#690 id=690 data-nosnippet>690</a>            _channel: <span class="kw-2">&amp;</span>ChannelId,
-<a href=#691 id=691 data-nosnippet>691</a>            payload: <span class="kw-2">&amp;</span>[u8],
-<a href=#692 id=692 data-nosnippet>692</a>            options: <span class="kw-2">&amp;</span>SendOptions,
-<a href=#693 id=693 data-nosnippet>693</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SendReceipt&gt;, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
-<a href=#694 id=694 data-nosnippet>694</a>        {
-<a href=#695 id=695 data-nosnippet>695</a>            <span class="self">self</span>.send_unicast(from, dst, payload, options).<span class="kw">await
-<a href=#696 id=696 data-nosnippet>696</a>        </span>}
-<a href=#697 id=697 data-nosnippet>697</a>
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">async fn </span>fill_random(<span class="kw-2">&amp;</span><span class="self">self</span>, dest: <span class="kw-2">&amp;mut </span>[u8]) {
-<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
-<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">let </span>next = state.random_blocks.pop_front().expect(<span class="string">"test rng exhausted"</span>);
-<a href=#701 id=701 data-nosnippet>701</a>            dest.copy_from_slice(<span class="kw-2">&amp;</span>next[..dest.len()]);
-<a href=#702 id=702 data-nosnippet>702</a>        }
-<a href=#703 id=703 data-nosnippet>703</a>
-<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">async fn </span>now_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="self">self</span>.state.borrow().now_ms
-<a href=#706 id=706 data-nosnippet>706</a>        }
+<a href=#671 id=671 data-nosnippet>671</a>            _from: LocalIdentityId,
+<a href=#672 id=672 data-nosnippet>672</a>            _channel: <span class="kw-2">&amp;</span>ChannelId,
+<a href=#673 id=673 data-nosnippet>673</a>            _payload: <span class="kw-2">&amp;</span>[u8],
+<a href=#674 id=674 data-nosnippet>674</a>            _options: <span class="kw-2">&amp;</span>SendOptions,
+<a href=#675 id=675 data-nosnippet>675</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;SendReceipt, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt; {
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="prelude-val">Ok</span>(SendReceipt(<span class="number">99</span>))
+<a href=#677 id=677 data-nosnippet>677</a>        }
+<a href=#678 id=678 data-nosnippet>678</a>
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">async fn </span>send_unicast(
+<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#681 id=681 data-nosnippet>681</a>            from: LocalIdentityId,
+<a href=#682 id=682 data-nosnippet>682</a>            dst: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#683 id=683 data-nosnippet>683</a>            payload: <span class="kw-2">&amp;</span>[u8],
+<a href=#684 id=684 data-nosnippet>684</a>            options: <span class="kw-2">&amp;</span>SendOptions,
+<a href=#685 id=685 data-nosnippet>685</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SendReceipt&gt;, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
+<a href=#686 id=686 data-nosnippet>686</a>        {
+<a href=#687 id=687 data-nosnippet>687</a>            <span class="self">self</span>.state.borrow_mut().unicasts.push(SentUnicast {
+<a href=#688 id=688 data-nosnippet>688</a>                from,
+<a href=#689 id=689 data-nosnippet>689</a>                to: <span class="kw-2">*</span>dst,
+<a href=#690 id=690 data-nosnippet>690</a>                payload: payload.to_vec(),
+<a href=#691 id=691 data-nosnippet>691</a>                options: options.clone(),
+<a href=#692 id=692 data-nosnippet>692</a>            });
+<a href=#693 id=693 data-nosnippet>693</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(SendReceipt(<span class="number">42</span>)))
+<a href=#694 id=694 data-nosnippet>694</a>        }
+<a href=#695 id=695 data-nosnippet>695</a>
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">async fn </span>send_blind_unicast(
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#698 id=698 data-nosnippet>698</a>            from: LocalIdentityId,
+<a href=#699 id=699 data-nosnippet>699</a>            dst: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#700 id=700 data-nosnippet>700</a>            _channel: <span class="kw-2">&amp;</span>ChannelId,
+<a href=#701 id=701 data-nosnippet>701</a>            payload: <span class="kw-2">&amp;</span>[u8],
+<a href=#702 id=702 data-nosnippet>702</a>            options: <span class="kw-2">&amp;</span>SendOptions,
+<a href=#703 id=703 data-nosnippet>703</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SendReceipt&gt;, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
+<a href=#704 id=704 data-nosnippet>704</a>        {
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="self">self</span>.send_unicast(from, dst, payload, options).<span class="kw">await
+<a href=#706 id=706 data-nosnippet>706</a>        </span>}
 <a href=#707 id=707 data-nosnippet>707</a>
-<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">async fn </span>register_ephemeral(
-<a href=#709 id=709 data-nosnippet>709</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#710 id=710 data-nosnippet>710</a>            _parent: LocalIdentityId,
-<a href=#711 id=711 data-nosnippet>711</a>            _identity: SoftwareIdentity,
-<a href=#712 id=712 data-nosnippet>712</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;LocalIdentityId, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
-<a href=#713 id=713 data-nosnippet>713</a>        {
-<a href=#714 id=714 data-nosnippet>714</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
-<a href=#715 id=715 data-nosnippet>715</a>            <span class="kw">let </span>id = LocalIdentityId(state.next_ephemeral_id);
-<a href=#716 id=716 data-nosnippet>716</a>            state.next_ephemeral_id = state.next_ephemeral_id.wrapping_add(<span class="number">1</span>);
-<a href=#717 id=717 data-nosnippet>717</a>            <span class="prelude-val">Ok</span>(id)
-<a href=#718 id=718 data-nosnippet>718</a>        }
-<a href=#719 id=719 data-nosnippet>719</a>
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">async fn </span>remove_ephemeral(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; bool {
-<a href=#721 id=721 data-nosnippet>721</a>            <span class="self">self</span>.state.borrow_mut().removed_ephemerals.push(id);
-<a href=#722 id=722 data-nosnippet>722</a>            <span class="bool-val">true
-<a href=#723 id=723 data-nosnippet>723</a>        </span>}
-<a href=#724 id=724 data-nosnippet>724</a>    }
-<a href=#725 id=725 data-nosnippet>725</a>
-<a href=#726 id=726 data-nosnippet>726</a>    <span class="attr">#[cfg(all(feature = <span class="string">"software-crypto"</span>, feature = <span class="string">"unsafe-advanced"</span>))]
-<a href=#727 id=727 data-nosnippet>727</a>    </span><span class="kw">fn </span>parse_owned_mac_command(payload: <span class="kw-2">&amp;</span>[u8]) -&gt; OwnedMacCommand {
-<a href=#728 id=728 data-nosnippet>728</a>        OwnedMacCommand::from(
-<a href=#729 id=729 data-nosnippet>729</a>            <span class="kw">crate</span>::parse_mac_command_payload(umsh_core::PacketType::Unicast, payload).unwrap(),
-<a href=#730 id=730 data-nosnippet>730</a>        )
-<a href=#731 id=731 data-nosnippet>731</a>    }
-<a href=#732 id=732 data-nosnippet>732</a>
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="attr">#[cfg(feature = <span class="string">"unsafe-advanced"</span>)]
-<a href=#734 id=734 data-nosnippet>734</a>    </span><span class="kw">fn </span>block_on_ready&lt;F: Future&gt;(future: F) -&gt; F::Output {
-<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">fn </span>raw_waker() -&gt; RawWaker {
-<a href=#736 id=736 data-nosnippet>736</a>            <span class="kw">fn </span>clone(<span class="kw">_</span>: <span class="kw-2">*const </span>()) -&gt; RawWaker {
-<a href=#737 id=737 data-nosnippet>737</a>                raw_waker()
-<a href=#738 id=738 data-nosnippet>738</a>            }
-<a href=#739 id=739 data-nosnippet>739</a>            <span class="kw">fn </span>wake(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
-<a href=#740 id=740 data-nosnippet>740</a>            <span class="kw">fn </span>wake_by_ref(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
-<a href=#741 id=741 data-nosnippet>741</a>            <span class="kw">fn </span>drop(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">async fn </span>fill_random(<span class="kw-2">&amp;</span><span class="self">self</span>, dest: <span class="kw-2">&amp;mut </span>[u8]) {
+<a href=#709 id=709 data-nosnippet>709</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
+<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">let </span>next = state.random_blocks.pop_front().expect(<span class="string">"test rng exhausted"</span>);
+<a href=#711 id=711 data-nosnippet>711</a>            dest.copy_from_slice(<span class="kw-2">&amp;</span>next[..dest.len()]);
+<a href=#712 id=712 data-nosnippet>712</a>        }
+<a href=#713 id=713 data-nosnippet>713</a>
+<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">async fn </span>now_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="self">self</span>.state.borrow().now_ms
+<a href=#716 id=716 data-nosnippet>716</a>        }
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">async fn </span>register_ephemeral(
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#720 id=720 data-nosnippet>720</a>            _parent: LocalIdentityId,
+<a href=#721 id=721 data-nosnippet>721</a>            _identity: SoftwareIdentity,
+<a href=#722 id=722 data-nosnippet>722</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;LocalIdentityId, MacBackendError&lt;<span class="self">Self</span>::SendError, <span class="self">Self</span>::CapacityError&gt;&gt;
+<a href=#723 id=723 data-nosnippet>723</a>        {
+<a href=#724 id=724 data-nosnippet>724</a>            <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.state.borrow_mut();
+<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw">let </span>id = LocalIdentityId(state.next_ephemeral_id);
+<a href=#726 id=726 data-nosnippet>726</a>            state.next_ephemeral_id = state.next_ephemeral_id.wrapping_add(<span class="number">1</span>);
+<a href=#727 id=727 data-nosnippet>727</a>            <span class="prelude-val">Ok</span>(id)
+<a href=#728 id=728 data-nosnippet>728</a>        }
+<a href=#729 id=729 data-nosnippet>729</a>
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">async fn </span>remove_ephemeral(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; bool {
+<a href=#731 id=731 data-nosnippet>731</a>            <span class="self">self</span>.state.borrow_mut().removed_ephemerals.push(id);
+<a href=#732 id=732 data-nosnippet>732</a>            <span class="bool-val">true
+<a href=#733 id=733 data-nosnippet>733</a>        </span>}
+<a href=#734 id=734 data-nosnippet>734</a>    }
+<a href=#735 id=735 data-nosnippet>735</a>
+<a href=#736 id=736 data-nosnippet>736</a>    <span class="attr">#[cfg(all(feature = <span class="string">"software-crypto"</span>, feature = <span class="string">"unsafe-advanced"</span>))]
+<a href=#737 id=737 data-nosnippet>737</a>    </span><span class="kw">fn </span>parse_owned_mac_command(payload: <span class="kw-2">&amp;</span>[u8]) -&gt; OwnedMacCommand {
+<a href=#738 id=738 data-nosnippet>738</a>        OwnedMacCommand::from(
+<a href=#739 id=739 data-nosnippet>739</a>            <span class="kw">crate</span>::parse_mac_command_payload(umsh_core::PacketType::Unicast, payload).unwrap(),
+<a href=#740 id=740 data-nosnippet>740</a>        )
+<a href=#741 id=741 data-nosnippet>741</a>    }
 <a href=#742 id=742 data-nosnippet>742</a>
-<a href=#743 id=743 data-nosnippet>743</a>            RawWaker::new(
-<a href=#744 id=744 data-nosnippet>744</a>                core::ptr::null(),
-<a href=#745 id=745 data-nosnippet>745</a>                <span class="kw-2">&amp;</span>RawWakerVTable::new(clone, wake, wake_by_ref, drop),
-<a href=#746 id=746 data-nosnippet>746</a>            )
-<a href=#747 id=747 data-nosnippet>747</a>        }
-<a href=#748 id=748 data-nosnippet>748</a>
-<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>waker = <span class="kw">unsafe </span>{ Waker::from_raw(raw_waker()) };
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span><span class="kw-2">mut </span>context = Context::from_waker(<span class="kw-2">&amp;</span>waker);
-<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span><span class="kw-2">mut </span>future = <span class="macro">pin!</span>(future);
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">match </span>future.as_mut().poll(<span class="kw-2">&amp;mut </span>context) {
-<a href=#753 id=753 data-nosnippet>753</a>            Poll::Ready(value) =&gt; value,
-<a href=#754 id=754 data-nosnippet>754</a>            Poll::Pending =&gt; <span class="macro">panic!</span>(<span class="string">"test future unexpectedly returned Poll::Pending"</span>),
-<a href=#755 id=755 data-nosnippet>755</a>        }
-<a href=#756 id=756 data-nosnippet>756</a>    }
-<a href=#757 id=757 data-nosnippet>757</a>}
+<a href=#743 id=743 data-nosnippet>743</a>    <span class="attr">#[cfg(feature = <span class="string">"unsafe-advanced"</span>)]
+<a href=#744 id=744 data-nosnippet>744</a>    </span><span class="kw">fn </span>block_on_ready&lt;F: Future&gt;(future: F) -&gt; F::Output {
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">fn </span>raw_waker() -&gt; RawWaker {
+<a href=#746 id=746 data-nosnippet>746</a>            <span class="kw">fn </span>clone(<span class="kw">_</span>: <span class="kw-2">*const </span>()) -&gt; RawWaker {
+<a href=#747 id=747 data-nosnippet>747</a>                raw_waker()
+<a href=#748 id=748 data-nosnippet>748</a>            }
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">fn </span>wake(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
+<a href=#750 id=750 data-nosnippet>750</a>            <span class="kw">fn </span>wake_by_ref(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
+<a href=#751 id=751 data-nosnippet>751</a>            <span class="kw">fn </span>drop(<span class="kw">_</span>: <span class="kw-2">*const </span>()) {}
+<a href=#752 id=752 data-nosnippet>752</a>
+<a href=#753 id=753 data-nosnippet>753</a>            RawWaker::new(
+<a href=#754 id=754 data-nosnippet>754</a>                core::ptr::null(),
+<a href=#755 id=755 data-nosnippet>755</a>                <span class="kw-2">&amp;</span>RawWakerVTable::new(clone, wake, wake_by_ref, drop),
+<a href=#756 id=756 data-nosnippet>756</a>            )
+<a href=#757 id=757 data-nosnippet>757</a>        }
+<a href=#758 id=758 data-nosnippet>758</a>
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>waker = <span class="kw">unsafe </span>{ Waker::from_raw(raw_waker()) };
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span><span class="kw-2">mut </span>context = Context::from_waker(<span class="kw-2">&amp;</span>waker);
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span><span class="kw-2">mut </span>future = <span class="macro">pin!</span>(future);
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">match </span>future.as_mut().poll(<span class="kw-2">&amp;mut </span>context) {
+<a href=#763 id=763 data-nosnippet>763</a>            Poll::Ready(value) =&gt; value,
+<a href=#764 id=764 data-nosnippet>764</a>            Poll::Pending =&gt; <span class="macro">panic!</span>(<span class="string">"test future unexpectedly returned Poll::Pending"</span>),
+<a href=#765 id=765 data-nosnippet>765</a>        }
+<a href=#766 id=766 data-nosnippet>766</a>    }
+<a href=#767 id=767 data-nosnippet>767</a>}
 </code></pre></div></section></main></body></html>

@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-812ca648.js";
+            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-afe8cd7c.js"></script>
+        <script src="toc-1226d456.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1370,7 +1370,7 @@ of packets which transit the bridge.</p>
 <p>For example, given <code>umsh:cs:Public</code>, the input to canonicalization is <code>Public</code>, which folds to <code>public</code>, and the key is derived over the bytes of <code>public</code>. Because folding is applied before derivation, <code>umsh:cs:Public</code>, <code>umsh:cs:public</code>, and <code>umsh:cs:PUBLIC</code> all derive the <strong>same</strong> channel key. The output is a 32-byte pseudorandom key that serves as the channel key. This key then flows through the standard <a href="#multicast-packet-keys">Multicast Packet Keys</a> derivation to produce <code>K_enc</code> and <code>K_mic</code>.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Until then, a name that must display non-ASCII characters should carry them percent-encoded and be treated as case-sensitive in its encoded form.</p>
+<p>Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Note that percent-encoding does not provide a workaround: canonicalization operates on the <em>decoded</em> name, so a percent-encoded non-ASCII name still decodes to non-ASCII and is rejected. A group that wants a non-ASCII display name should use a private channel (<code>umsh:ck:</code>) with an explicit key and carry the display name as a URI parameter.</p>
 </blockquote>
 <p>HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.</p>
 <h3 id="private-channels"><a class="header" href="#private-channels">Private Channels</a></h3>
@@ -3232,7 +3232,8 @@ transport:</p>
 <li>Asynchronous serial links (UART, USB-CDC) use
 <a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>,
 exactly as used by Spinel.</li>
-<li>BLE will use a framing scheme to be defined separately.</li>
+<li>BLE uses the GATT frame transport defined in
+<a href="#companion-radio-over-ble">Companion Radio over BLE</a>.</li>
 </ul>
 <p>The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
@@ -3653,6 +3654,10 @@ sniffers.</p>
 This value can be used in energy scans and for determining the ambient noise
 floor for the operating environment.</p>
 <p>Zero dBm represents one milliwatt of power.</p>
+<p>Sampling ambient RSSI requires the radio to be actively receiving. If
+<code>PROP_PHY_ENABLED</code> is false, getting this property fails with
+<code>STATUS_INVALID_STATE</code>. A get may also fail with <code>STATUS_FAILURE</code> if the
+radio cannot service the read (for example, mid-reconfiguration).</p>
 <h3 id="prop-phy-lora-bw"><a class="header" href="#prop-phy-lora-bw">PROP 39: <code>PROP_PHY_LORA_BW</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -3937,6 +3942,328 @@ functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p
 </tbody>
 </table>
 </div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="companion-radio-over-ble"><a class="header" href="#companion-radio-over-ble">Companion Radio over BLE</a></h1>
+<p>This chapter defines the normative binding of the companion-radio
+protocol (see <a href="#minimal-companion-radio-protocol">Minimal Companion Radio
+Protocol</a>) onto Bluetooth Low Energy. It
+covers the <strong>tethered</strong> case only: one host device driving its own
+companion radio over a BLE connection, exactly as it would over UART or
+USB-CDC.</p>
+<p>Using BLE as a shared local bearer — nearby devices exchanging UMSH
+frames over BLE as peers, or reaching the UMSH network through a
+BLE-LoRa bridge — is a separate bearer design and is out of scope here.
+See <a href="#ble-as-a-local-bearer">BLE As A Local Bearer</a>
+for the design space. This chapter reserves identifier space for that
+future work (see (#uuid-allocation)) but does not specify it.</p>
+<p>The companion-radio protocol is transport-agnostic: frames are carried
+opaquely and unchanged. This binding replaces only the framing layer.
+HDLC-Lite framing (flags, escaping, and the FCS) is <strong>not</strong> used over
+BLE; ATT already provides reliable, ordered, integrity-protected
+delivery, and frame boundaries are recovered by the segmentation scheme
+below.</p>
+<h2 id="gatt-frame-transport"><a class="header" href="#gatt-frame-transport">GATT Frame Transport</a></h2>
+<p>This section defines a generic, service-agnostic pattern for carrying
+delimited frames over GATT. The Companion Link Service
+(see (#companion-link-service)) instantiates it; a future local-bearer
+service may instantiate it independently.</p>
+<p>A service using this pattern exposes a pair of characteristics:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Characteristic</th><th>Direction</th><th>GATT Properties</th></tr>
+</thead>
+<tbody>
+<tr><td>Frame In</td><td>Client→Server</td><td>Write; Write Without Response (optional)</td></tr>
+<tr><td>Frame Out</td><td>Server→Client</td><td>Notify</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each characteristic carries a sequence of <strong>segments</strong>. A segment is
+one ATT value: a single write to Frame In, or a single notification
+from Frame Out. One or more consecutive segments reassemble into
+exactly one frame. Segments of different frames are never interleaved
+on the same characteristic.</p>
+<h3 id="segment-format"><a class="header" href="#segment-format">Segment Format</a></h3>
+<p>Every segment begins with a single header octet, followed by zero or
+more octets of frame data:</p>
+<pre><code>  0   1   2   3   4   5   6   7
++---+---+---+---+---+---+---+---+
+|  SAR  |       RESERVED        |
++---+---+---+---+---+---+---+---+
+</code></pre>
+<p>Figure: Segment Header Format</p>
+<h4 id="sar-segmentation-and-reassembly"><a class="header" href="#sar-segmentation-and-reassembly"><code>SAR</code>: Segmentation and Reassembly</a></h4>
+<p>The two most significant bits indicate the segment’s position within
+its frame:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>SAR_COMPLETE</code></td><td>The segment contains a complete frame</td></tr>
+<tr><td>1</td><td><code>SAR_FIRST</code></td><td>First segment of a segmented frame</td></tr>
+<tr><td>2</td><td><code>SAR_CONT</code></td><td>Continuation segment of a segmented frame</td></tr>
+<tr><td>3</td><td><code>SAR_LAST</code></td><td>Last segment of a segmented frame</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="reserved-reserved-1"><a class="header" href="#reserved-reserved-1"><code>RESERVED</code>: Reserved</a></h4>
+<p>The six least significant bits <strong>MUST</strong> be transmitted as zero. A
+receiver encountering a nonzero value <strong>MUST</strong> discard the segment and
+reset reassembly on that characteristic (see (#reassembly)).</p>
+<h3 id="segmentation"><a class="header" href="#segmentation">Segmentation</a></h3>
+<p>A sender <strong>MUST NOT</strong> produce a segment larger than the current usable
+ATT payload (ATT_MTU minus 3 octets for the ATT opcode and handle).
+When a frame plus its one-octet segment header fits in a single ATT
+value, the sender <strong>SHOULD</strong> emit it as one <code>SAR_COMPLETE</code> segment.
+Otherwise the frame is split, in order, into one <code>SAR_FIRST</code> segment,
+zero or more <code>SAR_CONT</code> segments, and one <code>SAR_LAST</code> segment.</p>
+<p>All segments of a frame <strong>MUST</strong> be sent before any segment of the
+next frame on the same characteristic.</p>
+<h3 id="reassembly"><a class="header" href="#reassembly">Reassembly</a></h3>
+<p>The receiver maintains one reassembly buffer per characteristic:</p>
+<ul>
+<li><code>SAR_COMPLETE</code>: any partially reassembled frame is discarded; the
+segment payload is delivered as a complete frame.</li>
+<li><code>SAR_FIRST</code>: any partially reassembled frame is discarded; the
+segment payload starts a new reassembly.</li>
+<li><code>SAR_CONT</code>, <code>SAR_LAST</code>: the segment payload is appended to the
+reassembly in progress. If no reassembly is in progress, the segment
+<strong>MUST</strong> be discarded. On <code>SAR_LAST</code>, the reassembled octets are
+delivered as one complete frame.</li>
+</ul>
+<p>The service instantiating this pattern defines the maximum reassembled
+frame size. If a reassembly exceeds it, the receiver <strong>MUST</strong> discard
+the partial frame and ignore subsequent <code>SAR_CONT</code>/<code>SAR_LAST</code> segments
+until the next <code>SAR_COMPLETE</code> or <code>SAR_FIRST</code> segment.</p>
+<p>An ATT value of zero length contains no segment header and is not a
+valid segment; the receiver <strong>MUST</strong> discard it and reset reassembly
+on that characteristic.</p>
+<p>Reassembly state is reset whenever the connection drops or the link
+detaches (see (#attach-semantics)).</p>
+<p>Discarded segments and frames are transport-level events; they do not
+generate protocol-level error responses.</p>
+<h3 id="gatt-flow-control"><a class="header" href="#gatt-flow-control">Flow Control</a></h3>
+<p>Client-to-server flow control uses the ATT write mechanism: a client
+using Write (with response) <strong>SHOULD NOT</strong> issue the next write until
+the previous response arrives. The server’s write response is its
+assertion that it has accepted the segment. A client <strong>MAY</strong> use Write
+Without Response where supported, in which case it relies on
+link-layer backpressure; servers <strong>MUST</strong> process such segments in
+order but <strong>MAY</strong> stall the bearer while doing so.</p>
+<p>Server-to-client flow control is provided by the notification
+mechanism: the server’s stack paces notifications to the connection,
+and the server <strong>MUST NOT</strong> drop segments of a frame it has begun to
+send.</p>
+<h3 id="mtu-considerations"><a class="header" href="#mtu-considerations">MTU Considerations</a></h3>
+<p>The scheme is correct at any ATT_MTU, including the 23-octet minimum.
+Clients <strong>SHOULD</strong> negotiate the largest ATT_MTU they support before
+attaching; servers <strong>SHOULD</strong> support an ATT_MTU of at least 247.
+Larger MTUs only reduce segment count — they never change frame
+semantics.</p>
+<h2 id="companion-link-service"><a class="header" href="#companion-link-service">Companion Link Service</a></h2>
+<p>The Companion Link Service carries companion-radio protocol frames
+using the GATT frame transport defined above. One reassembled frame is
+exactly one companion-radio frame as defined in
+<a href="#frame-format">Frame Format</a>; the transport
+never inspects or modifies frame contents.</p>
+<p>The maximum reassembled frame size for this service is 512 octets.</p>
+<h3 id="uuid-allocation"><a class="header" href="#uuid-allocation">UUID Allocation</a></h3>
+<p>UMSH GATT identifiers are allocated from the randomly generated UMSH
+base UUID <code>21EB6B15-XXXX-4CCF-92E4-A079171BEC97</code>, where <code>XXXX</code> is the
+assignment slot.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Slot</th><th>UUID</th><th>Assignment</th></tr>
+</thead>
+<tbody>
+<tr><td><code>0x0001</code></td><td><code>21EB6B15-0001-4CCF-92E4-A079171BEC97</code></td><td>Companion Link Service</td></tr>
+<tr><td><code>0x0002</code></td><td><code>21EB6B15-0002-4CCF-92E4-A079171BEC97</code></td><td>Frame In characteristic</td></tr>
+<tr><td><code>0x0003</code></td><td><code>21EB6B15-0003-4CCF-92E4-A079171BEC97</code></td><td>Frame Out characteristic</td></tr>
+<tr><td><code>0x0100</code>+</td><td>—</td><td>Reserved: BLE local bearer</td></tr>
+</tbody>
+</table>
+</div>
+<p>Slots <code>0x0100</code> and above are reserved for the future BLE local-bearer
+service family and <strong>MUST NOT</strong> be used for tethered companion-link
+purposes.</p>
+<h3 id="attach-semantics"><a class="header" href="#attach-semantics">Attach Semantics</a></h3>
+<p>A host is <strong>attached</strong> once it has enabled notifications on Frame Out
+(by writing the Client Characteristic Configuration Descriptor) over a
+connection meeting the security requirements in (#ble-security).
+Connection alone does not attach.</p>
+<p>On attach, the NCP <strong>MUST</strong> silently reset its protocol session to
+post-reset defaults, exactly as specified for host attach on serial
+transports: no unsolicited reset notification is emitted, so the host
+never races a stray notice during its own reset handshake. The NCP
+<strong>MUST NOT</strong> emit any frame before attach.</p>
+<p>A host <strong>detaches</strong> by disabling notifications or by disconnecting.
+Partially reassembled frames are discarded on detach.</p>
+<p>The NCP supports one attached host at a time, across all transports it
+exposes. If a new host attaches — over BLE or over another transport
+such as USB — the NCP <strong>MUST</strong> detach any previously attached host and
+reset the session for the new one. An NCP <strong>MAY</strong> instead reject new
+connections while a host is attached.</p>
+<h3 id="connection-parameters"><a class="header" href="#connection-parameters">Connection Parameters</a></h3>
+<p>The transport is latency-tolerant; any standard connection parameters
+work. NCPs <strong>SHOULD</strong> accept connection intervals in the 15–50 ms
+range so that transmit confirmations and received-frame delivery do
+not dominate MAC-layer timing budgets.</p>
+<h2 id="ble-advertising"><a class="header" href="#ble-advertising">Advertising and Discovery</a></h2>
+<p>While powered and not attached, the NCP <strong>SHOULD</strong> advertise as
+connectable and include the Companion Link Service UUID in its
+advertising data or scan response, so hosts can discover companion
+radios by service rather than by name. The advertised local name is
+implementation-specific.</p>
+<p>While a host is attached over another transport (for example, an open
+companion session over USB-CDC), the NCP <strong>SHOULD</strong> suspend
+advertising, and <strong>SHOULD</strong> resume it when that host detaches.</p>
+<p>Advertising content <strong>MUST NOT</strong> reveal whether the NCP holds bonds or
+identify previously bonded hosts. NCPs <strong>SHOULD</strong> use resolvable
+private addresses.</p>
+<p>Pairing mode (see (#pairing-mode)) governs only the acceptance of
+pairing requests; it does not affect advertising. In particular, a
+bonded NCP continues to advertise outside pairing mode so that its
+bonded hosts can reconnect.</p>
+<h2 id="ble-security"><a class="header" href="#ble-security">Security</a></h2>
+<p>The companion-radio protocol is a privileged interface: an attached
+host commands transmission with arbitrary content, timing, and power
+under the operator’s regulatory responsibility, observes all traffic
+metadata the radio receives, and can deny service to the legitimate
+host. On serial transports this interface is implicitly protected by
+physical possession of the device. The BLE binding <strong>MUST</strong> provide at
+least an equivalent barrier, and its cryptographic strength <strong>MUST
+NOT</strong> fall below that of UMSH itself (approximately 128-bit; see
+<a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
+<h3 id="pairing-requirements"><a class="header" href="#pairing-requirements">Pairing Requirements</a></h3>
+<ul>
+<li>Pairing <strong>MUST</strong> use LE Secure Connections (LESC). Legacy pairing
+<strong>MUST</strong> be rejected; NCPs <strong>SHOULD</strong> operate in Secure Connections
+Only mode.</li>
+<li>Bonding is <strong>REQUIRED</strong>. The NCP <strong>MUST NOT</strong> attach a host over an
+unbonded link.</li>
+<li>The Frame In and Frame Out characteristics, including the Frame Out
+CCCD, <strong>MUST</strong> be readable and writable only over an encrypted link
+keyed by a stored LESC bond. Access over any other link <strong>MUST</strong> be
+refused with the appropriate ATT security error.</li>
+</ul>
+<p>LESC pairing (P-256 ECDH) meets the 128-bit strength requirement. The
+remaining risk is man-in-the-middle interception during the pairing
+ceremony itself, which the following requirements bound.</p>
+<h3 id="pairing-mode"><a class="header" href="#pairing-mode">Pairing Mode</a></h3>
+<p>Except as provided for configured-PIN and OOB pairing below, the NCP
+accepts pairing requests from unbonded devices only while in <strong>pairing
+mode</strong>; at all other times such requests <strong>MUST</strong> be rejected.</p>
+<p>Entering pairing mode:</p>
+<ul>
+<li>While the NCP holds no bonds, it <strong>SHOULD</strong> enter pairing mode
+automatically at power-on for a short window (15–30 seconds
+<strong>RECOMMENDED</strong>).</li>
+<li>Once the NCP holds one or more bonds, it <strong>MUST NOT</strong> enter pairing
+mode automatically. Entering pairing mode then requires a deliberate
+physical gesture distinct from normal power-on — for example,
+holding the user button through power-on until the device signals
+that pairing mode is active.</li>
+</ul>
+<p>Pairing mode <strong>MUST</strong> end when any of the following occurs:</p>
+<ul>
+<li>a new bond completes;</li>
+<li>an already-bonded host establishes an encrypted connection;</li>
+<li>an implementation-defined timeout expires.</li>
+</ul>
+<p>The NCP <strong>SHOULD</strong> give a perceptible indication (LED pattern, tone,
+or display) while pairing mode is active.</p>
+<p>A physical-presence-gated ceremony reduces the pairing trust decision
+to possession of the device — the same property that protects the
+serial transports.</p>
+<h3 id="association-models"><a class="header" href="#association-models">Association Models</a></h3>
+<ul>
+<li>Devices with a display and a confirmation input <strong>SHOULD</strong> use an
+authenticated association model (numeric comparison, or passkey
+display) for new bonds.</li>
+<li>Devices without a display, and with no pairing PIN configured, use
+Just Works, accepted only in pairing mode. This model is
+unauthenticated; the pairing-mode gesture is the entire trust
+decision.</li>
+<li>Devices with a pairing PIN configured (see (#pairing-pin)) use LESC
+Passkey Entry with the configured PIN as a static passkey. Such
+pairing <strong>MAY</strong> be accepted outside pairing mode. The NCP <strong>MUST</strong>
+count consecutive passkey authentication failures — pairing
+attempts that fail the LESC confirm-value or DHKey check — since
+power-on; the counter resets on a successful pairing or a power
+cycle. Rejections that never reach passkey authentication
+(legacy-pairing attempts, pairing refused outside pairing mode,
+malformed pairing requests) <strong>MUST NOT</strong> increment the counter, so
+they cannot be used to lock out pairing remotely. After a small
+limit (<strong>MUST NOT</strong> exceed 5; 3 <strong>RECOMMENDED</strong>), the NCP <strong>MUST</strong>
+reject all further pairing attempts until it is power cycled.</li>
+<li>NCPs <strong>MAY</strong> additionally support LESC Out-of-Band pairing (for
+example, OOB data conveyed by a QR code affixed to or displayed by
+the device). OOB pairing is authenticated and <strong>MAY</strong> be accepted at
+any time. The conveyance and provisioning of OOB data is out of
+scope for this document.</li>
+</ul>
+<p>The failed-attempt lockout is load-bearing, not defensive polish: LESC
+Passkey Entry discloses the passkey one bit per protocol round, so an
+active attacker learns roughly one PIN bit per failed pairing attempt,
+and a passive eavesdropper on one <em>successful</em> pairing learns the
+entire PIN. A static passkey therefore provides bounded, not absolute,
+authentication: the lockout caps active extraction at a few bits per
+power cycle performed by the operator, and operators <strong>SHOULD</strong> change
+the PIN if a pairing exchange may have been observed.</p>
+<h3 id="pairing-pin"><a class="header" href="#pairing-pin">Pairing PIN Configuration</a></h3>
+<h4 id="prop-ble-pairing-pin"><a class="header" href="#prop-ble-pairing-pin">PROP 4864: <code>PROP_BLE_PAIRING_PIN</code></a></h4>
+<ul>
+<li>Type: Single-Value, Write-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>OPTIONAL</strong> (meaningful only on NCPs exposing this
+transport)</li>
+<li>Value Type: UINT32_LE, or empty</li>
+<li>Units: LESC passkey, decimal 0–999999</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>Sets the static passkey used by the configured-PIN association model
+above. Writing an empty value clears the PIN, returning the device to
+the Just Works model. Values outside 0–999999 fail with
+<code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>As an exception to the usual <code>CMD_PROP_SET</code> behavior, a successful
+set of this property is acknowledged with <code>CMD_PROP_IS</code> for
+<code>PROP_LAST_STATUS</code> carrying <code>STATUS_OK</code> and the command’s TID; the
+NCP <strong>MUST NOT</strong> emit <code>CMD_PROP_IS</code> for this property itself. Success
+<strong>MUST NOT</strong> be reported before the new value is in effect for
+subsequent pairing attempts and, where the device supports
+persistence, durably stored; a value that cannot be applied or stored
+is reported with an appropriate error status and leaves the previous
+PIN state unchanged.</p>
+<p>The PIN persists across resets and power cycles. It is write-only:
+<code>CMD_PROP_GET</code> for this property <strong>MUST</strong> fail with
+<code>STATUS_UNIMPLEMENTED</code> and <strong>MUST NOT</strong> disclose the value or whether
+a PIN is configured.</p>
+<p>Because this property is only reachable through an attached session,
+it is always protected by the transport that carried it: physical
+possession on serial transports, or an existing bonded LESC link on
+BLE.</p>
+<h3 id="bond-management"><a class="header" href="#bond-management">Bond Management</a></h3>
+<ul>
+<li>NCPs <strong>MUST</strong> provide a local mechanism to delete stored bonds. The
+mechanism is implementation-specific but <strong>MUST NOT</strong> be invocable
+through the companion-radio protocol itself over an unauthenticated
+path.</li>
+<li>NCPs <strong>MAY</strong> limit the number of stored bonds; when full, new
+pairing attempts fail until a bond is deleted locally.</li>
+</ul>
+<h3 id="layering-note"><a class="header" href="#layering-note">Layering Note</a></h3>
+<p>BLE link security protects the <em>transport</em>. It does not alter the UMSH
+security model: MAC-layer keys remain on the host, frames crossing
+this link remain UMSH ciphertext where UMSH encrypts them, and a
+compromised NCP still cannot impersonate host identities. Conversely,
+future companion-protocol extensions that provision keying material to
+the NCP (see <a href="#security-boundary">Companion Radio</a>)
+<strong>MUST NOT</strong> be carried over a link that does not meet the
+requirements of this section.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h1>
 <p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>

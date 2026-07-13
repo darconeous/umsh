@@ -553,7 +553,7 @@
 <a href=#553 id=553 data-nosnippet>553</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TxError&lt;()&gt;&gt; {
 <a href=#554 id=554 data-nosnippet>554</a>        <span class="self">self</span>.promote_due_frames();
 <a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>now_ms = <span class="self">self</span>.clock.now_ms();
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">if </span>options.cad_timeout_ms.is_some() &amp;&amp; <span class="self">self</span>.channel_busy(from, now_ms) {
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">if </span>!<span class="macro">matches!</span>(options.cad, umsh_hal::CadPolicy::Skip) &amp;&amp; <span class="self">self</span>.channel_busy(from, now_ms) {
 <a href=#557 id=557 data-nosnippet>557</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TxError::CadTimeout);
 <a href=#558 id=558 data-nosnippet>558</a>        }
 <a href=#559 id=559 data-nosnippet>559</a>
