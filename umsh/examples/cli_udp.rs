@@ -48,7 +48,7 @@ const DUP: usize = 64;
 type P<R> = TokioPlatform<R, TokioFileCounterStore, TokioFileKeyValueStore>;
 type CliMac<R> = Mac<P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 type CliHandle<'a, R> = MacHandle<'a, P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
-type CliHost<'a, R> = Host<'a, P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
+type CliHost<'a, R> = Host<CliHandle<'a, R>>;
 
 // ─── Session type alias ───────────────────────────────────────────────────────
 

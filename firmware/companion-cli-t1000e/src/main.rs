@@ -168,7 +168,7 @@ mod firmware {
     // depend on `umsh-node` (alloc + software-crypto), which the BSP doesn't
     // pull in, so the firmware owns those two aliases.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
-    type T1000EHost = Host<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>;
+    type T1000EHost = Host<MacHandle<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>>;
     /// LocalNode handle. Cheap to clone — passed to `cli_task` and `beacon_task`.
     type T1000ENode = LocalNode<MacHandle<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 

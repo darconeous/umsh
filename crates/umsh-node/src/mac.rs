@@ -1,18 +1,34 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_mac::{
-    AddPeerError, CapacityError, LocalIdentityId, MacHandle, PeerId, Platform, SendError,
-    SendOptions, SendReceipt,
+    AddPeerError, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle, PeerId,
+    Platform, SendError, SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
 ///
 /// [`MacHandle`](umsh_mac::MacHandle) implements `MacBackend`, and test code can provide a
-/// lightweight fake.
+/// lightweight fake. Making the node layer ([`Host`](crate::Host),
+/// [`LocalNode`](crate::LocalNode), …) generic over this trait keeps the MAC's eight
+/// fixed-capacity const generics confined to the `MacHandle` type rather than propagating
+/// through every node-layer type and free function.
 pub trait MacBackend: Clone {
     /// Error type returned by send-oriented operations.
     type SendError;
     /// Error type returned by fixed-capacity operations.
     type CapacityError;
+    /// Error type returned by the event-loop driver, [`next_event`](Self::next_event).
+    type RunError;
+
+    /// Drive the MAC until one wake cycle completes, invoking `on_event` for
+    /// each emitted event.
+    ///
+    /// This is the single wake-driven step the node layer builds `pump_once` /
+    /// `run` on top of; it waits for radio activity or a protocol deadline
+    /// rather than busy-polling.
+    async fn next_event(
+        &self,
+        on_event: impl FnMut(LocalIdentityId, MacEventRef<'_>),
+    ) -> Result<(), Self::RunError>;
 
     /// Add or refresh a peer.
     async fn add_peer(
@@ -115,6 +131,8 @@ pub enum MacBackendError<S, C> {
     Capacity(C),
     /// A supplied public key did not decode to a valid Ed25519 point on the curve.
     InvalidPublicKey,
+    /// A channel name failed canonicalization (non-ASCII or too long).
+    InvalidChannelName(umsh_crypto::ChannelNameError),
 }
 
 impl<
@@ -131,6 +149,14 @@ impl<
 {
     type SendError = SendError;
     type CapacityError = CapacityError;
+    type RunError = MacError<<P::Radio as umsh_hal::Radio>::Error>;
+
+    async fn next_event(
+        &self,
+        on_event: impl FnMut(LocalIdentityId, MacEventRef<'_>),
+    ) -> Result<(), Self::RunError> {
+        self.next_event(on_event).await
+    }
 
     async fn add_peer(
         &self,
@@ -155,9 +181,12 @@ impl<
         &self,
         name: &str,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
-        self.add_named_channel(name)
-            .await
-            .map_err(MacBackendError::Capacity)
+        self.add_named_channel(name).await.map_err(|err| match err {
+            umsh_mac::AddChannelError::Capacity => MacBackendError::Capacity(CapacityError),
+            umsh_mac::AddChannelError::InvalidName(reason) => {
+                MacBackendError::InvalidChannelName(reason)
+            }
+        })
     }
 
     async fn send_broadcast(

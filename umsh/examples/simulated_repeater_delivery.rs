@@ -38,7 +38,7 @@ type RepeaterPlatform = EmbassyPlatform<
 
 type RepeaterMac = Mac<RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 type RepeaterHost<'a> =
-    Host<'a, RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
+    Host<MacHandle<'a, RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>;
 
 fn main() {
     block_on(async_main());
