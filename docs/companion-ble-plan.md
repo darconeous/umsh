@@ -1,0 +1,475 @@
+# Companion Radio BLE Transport — Implementation Plan
+
+*Drafted 2026-07-13. Phase measurements and the license check are
+recorded inline as phases complete.*
+
+Implements the [Companion Radio over BLE](protocol/src/companion-radio-ble.md)
+spec chapter: the companion-radio protocol carried over the GATT frame
+transport, secured with LESC bonding and the pairing-mode/PIN model,
+on the T-Echo NCP firmware and the host-side `CompanionRadio` driver.
+
+Scope is the **tethered** case only. The BLE local bearer / BLE-LoRa
+bridge is deferred; the only work it imposes here is captured in the
+[architecture guardrails](#architecture-guardrails-for-the-future-bridge).
+
+## Decision record
+
+| Decision | Choice | Where settled |
+|---|---|---|
+| BLE stack (firmware) | `trouble-host` + `nrf-sdc`/`nrf-mpsl`; `nrf-softdevice` is the documented fallback | Phase 0 is the gate |
+| Framing | GATT frame transport, 1-byte SAR header; no HDLC over BLE | Spec §GATT Frame Transport |
+| UUIDs | Base `21EB6B15-XXXX-4CCF-92E4-A079171BEC97` (uuidgen), slot in group 2; `0x0100`+ reserved for the local bearer | Spec §UUID Allocation |
+| Security | LESC only, bonding required, encrypted+bonded characteristic permissions | Spec §Security |
+| Pairing | Pairing mode: auto 15–30 s at power-on only while unbonded; bonded → hold-through-power-on gesture; exits on new bond / bonded connect / timeout | Spec §Pairing Mode |
+| Static PIN | `PROP_BLE_PAIRING_PIN` (4864), write-only, persisted; Passkey Entry accepted anytime with ≤3-failures-per-power-cycle lockout | Spec §Pairing PIN Configuration |
+| Advertising | Suspended while a USB-CDC companion session is open | Spec §Advertising |
+| Host BLE library | `btleplug` (GATT central; macOS + Linux first) | this plan, Phase B2 |
+| Session/wire layering | Unchanged: `Session` stays framing-free and transport-free | — |
+
+### Architecture guardrails for the future bridge
+
+- The SAR transport lives in `umsh-companion::gatt` as a
+  service-agnostic module (like `hdlc`), not welded to the companion
+  service.
+- UUID slots `0x0100+` stay unallocated.
+- The radio runner (`RADIO_CH` + `NCP_CTL`) remains the single mux
+  point for radio clients; nothing added here may assume `Session` is
+  the radio's only client.
+
+## Architecture overview
+
+Layer map — asterisks mark what this plan adds or changes:
+
+~~~
+Host                                    NCP firmware (companion-ncp-techo)
+────                                    ──────────────────────────────────
+umsh::companion_radio                   ncp_task: Session + Emitter
+  CompanionRadio<L: FrameLink>*           (framing removed from this task)*
+    SerialFrameLink<IO>  (HDLC)*        usb_in_task: HDLC decode*   ble_task*
+    BleFrameLink (btleplug + SAR)*      output_task: HDLC encode*   (SAR both
+                                                                     directions,
+umsh-companion (wire crate, no_std)     pairing mode, adv control)
+  frame / pui / ids / meta / status
+  hdlc  (serial framing)
+  gatt* (SAR framing + UUIDs)           trouble-host + nrf-sdc + nrf-mpsl*
+
+umsh-companion-ncp
+  Session (+ PROP_BLE_PAIRING_PIN handling, Effect::SetPairingPin)*
+~~~
+
+Firmware task/channel graph after Phase C (today's graph is in the
+header comment of `firmware/companion-ncp-techo/src/main.rs`):
+
+~~~
+usb_in_task ──┐                          ┌──► OUT_USB_CH ─► output_task
+  (HDLC decode│                          │      (HDLC encode + 64B chunks)
+   + edges)   ├─► INPUT_CH ─► ncp_task ──┤
+ble_task ─────┘   (frames +   (Session,  └──► OUT_BLE_CH ─► ble_task notify
+  (SAR decode      attach/     routing,         (SAR segments @ ATT MTU)
+   + edges)        detach)     arbitration)
+radio_task ◄──── RADIO_CH / NCP_CTL ────► ncp_task   (unchanged)
+~~~
+
+## Phase 0 — BLE stack spike (gate)
+
+Prove `trouble-host` + `nrf-sdc` on our T-Echo alongside everything
+the NCP firmware already uses, before touching real firmware. Exit
+decides trouble vs. the `nrf-softdevice` fallback.
+
+**Deliverable.** Throwaway binary `firmware/ble-spike-techo` (not in
+workspace `default-members`; release-only like the rest).
+
+**Steps.**
+
+1. Dependencies: `nrf-mpsl`, `nrf-sdc` (peripheral role, nRF52840
+   feature), `trouble-host` (peripheral + GATT + security features).
+   Pin all three as git revisions in the workspace, same discipline as
+   the `lora-phy` patch. Expect version coupling with `embassy-nrf`/
+   `embassy-time` — if nrf-sdc requires a newer embassy than the
+   workspace uses, the embassy upgrade happens *here*, in the spike,
+   not mid-Phase-C.
+2. LFCLK: BLE requires an accurate 32.768 kHz source.
+   `umsh_bsp_nrf52840::clocks::default_config()` deliberately does not
+   select the external crystal; the spike configures
+   `LfclkSource::ExternalXtal` (the T-Echo has the crystal) and we add
+   a `clocks::ble_config()` beside the default rather than changing
+   existing firmwares.
+3. MPSL/SDC bring-up: MPSL claims RTC0, TIMER0, TEMP, RADIO, ECB/AAR
+   and specific PPI channels, plus high/low IRQ levels. Verify no
+   collision with what the NCP firmware uses (RTC1 for embassy-time,
+   TWISPI1, USBD, WDT, GPIOTE) and record the required
+   `embassy-nrf::config::Config` interrupt priorities.
+4. RNG: `nrf-sdc` takes the RNG peripheral. The NCP firmware doesn't
+   use it (no MAC on the NCP), so hand it over wholesale. Record the
+   sharing question for future MAC-bearing BLE firmware in the plan,
+   not in code.
+5. GATT echo service: one write characteristic, one notify
+   characteristic, both requiring encryption. Advertise, connect from
+   nRF Connect (phone) and from macOS.
+6. Security spike — the questions that gate everything:
+   - LESC-only enforcement (reject legacy pairing)?
+   - Just Works bonding, and the ability to *reject* a pairing request
+     programmatically (pairing-mode gate)?
+   - Static passkey as responder (peripheral IO capability
+     `DisplayOnly` with a fixed passkey)?
+   - Encrypted+bonded permission enforcement on characteristic access
+     and CCCD writes?
+   - Bond data export/import (needed for Phase D persistence)?
+7. Coexistence: initialize the SX1262 over SPIM and keep USB-CDC echo
+   alive during an active BLE connection; run for 30+ minutes with the
+   WDT armed.
+8. Measure and record: flash delta, RAM delta (SDC memory pool +
+   trouble `HostResources`), still links at `0x26000`, S140 blob
+   untouched.
+
+**Exit criteria.** Bonded LESC connection from a phone; encrypted echo
+round-trip; USB-CDC concurrently functional; WDT never fires; the six
+security questions answered yes (or fallback invoked); numbers
+recorded at the top of this file when done.
+
+**Fallback.** If trouble's SMP cannot express the spec's requirements,
+switch to `nrf-softdevice` (S140 v7.3.0 is already resident on these
+boards). Consequences: RAM origin moves up by the SD's claim,
+`memory.x` per-firmware, flash writes go through `sd_flash_write`, and
+the Phase C task code changes shape — but Phases A/B and the spec are
+unaffected.
+
+## Phase A — wire crate: `umsh_companion::gatt`
+
+New module beside `hdlc`, same rules: `no_std`, allocation-free, zero
+dependencies, host-tested.
+
+**API sketch** (mirrors `hdlc`'s conventions):
+
+~~~rust
+/// SAR values (segment header bits 7-6).
+pub const SAR_COMPLETE: u8 = 0;
+pub const SAR_FIRST: u8 = 1;
+pub const SAR_CONT: u8 = 2;
+pub const SAR_LAST: u8 = 3;
+
+/// Maximum reassembled frame size for the Companion Link Service.
+pub const MAX_FRAME: usize = 512;
+
+/// UMSH base UUID with `slot` spliced into the second group.
+pub const fn uuid(slot: u16) -> u128;
+pub const SERVICE_UUID: u128 = uuid(0x0001);
+pub const FRAME_IN_UUID: u128 = uuid(0x0002);
+pub const FRAME_OUT_UUID: u128 = uuid(0x0003);
+
+/// Iterator over header-prefixed segments of one frame.
+/// `seg_payload` is the usable ATT payload minus the header octet;
+/// callers derive it from the negotiated ATT_MTU (mtu - 3 - 1).
+pub fn segments(frame: &[u8], seg_payload: usize)
+    -> impl Iterator<Item = Segment<'_>>;
+/// One segment: `header()` byte + `payload()` slice; `write_to(buf)`.
+pub struct Segment<'a> { /* sar, payload */ }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeError { ReservedBits, Orphan, TooLong }
+
+/// Per-characteristic reassembler; `N` bounds the reassembled frame.
+pub struct Reassembler<const N: usize> { /* buf, len, in_progress */ }
+impl<const N: usize> Reassembler<N> {
+    pub const fn new() -> Self;
+    pub fn reset(&mut self);
+    /// Push one segment (a whole ATT value). Returns a completed
+    /// frame, an error (state already reset), or None.
+    pub fn push(&mut self, segment: &[u8])
+        -> Option<Result<&[u8], DecodeError>>;
+}
+~~~
+
+Semantics exactly per spec §Segmentation/§Reassembly: `COMPLETE`/
+`FIRST` discard any partial frame and start fresh; `CONT`/`LAST`
+without a frame in progress → `Orphan`; nonzero reserved bits →
+`ReservedBits`; overflow → `TooLong` reported once, subsequent
+`CONT`/`LAST` silently ignored until the next `COMPLETE`/`FIRST`.
+Empty segment payloads are legal.
+
+**Tests** (mirror the `hdlc` suite):
+
+- round-trip at seg_payload 19 (ATT_MTU 23), 243 (247), 511 (517);
+- single-`COMPLETE` frame; frame exactly filling *n* segments; empty
+  frame; empty middle segment;
+- reserved-bit rejection; `Orphan` cont/last; `FIRST` mid-reassembly
+  discards and restarts; overflow then recovery;
+- `uuid()` spot-check against the spec table's three literal UUIDs.
+
+**Exit criteria.** `cargo test -p umsh-companion` green; module doc
+cross-references the spec chapter.
+
+## Phase B — host: framing refactor + BLE central
+
+### B1 — make `CompanionRadio` framing-pluggable
+
+Today `CompanionRadio<IO: AsyncRead + AsyncWrite + Unpin>` owns an
+`hdlc::Decoder<WIRE_BUF>` and does byte I/O in `send_frame_buf` /
+`read_more`. Extract the byte/framing layer behind a frame-oriented
+link trait; everything above (`ingest`, transactions, queues, `Radio`
+impl) already thinks in frames.
+
+~~~rust
+pub trait FrameLink {
+    /// Send one companion frame.
+    async fn send_frame(&mut self, frame: &[u8])
+        -> Result<(), CompanionRadioError>;
+    /// Receive the next complete companion frame. Must be
+    /// cancel-safe: dropping the future mid-frame must not lose
+    /// buffered partial state.
+    async fn recv_frame(&mut self)
+        -> Result<Vec<u8>, CompanionRadioError>;
+}
+~~~
+
+- `SerialFrameLink<IO>`: owns the `hdlc::Decoder<WIRE_BUF>` +
+  `READ_CHUNK` buffer; `recv_frame` loops read→decode until a frame
+  completes (partial decoder state lives in the struct, making
+  cancellation safe). `send_frame` = today's `send_frame_buf` body.
+- `CompanionRadio<L: FrameLink>`: `ingest(&[u8])` becomes
+  `ingest_frame(&[u8])` (drop the per-byte loop); `read_more` becomes
+  `recv_frame` + `tokio::time::timeout` at the call sites that hold
+  the deadline.
+- `open_serial` keeps its exact signature and the `serial-radio`
+  feature; it returns
+  `CompanionRadio<SerialFrameLink<tokio_serial::SerialStream>>`.
+
+Regression gate before B2: `cargo test -p umsh`, plus
+`companion_probe` against real T-Echo hardware over USB.
+
+### B2 — `BleFrameLink` (btleplug)
+
+New `ble-radio` feature: `ble-radio = ["tokio-support",
+"dep:btleplug"]`; macOS and Linux are the supported targets, Windows
+best-effort.
+
+- **Discovery/connect**: scan for `gatt::SERVICE_UUID`; selector is
+  "only one found" / name substring / platform id string.
+  `CompanionRadio::open_ble(selector, config)` mirrors `open_serial`.
+- **Attach**: connect → discover services → subscribe to Frame Out.
+  The subscription (CCCD write) is the attach edge; the NCP resets its
+  session silently, so `CompanionRadio::new` proceeds directly to its
+  normal `CMD_RST` handshake. Pairing is OS-mediated: the first
+  security-gated operation triggers the platform pairing flow (macOS
+  prompts; Linux needs a BlueZ agent — document the `bluetoothctl`
+  pair/PIN flow in the example's help text).
+- **recv path**: btleplug's notification stream feeds a
+  `tokio::sync::mpsc`; `recv_frame` drains it through
+  `gatt::Reassembler<{ gatt::MAX_FRAME }>`.
+- **send path**: `gatt::segments(frame, seg_payload)` written with
+  `WriteType::WithResponse` (the response is our flow control, per
+  spec). btleplug does not portably expose the negotiated ATT_MTU, so
+  `seg_payload` defaults to **19** (the ATT 23-octet floor — always
+  correct, merely chatty) with a config override; B2 investigates
+  per-platform MTU discovery and raises the default where reliable.
+  Host→NCP frames are small (commands; STR_SEND ≤ ~270 octets ≈ 14
+  writes worst-case), and the NCP→host direction — the bulk of
+  traffic — segments at the *NCP's* true ATT MTU, so the conservative
+  default costs little.
+- **Disconnect** surfaces as `CompanionRadioError::Disconnected`.
+
+### B3 — examples
+
+`companion_probe` and `desktop_chat` accept `--ble [selector]` as an
+alternative to the serial path, gated on the `ble-radio` feature
+(new `[[example]] required-features` entries).
+
+**Exit criteria.** Loopback unit tests for `SerialFrameLink` parity;
+`companion_probe --ble` connects, bonds, and completes the property
+handshake against the Phase C firmware (this criterion lands with C).
+
+## Phase C — NCP firmware integration
+
+All in `firmware/companion-ncp-techo`. C1 is a pure refactor verified
+on USB alone; BLE code first appears in C2.
+
+### C1 — framing out of `ncp_task` (USB-only refactor)
+
+Today `ncp_task` owns the HDLC decoder and the `Emitter` HDLC-encodes
+at emit time (`OUTPUT_CH` carries 64-byte wire chunks). Move framing
+to the transport edges so `ncp_task` deals only in companion frames:
+
+- `INPUT_CH` item becomes:
+
+  ~~~rust
+  const FRAME_IN_MAX: usize = 300;
+  enum Transport { Usb, Ble }
+  enum InEvent {
+      Attached(Transport),
+      Detached(Transport),
+      Frame(Transport, heapless::Vec<u8, FRAME_IN_MAX>),
+  }
+  ~~~
+
+- `usb_in_task` owns the `hdlc::Decoder<FRAME_IN_MAX>`; emits
+  `Attached`/`Detached` on connection edges and whole frames
+  otherwise. Decode errors are dropped there (as today).
+- `Emitter` stages **raw** frames; `flush` sends them to
+  `OUT_USB_CH: Channel<_, heapless::Vec<u8, FRAME_IN_MAX>, 4>`.
+- `output_task` HDLC-encodes (keeps `WIRE_MAX`) and chunks to 64-byte
+  USB packets.
+- `ncp_task` keeps the session-reset-on-attach and decoder-free logic.
+
+Verify on hardware: `companion_probe` + `desktop_chat` over USB behave
+identically. Commit before any BLE code.
+
+### C2 — BLE stack + companion service
+
+From the Phase 0 spike, into the real firmware:
+
+- `main`: switch to `clocks::ble_config()`; init MPSL + SDC with the
+  spike's priorities and memory pool; spawn `mpsl_task`/`ble_task`.
+- `ble_task` owns: the trouble GATT server (Companion Link Service,
+  Frame In write + write-without-response, Frame Out notify + CCCD;
+  all access encrypted+bonded), advertising, and per-connection state.
+- Inbound: Frame In writes → `gatt::Reassembler<512>` → clamp to
+  `FRAME_IN_MAX` → `InEvent::Frame(Transport::Ble, ..)`. CCCD
+  subscribe on a link that meets security → `Attached(Ble)`;
+  disconnect or unsubscribe → `Detached(Ble)`.
+- Outbound: `OUT_BLE_CH` (same shape as `OUT_USB_CH`); `ble_task`
+  segments at the connection's real ATT MTU via `gatt::segments` and
+  notifies. If the host is gone mid-frame the remainder is dropped
+  with the connection (reassembly resets on detach per spec).
+
+### C3 — transport arbitration + advertising policy
+
+In `ncp_task`, one place:
+
+- `active: Option<Transport>`. `Attached(t)` → session reset (existing
+  path), `active = Some(t)`, and if the displaced transport was BLE,
+  signal `ble_task` to disconnect; if USB, its decoder resets on its
+  own edge.
+- `Frame(t, ..)` where `Some(t) != active` → dropped.
+- `Detached(t)` where `t == active` → `active = None`.
+- Advertising: an `embassy_sync::watch` carries
+  `adv_allowed = !(active == Some(Usb))` to `ble_task`, which also
+  gates advertising on its own pairing/bond state (spec §Advertising:
+  suspended while a USB companion session is open).
+
+### C4 — pairing mode, gesture, lockout, PIN property
+
+- **Pairing-mode state machine** in `ble_task`:
+  - Entry at boot: no bonds → auto pairing mode, 30 s timer. Bonds
+    present → only if the boot gesture fired.
+  - Boot gesture: `main` samples the user button (P1.10) at startup;
+    if held, wait until it has been held ~3 s *past* boot, signal
+    pairing mode, and indicate via LED (distinct from the runtime
+    2 s long-press → shutdown, which only arms after release).
+  - Exit: new bond completes | bonded host establishes an encrypted
+    connection | timer expiry.
+  - While not in pairing mode: reject pairing requests, except
+    Passkey Entry when a PIN is configured (below).
+  - LED: add a pairing-mode pattern to `LedEngine` timings.
+- **Lockout**: failed-pairing counter in `ble_task` (RAM; resets only
+  by reboot). At 3, reject *all* pairing until power cycle.
+- **`PROP_BLE_PAIRING_PIN` (4864)**:
+  - `umsh-companion/src/ids.rs`: `pub const BLE_PAIRING_PIN: u32 =
+    4864;` under `prop`.
+  - `Session::prop_set`: accept empty (clear) or `UINT32_LE` ≤
+    999 999, else `STATUS_INVALID_ARGUMENT`; on success emit the
+    standard `CMD_PROP_IS` echo (echoing to the setter on the same
+    link discloses nothing) and return
+    `Effect::SetPairingPin(Option<u32>)`. **No PIN state is stored in
+    `Session`** — the PIN survives `CMD_RST` by design, so its
+    authority lives in the firmware/persistence layer.
+  - `Session::prop_get` for 4864: `STATUS_UNIMPLEMENTED`, without
+    revealing whether a PIN is set (i.e., the same answer always).
+  - Firmware: `Effect::SetPairingPin` routes to `ble_task`; when a
+    PIN is set, the SMP responder uses IO capability `DisplayOnly`
+    with the static passkey; when unset, `NoInputNoOutput` (Just
+    Works). RAM-only until Phase D.
+  - Session tests: set/clear/range/get-refusal, effect emission,
+    and `CMD_RST` *not* emitting any PIN-related effect.
+
+**Exit criteria.** `companion_probe --ble` and `desktop_chat --ble`
+pass against the T-Echo; USB regression unchanged; nRF Connect
+verification: unencrypted characteristic access refused, pairing
+refused outside pairing mode, lockout trips at 3 failures and clears
+on power cycle, bonded reconnect kills pairing mode.
+
+## Phase D — persistence
+
+- Storage region per [firmware-storage-plan.md](firmware-storage-plan.md):
+  sequential-storage on internal NVMC, 64 KB at the top of the app
+  window; shrink `FLASH LENGTH` in this firmware's `memory.x`
+  accordingly.
+- NVMC writes stall the CPU and violate BLE timing: all flash ops go
+  through the MPSL-coordinated flash interface (`nrf-mpsl` flash
+  feature). This firmware persists nothing else, so this is the only
+  flash/BLE interaction.
+- Persist: bond store (identity keys + LTKs; cap 4 bonds — at
+  capacity, new pairing fails per spec §Bond Management) and the
+  pairing PIN (write-only at the protocol; never logged or echoed in
+  diagnostics).
+- Local bond deletion (spec requirement): hold the user button through
+  boot ~10 s — i.e., well past the 3 s pairing-mode gesture, with a
+  second distinct LED indication — clears bonds and the PIN.
+  (Gesture ladder at power-on: tap = normal boot; ~3 s = pairing
+  mode; ~10 s = factory-reset BLE state.)
+
+**Exit criteria.** Bonds and PIN survive power cycles; reconnection
+after power cycle needs no re-pairing; wipe gesture verified; BLE
+connection stays up across a persistence write burst.
+
+## Phase E — hardware validation and polish
+
+- Soak: `desktop_chat --ble` for hours alongside live LoRa traffic;
+  watch for WDT resets, missed TX confirmations, MAC-timer slippage
+  from connection-interval latency.
+- Measure and record: attach latency; frame round-trip at ATT MTU
+  23 / 185 / 247; idle current added by advertising and by a
+  maintained connection; throughput vs. USB.
+- Supervision-timeout behavior: walk out of range mid-session; clean
+  detach + re-attach; verify `ncp_task` arbitration state recovers.
+- Update: spec chapter if reality diverged (connection parameters
+  especially), firmware header-comment task layout, project memory.
+
+## Dependency pinning
+
+Git revisions for `trouble-host`, `nrf-sdc`, `nrf-mpsl` are pinned in
+the workspace at Phase 0 and only moved deliberately (same policy as
+the `lora-phy` patch). Before Phase C merges: confirm the Nordic
+SoftDevice Controller binary's license is compatible with this repo's
+MIT/Apache-2.0 dual license and note the result here.
+
+## Risks
+
+| Risk | Mitigation |
+|---|---|
+| trouble SMP can't express LESC-only / pairing rejection / static passkey / bond export | Phase 0 gate; `nrf-softdevice` fallback documented above. |
+| nrf-sdc forces an embassy version bump across the workspace | Absorbed in Phase 0, in the spike, before any real firmware changes. |
+| SDC + trouble flash/RAM footprint | Measured at Phase 0; NCP firmware is small today; 760 K window. |
+| MPSL interrupt priorities vs. SPIM/USBD latency (SX1262 BUSY timing, CDC) | Phase 0 coexistence checks with the radio initialized; Phase E soak. |
+| btleplug: no portable ATT MTU query | 19-octet conservative default host→NCP; NCP→host uses true MTU; config override; investigate per-platform in B2. |
+| btleplug platform quirks (macOS UUID-not-MAC ids, BlueZ agent, Windows pairing) | B2 scopes macOS + Linux; document per-OS pairing flow; Windows best-effort. |
+| Boot-button gesture ladder misfires (pairing vs. wipe vs. bootloader interplay) | Timings far apart (3 s / 10 s), distinct LED states, verified on hardware in C4/D. |
+| SDC binary license | Checked before Phase C merges (see Dependency pinning). |
+
+## Deferred (tracked, not planned here)
+
+- L2CAP CoC binding (one SDU = one frame) once host platforms allow.
+- Numeric-comparison ceremony on display-bearing NCP firmware.
+- LESC OOB pairing (QR conveyance) — spec leaves room; format
+  undefined until a device needs it.
+- BLE on T1000E and Wio Tracker L1 — mechanical once companion-ncp-
+  techo is proven; T1000E is factory-sealed, so it goes last.
+- iOS/Android host library.
+- RNG sharing story for future firmware that runs both BLE and the
+  UMSH MAC on-device (SDC owns the RNG peripheral in this plan).
+
+## Sequencing summary
+
+| Phase | Depends on | Hardware needed | Gate |
+|---|---|---|---|
+| 0 spike | — | T-Echo + phone | trouble-vs-softdevice decision |
+| A wire crate | spec | none | tests green |
+| B1 host refactor | A | T-Echo (USB regression) | probe over USB unchanged |
+| B2/B3 host BLE | B1, A | none until C lands | compiles; loopback tests |
+| C1 firmware refactor | — (parallel with A/B) | T-Echo | USB behavior identical |
+| C2–C4 firmware BLE | 0, A, C1 | T-Echo + phone + host | probe/chat over BLE; security checklist |
+| D persistence | C | T-Echo | bonds/PIN survive power cycle |
+| E validation | C, D | full setup | soak + measurements recorded |
+
+Phases A, B1, and C1 are independent of the Phase 0 outcome and can
+proceed while the spike is underway; C2 is the first step that
+consumes the spike's results.
