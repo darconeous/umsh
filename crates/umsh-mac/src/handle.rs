@@ -1,5 +1,4 @@
 use core::future::poll_fn;
-use core::task::Poll;
 
 use rand::Rng;
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
@@ -140,13 +139,15 @@ impl<
     }
 
     /// Adds or updates a named channel using the coordinator's channel-key derivation.
-    pub async fn add_named_channel(&self, name: &str) -> Result<(), CapacityError> {
+    ///
+    /// The name is canonicalized (ASCII lowercase fold) before derivation.
+    pub async fn add_named_channel(&self, name: &str) -> Result<(), crate::AddChannelError> {
         self.mac.borrow_mut().await.add_named_channel(name)
     }
 
     /// Return whether inbound secure packets carrying a full source key may auto-register peers.
     pub async fn auto_register_full_key_peers(&self) -> bool {
-        self.mac.borrow_mut().await.auto_register_full_key_peers()
+        self.mac.borrow().await.auto_register_full_key_peers()
     }
 
     /// Enable or disable inbound full-key peer auto-registration.
@@ -267,35 +268,27 @@ impl<
 
             // Phase 2: wait for a radio frame or timer deadline. Acquire the
             // borrow briefly each poll so concurrent tasks can obtain it too.
+            // `poll_with_mut` keeps us registered on the cell's wake condition
+            // across Pending polls, so we re-poll both when the cell frees up
+            // and when another handle mutates coordinator state (e.g.
+            // `cli.send_unicast` enqueues a frame and drops its borrow) —
+            // without that, TX queued by concurrent handles would sit until
+            // the next radio/timer event. It also deregisters us around our
+            // own borrow so our guard release cannot self-wake into a spin,
+            // and the scoped ticket deregisters on drop so this wait can be
+            // cancelled (e.g. losing a `select!` race) without leaking its
+            // waker registration.
             let mut buf = [0u8; FRAME];
-            let cond = self.mac.cond();
-            let mut cond_ticket = cond.ticket();
+            let mut cond_ticket = self.mac.scoped_ticket();
             let reason = poll_fn(|cx| {
-                // Always register on the cell's wake condition first so we
-                // re-poll when another handle mutates coordinator state
-                // (e.g. `cli.send_unicast` enqueues a frame and drops its
-                // borrow). Without this, we'd only wake on radio I/O or
-                // timer deadlines — TX queued by concurrent handles would
-                // sit until the next unrelated radio event.
-                if cond.is_ticket_triggered(&cond_ticket) {
-                    cond.forget_ticket(&mut cond_ticket);
-                    cond_ticket = cond.ticket();
-                }
-                let _ = cond.poll_wait(cx, &mut cond_ticket);
-
-                if let Some(mut mac) = self.mac.try_borrow_mut() {
-                    // Got the borrow: also register radio/timer wakers and
-                    // check for readiness in one shot.
+                self.mac.poll_with_mut(cx, &mut cond_ticket, |mac, cx| {
+                    // Register radio/timer wakers and check readiness in one shot.
                     mac.poll_wait_for_wake(cx, &mut buf)
-                } else {
-                    // Another caller currently holds the cell. The cond
-                    // registration above will wake us when they release.
-                    Poll::Pending
-                }
+                })
             })
             .await
             .map_err(MacError::Radio)?;
-            cond.forget_ticket(&mut cond_ticket);
+            drop(cond_ticket);
 
             // Phases 3-5: re-acquire the borrow and finish the cycle.
             self.mac
@@ -349,7 +342,7 @@ impl<
 
     /// Returns the current coordinator clock time in milliseconds.
     pub async fn now_ms(&self) -> u64 {
-        self.mac.borrow_mut().await.clock().now_ms()
+        self.mac.borrow().await.clock().now_ms()
     }
 
     #[cfg(feature = "software-crypto")]
@@ -388,7 +381,7 @@ impl<
     /// Return the live TX frame counter for one identity, if registered.
     pub async fn frame_counter(&self, id: LocalIdentityId) -> Option<u32> {
         self.mac
-            .borrow_mut()
+            .borrow()
             .await
             .identity(id)
             .map(|slot| slot.frame_counter())
@@ -397,7 +390,7 @@ impl<
     /// Return the persisted TX frame-counter boundary for one identity, if registered.
     pub async fn persisted_frame_counter(&self, id: LocalIdentityId) -> Option<u32> {
         self.mac
-            .borrow_mut()
+            .borrow()
             .await
             .identity(id)
             .map(|slot| slot.persisted_counter())
@@ -407,7 +400,7 @@ impl<
     ///
     /// This covers all known peers, not just those with an active crypto session.
     pub async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
-        let mac = self.mac.borrow_mut().await;
+        let mac = self.mac.borrow().await;
         for (_, info) in mac.peer_registry().iter() {
             f(info.public_key);
         }
@@ -420,7 +413,7 @@ impl<
         id: LocalIdentityId,
         f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
     ) {
-        let mac = self.mac.borrow_mut().await;
+        let mac = self.mac.borrow().await;
         let Some(slot) = mac.identity(id) else {
             return;
         };
