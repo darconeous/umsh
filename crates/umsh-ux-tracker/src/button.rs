@@ -2,8 +2,8 @@
 //!
 //! Resolves a stream of raw [`ButtonEdge`] events plus a monotonic
 //! millisecond clock into the high-level [`ButtonEvent`]s the UX is
-//! defined in terms of: single click, double click, triple click, and
-//! long-press.
+//! defined in terms of: single, double, triple, and quadruple clicks,
+//! plus long-press.
 //!
 //! The machine is **pure logic** — no embassy, no hardware, no I/O — so
 //! it can be exhaustively unit-tested with synthetic time. Callers are
@@ -20,11 +20,12 @@
 //!
 //! - A "click" is a press-then-release where the hold duration is at
 //!   most `max_click_hold`.
-//! - One, two, or three clicks within `inter_click_gap` of each other
-//!   produce [`ButtonEvent::Single`], [`ButtonEvent::Double`], or
-//!   [`ButtonEvent::Triple`] respectively. Triple fires immediately on
-//!   the third release without waiting for the gap; single / double
-//!   fire after the gap elapses with no further press.
+//! - One to four clicks within `inter_click_gap` of each other produce
+//!   [`ButtonEvent::Single`], [`ButtonEvent::Double`],
+//!   [`ButtonEvent::Triple`], or [`ButtonEvent::Quad`] respectively.
+//!   Quad fires immediately on the fourth release without waiting for
+//!   the gap; single / double / triple fire after the gap elapses with
+//!   no further press.
 //! - Holding the button continuously for `long_press` produces
 //!   [`ButtonEvent::Long`] *while the button is still pressed* and
 //!   consumes any clicks accumulated before the hold began.
@@ -246,8 +247,20 @@ fn click_count_to_event(clicks: u8) -> Option<ButtonEvent> {
 mod tests {
     use super::*;
 
+    /// FSM with fixed test timings (500 ms click, 400 ms gap, 5 s long).
+    ///
+    /// Deliberately *not* `ButtonTimings::default()`: the assertions below
+    /// hardcode thresholds derived from these numbers, and the product
+    /// defaults are tuning knobs that have changed before (long-press
+    /// 5 s → 3 s in commit 65d8d4e6, which silently broke this module's
+    /// tests). Pinning the timings keeps the tests about the FSM's
+    /// *logic*, not the current tuning.
     fn fsm() -> ButtonFsm {
-        ButtonFsm::new(ButtonTimings::default())
+        ButtonFsm::new(ButtonTimings {
+            max_click_hold: Duration::from_millis(500),
+            inter_click_gap: Duration::from_millis(400),
+            long_press: Duration::from_secs(5),
+        })
     }
 
     /// Simulate a press at `down_ms` and release at `up_ms` with no
@@ -296,12 +309,22 @@ mod tests {
     }
 
     #[test]
-    fn triple_click_fires_immediately_on_third_release() {
+    fn triple_click_fires_after_gap() {
+        // Since Quad was added, a triple no longer fires immediately on
+        // the third release — the FSM must wait out the inter-click gap
+        // in case a fourth click arrives.
         let mut fsm = fsm();
         click(&mut fsm, 0, 100);
         click(&mut fsm, 200, 300);
         let (_, third_release) = click(&mut fsm, 400, 500);
-        assert_eq!(third_release, Some(ButtonEvent::Triple));
+        assert_eq!(third_release, None);
+
+        // Before the gap, nothing.
+        assert_eq!(fsm.poll(700), None);
+
+        // After the gap, triple fires.
+        assert_eq!(fsm.poll(900), Some(ButtonEvent::Triple));
+        assert_eq!(fsm.poll(1_000), None);
     }
 
     #[test]
@@ -403,17 +426,19 @@ mod tests {
     }
 
     #[test]
-    fn four_quick_clicks_resolve_as_triple_then_single() {
-        // Triple fires immediately on the third release; the fourth click
-        // starts a fresh sequence.
+    fn four_quick_clicks_resolve_as_quad_immediately() {
+        // Quad is the highest click count, so it fires immediately on the
+        // fourth release without waiting for the inter-click gap.
         let mut fsm = fsm();
         click(&mut fsm, 0, 50);
         click(&mut fsm, 100, 150);
-        let (_, triple) = click(&mut fsm, 200, 250);
-        assert_eq!(triple, Some(ButtonEvent::Triple));
+        let (_, third) = click(&mut fsm, 200, 250);
+        assert_eq!(third, None);
+        let (_, quad) = click(&mut fsm, 300, 350);
+        assert_eq!(quad, Some(ButtonEvent::Quad));
 
-        // Fourth click — fresh sequence, will fire single after the gap.
-        click(&mut fsm, 300, 350);
-        assert_eq!(fsm.poll(800), Some(ButtonEvent::Single));
+        // The sequence is consumed: nothing further fires.
+        assert_eq!(fsm.poll(800), None);
+        assert_eq!(fsm.next_deadline(), None);
     }
 }
