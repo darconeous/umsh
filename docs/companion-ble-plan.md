@@ -195,9 +195,11 @@ without a frame in progress → `Orphan`; nonzero reserved bits →
 `CONT`/`LAST` silently ignored until the next `COMPLETE`/`FIRST`.
 Empty segment *payloads* are legal, but a zero-length ATT value has
 no header octet and is a `Runt`: error, reassembly reset (per spec).
-`segments()` requires `seg_payload >= 1` (`debug_assert`; callers
-derive it from ATT_MTU, whose 23-octet floor yields 19) — a
-zero value must not produce an infinite iterator.
+`segments()` requires `seg_payload >= 1` with an **unconditional**
+assert (callers derive it from ATT_MTU, whose 23-octet floor yields
+19); the host configuration override is validated before constructing
+the link. A zero value must fail at that boundary in debug and release
+builds, never produce an infinite iterator or reach `chunks(0)`.
 
 **Tests** (mirror the `hdlc` suite):
 
@@ -208,7 +210,7 @@ zero value must not produce an infinite iterator.
   segment) mid-reassembly and at idle; `FIRST` mid-reassembly
   discards and restarts; overflow then recovery;
 - `segments()` with `seg_payload` of 1, and the `seg_payload == 0`
-  debug assertion;
+  assertion in both debug and release-style builds;
 - `uuid()` spot-check against the spec table's three literal UUIDs.
 
 **Exit criteria.** `cargo test -p umsh-companion` green; module doc
@@ -238,9 +240,13 @@ pub trait FrameLink {
 ~~~
 
 - `SerialFrameLink<IO>`: owns the `hdlc::Decoder<WIRE_BUF>` +
-  `READ_CHUNK` buffer; `recv_frame` loops read→decode until a frame
-  completes (partial decoder state lives in the struct, making
-  cancellation safe). `send_frame` = today's `send_frame_buf` body.
+  `READ_CHUNK` buffer **and persistent `read_pos`/`read_len` cursors**.
+  `recv_frame` loops buffered-bytes→decode→read until a frame
+  completes. If one read contains the end of one frame plus bytes of
+  the next, the unread tail remains in the struct for the next call;
+  returning a frame never discards it. Partial decoder and read-buffer
+  state both live in the struct, making cancellation safe.
+  `send_frame` = today's `send_frame_buf` body.
 - `CompanionRadio<L: FrameLink>`: `ingest(&[u8])` becomes
   `ingest_frame(&[u8])` (drop the per-byte loop); `read_more` becomes
   `recv_frame` + `tokio::time::timeout` at the call sites that hold
@@ -289,7 +295,9 @@ best-effort.
 alternative to the serial path, gated on the `ble-radio` feature
 (new `[[example]] required-features` entries).
 
-**Exit criteria.** Loopback unit tests for `SerialFrameLink` parity;
+**Exit criteria.** Loopback unit tests for `SerialFrameLink` parity,
+including two frames returned by one underlying read, a frame boundary
+with a partial successor, and cancellation with buffered tail bytes;
 `companion_probe --ble` connects, bonds, and completes the property
 handshake against the Phase C firmware (this criterion lands with C).
 
@@ -369,7 +377,11 @@ displaced session's state can never leak into its successor:
   generation is stale. Responses and radio frames queued for a
   displaced session are thereby discarded rather than delivered to
   the displaced host or, worse, to the next session on that
-  transport.
+  transport. The generation is checked again **between every USB HDLC
+  chunk and every BLE SAR segment**; if it changes while a frame is in
+  flight, the transport aborts the remainder immediately. A dequeue-
+  time check alone is insufficient because displacement can occur
+  during a multi-chunk/multi-segment send.
 - `Frame(t, ..)` where `Some(t) != active` → dropped. Frames emitted
   while `active == None` → dropped (nothing is attached to receive
   them).
@@ -403,8 +415,10 @@ Policy truth table:
   - While not in pairing mode: reject pairing requests, except
     Passkey Entry when a PIN is configured (below).
   - LED: add a pairing-mode pattern to `LedEngine` timings.
-- **Lockout**: failed-pairing counter in `ble_task` (RAM; resets only
-  by reboot). At 3, reject *all* pairing until power cycle.
+- **Lockout**: failed-pairing counter in `ble_task` (RAM; resets on a
+  successful pairing or reboot). At 3, reject *all* pairing until
+  power cycle; once locked, a pairing cannot succeed and therefore
+  cannot clear the lockout.
 - **`PROP_BLE_PAIRING_PIN` (4864)** — deferred completion, mirroring
   the existing `PROP_PHY_RSSI` pattern (`Effect::SampleRssi { tid }` →
   `Session::respond_rssi`):
@@ -413,9 +427,10 @@ Policy truth table:
   - `Session::prop_set`: validate (empty = clear, or `UINT32_LE` ≤
     999 999, else `STATUS_INVALID_ARGUMENT`), then return
     `Effect::SetPairingPin { tid, pin: Option<u32> }` **without
-    emitting any response yet**. The firmware applies the SMP
-    configuration (and, from Phase D, commits it to flash), then
-    calls `Session::respond_pin_set(tid, result, emit)`, which emits
+    emitting any response yet**. In Phase C the firmware applies the
+    RAM-only SMP configuration; from Phase D it first commits the new
+    value and then publishes it to the live SMP state. It then calls
+    `Session::respond_pin_set(tid, result, emit)`, which emits
     `CMD_PROP_IS PROP_LAST_STATUS` with `STATUS_OK` on success or
     `STATUS_INTERNAL_ERROR` on apply/commit failure (per spec: this
     property is never echoed, and success is not reported before the
@@ -425,9 +440,13 @@ Policy truth table:
   - `Session::prop_get` for 4864: `STATUS_UNIMPLEMENTED`, without
     revealing whether a PIN is set (i.e., the same answer always).
   - Host side: `CompanionRadio::finish_prop_transaction` currently
-    treats any `PROP_LAST_STATUS` response as an error; teach it that
-    `STATUS_OK` is a success carrying no value (this also matches
-    `CMD_STR_SEND`-style completions generally).
+    treats any `PROP_LAST_STATUS` response as an error. Give the
+    transaction helper an explicit expected-response policy (or a
+    dedicated write-only setter) so **only** operations specified to
+    use status-only completion—here, `PROP_BLE_PAIRING_PIN`—accept
+    `STATUS_OK` as success carrying no value. Ordinary property gets
+    and sets must still require `CMD_PROP_IS` for their requested key;
+    a status-only `OK` there is a protocol violation, not success.
   - Firmware: `Effect::SetPairingPin` routes to `ble_task`; when a
     PIN is set, the SMP responder uses IO capability `DisplayOnly`
     with the static passkey; when unset, `NoInputNoOutput` (Just
@@ -447,11 +466,14 @@ Policy truth table:
 pass against the T-Echo; USB regression unchanged; displacement test:
 attach over USB mid-BLE-session and vice versa, verifying the
 displaced side receives nothing further (no stale generation frames)
-and both transports re-attach cleanly afterward; nRF Connect
+and both transports re-attach cleanly afterward; force displacement
+in the middle of a multi-chunk USB frame and a multi-segment BLE frame
+to exercise the send-loop generation checks; nRF Connect
 verification: unencrypted characteristic access refused, pairing
 refused outside pairing mode, lockout trips at 3 authentication
 failures (and only authentication failures) and clears on power
-cycle, bonded reconnect kills pairing mode.
+cycle; a successful pairing also resets a nonzero failure count;
+bonded reconnect kills pairing mode.
 
 ## Phase D — persistence
 
@@ -466,10 +488,20 @@ cycle, bonded reconnect kills pairing mode.
 - Persist: bond store (identity keys + LTKs; cap 4 bonds — at
   capacity, new pairing fails per spec §Bond Management) and the
   pairing PIN (write-only at the protocol; never logged or echoed in
-  diagnostics). The PIN's deferred completion from C4 now spans the
-  flash commit: `respond_pin_set` fires only after the
-  MPSL-coordinated write succeeds, reporting `STATUS_INTERNAL_ERROR`
-  (and leaving the previous PIN in effect) if it does not.
+  diagnostics). PIN updates are transactional: validate, commit the
+  new value with the MPSL-coordinated flash interface, then publish it
+  to the live SMP state through an infallible assignment. Until the
+  commit succeeds, the previous live PIN remains in effect;
+  `respond_pin_set` reports `STATUS_INTERNAL_ERROR` on failure. The
+  storage record format/commit protocol must also make power loss at
+  any point select either the complete old value or the complete new
+  value on reboot, never a partial record.
+- Bond persistence failure is fail-closed. A newly completed SMP bond
+  is not eligible to attach until its keys have been committed. If
+  that commit fails, disconnect the peer and delete the volatile bond
+  from the controller/host store so it cannot use an apparently valid
+  but non-durable bond for characteristic access. Capacity is checked
+  before accepting a new pairing.
 - Local bond deletion (spec requirement): hold the user button through
   boot ~10 s — i.e., well past the 3 s pairing-mode gesture, with a
   second distinct LED indication — clears bonds and the PIN.
@@ -478,7 +510,9 @@ cycle, bonded reconnect kills pairing mode.
 
 **Exit criteria.** Bonds and PIN survive power cycles; reconnection
 after power cycle needs no re-pairing; wipe gesture verified; BLE
-connection stays up across a persistence write burst.
+connection stays up across a persistence write burst; injected PIN-
+and bond-write failures preserve the previous PIN, reject the new
+bond, and leave storage recoverable after an immediate power cycle.
 
 ## Phase E — hardware validation and polish
 
