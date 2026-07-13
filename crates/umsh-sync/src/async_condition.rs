@@ -151,7 +151,7 @@ impl<'a> Drop for AsyncConditionWait<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::{pending, ready, select, Either, FutureExt};
+    use futures::future::{Either, FutureExt, pending, ready, select};
 
     /// Straight port of the upstream `test_async_condition` test, adapted
     /// to `futures::executor::block_on` since we don't have `fuchsia_async`.

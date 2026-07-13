@@ -408,7 +408,10 @@ pub fn render_phase1_test_vectors_markdown() -> String {
             (
                 "ENC_DST_SRC",
                 "ENCRYPT(`DST || SRC`)",
-                hex_spaced(&vectors.blind_unicast[blind_unicast_header.options_range.end..blind_unicast_header.body_range.start]),
+                hex_spaced(
+                    &vectors.blind_unicast[blind_unicast_header.options_range.end
+                        ..blind_unicast_header.body_range.start],
+                ),
             ),
             (
                 "ENC_PAYLOAD",

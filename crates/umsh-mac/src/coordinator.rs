@@ -2266,12 +2266,9 @@ impl<
                             // are silently dropped to avoid resync churn from
                             // normal mesh reordering. See
                             // `COUNTER_RESYNC_GAP_THRESHOLD`.
-                            let counter = Self::replay_metadata(
-                                header,
-                                &buf[..frame_len],
-                            )
-                            .map(|(c, _)| c)
-                            .unwrap_or(0);
+                            let counter = Self::replay_metadata(header, &buf[..frame_len])
+                                .map(|(c, _)| c)
+                                .unwrap_or(0);
                             let gap = self
                                 .identity(local_id)
                                 .and_then(|slot| slot.peer_crypto().get(&peer_id))
@@ -2287,10 +2284,8 @@ impl<
                                     rx,
                                     received_at_ms,
                                 );
-                                self.maybe_request_counter_resync(
-                                    local_id, peer_id, peer_key,
-                                )
-                                .await;
+                                self.maybe_request_counter_resync(local_id, peer_id, peer_key)
+                                    .await;
                             }
                             continue;
                         }
@@ -4185,7 +4180,9 @@ impl<
             .frame
             .get(1 + fhops_len..header.options_range.start)?;
         let core_end = cursor + fixed_core.len();
-        rewritten.get_mut(cursor..core_end)?.copy_from_slice(fixed_core);
+        rewritten
+            .get_mut(cursor..core_end)?
+            .copy_from_slice(fixed_core);
         cursor = core_end;
 
         // Re-encoded options

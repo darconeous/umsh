@@ -692,9 +692,8 @@ mod firmware {
         spawner.spawn(power_task(saadc, sensor_rail).unwrap());
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());
-        spawner.spawn(
-            cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap(),
-        );
+        spawner
+            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
 
         join(usb.run(), heartbeat(led, wdt_handle)).await;
     }

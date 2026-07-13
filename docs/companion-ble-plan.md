@@ -3,6 +3,92 @@
 *Drafted 2026-07-13. Phase measurements and the license check are
 recorded inline as phases complete.*
 
+## Implementation status — 2026-07-13
+
+Phases A, B, C, and the implementation portion of D are now present.
+The workspace is on `embassy-nrf` 0.11 / `embassy-sync` 0.8. Trouble
+is pinned to `darconeous/trouble@fef9a7a95283be3103e638463a08d355077e2500`,
+a single upstream-oriented commit based on audited upstream `78aaf7d`.
+That commit contains the pairing-request gate, fixed responder
+passkeys, correct negative-LTK replies, and feature-gated redacted
+security/connection tracing. Its complete relevant host suite passes
+(61 tests). Nordic's
+controller/MPSL remain pinned to
+`alexmoon/nrf-sdc@abe49d22ebfc85fae134eb082fbfddf752016a55`.
+
+The Phase-0 spike has run on the real T-Echo with the strict 8 s WDT:
+SX1262 initialization, MPSL/SDC initialization, advertising, and USB
+CDC all complete before the watchdog deadline; USB echo remained live
+after a rejected BLE access. Nordic's SDC buffer configuration accepts
+at most 251 octets (not Trouble's 255-byte host-pool size), which the
+spike established by stage diagnostics. The spike release measured
+320,638 bytes text, 4,288 bytes data, and 20,868 bytes BSS before the
+final fixed-passkey pin move; its final flash payload was 324,930 bytes.
+
+The production firmware now includes the Companion Link service,
+GATT SAR edges, session-generation arbitration, advertising suppression
+during a USB session, the pairing gate/static PIN/three-failure lockout,
+four-bond + PIN persistence through MPSL-coordinated flash, and the
+pairing-mode and bond-wipe policy. The initially implemented 3 s pairing /
+10 s BLE-wipe boot gesture was based on a screenless-device interaction
+model and has been removed from the T-Echo firmware; the T-Echo must expose
+those actions through its display UI. After the hardware fixes,
+its non-debug release image measures 371,998 bytes text, 6,104 bytes
+data, and 37,940 bytes BSS (378,114-byte flash payload). On hardware it
+completes the USB reset/property
+handshake (`umsh-ncp-techo/0.1`, MTU 255), advertises as `UMSH NCP`, and
+is visible/connectable in nRF Connect. PIN `123456` was transactionally
+committed on hardware; nRF Connect then bonded, enabled the protected
+Frame-Out CCCD, wrote complete-SAR `CMD_RST` (`00 81 01`) to Frame In,
+and received the exact `RESET_SOFTWARE` notification
+(`00 80 06 00 72`). A subsequent clean iOS pairing completed LESC
+passkey authentication, received the central's identity address and
+IRK, committed the bond to flash, enabled the protected CCCD, and
+resumed authenticated encryption without a PIN both after disconnect
+and after reflashing/rebooting the identical image. The production
+1200-baud CDC recovery path was also verified to enter `TECHOBOOT`.
+
+The hardware trace also found and fixed a Trouble host bug in stale-bond
+recovery: on `LE Long Term Key Request` with no matching bond, Trouble
+requested an `AuthenticationFailure` disconnect. It now sends the
+Bluetooth-defined `LE Long Term Key Request Negative Reply`; the trace
+proved the command completed and the disconnect then came from iOS.
+iOS retained its asymmetric development bond under an older advertised
+name until that entry was manually forgotten, after which clean pairing
+and durable reconnect succeeded.
+
+Outside-window rejection is now also verified directly on iOS hardware.
+With the store transactionally wiped (`ble-bonds=0`, pairing PIN absent)
+and the 30 s window expired, an encrypted-only CCCD subscription caused
+iOS to send SMP `Pairing Request` (`0x01`). The fork immediately answered
+SMP `Pairing Failed` (`0x05`) with reason `Pairing Not Supported` (`0x05`),
+without presenting a PIN UI or enabling notifications. A disconnect and
+reconnect then arrived unencrypted with no IRK/table match and no LTK
+request, proving the rejected attempt left no stale phone-side bond.
+
+Still open before declaring the hardware phases complete: exercise
+fixed-PIN failures and lockout; run the Linux BlueZ pairing/recovery test;
+and perform the 30-minute/long soak. macOS
+CoreBluetooth discovery did find the service, but both discovery and
+post-discovery operations can block indefinitely, so the host link now
+bounds each `btleplug` await with explicit timeouts; macOS attach remains
+to be completed after the phone security checks.
+
+The repository's T-Echo bootloader configuration identifies the board's
+resident layout as S140 **v6.1.1** (application base `0x26000`), not the
+v7.3.0 fallback assumed below; the physical image's info block still
+needs to be dumped before relying on it.
+
+**Decision (2026-07-13): proceed with a pinned trouble fork** that adds
+the pairing-request rejection gate (and, only if the spike shows it is
+needed, bond-gated attribute access) — see
+[The trouble fork](#the-trouble-fork). The `nrf-softdevice` fallback is
+demoted to last resort: `nrf-softdevice`'s bindings target S140 v7.x,
+which the T-Echo's resident v6.1.1 image is not, so the fallback would
+itself require reprovisioning the SoftDevice and moving the app base —
+the "already resident, zero provisioning risk" advantage that
+originally justified it does not exist on this board.
+
 Implements the [Companion Radio over BLE](protocol/src/companion-radio-ble.md)
 spec chapter: the companion-radio protocol carried over the GATT frame
 transport, secured with LESC bonding and the pairing-mode/PIN model,
@@ -16,11 +102,12 @@ bridge is deferred; the only work it imposes here is captured in the
 
 | Decision | Choice | Where settled |
 |---|---|---|
-| BLE stack (firmware) | `trouble-host` + `nrf-sdc`/`nrf-mpsl`; `nrf-softdevice` is the documented fallback | Phase 0 is the gate |
+| BLE stack (firmware) | `trouble-host` + `nrf-sdc`/`nrf-mpsl`, with trouble consumed via a pinned fork; `nrf-softdevice` demoted to last resort | decided 2026-07-13 |
+| Pairing-mode gate | Fork patch: runtime pairing-request rejection (SMP `Pairing Failed`, reason `Pairing Not Supported`); upstream PR pursued in parallel | decided 2026-07-13, §[The trouble fork](#the-trouble-fork) |
 | Framing | GATT frame transport, 1-byte SAR header; no HDLC over BLE | Spec §GATT Frame Transport |
 | UUIDs | Base `21EB6B15-XXXX-4CCF-92E4-A079171BEC97` (uuidgen), slot in group 2; `0x0100`+ reserved for the local bearer | Spec §UUID Allocation |
 | Security | LESC only, bonding required, encrypted+bonded characteristic permissions | Spec §Security |
-| Pairing | Pairing mode: auto 15–30 s at power-on only while unbonded; bonded → hold-through-power-on gesture; exits on new bond / bonded connect / timeout | Spec §Pairing Mode |
+| Pairing | Pairing mode: auto 15–30 s at power-on only while unbonded; bonded → explicit action in the T-Echo display UI; exits on new bond / bonded connect / timeout | Spec §Pairing Mode |
 | Static PIN | `PROP_BLE_PAIRING_PIN` (4864), write-only, persisted; Passkey Entry accepted anytime with ≤3-failures-per-power-cycle lockout | Spec §Pairing PIN Configuration |
 | Advertising | Suspended while a USB-CDC companion session is open | Spec §Advertising |
 | Host BLE library | `btleplug` (GATT central; macOS + Linux first) | this plan, Phase B2 |
@@ -70,6 +157,88 @@ ble_task ─────┘   (frames +   (Session,  └──► OUT_BLE_CH ─
 radio_task ◄──── RADIO_CH / NCP_CTL ────► ncp_task   (unchanged)
 ~~~
 
+## The trouble fork {#the-trouble-fork}
+
+Upstream trouble (audited at `78aaf7d`) auto-accepts every incoming
+`PairingRequest`: `handle_peripheral` in
+`host/src/security_manager/mod.rs` constructs the pairing state
+machine unconditionally when idle, the only refusals being the
+SC-only/key-size checks, and `ConnectionEvent` exposes pairing only
+post-facto (`PairingComplete`/`PairingFailed`). The spec's pairing-mode
+and lockout rules both say pairing **MUST be rejected**, so we carry a
+fork rather than weaken the spec to "allow, then neutralize."
+
+Why reject-at-request instead of capability-matching (recorded so the
+tradeoff isn't relitigated later):
+
+- The spec invariant stays one testable predicate; the alternative
+  smears policy across the bondable flag, dynamic IO-capability
+  downgrades, `PairingComplete` cleanup, and per-access checks — all
+  of which must be simultaneously correct in every mode.
+- Unbonded strangers never exercise the SMP stack (no free P-256 work
+  for anyone in radio range; future SMP bugs are not reachable
+  pre-authorization).
+- Allow-then-neutralize leaves the *central* with a stored bond the
+  peripheral never kept — the classic asymmetric-bond failure where
+  the phone can't reconnect until the user manually forgets the
+  device.
+
+**Mechanics.**
+
+- Fork `embassy-rs/trouble` at the audited revision; consume it via
+  the workspace `[patch]` table, same discipline as the `lora-phy`
+  fork. Its pinned controller
+  (`alexmoon/nrf-sdc@abe49d2`) is used as-is.
+- **Patch 1 (required) — pairing-acceptance gate.** A runtime
+  `set_pairing_enabled(bool)` on the security manager, surfaced
+  through the public stack API. While disabled, an idle incoming
+  `PairingRequest` is answered with SMP `Pairing Failed`, reason
+  **`Pairing Not Supported` (0x05)** — an explicit rejection, not a
+  silent drop, so the central fails immediately instead of hanging
+  into the 30 s SMP timeout — and no pairing state machine is
+  constructed. An exchange already in progress is unaffected; C4's
+  mode-exit rules govern those.
+- **Fixed responder passkey (required after the spike audit).** Upstream
+  generated a random displayed passkey and had no way to install the
+  configured `PROP_BLE_PAIRING_PIN`. The fork therefore also exposes
+  `set_fixed_passkey(Option<u32>)`; the value is range-checked and used
+  in the LESC display-role paths. A paired central/peripheral test proves
+  both sides derive matching keys from the configured six-digit value.
+- **Patch 2 (only if the spike proves it necessary) — bond-gated
+  access.** The spec requires refusing non-bonded access with an ATT
+  security error. If trouble's `GattEvent` accept/reject surface lets
+  the application reject Frame In writes and the Frame Out CCCD write
+  with the appropriate ATT error after an `is_bonded_peer()` check,
+  no patch is needed. If the reject path cannot carry the error code,
+  or CCCD writes are not surfaced to the application, add a
+  bond-required security level to the same fork.
+- **Patch-2 decision (2026-07-13): not needed.** CCCD writes are surfaced
+  as `GattEvent::Write`, Frame In uses the same event path, and
+  `GattEvent::reject(AttErrorCode)` carries
+  `INSUFFICIENT_AUTHENTICATION`. The production server performs the
+  `is_bonded_peer()` check at those two protected handles; service
+  discovery remains available to an unbonded central.
+- **Patch 3 (required after hardware stale-bond testing) — negative LTK
+  reply.** When the controller raises `LE Long Term Key Request` and no
+  matching bond exists, the host sends
+  `LE Long Term Key Request Negative Reply`, as defined by the Bluetooth
+  HCI contract. The audited upstream path instead requested an
+  `AuthenticationFailure` disconnect, trapping iOS/nRF Connect in a
+  rapid reconnect loop and obscuring the asymmetric bond. The negative
+  reply is also used for an unknown connection identity; its controller
+  result is propagated rather than ignored. A redacted hardware trace
+  proved the negative reply completed successfully and that the ensuing
+  stale-bond disconnect was initiated by iOS.
+- **Upstream hedge.** Open the upstream issue/PR for Patch 1
+  immediately and track it — "application-controlled pairing policy"
+  is generically useful, so the fork is expected to be temporary. If
+  upstream lands a different shape, converge on theirs at the next
+  deliberate pin move; until then the pin only moves deliberately.
+- The C4 lockout reuses the same gate: overall,
+  `pairing_enabled = pairing_mode || (pin_configured && !locked_out)`.
+  With a PIN configured, this gate is what actually stops passkey
+  bit-leak probing once the failure counter trips.
+
 ## Phase 0 — BLE stack spike (gate)
 
 Prove `trouble-host` + `nrf-sdc` on our T-Echo alongside everything
@@ -82,12 +251,13 @@ workspace `default-members`; release-only like the rest).
 **Steps.**
 
 1. Dependencies: `nrf-mpsl`, `nrf-sdc` (peripheral role, nRF52840
-   feature), `trouble-host` (peripheral + GATT + security features).
-   Pin all three as git revisions in the workspace, same discipline as
-   the `lora-phy` patch. Expect version coupling with `embassy-nrf`/
-   `embassy-time` — if nrf-sdc requires a newer embassy than the
-   workspace uses, the embassy upgrade happens *here*, in the spike,
-   not mid-Phase-C.
+   feature), and `trouble-host` **via our fork** (peripheral + GATT +
+   security features). Pin all three as git revisions in the
+   workspace, same discipline as the `lora-phy` patch. The audit
+   already established the version coupling: trouble at the pinned
+   revision expects `embassy-nrf` 0.11 while the workspace is on
+   0.10, so the workspace-wide embassy upgrade happens *here*, in the
+   spike, not mid-Phase-C.
 2. LFCLK: BLE requires an accurate 32.768 kHz source.
    `umsh_bsp_nrf52840::clocks::default_config()` deliberately does not
    select the external crystal; the spike configures
@@ -110,14 +280,19 @@ workspace `default-members`; release-only like the rest).
    security-gated subscription works after out-of-process pairing —
    this BlueZ recovery path is exactly what Phase B2 depends on and
    is not established by the phone test.
-6. Security spike — the questions that gate everything:
+6. Security spike — validated on the fork:
    - LESC-only enforcement (reject legacy pairing)?
-   - Just Works bonding, and the ability to *reject* a pairing request
-     programmatically (pairing-mode gate)?
+   - Just Works bonding?
+   - Pairing rejection via the fork's `set_pairing_enabled(false)`:
+     from a central, rejection outside pairing mode is immediate (a
+     clean pairing failure on the phone, reason Pairing Not
+     Supported, and **no stale central-side bond**), and an exchange
+     already in progress is unaffected?
    - Static passkey as responder (peripheral IO capability
      `DisplayOnly` with a fixed passkey)?
-   - Encrypted+bonded permission enforcement on characteristic access
-     and CCCD writes?
+   - Encrypted+bonded enforcement on characteristic access and CCCD
+     writes — this answer decides whether the fork needs Patch 2 or
+     application-side `is_bonded_peer()` rejection suffices?
    - Bond data export/import (needed for Phase D persistence)?
 7. Coexistence: initialize the SX1262 over SPIM and keep USB-CDC echo
    alive during an active BLE connection; run for 30+ minutes with the
@@ -130,17 +305,40 @@ workspace `default-members`; release-only like the rest).
    app-base expectations. The `nrf-softdevice` fallback must rest on
    the actual image on the board, not the nominal "S140 v7.3.0".
 
+**Measured implementation notes (2026-07-13).** The pinned `nrf-sdc`
+wrapper must currently be built with both its `peripheral` and `central`
+features because its controller trait implementation references central
+HCI symbols even though this firmware never takes a central role. MPSL
+owns CLOCK/POWER, so USB uses `SoftwareVbusDetect` in the permanently
+powered/ready state; CDC DTR still supplies protocol attach edges. The
+external 32.768 kHz crystal is configured at 20 ppm. MPSL owns RADIO,
+RTC0, TIMER0, TEMP and PPI 19/30/31; SDC owns PPI 17/18/20–29 and RNG;
+embassy-time remains on RTC1. SDC's controller buffer limit is 251,
+while Trouble's 255-byte packet pool includes higher-layer headroom.
+On macOS the local build must ignore the developer's ESP-specific
+`LIBCLANG_PATH` and give bindgen the active macOS SDK sysroot; this is a
+host build-environment workaround, not a firmware dependency.
+MPSL must be constructed with `with_timeslots` and one `SessionMem`
+slot—using plain `new` correctly caused the first hardware PIN commit to
+fail closed with `STATUS_INTERNAL_ERROR`; the corrected initialization
+then committed and activated the PIN successfully.
+
 **Exit criteria.** Bonded LESC connection from a phone; encrypted echo
 round-trip; USB-CDC concurrently functional; WDT never fires; the six
 security questions answered yes (or fallback invoked); numbers
 recorded at the top of this file when done.
 
-**Fallback.** If trouble's SMP cannot express the spec's requirements,
-switch to `nrf-softdevice` (S140 v7.3.0 is already resident on these
-boards). Consequences: RAM origin moves up by the SD's claim,
-`memory.x` per-firmware, flash writes go through `sd_flash_write`, and
-the Phase C task code changes shape — but Phases A/B and the spec are
-unaffected.
+**Fallback (last resort).** Corrected 2026-07-13: the T-Echo's
+resident SoftDevice is S140 **v6.1.1** at app base `0x26000` (see
+[firmware-plan-techo.md](firmware-plan-techo.md); the v7.3.0 figure
+belongs to the Wio Tracker L1 / T1000E, whose app base is `0x27000`).
+`nrf-softdevice`'s bindings target S140 v7.x, so taking this path
+means reprovisioning the SoftDevice (a combined bootloader+SD DFU
+package over serial DFU, or SWD), moving the app base to `0x27000`,
+raising the RAM origin by the SD's claim, routing flash writes through
+`sd_flash_write`, and reshaping the Phase C task code. Phases A/B and
+the spec are unaffected — but with no resident-image advantage, this
+is strictly a last resort if the fork approach fails on hardware.
 
 ## Phase A — wire crate: `umsh_companion::gatt`
 
@@ -401,24 +599,27 @@ Policy truth table:
 | none  | disconnected | yes | only per pairing-mode/PIN/OOB rules |
 | none  | connected, not yet attached | no (connected) | per pairing-mode/PIN/OOB rules |
 
-### C4 — pairing mode, gesture, lockout, PIN property
+### C4 — pairing mode, display UI, lockout, PIN property
 
 - **Pairing-mode state machine** in `ble_task`:
   - Entry at boot: no bonds → auto pairing mode, 30 s timer. Bonds
-    present → only if the boot gesture fired.
-  - Boot gesture: `main` samples the user button (P1.10) at startup;
-    if held, wait until it has been held ~3 s *past* boot, signal
-    pairing mode, and indicate via LED (distinct from the runtime
-    2 s long-press → shutdown, which only arms after release).
+    present → only after the user explicitly requests pairing from the
+    T-Echo's on-screen BLE UI.
+  - The e-paper display presents pairing state and the pairing action;
+    the user/touch controls operate that UI. This is an explicit visible
+    interaction, not a hidden boot-time hold-duration gesture. The exact
+    menu and control mapping must be defined with the rest of the T-Echo
+    UI rather than borrowed from the screenless-device gesture FSM.
   - Exit: new bond completes | bonded host establishes an encrypted
     connection | timer expiry.
-  - While not in pairing mode: reject pairing requests, except
-    Passkey Entry when a PIN is configured (below).
+  - Pairing acceptance is the fork's gate, driven from one place:
+    `pairing_enabled = pairing_mode || (pin_configured && !locked_out)`.
   - LED: add a pairing-mode pattern to `LedEngine` timings.
 - **Lockout**: failed-pairing counter in `ble_task` (RAM; resets on a
-  successful pairing or reboot). At 3, reject *all* pairing until
-  power cycle; once locked, a pairing cannot succeed and therefore
-  cannot clear the lockout.
+  successful pairing or reboot). At 3, `locked_out = true` — the gate
+  formula above then rejects *all* pairing until power cycle; once
+  locked, a pairing cannot succeed and therefore cannot clear the
+  lockout.
 - **`PROP_BLE_PAIRING_PIN` (4864)** — deferred completion, mirroring
   the existing `PROP_PHY_RSSI` pattern (`Effect::SampleRssi { tid }` →
   `Session::respond_rssi`):
@@ -502,14 +703,14 @@ bonded reconnect kills pairing mode.
   from the controller/host store so it cannot use an apparently valid
   but non-durable bond for characteristic access. Capacity is checked
   before accepting a new pairing.
-- Local bond deletion (spec requirement): hold the user button through
-  boot ~10 s — i.e., well past the 3 s pairing-mode gesture, with a
-  second distinct LED indication — clears bonds and the PIN.
-  (Gesture ladder at power-on: tap = normal boot; ~3 s = pairing
-  mode; ~10 s = factory-reset BLE state.)
+- Local bond deletion (spec requirement) is an explicit destructive action
+  in the T-Echo's on-screen BLE UI. It must display what will be cleared and
+  require confirmation before clearing bonds and the PIN. A boot-time
+  hold-duration gesture is reserved for screenless devices and is not used
+  on the T-Echo.
 
 **Exit criteria.** Bonds and PIN survive power cycles; reconnection
-after power cycle needs no re-pairing; wipe gesture verified; BLE
+after power cycle needs no re-pairing; on-screen wipe flow verified; BLE
 connection stays up across a persistence write burst; injected PIN-
 and bond-write failures preserve the previous PIN, reject the new
 bond, and leave storage recoverable after an immediate power cycle.
@@ -531,27 +732,37 @@ bond, and leave storage recoverable after an immediate power cycle.
 
 Git revisions for `trouble-host`, `nrf-sdc`, `nrf-mpsl` are pinned in
 the workspace at Phase 0 and only moved deliberately (same policy as
-the `lora-phy` patch). Before Phase C merges: confirm the Nordic
-SoftDevice Controller binary's license is compatible with this repo's
-MIT/Apache-2.0 dual license and note the result here.
+the `lora-phy` patch).
+
+**License check (2026-07-13).** The Rust `nrf-sdc`/`nrf-mpsl` wrappers
+are MIT OR Apache-2.0. Nordic's linked SDC and MPSL archives are instead
+under `LicenseRef-Nordic-5-Clause`: redistribution is permitted, use is
+restricted to Nordic ICs, the binaries may not be reverse engineered,
+and the notice/disclaimer conditions apply (binary redistribution
+embedded in a Nordic product/software update has the license's explicit
+notice exception). This T-Echo target is an nRF52840, so the intended
+firmware use is permitted, but the Nordic binary components are not
+relicensed MIT/Apache-2.0; release/SBOM materials must preserve their
+Nordic license identity and required notices.
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| trouble SMP can't express LESC-only / pairing rejection / static passkey / bond export | Phase 0 gate; `nrf-softdevice` fallback documented above. |
+| trouble SMP gaps beyond the audited one (static passkey or bond export misbehave on hardware) | Phase 0 validates on the fork; last-resort fallback documented above. |
+| Fork maintenance: upstream rejects or reshapes the pairing-policy patch | Patch is small and isolated (one gate + one SMP response); upstream PR opened in parallel at Phase 0; converge on upstream's shape at the next deliberate pin move; `lora-phy` fork precedent. |
 | nrf-sdc forces an embassy version bump across the workspace | Absorbed in Phase 0, in the spike, before any real firmware changes. |
 | SDC + trouble flash/RAM footprint | Measured at Phase 0; NCP firmware is small today; 760 K window. |
 | MPSL interrupt priorities vs. SPIM/USBD latency (SX1262 BUSY timing, CDC) | Phase 0 coexistence checks with the radio initialized; Phase E soak. |
 | btleplug: no portable ATT MTU query | 19-octet conservative default host→NCP; NCP→host uses true MTU; config override; investigate per-platform in B2. |
 | btleplug platform quirks (macOS UUID-not-MAC ids, BlueZ agent, Windows pairing) | B2 scopes macOS + Linux; document per-OS pairing flow; Windows best-effort. |
-| Boot-button gesture ladder misfires (pairing vs. wipe vs. bootloader interplay) | Timings far apart (3 s / 10 s), distinct LED states, verified on hardware in C4/D. |
+| T-Echo pairing/bond-management UI is not yet integrated into the NCP firmware | Reuse the proven e-paper driver, define the visible menu/control mapping explicitly, and validate pairing entry and destructive confirmation on hardware in C4/D. |
 | SDC binary license | Checked before Phase C merges (see Dependency pinning). |
 
 ## Deferred (tracked, not planned here)
 
 - L2CAP CoC binding (one SDU = one frame) once host platforms allow.
-- Numeric-comparison ceremony on display-bearing NCP firmware.
+- Numeric-comparison ceremony beyond the initial T-Echo display UI.
 - LESC OOB pairing (QR conveyance) — spec leaves room; format
   undefined until a device needs it.
 - BLE on T1000E and Wio Tracker L1 — mechanical once companion-ncp-
@@ -564,7 +775,7 @@ MIT/Apache-2.0 dual license and note the result here.
 
 | Phase | Depends on | Hardware needed | Gate |
 |---|---|---|---|
-| 0 spike | — | T-Echo + phone | trouble-vs-softdevice decision |
+| 0 spike | fork Patch 1 | T-Echo + phone | fork + stack validated on hardware |
 | A wire crate | spec | none | tests green |
 | B1 host refactor | A | T-Echo (USB regression) | probe over USB unchanged |
 | B2/B3 host BLE | B1, A | none until C lands | compiles; loopback tests |

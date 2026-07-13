@@ -256,7 +256,9 @@ mod tests {
 
     #[test]
     fn beacon_request_with_nonce() {
-        let cmd = MacCommand::BeaconRequest { nonce: Some(0x12345678) };
+        let cmd = MacCommand::BeaconRequest {
+            nonce: Some(0x12345678),
+        };
         encode_decode(cmd);
         let mut buf = [0u8; 8];
         let len = encode(&cmd, &mut buf).unwrap();
@@ -278,10 +280,16 @@ mod tests {
 
     #[test]
     fn signal_report_response() {
-        encode_decode(MacCommand::SignalReportResponse { rssi: 200, snr: -10 });
+        encode_decode(MacCommand::SignalReportResponse {
+            rssi: 200,
+            snr: -10,
+        });
         let mut buf = [0u8; 8];
         let len = encode(
-            &MacCommand::SignalReportResponse { rssi: 0xAB, snr: -1 },
+            &MacCommand::SignalReportResponse {
+                rssi: 0xAB,
+                snr: -1,
+            },
             &mut buf,
         )
         .unwrap();
@@ -290,13 +298,17 @@ mod tests {
 
     #[test]
     fn echo_request() {
-        encode_decode(MacCommand::EchoRequest { data: &[0x01, 0x02, 0x03] });
+        encode_decode(MacCommand::EchoRequest {
+            data: &[0x01, 0x02, 0x03],
+        });
         encode_decode(MacCommand::EchoRequest { data: &[] });
     }
 
     #[test]
     fn echo_response() {
-        encode_decode(MacCommand::EchoResponse { data: &[0xDE, 0xAD] });
+        encode_decode(MacCommand::EchoResponse {
+            data: &[0xDE, 0xAD],
+        });
     }
 
     #[test]
@@ -342,11 +354,15 @@ mod tests {
 
     #[test]
     fn owned_from_borrowed_echo() {
-        let cmd = MacCommand::EchoRequest { data: &[0x01, 0x02] };
+        let cmd = MacCommand::EchoRequest {
+            data: &[0x01, 0x02],
+        };
         let owned = OwnedMacCommand::from(cmd);
         assert_eq!(
             owned,
-            OwnedMacCommand::EchoRequest { data: alloc::vec![0x01, 0x02] }
+            OwnedMacCommand::EchoRequest {
+                data: alloc::vec![0x01, 0x02]
+            }
         );
     }
 
@@ -362,7 +378,10 @@ mod tests {
 
     #[test]
     fn parse_unknown_command_id() {
-        assert!(matches!(parse(&[0xFF]), Err(crate::AppParseError::InvalidCommandId(0xFF))));
+        assert!(matches!(
+            parse(&[0xFF]),
+            Err(crate::AppParseError::InvalidCommandId(0xFF))
+        ));
     }
 
     #[test]

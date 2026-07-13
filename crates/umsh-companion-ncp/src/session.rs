@@ -81,6 +81,9 @@ pub enum Effect {
     /// for a `PROP_PHY_RSSI` get while the PHY is enabled, because the session
     /// itself has no live view of the radio.
     SampleRssi { tid: u8 },
+    /// Apply and persist a new BLE pairing PIN, then complete the deferred
+    /// property transaction with [`Session::respond_pin_set`].
+    SetPairingPin { tid: u8, pin: Option<u32> },
 }
 
 struct PendingTx {
@@ -281,6 +284,10 @@ impl Session {
         // PROP_PHY_RSSI is an instantaneous radio reading the session cannot
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
+        if key == prop::BLE_PAIRING_PIN {
+            self.fail(tid, Status::UNIMPLEMENTED, emit);
+            return None;
+        }
         if key == prop::PHY_RSSI {
             if self.settings.enabled {
                 return Some(Effect::SampleRssi { tid });
@@ -310,6 +317,24 @@ impl Session {
         }
     }
 
+    /// Complete a deferred write of the write-only BLE pairing PIN.
+    pub fn respond_pin_set(
+        &mut self,
+        tid: u8,
+        result: Result<(), ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        self.send_status(
+            tid,
+            if result.is_ok() {
+                Status::OK
+            } else {
+                Status::INTERNAL_ERROR
+            },
+            emit,
+        );
+    }
+
     fn prop_set(
         &mut self,
         tid: u8,
@@ -318,6 +343,20 @@ impl Session {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        if key == prop::BLE_PAIRING_PIN {
+            let pin = if value.is_empty() {
+                None
+            } else {
+                match parse_u32(value) {
+                    Ok(pin) if pin <= 999_999 => Some(pin),
+                    _ => {
+                        self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                        return None;
+                    }
+                }
+            };
+            return Some(Effect::SetPairingPin { tid, pin });
+        }
         let radio_affecting = match self.apply_prop_set(key, value) {
             Ok(radio_affecting) => radio_affecting,
             Err(status) => {
@@ -351,8 +390,7 @@ impl Session {
             }
             prop::PHY_TX_POWER => {
                 let power = parse_i8(value)?;
-                if !(self.config.min_tx_power_dbm..=self.config.max_tx_power_dbm).contains(&power)
-                {
+                if !(self.config.min_tx_power_dbm..=self.config.max_tx_power_dbm).contains(&power) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
                 self.settings.tx_power_dbm = power;
@@ -612,7 +650,11 @@ mod tests {
     }
 
     /// Drive `handle_frame` and collect emitted frames.
-    fn dispatch(session: &mut Session, request: &[u8], now_ms: u64) -> (Vec<Vec<u8>>, Option<Effect>) {
+    fn dispatch(
+        session: &mut Session,
+        request: &[u8],
+        now_ms: u64,
+    ) -> (Vec<Vec<u8>>, Option<Effect>) {
         let mut emitted = Vec::new();
         let effect = session.handle_frame(request, now_ms, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
@@ -703,12 +745,16 @@ mod tests {
         assert_eq!(get(&mut session, prop::NCP_VERSION), b"test-ncp/0.1\0");
         assert_eq!(get(&mut session, prop::PHY_MTU), 255u16.to_le_bytes());
         assert_eq!(
-            pui::decode(&get(&mut session, prop::INTERFACE_TYPE)).unwrap().0,
+            pui::decode(&get(&mut session, prop::INTERFACE_TYPE))
+                .unwrap()
+                .0,
             ids::INTERFACE_TYPE
         );
         // Post-reset LAST_STATUS is the reset reason.
         assert_eq!(
-            pui::decode(&get(&mut session, prop::LAST_STATUS)).unwrap().0,
+            pui::decode(&get(&mut session, prop::LAST_STATUS))
+                .unwrap()
+                .0,
             Status::RESET_POWER_ON.0
         );
     }
@@ -724,7 +770,10 @@ mod tests {
             caps.push(value);
             offset += used;
         }
-        assert_eq!(caps, [cap::WRITABLE_RAW_STREAM, cap::PHY_DUTY_LIMIT, cap::PHY_LORA]);
+        assert_eq!(
+            caps,
+            [cap::WRITABLE_RAW_STREAM, cap::PHY_DUTY_LIMIT, cap::PHY_LORA]
+        );
     }
 
     #[test]
@@ -807,6 +856,64 @@ mod tests {
     }
 
     #[test]
+    fn pairing_pin_set_clear_validate_and_defer() {
+        let mut session = test_session();
+
+        let (emitted, effect) = set(
+            &mut session,
+            prop::BLE_PAIRING_PIN,
+            &123_456u32.to_le_bytes(),
+        );
+        assert!(
+            emitted.is_empty(),
+            "PIN must not be acknowledged before apply"
+        );
+        assert_eq!(
+            effect,
+            Some(Effect::SetPairingPin {
+                tid: 2,
+                pin: Some(123_456)
+            })
+        );
+
+        let (emitted, effect) = set(&mut session, prop::BLE_PAIRING_PIN, &[]);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::SetPairingPin { tid: 2, pin: None }));
+
+        for bad in [&1_000_000u32.to_le_bytes()[..], &[1, 2, 3][..]] {
+            let (emitted, effect) = set(&mut session, prop::BLE_PAIRING_PIN, bad);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+    }
+
+    #[test]
+    fn pairing_pin_completion_and_get_refusal() {
+        let mut session = test_session();
+        let mut emitted = Vec::new();
+        session.respond_pin_set(7, Ok(()), &mut |frame| emitted.push(frame.to_vec()));
+        expect_status(&emitted[0], 7, Status::OK);
+        emitted.clear();
+        session.respond_pin_set(6, Err(()), &mut |frame| emitted.push(frame.to_vec()));
+        expect_status(&emitted[0], 6, Status::INTERNAL_ERROR);
+
+        let mut request = [0; 16];
+        let len = frame::prop_get(&mut request, 5, prop::BLE_PAIRING_PIN).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &request[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 5, Status::UNIMPLEMENTED);
+    }
+
+    #[test]
+    fn reset_has_no_pairing_pin_effect() {
+        let mut session = test_session();
+        let mut request = [0; 4];
+        let len = frame::reset(&mut request, 1).unwrap();
+        let (_, effect) = dispatch(&mut session, &request[..len], 0);
+        assert!(matches!(effect, Some(Effect::ApplyRadio(_))));
+    }
+
+    #[test]
     fn transmit_lifecycle() {
         let mut session = test_session();
         enable(&mut session);
@@ -880,7 +987,9 @@ mod tests {
         assert!(emitted.is_empty());
         // ... but LAST_STATUS records it.
         assert_eq!(
-            pui::decode(&get(&mut session, prop::LAST_STATUS)).unwrap().0,
+            pui::decode(&get(&mut session, prop::LAST_STATUS))
+                .unwrap()
+                .0,
             Status::INVALID_STATE.0
         );
     }

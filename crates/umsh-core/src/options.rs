@@ -446,7 +446,10 @@ mod tests {
         let items: Vec<_> = OptionDecoder::new(&buf[..len])
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(items, vec![(1, &[0x01u8][..]), (3, &[0x02][..]), (3, &[0x03][..])]);
+        assert_eq!(
+            items,
+            vec![(1, &[0x01u8][..]), (3, &[0x02][..]), (3, &[0x03][..])]
+        );
     }
 
     #[test]
@@ -522,7 +525,7 @@ mod tests {
 
         let mut dec = OptionDecoder::new(&buf[..opt_len + 2]);
         let _ = dec.next().unwrap().unwrap(); // consume the option
-        assert!(dec.next().is_none());        // end marker stops iteration
+        assert!(dec.next().is_none()); // end marker stops iteration
         assert_eq!(dec.remainder(), &[0xDE, 0xAD]);
     }
 

@@ -264,7 +264,11 @@ impl<
     ) -> Result<(), MacError<<P::Radio as umsh_hal::Radio>::Error>> {
         loop {
             // Phase 1: drain any ready transmit work.
-            self.mac.borrow_mut().await.drain_tx_queue(&mut on_event).await?;
+            self.mac
+                .borrow_mut()
+                .await
+                .drain_tx_queue(&mut on_event)
+                .await?;
 
             // Phase 2: wait for a radio frame or timer deadline. Acquire the
             // borrow briefly each poll so concurrent tasks can obtain it too.

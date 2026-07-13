@@ -12,10 +12,7 @@ use umsh_node::{AppEncodeError, MacCommand};
 /// Encode `cmd` into `out` as a complete MAC-command payload
 /// (`PayloadType::MacCommand` byte + encoded command body). Returns the
 /// number of bytes written.
-pub fn encode_mac_command(
-    cmd: &MacCommand<'_>,
-    out: &mut [u8],
-) -> Result<usize, AppEncodeError> {
+pub fn encode_mac_command(cmd: &MacCommand<'_>, out: &mut [u8]) -> Result<usize, AppEncodeError> {
     if out.is_empty() {
         return Err(AppEncodeError::BufferTooSmall);
     }

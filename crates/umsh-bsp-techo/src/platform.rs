@@ -19,14 +19,14 @@ use umsh_mac::Platform;
 pub struct TechoPlatform;
 
 impl Platform for TechoPlatform {
-    type Identity      = SoftwareIdentity;
-    type Aes           = SoftwareAes;
-    type Sha           = SoftwareSha256;
-    type Radio         = umsh_radio_loraphy::LoraphyRadio<ThreadModeRawMutex, 4, 2>;
-    type Delay         = Delay;
-    type Clock         = EmbassyClock;
-    type Rng           = Nrf52840Rng;
-    type CounterStore  = NvmcCounterStore;
+    type Identity = SoftwareIdentity;
+    type Aes = SoftwareAes;
+    type Sha = SoftwareSha256;
+    type Radio = umsh_radio_loraphy::LoraphyRadio<ThreadModeRawMutex, 4, 2>;
+    type Delay = Delay;
+    type Clock = EmbassyClock;
+    type Rng = Nrf52840Rng;
+    type CounterStore = NvmcCounterStore;
     type KeyValueStore = NvmcKeyValueStore;
 }
 

@@ -289,7 +289,10 @@ where
         if self.node.join(&channel).await.is_err() {
             return false;
         }
-        let entry = ChannelEntry { name: hname.clone(), key_bytes };
+        let entry = ChannelEntry {
+            name: hname.clone(),
+            key_bytes,
+        };
         if self.channels.insert(hname, entry).is_err() {
             let _ = self.node.leave(&channel);
             return false;
@@ -937,7 +940,10 @@ where
             entry.alias = Some(new_alias_heap.clone());
         }
         // Persist (best-effort).
-        let _ = self.peer_store.store_peer(&key.0, Some(new_alias_heap.as_bytes())).await;
+        let _ = self
+            .peer_store
+            .store_peer(&key.0, Some(new_alias_heap.as_bytes()))
+            .await;
         self.out.write_line("ok").await?;
         Ok(())
     }
@@ -1017,9 +1023,7 @@ where
                 None => self.write_err("show_raw: expected true|false").await?,
             },
             _ => {
-                self.write_err(
-                    "unknown setting (flood_hops / ack_requested / show_hex / show_raw)",
-                )
+                self.write_err("unknown setting (flood_hops / ack_requested / show_hex / show_raw)")
                     .await?
             }
         }
@@ -1335,7 +1339,10 @@ where
                         return self.write_err("channel table full").await;
                     }
                     // Persist (best-effort).
-                    let _ = self.channel_store.store_channel(name.as_bytes(), &key_bytes).await;
+                    let _ = self
+                        .channel_store
+                        .store_channel(name.as_bytes(), &key_bytes)
+                        .await;
                     self.out.write_line("joined").await?;
                 }
                 Err(e) => self.write_err(&node_err_str(&e)).await?,
@@ -1485,7 +1492,6 @@ where
         }
         s
     }
-
 }
 
 // ─── Subscription wiring (free function to avoid borrow conflicts) ────────────
@@ -1775,4 +1781,3 @@ fn hex_nib(b: u8) -> Option<u8> {
         _ => None,
     }
 }
-

@@ -152,10 +152,7 @@ impl<'d, D: UsbDriver<'d>> CliInput for CdcInput<'d, D> {
                 let copy_len = term.min(buf.len());
                 buf[..copy_len].copy_from_slice(&self.buf[..copy_len]);
                 let mut consumed = term + 1;
-                if self.buf[term] == b'\r'
-                    && consumed < self.len
-                    && self.buf[consumed] == b'\n'
-                {
+                if self.buf[term] == b'\r' && consumed < self.len && self.buf[consumed] == b'\n' {
                     consumed += 1;
                 }
                 self.buf.copy_within(consumed..self.len, 0);

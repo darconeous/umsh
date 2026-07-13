@@ -1,0 +1,33 @@
+[package]
+name = "firmware-ble-spike-techo"
+description = "T-Echo coexistence spike for Trouble, nRF SDC, USB, SX1262, and WDT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "firmware-ble-spike-techo"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-companion = { path = "../../crates/umsh-companion" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7" }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-usb = { version = "0.6", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+heapless = { version = "0.9", default-features = false }
+lora-phy = { workspace = true }
+nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
+nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
+panic-halt = "1"
+static_cell = "2"
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+defmt = "0.3"

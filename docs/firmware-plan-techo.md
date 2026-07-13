@@ -61,6 +61,15 @@ The T-Echo isn't a tracker-class device:
 - User button **plus** capacitive touch button **plus** reset button,
   rather than a single button.
 
+**Product UX constraint (confirmed 2026-07-13):** timed button-gesture
+ladders for pairing, bond deletion, or similar configuration are intended
+for screenless devices such as the T-1000E. They must not be carried over
+to the T-Echo. The T-Echo has a display, so pairing and bond management
+must be visible, explicit UI actions using the display and its controls;
+destructive actions require visible confirmation. Bootloader entry through
+the 1200-baud CDC reset mechanism is separate: it only requests the resident
+bootloader and is not an application-level pairing or reset gesture.
+
 So `umsh-ux-tracker`'s abstractions (single-button gesture FSM,
 single-LED heartbeat, piezo buzzer) only partially apply. The honest
 answer is that the T-Echo belongs to a future `umsh-ux-handheld` or

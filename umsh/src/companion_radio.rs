@@ -1,7 +1,6 @@
 //! Host-side client for the minimal companion-radio (NCP) protocol.
 //!
-//! [`CompanionRadio`] drives an NCP over any reliable byte stream
-//! (USB-CDC serial, UART, TCP, a PTY, ...) using HDLC-Lite framing, and
+//! [`CompanionRadio`] drives an NCP over a frame-oriented [`FrameLink`], and
 //! exposes the link as a [`umsh_hal::Radio`] so the host can run the
 //! full MAC/node stack with the NCP acting purely as the PHY.
 //!
@@ -15,10 +14,9 @@
 
 use std::collections::VecDeque;
 use std::io;
-use std::pin::Pin;
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::time::Instant;
 
 use umsh_companion::Status;
@@ -59,6 +57,8 @@ pub enum CompanionRadioError {
     FrameTooLarge(usize),
     /// The NCP did not answer a command in time.
     Timeout,
+    /// A non-stream transport failed.
+    Transport(String),
 }
 
 impl core::fmt::Display for CompanionRadioError {
@@ -73,6 +73,7 @@ impl core::fmt::Display for CompanionRadioError {
             }
             Self::FrameTooLarge(len) => write!(formatter, "frame too large: {len} bytes"),
             Self::Timeout => write!(formatter, "timed out waiting for NCP response"),
+            Self::Transport(message) => write!(formatter, "transport error: {message}"),
         }
     }
 }
@@ -141,12 +142,344 @@ struct Response {
     value: Vec<u8>,
 }
 
-/// Companion radio attached over a byte stream, usable as a
-/// [`umsh_hal::Radio`].
-pub struct CompanionRadio<IO> {
+#[derive(Clone, Copy)]
+enum PropResponsePolicy {
+    Value,
+    StatusOnly,
+}
+
+/// A cancel-safe, frame-oriented companion transport.
+#[allow(async_fn_in_trait)]
+pub trait FrameLink {
+    /// Send one complete companion frame.
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), CompanionRadioError>;
+
+    /// Poll for the next complete companion frame.
+    ///
+    /// Implementations keep all partial state in `self`, so cancellation cannot
+    /// discard a partial frame or unread bytes following a completed frame.
+    fn poll_recv_frame(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<Vec<u8>, CompanionRadioError>>;
+
+    /// Receive the next complete companion frame.
+    async fn recv_frame(&mut self) -> Result<Vec<u8>, CompanionRadioError> {
+        core::future::poll_fn(|cx| self.poll_recv_frame(cx)).await
+    }
+}
+
+/// HDLC-Lite framing over a reliable asynchronous byte stream.
+pub struct SerialFrameLink<IO> {
     io: IO,
-    config: CompanionRadioConfig,
     decoder: hdlc::Decoder<WIRE_BUF>,
+    read_buf: [u8; READ_CHUNK],
+    read_pos: usize,
+    read_len: usize,
+}
+
+impl<IO> SerialFrameLink<IO> {
+    /// Wrap a byte stream in companion HDLC framing.
+    pub fn new(io: IO) -> Self {
+        Self {
+            io,
+            decoder: hdlc::Decoder::new(),
+            read_buf: [0; READ_CHUNK],
+            read_pos: 0,
+            read_len: 0,
+        }
+    }
+
+    /// Recover the underlying byte stream.
+    pub fn into_inner(self) -> IO {
+        self.io
+    }
+}
+
+impl<IO> FrameLink for SerialFrameLink<IO>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+{
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), CompanionRadioError> {
+        let mut wire = vec![0u8; hdlc::max_encoded_len(frame.len())];
+        let len = hdlc::encode_frame(frame, &mut wire).expect("buffer sized with max_encoded_len");
+        self.io.write_all(&wire[..len]).await?;
+        self.io.flush().await?;
+        Ok(())
+    }
+
+    fn poll_recv_frame(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<Vec<u8>, CompanionRadioError>> {
+        loop {
+            while self.read_pos < self.read_len {
+                let byte = self.read_buf[self.read_pos];
+                self.read_pos += 1;
+                if let Some(Ok(frame)) = self.decoder.push(byte) {
+                    return core::task::Poll::Ready(Ok(frame.to_vec()));
+                }
+            }
+
+            self.read_pos = 0;
+            self.read_len = 0;
+            let mut read_buf = ReadBuf::new(&mut self.read_buf);
+            match core::pin::Pin::new(&mut self.io).poll_read(cx, &mut read_buf) {
+                core::task::Poll::Ready(Ok(())) => {
+                    self.read_len = read_buf.filled().len();
+                    if self.read_len == 0 {
+                        return core::task::Poll::Ready(Err(CompanionRadioError::Disconnected));
+                    }
+                }
+                core::task::Poll::Ready(Err(error)) => {
+                    return core::task::Poll::Ready(Err(CompanionRadioError::Io(error)));
+                }
+                core::task::Poll::Pending => return core::task::Poll::Pending,
+            }
+        }
+    }
+}
+
+/// BLE-specific link configuration.
+#[cfg(feature = "ble-radio")]
+#[derive(Clone, Copy, Debug)]
+pub struct BleFrameLinkConfig {
+    /// Frame bytes per GATT segment, excluding the SAR header.
+    pub segment_payload: usize,
+    /// How long discovery may run before reporting no matching peripheral.
+    pub discovery_timeout: Duration,
+    /// Maximum duration for each CoreBluetooth/BlueZ link operation.
+    pub operation_timeout: Duration,
+}
+
+#[cfg(feature = "ble-radio")]
+impl Default for BleFrameLinkConfig {
+    fn default() -> Self {
+        Self {
+            // Correct for the mandatory ATT_MTU 23 floor on every platform.
+            segment_payload: 19,
+            discovery_timeout: Duration::from_secs(10),
+            operation_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
+/// GATT/SAR frame transport backed by `btleplug`.
+#[cfg(feature = "ble-radio")]
+pub struct BleFrameLink {
+    peripheral: btleplug::platform::Peripheral,
+    frame_in: btleplug::api::Characteristic,
+    notifications: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    reassembler: umsh_companion::gatt::Reassembler<{ umsh_companion::gatt::MAX_FRAME }>,
+    segment_payload: usize,
+    operation_timeout: Duration,
+}
+
+#[cfg(feature = "ble-radio")]
+impl BleFrameLink {
+    /// Discover and attach to a Companion Link Service peripheral.
+    ///
+    /// `selector` matches a local-name substring or the platform peripheral ID.
+    /// With no selector, discovery must yield exactly one companion radio.
+    pub async fn connect(
+        selector: Option<&str>,
+        config: BleFrameLinkConfig,
+    ) -> Result<Self, CompanionRadioError> {
+        use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+        use futures_util::StreamExt;
+
+        if !(1..=511).contains(&config.segment_payload) {
+            return Err(CompanionRadioError::Protocol(
+                "BLE segment payload must be in 1..=511",
+            ));
+        }
+
+        let manager = btleplug::platform::Manager::new()
+            .await
+            .map_err(ble_error)?;
+        let adapters = manager.adapters().await.map_err(ble_error)?;
+        let service = uuid::Uuid::from_u128(umsh_companion::gatt::SERVICE_UUID);
+        let deadline = Instant::now() + config.discovery_timeout;
+        let mut matches = Vec::new();
+
+        for adapter in adapters {
+            adapter
+                .start_scan(ScanFilter {
+                    services: vec![service],
+                })
+                .await
+                .map_err(ble_error)?;
+            loop {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                matches.clear();
+                let peripherals =
+                    match tokio::time::timeout_at(deadline, adapter.peripherals()).await {
+                        Ok(result) => result.map_err(ble_error)?,
+                        Err(_) => break,
+                    };
+                for peripheral in peripherals {
+                    let properties =
+                        match tokio::time::timeout_at(deadline, peripheral.properties()).await {
+                            Ok(result) => result.map_err(ble_error)?,
+                            Err(_) => break,
+                        };
+                    let id = peripheral.id().to_string();
+                    let name = properties
+                        .as_ref()
+                        .and_then(|properties| properties.local_name.as_deref());
+                    let selected = selector.is_none_or(|selector| {
+                        id == selector || name.is_some_and(|name| name.contains(selector))
+                    });
+                    let advertises_service = properties.as_ref().is_some_and(|properties| {
+                        properties.services.iter().any(|uuid| *uuid == service)
+                    });
+                    if selected && advertises_service {
+                        matches.push(peripheral);
+                    }
+                }
+                if !matches.is_empty() || Instant::now() >= deadline {
+                    break;
+                }
+            }
+            // CoreBluetooth operations can block indefinitely. Discovery's
+            // configured deadline applies to every await, including cleanup.
+            let _ = tokio::time::timeout(Duration::from_secs(1), adapter.stop_scan()).await;
+            if !matches.is_empty() {
+                break;
+            }
+        }
+
+        let peripheral = match matches.len() {
+            0 => {
+                return Err(CompanionRadioError::Transport(
+                    "no Companion Link Service peripheral found".into(),
+                ));
+            }
+            1 => matches.pop().unwrap(),
+            _ => {
+                return Err(CompanionRadioError::Transport(
+                    "multiple companion radios found; provide a selector".into(),
+                ));
+            }
+        };
+
+        let is_connected =
+            tokio::time::timeout(config.operation_timeout, peripheral.is_connected())
+                .await
+                .map_err(|_| CompanionRadioError::Timeout)?
+                .map_err(ble_error)?;
+        if !is_connected {
+            tokio::time::timeout(config.operation_timeout, peripheral.connect())
+                .await
+                .map_err(|_| CompanionRadioError::Timeout)?
+                .map_err(ble_error)?;
+        }
+        tokio::time::timeout(config.operation_timeout, peripheral.discover_services())
+            .await
+            .map_err(|_| CompanionRadioError::Timeout)?
+            .map_err(ble_error)?;
+        let frame_in_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_IN_UUID);
+        let frame_out_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_OUT_UUID);
+        let characteristics = peripheral.characteristics();
+        let frame_in = characteristics
+            .iter()
+            .find(|characteristic| characteristic.uuid == frame_in_uuid)
+            .cloned()
+            .ok_or(CompanionRadioError::Protocol("missing BLE Frame In"))?;
+        let frame_out = characteristics
+            .iter()
+            .find(|characteristic| characteristic.uuid == frame_out_uuid)
+            .cloned()
+            .ok_or(CompanionRadioError::Protocol("missing BLE Frame Out"))?;
+
+        let mut stream = tokio::time::timeout(config.operation_timeout, peripheral.notifications())
+            .await
+            .map_err(|_| CompanionRadioError::Timeout)?
+            .map_err(ble_error)?;
+        let (tx, notifications) = tokio::sync::mpsc::channel(32);
+        tokio::spawn(async move {
+            while let Some(notification) = stream.next().await {
+                if notification.uuid == frame_out_uuid && tx.send(notification.value).await.is_err()
+                {
+                    break;
+                }
+            }
+        });
+        // This security-gated CCCD write is the protocol attach edge. Pairing
+        // prompts are mediated by the host OS.
+        tokio::time::timeout(config.operation_timeout, peripheral.subscribe(&frame_out))
+            .await
+            .map_err(|_| CompanionRadioError::Timeout)?
+            .map_err(ble_error)?;
+
+        Ok(Self {
+            peripheral,
+            frame_in,
+            notifications,
+            reassembler: umsh_companion::gatt::Reassembler::new(),
+            segment_payload: config.segment_payload,
+            operation_timeout: config.operation_timeout,
+        })
+    }
+}
+
+#[cfg(feature = "ble-radio")]
+impl FrameLink for BleFrameLink {
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), CompanionRadioError> {
+        use btleplug::api::{Peripheral as _, WriteType};
+
+        for segment in umsh_companion::gatt::segments(frame, self.segment_payload) {
+            let mut value = vec![0; segment.payload().len() + 1];
+            segment
+                .write_to(&mut value)
+                .expect("segment destination is exactly sized");
+            tokio::time::timeout(
+                self.operation_timeout,
+                self.peripheral
+                    .write(&self.frame_in, &value, WriteType::WithResponse),
+            )
+            .await
+            .map_err(|_| CompanionRadioError::Timeout)?
+            .map_err(ble_error)?;
+        }
+        Ok(())
+    }
+
+    fn poll_recv_frame(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<Vec<u8>, CompanionRadioError>> {
+        loop {
+            match self.notifications.poll_recv(cx) {
+                core::task::Poll::Ready(Some(segment)) => {
+                    if let Some(Ok(frame)) = self.reassembler.push(&segment) {
+                        return core::task::Poll::Ready(Ok(frame.to_vec()));
+                    }
+                    // Transport-level malformed/oversize segments are dropped.
+                }
+                core::task::Poll::Ready(None) => {
+                    self.reassembler.reset();
+                    return core::task::Poll::Ready(Err(CompanionRadioError::Disconnected));
+                }
+                core::task::Poll::Pending => return core::task::Poll::Pending,
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ble-radio")]
+fn ble_error(error: btleplug::Error) -> CompanionRadioError {
+    CompanionRadioError::Transport(error.to_string())
+}
+
+/// Companion radio attached over a frame link, usable as a
+/// [`umsh_hal::Radio`].
+pub struct CompanionRadio<L> {
+    link: L,
+    config: CompanionRadioConfig,
     rx_queue: VecDeque<RxPacket>,
     responses: VecDeque<Response>,
     /// Unsolicited reset notification not yet surfaced to the caller.
@@ -157,17 +490,16 @@ pub struct CompanionRadio<IO> {
     next_tid: u8,
 }
 
-impl<IO> CompanionRadio<IO>
+impl<L> CompanionRadio<L>
 where
-    IO: AsyncRead + AsyncWrite + Unpin,
+    L: FrameLink,
 {
     /// Attach to an NCP: reset it, verify the protocol version, apply
     /// the RF configuration, and enable the PHY.
-    pub async fn new(io: IO, config: CompanionRadioConfig) -> Result<Self, CompanionRadioError> {
+    pub async fn new(link: L, config: CompanionRadioConfig) -> Result<Self, CompanionRadioError> {
         let mut radio = Self {
-            io,
+            link,
             config,
-            decoder: hdlc::Decoder::new(),
             rx_queue: VecDeque::new(),
             responses: VecDeque::new(),
             seen_reset: None,
@@ -191,7 +523,7 @@ where
         let mut buf = [0u8; 2];
         let len = frame::reset(&mut buf, TID_UNSOLICITED)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.send_frame_buf(&buf[..len]).await?;
+        self.link.send_frame(&buf[..len]).await?;
         let deadline = Instant::now() + self.config.response_timeout;
         self.wait_reset(deadline).await?;
 
@@ -248,8 +580,9 @@ where
         let mut buf = [0u8; 8];
         let len = frame::prop_get(&mut buf, tid, key)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.send_frame_buf(&buf[..len]).await?;
-        self.finish_prop_transaction(tid, key).await
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
+            .await
     }
 
     /// Set a property via `CMD_PROP_SET`, returning the authoritative
@@ -263,25 +596,71 @@ where
         let mut buf = vec![0u8; value.len() + 8];
         let len = frame::prop_set(&mut buf, tid, key, value)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.send_frame_buf(&buf[..len]).await?;
-        self.finish_prop_transaction(tid, key).await
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
+            .await
+    }
+
+    /// Set or clear the NCP's persisted, write-only BLE pairing PIN.
+    ///
+    /// This property is the protocol's sole status-only property write: the
+    /// value is never echoed. `None` clears the configured passkey.
+    pub async fn set_ble_pairing_pin(
+        &mut self,
+        pin: Option<u32>,
+    ) -> Result<(), CompanionRadioError> {
+        if pin.is_some_and(|pin| pin > 999_999) {
+            return Err(CompanionRadioError::Protocol(
+                "BLE pairing PIN out of range",
+            ));
+        }
+        let tid = self.alloc_tid();
+        let value = pin.map(u32::to_le_bytes);
+        let mut buf = [0u8; 12];
+        let len = frame::prop_set(
+            &mut buf,
+            tid,
+            prop::BLE_PAIRING_PIN,
+            value.as_ref().map_or(&[], |value| &value[..]),
+        )
+        .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, prop::BLE_PAIRING_PIN, PropResponsePolicy::StatusOnly)
+            .await
+            .map(|_| ())
     }
 
     async fn finish_prop_transaction(
         &mut self,
         tid: u8,
         key: u32,
+        policy: PropResponsePolicy,
     ) -> Result<Vec<u8>, CompanionRadioError> {
         let deadline = Instant::now() + self.config.response_timeout;
         let (response_key, value) = self.wait_response(tid, deadline).await?;
-        if response_key == key {
-            Ok(value)
-        } else if response_key == prop::LAST_STATUS {
-            Err(CompanionRadioError::Status(decode_status(&value)))
-        } else {
-            Err(CompanionRadioError::Protocol(
+        match (policy, response_key) {
+            (PropResponsePolicy::Value, response_key) if response_key == key => Ok(value),
+            (PropResponsePolicy::StatusOnly, prop::LAST_STATUS) => {
+                let status = decode_status(&value);
+                if status == Status::OK {
+                    Ok(Vec::new())
+                } else {
+                    Err(CompanionRadioError::Status(status))
+                }
+            }
+            (PropResponsePolicy::Value, prop::LAST_STATUS) => {
+                let status = decode_status(&value);
+                if status == Status::OK {
+                    Err(CompanionRadioError::Protocol(
+                        "unexpected status-only property response",
+                    ))
+                } else {
+                    Err(CompanionRadioError::Status(status))
+                }
+            }
+            _ => Err(CompanionRadioError::Protocol(
                 "response for unexpected property",
-            ))
+            )),
         }
     }
 
@@ -291,72 +670,56 @@ where
         tid
     }
 
-    /// HDLC-encode and send one companion frame.
-    async fn send_frame_buf(&mut self, frame_bytes: &[u8]) -> Result<(), CompanionRadioError> {
-        let mut wire = vec![0u8; hdlc::max_encoded_len(frame_bytes.len())];
-        let len = hdlc::encode_frame(frame_bytes, &mut wire)
-            .expect("buffer sized with max_encoded_len");
-        self.io.write_all(&wire[..len]).await?;
-        self.io.flush().await?;
-        Ok(())
-    }
-
-    /// Feed received bytes through the HDLC decoder and sort complete
-    /// frames into the receive queue, the response queue, or the
-    /// reset flag. Malformed frames are dropped; the decoder
-    /// resynchronizes on the next flag byte.
-    fn ingest(&mut self, chunk: &[u8]) {
-        for &byte in chunk {
-            let Some(Ok(frame_bytes)) = self.decoder.push(byte) else {
-                continue;
-            };
-            let Ok(frame) = Frame::parse(frame_bytes) else {
-                continue;
-            };
-            match frame.command() {
-                Some(Cmd::StrRecv) => {
-                    let Ok(payload) = StreamPayload::parse(frame.payload) else {
-                        continue;
-                    };
-                    if payload.stream != stream::PHY_RAW {
-                        continue;
+    /// Sort a complete companion frame into the receive queue, response queue,
+    /// or the
+    /// reset flag. Malformed frames are dropped.
+    fn ingest_frame(&mut self, frame_bytes: &[u8]) {
+        let Ok(frame) = Frame::parse(frame_bytes) else {
+            return;
+        };
+        match frame.command() {
+            Some(Cmd::StrRecv) => {
+                let Ok(payload) = StreamPayload::parse(frame.payload) else {
+                    return;
+                };
+                if payload.stream != stream::PHY_RAW {
+                    return;
+                }
+                let meta = RxMeta::decode(payload.metadata).unwrap_or_default();
+                if self.rx_queue.len() >= RX_QUEUE_DEPTH {
+                    self.rx_queue.pop_front();
+                }
+                self.rx_queue.push_back(RxPacket {
+                    data: payload.data.to_vec(),
+                    meta,
+                });
+            }
+            Some(Cmd::PropIs) => {
+                let Ok(payload) = PropPayload::parse(frame.payload) else {
+                    return;
+                };
+                let tid = frame.header.tid();
+                if tid == TID_UNSOLICITED {
+                    if payload.key == prop::LAST_STATUS {
+                        let status = decode_status(payload.value);
+                        if status.is_reset() {
+                            self.seen_reset = Some(status);
+                        }
                     }
-                    let meta = RxMeta::decode(payload.metadata).unwrap_or_default();
-                    if self.rx_queue.len() >= RX_QUEUE_DEPTH {
-                        self.rx_queue.pop_front();
+                    // Other unsolicited property updates are not
+                    // used by this client yet.
+                } else {
+                    if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
+                        self.responses.pop_front();
                     }
-                    self.rx_queue.push_back(RxPacket {
-                        data: payload.data.to_vec(),
-                        meta,
+                    self.responses.push_back(Response {
+                        tid,
+                        key: payload.key,
+                        value: payload.value.to_vec(),
                     });
                 }
-                Some(Cmd::PropIs) => {
-                    let Ok(payload) = PropPayload::parse(frame.payload) else {
-                        continue;
-                    };
-                    let tid = frame.header.tid();
-                    if tid == TID_UNSOLICITED {
-                        if payload.key == prop::LAST_STATUS {
-                            let status = decode_status(payload.value);
-                            if status.is_reset() {
-                                self.seen_reset = Some(status);
-                            }
-                        }
-                        // Other unsolicited property updates are not
-                        // used by this client yet.
-                    } else {
-                        if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
-                            self.responses.pop_front();
-                        }
-                        self.responses.push_back(Response {
-                            tid,
-                            key: payload.key,
-                            value: payload.value.to_vec(),
-                        });
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
     }
 
@@ -411,14 +774,12 @@ where
         if now >= deadline {
             return Err(CompanionRadioError::Timeout);
         }
-        let mut chunk = [0u8; READ_CHUNK];
-        let read = match tokio::time::timeout(deadline - now, self.io.read(&mut chunk)).await {
+        let frame = match tokio::time::timeout(deadline - now, self.link.recv_frame()).await {
             Err(_elapsed) => return Err(CompanionRadioError::Timeout),
-            Ok(Err(error)) => return Err(CompanionRadioError::Io(error)),
-            Ok(Ok(0)) => return Err(CompanionRadioError::Disconnected),
-            Ok(Ok(read)) => read,
+            Ok(Err(error)) => return Err(error),
+            Ok(Ok(frame)) => frame,
         };
-        self.ingest(&chunk[..read]);
+        self.ingest_frame(&frame);
         Ok(())
     }
 
@@ -436,7 +797,7 @@ where
 }
 
 #[cfg(feature = "serial-radio")]
-impl CompanionRadio<tokio_serial::SerialStream> {
+impl CompanionRadio<SerialFrameLink<tokio_serial::SerialStream>> {
     /// Attach to an NCP on a serial port.
     pub async fn open_serial(
         path: impl AsRef<str>,
@@ -448,13 +809,34 @@ impl CompanionRadio<tokio_serial::SerialStream> {
         let stream = tokio_serial::new(path.as_ref(), baud_rate)
             .open_native_async()
             .map_err(|error| CompanionRadioError::Io(error.into()))?;
-        Self::new(stream, config).await
+        Self::new(SerialFrameLink::new(stream), config).await
     }
 }
 
-impl<IO> Radio for CompanionRadio<IO>
+#[cfg(feature = "ble-radio")]
+impl CompanionRadio<BleFrameLink> {
+    /// Discover, connect, attach, and initialize a BLE companion radio.
+    pub async fn open_ble(
+        selector: Option<&str>,
+        config: CompanionRadioConfig,
+    ) -> Result<Self, CompanionRadioError> {
+        Self::open_ble_with_link_config(selector, config, BleFrameLinkConfig::default()).await
+    }
+
+    /// As [`Self::open_ble`], with an explicit GATT link configuration.
+    pub async fn open_ble_with_link_config(
+        selector: Option<&str>,
+        config: CompanionRadioConfig,
+        link_config: BleFrameLinkConfig,
+    ) -> Result<Self, CompanionRadioError> {
+        let link = BleFrameLink::connect(selector, link_config).await?;
+        Self::new(link, config).await
+    }
+}
+
+impl<L> Radio for CompanionRadio<L>
 where
-    IO: AsyncRead + AsyncWrite + Unpin,
+    L: FrameLink,
 {
     type Error = CompanionRadioError;
 
@@ -511,7 +893,8 @@ where
                 &meta_buf[..meta_len],
             )
             .map_err(|_| TxError::Io(CompanionRadioError::Protocol("frame encode")))?;
-            self.send_frame_buf(&frame_buf[..frame_len])
+            self.link
+                .send_frame(&frame_buf[..frame_len])
                 .await
                 .map_err(TxError::Io)?;
 
@@ -520,7 +903,10 @@ where
             let deadline = Instant::now()
                 + self.config.response_timeout
                 + Duration::from_millis(u64::from(self.t_frame_ms) * 2);
-            let (key, value) = self.wait_response(tid, deadline).await.map_err(TxError::Io)?;
+            let (key, value) = self
+                .wait_response(tid, deadline)
+                .await
+                .map_err(TxError::Io)?;
             if key != prop::LAST_STATUS {
                 return Err(TxError::Io(CompanionRadioError::Protocol(
                     "unexpected transmit response",
@@ -552,19 +938,9 @@ where
                 return core::task::Poll::Ready(Ok(info));
             }
 
-            let mut chunk = [0u8; READ_CHUNK];
-            let mut read_buf = ReadBuf::new(&mut chunk);
-            match Pin::new(&mut self.io).poll_read(cx, &mut read_buf) {
-                core::task::Poll::Ready(Ok(())) => {
-                    let filled = read_buf.filled().len();
-                    if filled == 0 {
-                        return core::task::Poll::Ready(Err(CompanionRadioError::Disconnected));
-                    }
-                    self.ingest(&chunk[..filled]);
-                }
-                core::task::Poll::Ready(Err(error)) => {
-                    return core::task::Poll::Ready(Err(CompanionRadioError::Io(error)));
-                }
+            match self.link.poll_recv_frame(cx) {
+                core::task::Poll::Ready(Ok(frame)) => self.ingest_frame(&frame),
+                core::task::Poll::Ready(Err(error)) => return core::task::Poll::Ready(Err(error)),
                 core::task::Poll::Pending => return core::task::Poll::Pending,
             }
         }
@@ -590,7 +966,7 @@ fn decode_status(value: &[u8]) -> Status {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use tokio::io::DuplexStream;
+    use tokio::io::{AsyncReadExt, DuplexStream};
 
     /// Payload that makes the fake NCP report a CCA failure.
     const CCA_FAIL: &[u8] = b"cca-fail";
@@ -641,8 +1017,11 @@ mod tests {
                     Cmd::PropSet => {
                         let payload = PropPayload::parse(frame.payload).unwrap();
                         props.insert(payload.key, payload.value.to_vec());
-                        let len =
-                            frame::prop_is(&mut buf, tid, payload.key, payload.value).unwrap();
+                        let len = if payload.key == prop::BLE_PAIRING_PIN {
+                            frame::last_status(&mut buf, tid, Status::OK).unwrap()
+                        } else {
+                            frame::prop_is(&mut buf, tid, payload.key, payload.value).unwrap()
+                        };
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::StrSend => {
@@ -675,9 +1054,8 @@ mod tests {
                         }
                         .encode(&mut meta)
                         .unwrap();
-                        let len =
-                            frame::str_recv(&mut buf, stream::PHY_RAW, payload.data, &meta)
-                                .unwrap();
+                        let len = frame::str_recv(&mut buf, stream::PHY_RAW, payload.data, &meta)
+                            .unwrap();
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::Nop => {
@@ -704,10 +1082,52 @@ mod tests {
         config
     }
 
-    async fn attached_radio() -> CompanionRadio<DuplexStream> {
+    async fn attached_radio() -> CompanionRadio<SerialFrameLink<DuplexStream>> {
         let (client, server) = tokio::io::duplex(4096);
         tokio::spawn(fake_ncp(server));
-        CompanionRadio::new(client, test_config()).await.unwrap()
+        CompanionRadio::new(SerialFrameLink::new(client), test_config())
+            .await
+            .unwrap()
+    }
+
+    fn wire(frame: &[u8]) -> Vec<u8> {
+        let mut encoded = vec![0; hdlc::max_encoded_len(frame.len())];
+        let len = hdlc::encode_frame(frame, &mut encoded).unwrap();
+        encoded.truncate(len);
+        encoded
+    }
+
+    #[tokio::test]
+    async fn serial_link_preserves_two_frames_from_one_read() {
+        let (client, mut server) = tokio::io::duplex(1024);
+        let mut bytes = wire(b"first");
+        bytes.extend_from_slice(&wire(b"second"));
+        server.write_all(&bytes).await.unwrap();
+
+        let mut link = SerialFrameLink::new(client);
+        assert_eq!(link.recv_frame().await.unwrap(), b"first");
+        assert_eq!(link.recv_frame().await.unwrap(), b"second");
+    }
+
+    #[tokio::test]
+    async fn serial_link_cancellation_keeps_partial_and_buffered_tail() {
+        let (client, mut server) = tokio::io::duplex(1024);
+        let first = wire(b"first");
+        let second = wire(b"second");
+        let split = second.len() / 2;
+        let mut initial = first;
+        initial.extend_from_slice(&second[..split]);
+        server.write_all(&initial).await.unwrap();
+
+        let mut link = SerialFrameLink::new(client);
+        assert_eq!(link.recv_frame().await.unwrap(), b"first");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), link.recv_frame())
+                .await
+                .is_err()
+        );
+        server.write_all(&second[split..]).await.unwrap();
+        assert_eq!(link.recv_frame().await.unwrap(), b"second");
     }
 
     #[tokio::test]
@@ -716,6 +1136,20 @@ mod tests {
         assert_eq!(radio.max_frame_size(), 255);
         assert_eq!(radio.ncp_version(), "fake-ncp/0.1");
         assert!(radio.t_frame_ms() > 0);
+    }
+
+    #[tokio::test]
+    async fn write_only_pairing_pin_accepts_status_completion() {
+        let mut radio = attached_radio().await;
+        radio.set_ble_pairing_pin(Some(123_456)).await.unwrap();
+        radio.set_ble_pairing_pin(None).await.unwrap();
+        assert!(radio.set_ble_pairing_pin(Some(1_000_000)).await.is_err());
+
+        let error = radio
+            .set_prop(prop::BLE_PAIRING_PIN, &123_456u32.to_le_bytes())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CompanionRadioError::Protocol(_)));
     }
 
     #[tokio::test]

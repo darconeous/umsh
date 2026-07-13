@@ -353,10 +353,7 @@ mod tests {
         assert_eq!(decoder.push(FLAG), None);
         assert_eq!(decoder.push(0x42), None);
         assert_eq!(decoder.push(ESCAPE), None);
-        assert_eq!(
-            decoder.push(FLAG),
-            Some(Err(DecodeError::AbortedEscape))
-        );
+        assert_eq!(decoder.push(FLAG), Some(Err(DecodeError::AbortedEscape)));
     }
 
     #[test]

@@ -40,7 +40,7 @@ cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
 embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
 embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
-embassy-nrf = { version = "0.10", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 static_cell = "2"
@@ -48,7 +48,7 @@ static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
 # embassy-sync for the static radio channels.
-embassy-sync = { version = "0.6", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
 # lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
 # no-op global logger so the firmware links without a debug transport.
 defmt = "0.3"

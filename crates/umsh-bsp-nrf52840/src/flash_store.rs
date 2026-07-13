@@ -282,8 +282,7 @@ impl NvmcStorage {
         if alias_len == 0 || n < 1 + alias_len {
             return Ok(None);
         }
-        let s = core::str::from_utf8(&buf[1..1 + alias_len])
-            .map_err(|_| Error::CorruptedData)?;
+        let s = core::str::from_utf8(&buf[1..1 + alias_len]).map_err(|_| Error::CorruptedData)?;
         Ok(heapless::String::try_from(s).ok())
     }
 
@@ -292,11 +291,7 @@ impl NvmcStorage {
     /// Writes the alias header and appends `pk` to the peer index if not
     /// already present. Any previously stored identity bytes are preserved.
     /// `alias`, if supplied, must be at most [`MAX_ALIAS_LEN`] bytes.
-    pub async fn store_peer_entry(
-        &self,
-        pk: &[u8; 32],
-        alias: Option<&[u8]>,
-    ) -> Result<(), Error> {
+    pub async fn store_peer_entry(&self, pk: &[u8; 32], alias: Option<&[u8]>) -> Result<(), Error> {
         let key = make_peer_key(pk)?;
 
         // Read existing record to preserve any identity bytes.
@@ -337,7 +332,8 @@ impl NvmcStorage {
                 return Err(Error::PeerIndexFull);
             }
             index_buf[existing_n..new_n].copy_from_slice(pk);
-            self.store_bytes(PEER_INDEX_KEY, &index_buf[..new_n]).await?;
+            self.store_bytes(PEER_INDEX_KEY, &index_buf[..new_n])
+                .await?;
         }
         Ok(())
     }
@@ -513,11 +509,7 @@ impl NvmcStorage {
     ///
     /// Writes the 32-byte key into the per-name record and appends the name
     /// to the channel index if not already present.
-    pub async fn store_channel_entry(
-        &self,
-        name: &[u8],
-        key: &[u8; 32],
-    ) -> Result<(), Error> {
+    pub async fn store_channel_entry(&self, name: &[u8], key: &[u8; 32]) -> Result<(), Error> {
         if name.len() > MAX_CHANNEL_NAME_LEN {
             return Err(Error::ValueTooLong);
         }
@@ -651,10 +643,8 @@ impl umsh_hal::PeerStore for NvmcPeerStore {
         &self,
         f: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
     ) -> Result<(), Self::Error> {
-        let mut buf: heapless::Vec<
-            ([u8; 32], Option<heapless::String<MAX_ALIAS_LEN>>),
-            MAX_PEERS,
-        > = heapless::Vec::new();
+        let mut buf: heapless::Vec<([u8; 32], Option<heapless::String<MAX_ALIAS_LEN>>), MAX_PEERS> =
+            heapless::Vec::new();
         self.storage.load_all_peers(&mut buf).await?;
         for (pk, alias) in buf.iter() {
             f(pk, alias.as_ref().map(|s| s.as_bytes()));

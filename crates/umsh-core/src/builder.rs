@@ -204,11 +204,7 @@ impl<'a, K, S> Builder<'a, K, S> {
         if self.options_len == 0 {
             return Ok(());
         }
-        let payload_len = self
-            .payload
-            .as_ref()
-            .map(|p| p.end - p.start)
-            .unwrap_or(0);
+        let payload_len = self.payload.as_ref().map(|p| p.end - p.start).unwrap_or(0);
         let scratch_end = self
             .buf
             .len()
@@ -235,9 +231,7 @@ impl<'a, K, S> Builder<'a, K, S> {
         let start = *cursor;
         if let Some(scratch) = self.options_scratch.clone() {
             let len = scratch.end - scratch.start;
-            let end = start
-                .checked_add(len)
-                .ok_or(BuildError::BufferTooSmall)?;
+            let end = start.checked_add(len).ok_or(BuildError::BufferTooSmall)?;
             if end > self.buf.len() {
                 return Err(BuildError::BufferTooSmall);
             }

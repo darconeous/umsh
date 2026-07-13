@@ -39,7 +39,10 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
     let mut msg = [0u8; 504];
     let msg_len = {
-        let mut w = SliceWriter { buf: &mut msg, pos: 0 };
+        let mut w = SliceWriter {
+            buf: &mut msg,
+            pos: 0,
+        };
         let _ = core::fmt::write(&mut w, format_args!("{}", info));
         w.pos
     };

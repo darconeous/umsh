@@ -1,6 +1,6 @@
 use core::fmt::Write as _;
 
-use cortex_m_rt::{exception, ExceptionFrame};
+use cortex_m_rt::{ExceptionFrame, exception};
 use umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter, SyncNoinit};
 
 #[unsafe(link_section = ".uninit")]
@@ -15,7 +15,10 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     let mut slot = PanicSlot::new(panic_region());
     let mut msg = [0u8; 504];
     let msg_len = {
-        let mut w = SliceWriter { buf: &mut msg, pos: 0 };
+        let mut w = SliceWriter {
+            buf: &mut msg,
+            pos: 0,
+        };
         // Marker prefix proves the panic handler ran even if Display(info)
         // formats as empty (e.g. PanicInfo with stripped message).
         let _ = w.write_str("PANIC: ");
@@ -41,11 +44,19 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     let mut slot = PanicSlot::new(panic_region());
     let mut msg = [0u8; 504];
     let msg_len = {
-        let mut w = SliceWriter { buf: &mut msg, pos: 0 };
+        let mut w = SliceWriter {
+            buf: &mut msg,
+            pos: 0,
+        };
         let _ = write!(
             w,
             "HARDFAULT pc=0x{:08x} lr=0x{:08x} r0=0x{:08x} r1=0x{:08x} r2=0x{:08x} r3=0x{:08x}",
-            ef.pc(), ef.lr(), ef.r0(), ef.r1(), ef.r2(), ef.r3(),
+            ef.pc(),
+            ef.lr(),
+            ef.r0(),
+            ef.r1(),
+            ef.r2(),
+            ef.r3(),
         );
         w.pos
     };

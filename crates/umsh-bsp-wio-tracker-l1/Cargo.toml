@@ -48,5 +48,5 @@ umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["
 [target.'cfg(target_os = "none")'.dependencies]
 umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
 embassy-time      = { version = "0.5", default-features = false }
-embassy-sync      = { version = "0.6", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
 cortex-m          = { version = "0.7" }

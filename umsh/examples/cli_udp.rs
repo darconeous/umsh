@@ -27,7 +27,9 @@ use umsh::{
     hal::Radio,
     mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig},
     node::Host,
-    tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio},
+    tokio_support::{
+        StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform, UdpMulticastRadio,
+    },
 };
 use umsh_cli::{
     DefaultCliSession, NoChannelStore, NoPeerStore, NoPowerControl,
@@ -67,8 +69,12 @@ impl StderrLogger {
 }
 
 impl CliLogger for StderrLogger {
-    fn level(&self) -> LogLevel { self.level }
-    fn set_level(&mut self, level: LogLevel) { self.level = level; }
+    fn level(&self) -> LogLevel {
+        self.level
+    }
+    fn set_level(&mut self, level: LogLevel) {
+        self.level = level;
+    }
     fn log(&mut self, level: LogLevel, args: core::fmt::Arguments<'_>) {
         if level <= self.level {
             eprintln!("[{:?}] {}", level, args);
@@ -130,20 +136,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Drive host + CLI concurrently. Both are infinite loops; select! exits
     // when the first one returns (CLI on /quit or EOF, host on fatal error).
     let local = tokio::task::LocalSet::new();
-    local.run_until(async {
-        tokio::select! {
-            r = host.run() => {
-                if let Err(e) = r {
-                    eprintln!("host error: {e:?}");
+    local
+        .run_until(async {
+            tokio::select! {
+                r = host.run() => {
+                    if let Err(e) = r {
+                        eprintln!("host error: {e:?}");
+                    }
+                }
+                r = cli.run(&mut stdin_in) => {
+                    if let Err(e) = r {
+                        eprintln!("cli error: {e:?}");
+                    }
                 }
             }
-            r = cli.run(&mut stdin_in) => {
-                if let Err(e) = r {
-                    eprintln!("cli error: {e:?}");
-                }
-            }
-        }
-    }).await;
+        })
+        .await;
 
     Ok(())
 }
@@ -213,9 +221,7 @@ fn build_mac<R: Radio>(
     ))
 }
 
-fn load_or_create_identity(
-    path: &Path,
-) -> Result<SoftwareIdentity, Box<dyn std::error::Error>> {
+fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity, Box<dyn std::error::Error>> {
     match std::fs::read(path) {
         Ok(bytes) => {
             let secret: [u8; 32] = bytes

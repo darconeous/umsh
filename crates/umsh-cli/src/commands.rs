@@ -11,35 +11,78 @@ pub enum Command<'a> {
     Quit,
     WhoAmI,
 
-    PeerAdd { pubkey: &'a str, alias: Option<&'a str> },
-    PeerAlias { peer: &'a str, alias: &'a str },
-    PeerRm { peer: &'a str },
+    PeerAdd {
+        pubkey: &'a str,
+        alias: Option<&'a str>,
+    },
+    PeerAlias {
+        peer: &'a str,
+        alias: &'a str,
+    },
+    PeerRm {
+        peer: &'a str,
+    },
     Peers,
 
-    Query { peer: &'a str },
-    Msg { peer: &'a str, text: &'a str },
-    Text { body: &'a str }, // bare line → current peer
-    Me { action: &'a str },
+    Query {
+        peer: &'a str,
+    },
+    Msg {
+        peer: &'a str,
+        text: &'a str,
+    },
+    Text {
+        body: &'a str,
+    }, // bare line → current peer
+    Me {
+        action: &'a str,
+    },
 
-    Ping { peer: &'a str, bytes: Option<u16> },
+    Ping {
+        peer: &'a str,
+        bytes: Option<u16>,
+    },
 
-    PfsStart { peer: &'a str, minutes: Option<u16> },
-    PfsEnd { peer: &'a str },
-    PfsStatus { peer: Option<&'a str> },
+    PfsStart {
+        peer: &'a str,
+        minutes: Option<u16>,
+    },
+    PfsEnd {
+        peer: &'a str,
+    },
+    PfsStatus {
+        peer: Option<&'a str>,
+    },
 
     Beacon,
 
-    ChannelJoin { name: &'a str, key: &'a str },
-    ChannelLeave { name: &'a str },
-    ChannelSend { name: &'a str, text: &'a str },
+    ChannelJoin {
+        name: &'a str,
+        key: &'a str,
+    },
+    ChannelLeave {
+        name: &'a str,
+    },
+    ChannelSend {
+        name: &'a str,
+        text: &'a str,
+    },
     Channels,
 
     Stats,
     Counters,
-    Log { level: &'a str },
-    SetShow,                              // `/set` (no args)
-    Set { var: &'a str, val: &'a str },
-    Raw { peer: &'a str, hex: &'a str },
+    Log {
+        level: &'a str,
+    },
+    SetShow, // `/set` (no args)
+    Set {
+        var: &'a str,
+        val: &'a str,
+    },
+    Raw {
+        peer: &'a str,
+        hex: &'a str,
+    },
 
     PowerOff,
     Reboot,
@@ -64,7 +107,11 @@ pub fn parse(line: &str) -> Result<Command<'_>, ParseError> {
     }
     let (head, rest) = split_one(&line[1..]);
     match head {
-        "help" | "?" => Ok(Command::Help(if rest.is_empty() { None } else { Some(rest) })),
+        "help" | "?" => Ok(Command::Help(if rest.is_empty() {
+            None
+        } else {
+            Some(rest)
+        })),
         "quit" | "exit" => Ok(Command::Quit),
         "whoami" => Ok(Command::WhoAmI),
 
@@ -137,7 +184,11 @@ fn parse_peer(rest: &str) -> Result<Command<'_>, ParseError> {
         "add" => {
             let (pubkey, alias_part) = split_one(tail);
             require(pubkey, "pubkey")?;
-            let alias = if alias_part.is_empty() { None } else { Some(alias_part) };
+            let alias = if alias_part.is_empty() {
+                None
+            } else {
+                Some(alias_part)
+            };
             Ok(Command::PeerAdd { pubkey, alias })
         }
         "alias" => {
@@ -164,7 +215,11 @@ fn parse_pfs(rest: &str) -> Result<Command<'_>, ParseError> {
             let minutes = if mins_part.is_empty() {
                 None
             } else {
-                Some(mins_part.parse::<u16>().map_err(|_| ParseError::BadNumber)?)
+                Some(
+                    mins_part
+                        .parse::<u16>()
+                        .map_err(|_| ParseError::BadNumber)?,
+                )
             };
             Ok(Command::PfsStart { peer, minutes })
         }
@@ -236,7 +291,12 @@ mod tests {
 
     #[test]
     fn bare_text() {
-        assert_eq!(parse("hello world"), Ok(Command::Text { body: "hello world" }));
+        assert_eq!(
+            parse("hello world"),
+            Ok(Command::Text {
+                body: "hello world"
+            })
+        );
     }
 
     #[test]
@@ -249,7 +309,10 @@ mod tests {
     fn peer_add_with_alias() {
         assert_eq!(
             parse("/peer add ABCDEF bob"),
-            Ok(Command::PeerAdd { pubkey: "ABCDEF", alias: Some("bob") })
+            Ok(Command::PeerAdd {
+                pubkey: "ABCDEF",
+                alias: Some("bob")
+            })
         );
     }
 
@@ -257,7 +320,10 @@ mod tests {
     fn peer_alias() {
         assert_eq!(
             parse("/peer alias bob alice"),
-            Ok(Command::PeerAlias { peer: "bob", alias: "alice" })
+            Ok(Command::PeerAlias {
+                peer: "bob",
+                alias: "alice"
+            })
         );
     }
 
@@ -265,15 +331,23 @@ mod tests {
     fn ping_with_bytes() {
         assert_eq!(
             parse("/ping bob 64"),
-            Ok(Command::Ping { peer: "bob", bytes: Some(64) })
+            Ok(Command::Ping {
+                peer: "bob",
+                bytes: Some(64)
+            })
         );
     }
 
     #[test]
     fn set_show_vs_set() {
         assert_eq!(parse("/set"), Ok(Command::SetShow));
-        assert_eq!(parse("/set flood_hops 3"),
-                   Ok(Command::Set { var: "flood_hops", val: "3" }));
+        assert_eq!(
+            parse("/set flood_hops 3"),
+            Ok(Command::Set {
+                var: "flood_hops",
+                val: "3"
+            })
+        );
     }
 
     #[test]

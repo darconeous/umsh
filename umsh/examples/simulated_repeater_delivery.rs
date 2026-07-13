@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::task::{Poll, RawWaker, RawWakerVTable, Waker};
 
 use rand::rngs::ThreadRng;
-use umsh_sync::AsyncRefCell;
 use umsh::{
     core::{PacketHeader, ParsedOptions, PublicKey},
     crypto::{
@@ -20,6 +19,7 @@ use umsh::{
     text::{TextReceiveIssue, UnicastTextChatWrapper},
     uri::encode_public_key_base58,
 };
+use umsh_sync::AsyncRefCell;
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -95,10 +95,7 @@ async fn async_main() {
         .await
         .expect("alice peer should fit");
     let bob_chat = UnicastTextChatWrapper::from_peer(&bob);
-    let alice = alice_node
-        .peer(bob_key)
-        .await
-        .expect("bob peer should fit");
+    let alice = alice_node.peer(bob_key).await.expect("bob peer should fit");
     let alice_chat = UnicastTextChatWrapper::from_peer(&alice);
     let alice_received = Rc::new(RefCell::new(0usize));
     let bob_received = Rc::new(RefCell::new(0usize));

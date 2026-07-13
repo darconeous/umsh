@@ -25,20 +25,20 @@ use embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::Pixel;
 
-pub const WIDTH:         usize = 200;
-pub const HEIGHT:        usize = 200;
+pub const WIDTH: usize = 200;
+pub const HEIGHT: usize = 200;
 pub const BYTES_PER_ROW: usize = WIDTH / 8;
-pub const BUF_SIZE:      usize = BYTES_PER_ROW * HEIGHT;
+pub const BUF_SIZE: usize = BYTES_PER_ROW * HEIGHT;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /// Hardware-reset, software-reset, and load all SSD1681 control registers.
 /// After this returns the panel is ready to accept RAM writes via [`render`].
 pub async fn init(
-    spi:  &mut Spim<'_>,
-    cs:   &mut Output<'_>,
-    dc:   &mut Output<'_>,
-    rst:  &mut Output<'_>,
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
+    rst: &mut Output<'_>,
     busy: &mut Input<'_>,
 ) {
     Timer::after(Duration::from_millis(10)).await;
@@ -47,14 +47,14 @@ pub async fn init(
     rst.set_high();
     wait_idle(busy).await;
 
-    cmd(spi, cs, dc, 0x12, &[]).await;                       // SW reset
+    cmd(spi, cs, dc, 0x12, &[]).await; // SW reset
     wait_idle(busy).await;
 
-    cmd(spi, cs, dc, 0x01, &[0xC7, 0x00, 0x00]).await;       // driver output: MUX=199
-    cmd(spi, cs, dc, 0x3C, &[0x05]).await;                   // border = VSS
-    cmd(spi, cs, dc, 0x18, &[0x80]).await;                   // built-in temp sensor
-    cmd(spi, cs, dc, 0x11, &[0x03]).await;                   // data entry: X+, Y+
-    cmd(spi, cs, dc, 0x44, &[0x00, 0x18]).await;             // X window 0..24
+    cmd(spi, cs, dc, 0x01, &[0xC7, 0x00, 0x00]).await; // driver output: MUX=199
+    cmd(spi, cs, dc, 0x3C, &[0x05]).await; // border = VSS
+    cmd(spi, cs, dc, 0x18, &[0x80]).await; // built-in temp sensor
+    cmd(spi, cs, dc, 0x11, &[0x03]).await; // data entry: X+, Y+
+    cmd(spi, cs, dc, 0x44, &[0x00, 0x18]).await; // X window 0..24
     cmd(spi, cs, dc, 0x45, &[0x00, 0x00, 0xC7, 0x00]).await; // Y window 0..199
 }
 
@@ -65,10 +65,10 @@ pub async fn init(
 /// Meshtastic) may have left content in it that would otherwise combine
 /// with our B/W frame.
 pub async fn render(
-    spi:    &mut Spim<'_>,
-    cs:     &mut Output<'_>,
-    dc:     &mut Output<'_>,
-    busy:   &mut Input<'_>,
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
+    busy: &mut Input<'_>,
     pixels: &[u8],
 ) {
     cmd(spi, cs, dc, 0x4E, &[0x00]).await;
@@ -121,7 +121,7 @@ impl DrawTarget for EpdFb<'_> {
                 if color.is_on() {
                     self.0[idx] &= !(1 << bit);
                 } else {
-                    self.0[idx] |=  1 << bit;
+                    self.0[idx] |= 1 << bit;
                 }
             }
         }
@@ -130,7 +130,9 @@ impl DrawTarget for EpdFb<'_> {
 }
 
 impl OriginDimensions for EpdFb<'_> {
-    fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
+    fn size(&self) -> Size {
+        Size::new(WIDTH as u32, HEIGHT as u32)
+    }
 }
 
 // ─── Private helpers ─────────────────────────────────────────────────────────
@@ -146,11 +148,11 @@ async fn wait_idle(busy: &mut Input<'_>) {
 /// read SRAM, and `&[...]` literals in release builds may live in flash
 /// (`.rodata`), which would silently produce garbage on the bus.
 async fn cmd(
-    spi:     &mut Spim<'_>,
-    cs:      &mut Output<'_>,
-    dc:      &mut Output<'_>,
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
     command: u8,
-    data:    &[u8],
+    data: &[u8],
 ) {
     let cmd_buf = [command];
     let mut data_buf = [0u8; 8];
@@ -172,8 +174,8 @@ async fn cmd(
 /// covers 5000 bytes despite the misleading 8-bit-only rumor for SPIM0/1.
 async fn write_ram(
     spi: &mut Spim<'_>,
-    cs:  &mut Output<'_>,
-    dc:  &mut Output<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
     cmd_byte: u8,
     pixels: &[u8],
 ) {

@@ -19,6 +19,7 @@
 
 pub mod airtime;
 pub mod frame;
+pub mod gatt;
 pub mod hdlc;
 pub mod ids;
 pub mod meta;
