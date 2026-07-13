@@ -79,9 +79,10 @@ pub struct RxMeta {
     pub rssi_dbm: Option<i16>,
     /// Link-quality indicator, 1 (worst) to 255 (perfect).
     pub lqi: Option<NonZeroU8>,
-    /// Signal-to-noise ratio in centibels. The wire sentinel `0xFFFF`
-    /// (-1 as `i16`) means unsupported, so `encode` maps an actual
-    /// -1 cB reading to -2 cB.
+    /// Signal-to-noise ratio in centibels. The wire sentinel `0x8000`
+    /// (`i16::MIN`, -3276.8 dB) means unsupported. No real link can
+    /// report that value, so every genuine measurement round-trips
+    /// without distortion.
     pub snr_cb: Option<i16>,
 }
 
@@ -97,11 +98,9 @@ impl RxMeta {
             Some(rssi) => (-rssi).clamp(0, 254) as u8,
         };
         out[1] = self.lqi.map(NonZeroU8::get).unwrap_or(0);
-        let snr = match self.snr_cb {
-            None => -1,
-            Some(-1) => -2,
-            Some(snr) => snr,
-        };
+        // `i16::MIN` is the "unsupported" sentinel; it is physically
+        // unreachable as a real SNR, so no genuine reading needs nudging.
+        let snr = self.snr_cb.unwrap_or(i16::MIN);
         out[2..4].copy_from_slice(&snr.to_le_bytes());
         Ok(Self::WIRE_LEN)
     }
@@ -114,7 +113,7 @@ impl RxMeta {
                 Ok(Self {
                     rssi_dbm: (*rssi != 0xFF).then(|| -i16::from(*rssi)),
                     lqi: NonZeroU8::new(*lqi),
-                    snr_cb: (snr != -1).then_some(snr),
+                    snr_cb: (snr != i16::MIN).then_some(snr),
                 })
             }
             _ => Err(MetaError::Truncated),
@@ -163,14 +162,17 @@ mod tests {
     fn rx_sentinels() {
         let mut buf = [0u8; RxMeta::WIRE_LEN];
         RxMeta::default().encode(&mut buf).unwrap();
-        assert_eq!(buf, [0xFF, 0x00, 0xFF, 0xFF]);
+        // SNR sentinel is i16::MIN (0x8000), little-endian.
+        assert_eq!(buf, [0xFF, 0x00, 0x00, 0x80]);
         assert_eq!(RxMeta::decode(&buf).unwrap(), RxMeta::default());
         assert_eq!(RxMeta::decode(&[]).unwrap(), RxMeta::default());
         assert_eq!(RxMeta::decode(&[91, 0, 0]), Err(MetaError::Truncated));
     }
 
     #[test]
-    fn rx_snr_sentinel_collision_nudged() {
+    fn rx_snr_negative_one_round_trips() {
+        // -0.1 dB used to collide with the old 0xFFFF sentinel; with the
+        // i16::MIN sentinel it survives a round trip unchanged.
         let meta = RxMeta {
             rssi_dbm: Some(0),
             lqi: None,
@@ -178,6 +180,6 @@ mod tests {
         };
         let mut buf = [0u8; RxMeta::WIRE_LEN];
         meta.encode(&mut buf).unwrap();
-        assert_eq!(RxMeta::decode(&buf).unwrap().snr_cb, Some(-2));
+        assert_eq!(RxMeta::decode(&buf).unwrap().snr_cb, Some(-1));
     }
 }
