@@ -789,6 +789,14 @@ impl PacketHeader {
     }
 }
 
+/// Default Minimum RSSI threshold (dBm) when the option is present with a
+/// zero-length value. Per the spec this value is subject to change.
+pub const DEFAULT_MIN_RSSI_DBM: i16 = -100;
+
+/// Default Minimum SNR threshold (dB) when the option is present with a
+/// zero-length value. Per the spec this value is subject to change.
+pub const DEFAULT_MIN_SNR_DB: i8 = -3;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsedOptions {
     pub region_code: Option<[u8; 2]>,
@@ -819,15 +827,74 @@ impl ParsedOptions {
                 OptionNumber::TraceRoute => parsed.trace_route = Some(value_range),
                 OptionNumber::SourceRoute => parsed.source_route = Some(value_range),
                 OptionNumber::RouteRetry if value.is_empty() => parsed.route_retry = true,
-                OptionNumber::MinRssi if value.len() == 2 => {
-                    parsed.min_rssi = Some(i16::from_be_bytes([value[0], value[1]]));
+                // Minimum RSSI (option 5): unsigned 1-byte value read as a
+                // negative dBm threshold (e.g. 130 → -130 dBm). A zero-length
+                // value selects the default threshold. Longer values are
+                // malformed and ignored.
+                OptionNumber::MinRssi if value.len() <= 1 => {
+                    parsed.min_rssi = Some(match value.first() {
+                        Some(&byte) => -i16::from(byte),
+                        None => DEFAULT_MIN_RSSI_DBM,
+                    });
                 }
-                OptionNumber::MinSnr if value.len() == 1 => parsed.min_snr = Some(value[0] as i8),
+                // Minimum SNR (option 9): signed 1-byte value in dB. A
+                // zero-length value selects the default threshold.
+                OptionNumber::MinSnr if value.len() <= 1 => {
+                    parsed.min_snr = Some(match value.first() {
+                        Some(&byte) => byte as i8,
+                        None => DEFAULT_MIN_SNR_DB,
+                    });
+                }
                 OptionNumber::Unknown(raw) if raw & 1 != 0 => parsed.has_unknown_critical = true,
                 _ => {}
             }
         }
         Ok(parsed)
+    }
+}
+
+#[cfg(test)]
+mod parsed_options_tests {
+    use super::*;
+
+    #[test]
+    fn min_rssi_one_byte_is_negated_dbm() {
+        // Option 5, length 1, value 130 → -130 dBm.
+        let buf = [0x51u8, 130];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.min_rssi, Some(-130));
+    }
+
+    #[test]
+    fn min_rssi_zero_len_selects_default() {
+        // Option 5, length 0.
+        let buf = [0x50u8];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.min_rssi, Some(DEFAULT_MIN_RSSI_DBM));
+    }
+
+    #[test]
+    fn min_snr_one_byte_is_signed_db() {
+        // Option 9, length 1, value 0xFD (-3).
+        let buf = [0x91u8, 0xFD];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.min_snr, Some(-3));
+    }
+
+    #[test]
+    fn min_snr_zero_len_selects_default() {
+        // Option 9, length 0.
+        let buf = [0x90u8];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.min_snr, Some(DEFAULT_MIN_SNR_DB));
+    }
+
+    #[test]
+    fn min_rssi_two_bytes_is_ignored() {
+        // Length 2 is malformed for Min RSSI; the option is ignored.
+        let buf = [0x52u8, 0x00, 0x82];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert_eq!(parsed.min_rssi, None);
     }
 }
 
