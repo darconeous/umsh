@@ -10,7 +10,7 @@ Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and
 
 ## CoAP-Style Option Encoding
 
-UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatability.
+UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatibility.
 
 Each option is encoded as a delta from the previous option's number, a length, and a value. The sequence is terminated by a `0xFF` end-of-options marker when a PAYLOAD follows the options block; packets with no payload omit the marker.
 

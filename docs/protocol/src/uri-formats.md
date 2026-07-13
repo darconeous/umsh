@@ -35,7 +35,7 @@ umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP
 Additional metadata may be attached as URI parameters:
 
 ```text
-umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugine
+umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=MyPrivateChannel;mh=6;r=Eugene
 ```
 
 Where, for example:
@@ -47,8 +47,10 @@ Where, for example:
 A channel may also be identified by a string from which the channel key is derived:
 
 ```text
-umsh:cs:Public
+umsh:cs:public
 ```
+
+The name that follows `umsh:cs:` is canonicalized before key derivation: it is percent-decoded, required to be ASCII, and folded to lowercase (see [Named Channels](multicast-channels.md#named-channels)). Because of the fold, `umsh:cs:public`, `umsh:cs:Public`, and `umsh:cs:PUBLIC` all identify the same channel.
 
 ## CoAP-over-UMSH URIs
 

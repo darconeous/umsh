@@ -140,7 +140,7 @@ When this option is present, each repeater that will repeat the packet must firs
 
 Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:
 
-**IATA-based regions.** For regions defined by proximity to an airport or a metro area with it's own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:
+**IATA-based regions.** For regions defined by proximity to an airport or a metro area with its own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:
 
 | IATA Code | Region Code |
 |---|---|
@@ -155,7 +155,7 @@ Region codes are 2-byte identifiers derived by one of two methods, depending on 
 | SF Bay Area | `0x31d9...` | `0x31d9` |
 | Southern Oregon | `0x6af2...` | `0x6af2` |
 
-IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will colide with an actual assigned IATA code.
+IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.
 
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).
 
