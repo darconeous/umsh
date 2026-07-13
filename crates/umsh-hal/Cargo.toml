@@ -9,5 +9,9 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_hal/"
 [features]
 default = ["std"]
 std = []
+# Provides `EmbassyClock`, an `embassy-time`-backed `Clock` shared by host
+# (arch-std) and embedded targets.
+embassy = ["dep:embassy-time"]
 
 [dependencies]
+embassy-time = { version = "0.5", optional = true, default-features = false }

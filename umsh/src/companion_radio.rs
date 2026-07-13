@@ -28,7 +28,7 @@ use umsh_companion::hdlc;
 use umsh_companion::ids::{self, prop, stream};
 use umsh_companion::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
 use umsh_companion::pui;
-use umsh_hal::{Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
 
 /// Capacity of the HDLC reassembly buffer (unescaped frame + FCS).
 const WIRE_BUF: usize = 1024;
@@ -458,6 +458,19 @@ where
 {
     type Error = CompanionRadioError;
 
+    /// Transmit one frame and await the NCP's confirmation.
+    ///
+    /// A confirmed transmit blocks the caller for up to
+    /// `response_timeout + 2 × t_frame_ms` while the frame goes out on air. This
+    /// is inherent to the half-duplex [`Radio::transmit`] contract and a real
+    /// radio behaves the same way. Frames the NCP receives during this window
+    /// are not lost — they are queued (see [`wait_response`](Self::wait_response)
+    /// → [`ingest`](Self::ingest)) and surface on the next
+    /// [`poll_receive`](Radio::poll_receive). MAC-layer timers (ACK timeouts,
+    /// retransmit deadlines) cannot advance while this future is pending, but
+    /// they are only *delayed*, not missed: the coordinator re-evaluates every
+    /// deadline against the current clock as soon as `transmit` returns, so a
+    /// deadline that came due mid-transmit fires immediately afterward.
     async fn transmit(
         &mut self,
         data: &[u8],
@@ -467,15 +480,20 @@ where
             return Err(TxError::Io(CompanionRadioError::FrameTooLarge(data.len())));
         }
 
-        // The NCP performs CCA itself; `cad_timeout_ms` becomes a
-        // host-side retry budget around `STATUS_CCA_FAILURE`.
+        // The NCP performs CCA itself; the CAD policy becomes a host-side
+        // retry budget around `STATUS_CCA_FAILURE`.
         let mut meta = TxMeta::default();
-        let cca_deadline = match options.cad_timeout_ms {
-            None => {
+        let cca_deadline = match options.cad {
+            CadPolicy::Skip => {
                 meta.flags |= TX_FLAG_NOCCA;
                 None
             }
-            Some(timeout_ms) => Some(Instant::now() + Duration::from_millis(timeout_ms.into())),
+            // Gate is a single attempt: a zero-length budget, so a busy channel
+            // fails immediately with CadTimeout.
+            CadPolicy::Gate => Some(Instant::now()),
+            CadPolicy::RetryFor { timeout_ms } => {
+                Some(Instant::now() + Duration::from_millis(timeout_ms.into()))
+            }
         };
         let mut meta_buf = [0u8; TxMeta::WIRE_LEN];
         let meta_len = meta
@@ -722,7 +740,7 @@ mod tests {
             .transmit(
                 CCA_FAIL,
                 TxOptions {
-                    cad_timeout_ms: Some(0),
+                    cad: CadPolicy::Gate,
                 },
             )
             .await;

@@ -19,7 +19,7 @@ repository.workspace = true
 default = []
 
 [dependencies]
-umsh-hal = { path = "../umsh-hal", default-features = false }
+umsh-hal = { path = "../umsh-hal", default-features = false, features = ["embassy"] }
 
 # Embedded-only deps. Gated on `target_os = "none"` so this crate still
 # parses and unit-tests cleanly on host (the rescue watchers are pure
