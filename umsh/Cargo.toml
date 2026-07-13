@@ -14,7 +14,7 @@ unsafe-advanced = ["umsh-mac/unsafe-advanced", "umsh-node/unsafe-advanced"]
 software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "umsh-node/software-crypto", "umsh-text/software-crypto"]
 tokio-support = ["std", "software-crypto", "dep:rand", "dep:socket2", "dep:tokio"]
 serial-radio = ["tokio-support", "dep:tokio-serial"]
-embassy-support = ["std", "software-crypto", "dep:embassy-executor", "dep:embassy-time", "dep:rand"]
+embassy-support = ["std", "software-crypto", "umsh-hal/embassy", "dep:embassy-executor", "dep:embassy-time", "dep:rand"]
 cli = ["tokio-support", "dep:umsh-cli"]
 
 [dependencies]

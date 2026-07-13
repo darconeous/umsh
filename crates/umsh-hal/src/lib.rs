@@ -10,6 +10,11 @@
 use core::num::NonZeroU8;
 use core::task::{Context, Poll};
 
+#[cfg(feature = "embassy")]
+mod embassy_clock;
+#[cfg(feature = "embassy")]
+pub use embassy_clock::EmbassyClock;
+
 /// Signal-to-noise ratio represented in centibels (0.1 dB units).
 ///
 /// This uses a slightly finer unit than whole decibels while still staying
@@ -79,16 +84,24 @@ pub struct RxInfo {
     pub lqi: Option<NonZeroU8>,
 }
 
+/// Channel-activity-detection (CAD) policy applied before a transmit.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CadPolicy {
+    /// Skip CAD entirely and transmit immediately.
+    #[default]
+    Skip,
+    /// Perform CAD once and transmit only if the channel is currently clear.
+    /// Equivalent to a retry budget of zero.
+    Gate,
+    /// Retry CAD until the channel is clear or `timeout_ms` elapses.
+    RetryFor { timeout_ms: u32 },
+}
+
 /// Options controlling how a frame is transmitted.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TxOptions {
-    /// Carrier-activity detection policy applied before transmit.
-    ///
-    /// `None` skips CAD and transmits immediately.
-    /// `Some(0)` performs an immediate CAD gate and only transmits if the
-    /// channel is currently clear.
-    /// `Some(n)` retries CAD until it succeeds or the timeout budget expires.
-    pub cad_timeout_ms: Option<u32>,
+    /// Channel-activity-detection policy applied before this transmit.
+    pub cad: CadPolicy,
 }
 
 /// Error returned by [`Radio::transmit`].
@@ -135,16 +148,21 @@ pub trait Clock {
 
     /// Poll a delay that completes when the monotonic clock reaches `deadline_ms`.
     ///
-    /// Returns `Poll::Ready(())` if the deadline has already passed.  Otherwise
-    /// the implementation should register `cx.waker()` with a platform timer and
-    /// return `Poll::Pending`.
+    /// Returns `Poll::Ready(())` if the deadline has already passed. Otherwise
+    /// the implementation MUST register `cx.waker()` with a platform timer and
+    /// return `Poll::Pending`, so the task is woken when the deadline elapses.
     ///
-    /// The default implementation returns `Ready(())` immediately, which causes
-    /// callers to busy-poll on timer deadlines.  Platform clocks backed by a
-    /// real timer (tokio, embassy, etc.) should override this.
+    /// The default implementation has no real timer: it schedules an immediate
+    /// re-poll (via `cx.waker().wake_by_ref()`) and returns `Poll::Pending`, causing
+    /// the caller to busy-poll until the monotonic clock reaches the deadline.
+    /// This is correct but wastes CPU; platform clocks backed by a real timer
+    /// (tokio, embassy, etc.) MUST override this to sleep efficiently. A default
+    /// that returned `Ready` unconditionally would spin just as hard; one that
+    /// returned `Pending` without waking would stall timer-driven work entirely.
     fn poll_delay_until(&self, cx: &mut Context<'_>, deadline_ms: u64) -> Poll<()> {
-        let _ = (cx, deadline_ms);
-        Poll::Ready(())
+        let _ = deadline_ms;
+        cx.waker().wake_by_ref();
+        Poll::Pending
     }
 }
 

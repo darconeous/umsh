@@ -1,12 +1,18 @@
 //! Embassy-friendly runtime adapters and fixed-capacity in-memory stores.
 
-use core::convert::Infallible;
 use core::{cell::RefCell, marker::PhantomData};
 
 use embedded_hal_async::delay::DelayNs;
 use heapless::Vec;
 use rand::{CryptoRng, TryCryptoRng, TryRng};
-use umsh_hal::{Clock, CounterStore, KeyValueStore};
+use umsh_hal::{CounterStore, KeyValueStore};
+
+/// Monotonic clock backed by `embassy-time`.
+///
+/// Re-exported from `umsh-hal` so host and embedded targets share one
+/// implementation, including an efficient `poll_delay_until` that registers a
+/// real embassy timer rather than busy-polling.
+pub use umsh_hal::EmbassyClock;
 
 #[cfg(feature = "software-crypto")]
 use crate::{
@@ -21,16 +27,6 @@ pub struct EmbassyDelay;
 impl DelayNs for EmbassyDelay {
     async fn delay_ns(&mut self, ns: u32) {
         embassy_time::Timer::after_nanos(u64::from(ns)).await;
-    }
-}
-
-/// Monotonic clock backed by `embassy_time::Instant`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EmbassyClock;
-
-impl Clock for EmbassyClock {
-    fn now_ms(&self) -> u64 {
-        embassy_time::Instant::now().as_millis()
     }
 }
 
@@ -54,49 +50,6 @@ impl<R: TryRng> TryRng for RngCoreAdapter<R> {
 }
 
 impl<R: TryCryptoRng> TryCryptoRng for RngCoreAdapter<R> {}
-
-/// Tiny deterministic RNG useful for tests and examples.
-#[derive(Clone, Copy, Debug)]
-pub struct XorShift64Rng {
-    state: u64,
-}
-
-impl XorShift64Rng {
-    /// Create the RNG with a non-zero seed.
-    pub fn new(seed: u64) -> Self {
-        Self { state: seed.max(1) }
-    }
-
-    fn next_word(&mut self) -> u64 {
-        let mut value = self.state;
-        value ^= value << 13;
-        value ^= value >> 7;
-        value ^= value << 17;
-        self.state = value;
-        value
-    }
-}
-
-impl TryRng for XorShift64Rng {
-    type Error = Infallible;
-
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(self.next_word() as u32)
-    }
-
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.next_word())
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-        for chunk in dest.chunks_mut(8) {
-            let bytes = self.next_word().to_le_bytes();
-            let len = chunk.len();
-            chunk.copy_from_slice(&bytes[..len]);
-        }
-        Ok(())
-    }
-}
 
 /// Errors returned by the fixed-capacity memory stores.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
