@@ -105,7 +105,11 @@ workspace `default-members`; release-only like the rest).
    not in code.
 5. GATT echo service: one write characteristic, one notify
    characteristic, both requiring encryption. Advertise, connect from
-   nRF Connect (phone) and from macOS.
+   nRF Connect (phone), from macOS, **and from Linux**: pair via
+   `bluetoothctl`, then run a `btleplug` smoke test proving a
+   security-gated subscription works after out-of-process pairing —
+   this BlueZ recovery path is exactly what Phase B2 depends on and
+   is not established by the phone test.
 6. Security spike — the questions that gate everything:
    - LESC-only enforcement (reject legacy pairing)?
    - Just Works bonding, and the ability to *reject* a pairing request
@@ -121,6 +125,10 @@ workspace `default-members`; release-only like the rest).
 8. Measure and record: flash delta, RAM delta (SDC memory pool +
    trouble `HostResources`), still links at `0x26000`, S140 blob
    untouched.
+9. Fallback insurance: dump the *resident* S140's info block from a
+   real T-Echo and record its exact version, required RAM claim, and
+   app-base expectations. The `nrf-softdevice` fallback must rest on
+   the actual image on the board, not the nominal "S140 v7.3.0".
 
 **Exit criteria.** Bonded LESC connection from a phone; encrypted echo
 round-trip; USB-CDC concurrently functional; WDT never fires; the six
@@ -166,7 +174,7 @@ pub fn segments(frame: &[u8], seg_payload: usize)
 pub struct Segment<'a> { /* sar, payload */ }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecodeError { ReservedBits, Orphan, TooLong }
+pub enum DecodeError { ReservedBits, Orphan, TooLong, Runt }
 
 /// Per-characteristic reassembler; `N` bounds the reassembled frame.
 pub struct Reassembler<const N: usize> { /* buf, len, in_progress */ }
@@ -185,15 +193,22 @@ Semantics exactly per spec §Segmentation/§Reassembly: `COMPLETE`/
 without a frame in progress → `Orphan`; nonzero reserved bits →
 `ReservedBits`; overflow → `TooLong` reported once, subsequent
 `CONT`/`LAST` silently ignored until the next `COMPLETE`/`FIRST`.
-Empty segment payloads are legal.
+Empty segment *payloads* are legal, but a zero-length ATT value has
+no header octet and is a `Runt`: error, reassembly reset (per spec).
+`segments()` requires `seg_payload >= 1` (`debug_assert`; callers
+derive it from ATT_MTU, whose 23-octet floor yields 19) — a
+zero value must not produce an infinite iterator.
 
 **Tests** (mirror the `hdlc` suite):
 
 - round-trip at seg_payload 19 (ATT_MTU 23), 243 (247), 511 (517);
 - single-`COMPLETE` frame; frame exactly filling *n* segments; empty
   frame; empty middle segment;
-- reserved-bit rejection; `Orphan` cont/last; `FIRST` mid-reassembly
+- reserved-bit rejection; `Orphan` cont/last; `Runt` (zero-length
+  segment) mid-reassembly and at idle; `FIRST` mid-reassembly
   discards and restarts; overflow then recovery;
+- `segments()` with `seg_payload` of 1, and the `seg_payload == 0`
+  debug assertion;
 - `uuid()` spot-check against the spec table's three literal UUIDs.
 
 **Exit criteria.** `cargo test -p umsh-companion` green; module doc
@@ -322,8 +337,12 @@ From the Phase 0 spike, into the real firmware:
 - `ble_task` owns: the trouble GATT server (Companion Link Service,
   Frame In write + write-without-response, Frame Out notify + CCCD;
   all access encrypted+bonded), advertising, and per-connection state.
-- Inbound: Frame In writes → `gatt::Reassembler<512>` → clamp to
-  `FRAME_IN_MAX` → `InEvent::Frame(Transport::Ble, ..)`. CCCD
+- Inbound: Frame In writes → `gatt::Reassembler<512>` (the spec's
+  service maximum) → `InEvent::Frame(Transport::Ble, ..)`. A
+  reassembled frame larger than `FRAME_IN_MAX` is **dropped whole**,
+  never truncated — the transport carries frames unchanged or not at
+  all, and truncation could turn oversize input into a different
+  valid command. CCCD
   subscribe on a link that meets security → `Attached(Ble)`;
   disconnect or unsubscribe → `Detached(Ble)`.
 - Outbound: `OUT_BLE_CH` (same shape as `OUT_USB_CH`); `ble_task`
@@ -333,18 +352,42 @@ From the Phase 0 spike, into the real firmware:
 
 ### C3 — transport arbitration + advertising policy
 
-In `ncp_task`, one place:
+In `ncp_task`, one place, with a **session generation counter** so a
+displaced session's state can never leak into its successor:
 
-- `active: Option<Transport>`. `Attached(t)` → session reset (existing
-  path), `active = Some(t)`, and if the displaced transport was BLE,
-  signal `ble_task` to disconnect; if USB, its decoder resets on its
-  own edge.
-- `Frame(t, ..)` where `Some(t) != active` → dropped.
+- `active: Option<Transport>` plus `gen: u32`, published as
+  `SESSION_GEN: AtomicU32`.
+- `Attached(t)`: `gen += 1`, session reset (existing path),
+  `active = Some(t)`. The displaced transport gets an explicit
+  logical detach, not an assumption that it will notice on its own:
+  BLE is told to disconnect; USB gets no physical edge when displaced,
+  so `usb_in_task` compares `SESSION_GEN` against its local copy at
+  the top of each read iteration and resets its HDLC decoder on
+  change (a partial frame can therefore never straddle sessions).
+- Output purge: every frame queued to `OUT_USB_CH`/`OUT_BLE_CH` is
+  tagged `(gen, frame)`; the consuming output task drops frames whose
+  generation is stale. Responses and radio frames queued for a
+  displaced session are thereby discarded rather than delivered to
+  the displaced host or, worse, to the next session on that
+  transport.
+- `Frame(t, ..)` where `Some(t) != active` → dropped. Frames emitted
+  while `active == None` → dropped (nothing is attached to receive
+  them).
 - `Detached(t)` where `t == active` → `active = None`.
-- Advertising: an `embassy_sync::watch` carries
-  `adv_allowed = !(active == Some(Usb))` to `ble_task`, which also
-  gates advertising on its own pairing/bond state (spec §Advertising:
-  suspended while a USB companion session is open).
+- Advertising is gated **only** by attach state, never by pairing
+  mode or bond state (spec §Advertising: bonded hosts must be able to
+  reconnect at any time). An `embassy_sync::watch` carries
+  `adv_allowed = (active != Some(Usb))` to `ble_task`; a live BLE
+  connection stops advertising as a side effect of being connected.
+
+Policy truth table:
+
+| USB session | BLE state    | Advertising | New pairing accepted |
+|---|---|---|---|
+| open  | —            | no  | n/a (adv off; existing bonds could still connect if implementation allows, then displace USB on subscribe) |
+| —     | attached     | no (connected) | n/a |
+| none  | disconnected | yes | only per pairing-mode/PIN/OOB rules |
+| none  | connected, not yet attached | no (connected) | per pairing-mode/PIN/OOB rules |
 
 ### C4 — pairing mode, gesture, lockout, PIN property
 
@@ -362,30 +405,53 @@ In `ncp_task`, one place:
   - LED: add a pairing-mode pattern to `LedEngine` timings.
 - **Lockout**: failed-pairing counter in `ble_task` (RAM; resets only
   by reboot). At 3, reject *all* pairing until power cycle.
-- **`PROP_BLE_PAIRING_PIN` (4864)**:
+- **`PROP_BLE_PAIRING_PIN` (4864)** — deferred completion, mirroring
+  the existing `PROP_PHY_RSSI` pattern (`Effect::SampleRssi { tid }` →
+  `Session::respond_rssi`):
   - `umsh-companion/src/ids.rs`: `pub const BLE_PAIRING_PIN: u32 =
     4864;` under `prop`.
-  - `Session::prop_set`: accept empty (clear) or `UINT32_LE` ≤
-    999 999, else `STATUS_INVALID_ARGUMENT`; on success emit the
-    standard `CMD_PROP_IS` echo (echoing to the setter on the same
-    link discloses nothing) and return
-    `Effect::SetPairingPin(Option<u32>)`. **No PIN state is stored in
+  - `Session::prop_set`: validate (empty = clear, or `UINT32_LE` ≤
+    999 999, else `STATUS_INVALID_ARGUMENT`), then return
+    `Effect::SetPairingPin { tid, pin: Option<u32> }` **without
+    emitting any response yet**. The firmware applies the SMP
+    configuration (and, from Phase D, commits it to flash), then
+    calls `Session::respond_pin_set(tid, result, emit)`, which emits
+    `CMD_PROP_IS PROP_LAST_STATUS` with `STATUS_OK` on success or
+    `STATUS_INTERNAL_ERROR` on apply/commit failure (per spec: this
+    property is never echoed, and success is not reported before the
+    value is applied and durably stored). **No PIN state is stored in
     `Session`** — the PIN survives `CMD_RST` by design, so its
     authority lives in the firmware/persistence layer.
   - `Session::prop_get` for 4864: `STATUS_UNIMPLEMENTED`, without
     revealing whether a PIN is set (i.e., the same answer always).
+  - Host side: `CompanionRadio::finish_prop_transaction` currently
+    treats any `PROP_LAST_STATUS` response as an error; teach it that
+    `STATUS_OK` is a success carrying no value (this also matches
+    `CMD_STR_SEND`-style completions generally).
   - Firmware: `Effect::SetPairingPin` routes to `ble_task`; when a
     PIN is set, the SMP responder uses IO capability `DisplayOnly`
     with the static passkey; when unset, `NoInputNoOutput` (Just
-    Works). RAM-only until Phase D.
-  - Session tests: set/clear/range/get-refusal, effect emission,
-    and `CMD_RST` *not* emitting any PIN-related effect.
+    Works). RAM-only until Phase D (the apply step completes
+    immediately; the effect/respond round-trip shape is the same, so
+    Phase D only inserts the flash commit).
+  - Lockout accounting per spec: the counter increments **only** on
+    passkey authentication failures (LESC confirm-value / DHKey check
+    failures); legacy-pairing rejections, pairing refused outside
+    pairing mode, and malformed SMP traffic do not count (remote
+    DoS resistance); reset on successful pairing or power cycle.
+  - Session tests: set/clear/range validation, no premature response,
+    `respond_pin_set` success and failure paths, get-refusal, and
+    `CMD_RST` *not* emitting any PIN-related effect.
 
 **Exit criteria.** `companion_probe --ble` and `desktop_chat --ble`
-pass against the T-Echo; USB regression unchanged; nRF Connect
+pass against the T-Echo; USB regression unchanged; displacement test:
+attach over USB mid-BLE-session and vice versa, verifying the
+displaced side receives nothing further (no stale generation frames)
+and both transports re-attach cleanly afterward; nRF Connect
 verification: unencrypted characteristic access refused, pairing
-refused outside pairing mode, lockout trips at 3 failures and clears
-on power cycle, bonded reconnect kills pairing mode.
+refused outside pairing mode, lockout trips at 3 authentication
+failures (and only authentication failures) and clears on power
+cycle, bonded reconnect kills pairing mode.
 
 ## Phase D — persistence
 
@@ -400,7 +466,10 @@ on power cycle, bonded reconnect kills pairing mode.
 - Persist: bond store (identity keys + LTKs; cap 4 bonds — at
   capacity, new pairing fails per spec §Bond Management) and the
   pairing PIN (write-only at the protocol; never logged or echoed in
-  diagnostics).
+  diagnostics). The PIN's deferred completion from C4 now spans the
+  flash commit: `respond_pin_set` fires only after the
+  MPSL-coordinated write succeeds, reporting `STATUS_INTERNAL_ERROR`
+  (and leaving the previous PIN in effect) if it does not.
 - Local bond deletion (spec requirement): hold the user button through
   boot ~10 s — i.e., well past the 3 s pairing-mode gesture, with a
   second distinct LED indication — clears bonds and the PIN.
