@@ -195,8 +195,22 @@ impl LedEngine {
 mod tests {
     use super::*;
 
+    /// Engine with fixed test timings (2 s interval, 50 ms pulse).
+    ///
+    /// Deliberately *not* `LedTimings::default()`: every assertion below
+    /// hardcodes deadlines derived from these numbers, and the product
+    /// defaults are tuning knobs that have changed before (2000/50 →
+    /// 4000/20 in commit 65d8d4e6, which silently broke this module's
+    /// tests). Pinning the timings here keeps the tests about the engine's
+    /// *logic*, not the current tuning.
     fn engine(start: u64) -> LedEngine {
-        LedEngine::new(LedTimings::default(), start)
+        LedEngine::new(
+            LedTimings {
+                heartbeat_interval: Duration::from_millis(2_000),
+                heartbeat_pulse: Duration::from_millis(50),
+            },
+            start,
+        )
     }
 
     #[test]
