@@ -223,6 +223,21 @@ impl From<CapacityError> for AddPeerError {
     }
 }
 
+/// Error returned when adding a named channel to the MAC channel table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddChannelError {
+    /// The channel table is full.
+    Capacity,
+    /// The channel name failed canonicalization (non-ASCII or too long).
+    InvalidName(umsh_crypto::ChannelNameError),
+}
+
+impl From<CapacityError> for AddChannelError {
+    fn from(_: CapacityError) -> Self {
+        AddChannelError::Capacity
+    }
+}
+
 /// Bundle of platform-specific associated types used by the higher layers.
 pub trait Platform {
     /// Local identity implementation.

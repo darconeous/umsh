@@ -1169,9 +1169,16 @@ impl<
     }
 
     /// Adds or updates a named channel using the coordinator's channel-key derivation.
-    pub fn add_named_channel(&mut self, name: &str) -> Result<(), CapacityError> {
-        let key = self.crypto.derive_named_channel_key(name);
-        self.add_channel(key)
+    ///
+    /// The name is canonicalized (ASCII lowercase fold) before derivation, so
+    /// `Public` and `public` register the same channel.
+    pub fn add_named_channel(&mut self, name: &str) -> Result<(), crate::AddChannelError> {
+        let key = self
+            .crypto
+            .derive_named_channel_key(name)
+            .map_err(crate::AddChannelError::InvalidName)?;
+        self.add_channel(key)?;
+        Ok(())
     }
 
     /// Return the number of occupied identity slots.
@@ -1684,10 +1691,14 @@ impl<
         let receipt = queued.receipt;
         let identity_id = queued.identity_id;
         let tx_options = if queued.priority == TxPriority::ImmediateAck {
-            TxOptions::default()
+            // Immediate ACK: the channel was clear when the packet ended, so
+            // transmit without CAD (see channel-access.md § Immediate ACK).
+            TxOptions {
+                cad: umsh_hal::CadPolicy::Skip,
+            }
         } else {
             TxOptions {
-                cad_timeout_ms: Some(0),
+                cad: umsh_hal::CadPolicy::Gate,
             }
         };
         match self
@@ -1896,7 +1907,14 @@ impl<
             if now_ms >= deadline {
                 return Poll::Ready(Ok(WakeReason::TimerExpired));
             }
-            let _ = self.clock.poll_delay_until(cx, deadline);
+            // A `Ready` here means the deadline elapsed between the `now_ms`
+            // snapshot above and this poll. Treat it as a timer expiry so the
+            // deadline is never silently dropped; a `Pending` result must have
+            // arranged a wake (a registered timer, or the default impl's
+            // immediate self-wake busy-poll).
+            if self.clock.poll_delay_until(cx, deadline).is_ready() {
+                return Poll::Ready(Ok(WakeReason::TimerExpired));
+            }
         }
 
         if self.tx_queue.has_ready(now_ms) {

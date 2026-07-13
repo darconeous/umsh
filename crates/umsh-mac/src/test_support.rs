@@ -553,7 +553,7 @@ impl ModeledNetwork {
     ) -> Result<(), TxError<()>> {
         self.promote_due_frames();
         let now_ms = self.clock.now_ms();
-        if options.cad_timeout_ms.is_some() && self.channel_busy(from, now_ms) {
+        if !matches!(options.cad, umsh_hal::CadPolicy::Skip) && self.channel_busy(from, now_ms) {
             return Err(TxError::CadTimeout);
         }
 

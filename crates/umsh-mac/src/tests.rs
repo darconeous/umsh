@@ -3875,7 +3875,7 @@ fn modeled_network_reports_cad_busy_during_active_transmission() {
     let result = block_on(bob.transmit(
         b"retry",
         TxOptions {
-            cad_timeout_ms: Some(0),
+            cad: umsh_hal::CadPolicy::Gate,
         },
     ));
     assert!(matches!(result, Err(TxError::CadTimeout)));
@@ -6534,8 +6534,12 @@ impl DummyRadio {
         } else {
             builder
         };
+        // `min_rssi`/`min_snr` are the dBm/dB thresholds. Min RSSI is encoded
+        // on the wire as an unsigned negated-dBm byte, so a positive dBm
+        // threshold is not representable and clamps to 0. Min SNR is a signed
+        // 1-byte dB value.
         let builder = if let Some(min_rssi) = min_rssi {
-            builder.option(OptionNumber::MinRssi, &min_rssi.to_be_bytes())
+            builder.option(OptionNumber::MinRssi, &[(-min_rssi).clamp(0, 255) as u8])
         } else {
             builder
         };
@@ -6750,7 +6754,7 @@ impl Radio for DummyRadio {
         data: &[u8],
         options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
-        if options.cad_timeout_ms.is_some() {
+        if !matches!(options.cad, umsh_hal::CadPolicy::Skip) {
             self.cad_calls = self.cad_calls.wrapping_add(1);
             if self.cad_responses.pop_front().unwrap_or(false) {
                 return Err(TxError::CadTimeout);
