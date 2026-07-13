@@ -102,6 +102,10 @@ frame size. If a reassembly exceeds it, the receiver **MUST** discard
 the partial frame and ignore subsequent `SAR_CONT`/`SAR_LAST` segments
 until the next `SAR_COMPLETE` or `SAR_FIRST` segment.
 
+An ATT value of zero length contains no segment header and is not a
+valid segment; the receiver **MUST** discard it and reset reassembly
+on that characteristic.
+
 Reassembly state is reset whenever the connection drops or the link
 detaches (see (#attach-semantics)).
 
@@ -203,6 +207,11 @@ Advertising content **MUST NOT** reveal whether the NCP holds bonds or
 identify previously bonded hosts. NCPs **SHOULD** use resolvable
 private addresses.
 
+Pairing mode (see (#pairing-mode)) governs only the acceptance of
+pairing requests; it does not affect advertising. In particular, a
+bonded NCP continues to advertise outside pairing mode so that its
+bonded hosts can reconnect.
+
 ## Security {#ble-security}
 
 The companion-radio protocol is a privileged interface: an attached
@@ -273,10 +282,15 @@ serial transports.
 * Devices with a pairing PIN configured (see (#pairing-pin)) use LESC
   Passkey Entry with the configured PIN as a static passkey. Such
   pairing **MAY** be accepted outside pairing mode. The NCP **MUST**
-  count consecutive failed pairing attempts since power-on; after a
-  small limit (**MUST NOT** exceed 5; 3 **RECOMMENDED**), the NCP
-  **MUST** reject all further pairing attempts until it is power
-  cycled.
+  count consecutive passkey authentication failures — pairing
+  attempts that fail the LESC confirm-value or DHKey check — since
+  power-on; the counter resets on a successful pairing or a power
+  cycle. Rejections that never reach passkey authentication
+  (legacy-pairing attempts, pairing refused outside pairing mode,
+  malformed pairing requests) **MUST NOT** increment the counter, so
+  they cannot be used to lock out pairing remotely. After a small
+  limit (**MUST NOT** exceed 5; 3 **RECOMMENDED**), the NCP **MUST**
+  reject all further pairing attempts until it is power cycled.
 * NCPs **MAY** additionally support LESC Out-of-Band pairing (for
   example, OOB data conveyed by a QR code affixed to or displayed by
   the device). OOB pairing is authenticated and **MAY** be accepted at
@@ -308,6 +322,16 @@ Sets the static passkey used by the configured-PIN association model
 above. Writing an empty value clears the PIN, returning the device to
 the Just Works model. Values outside 0–999999 fail with
 `STATUS_INVALID_ARGUMENT`.
+
+As an exception to the usual `CMD_PROP_SET` behavior, a successful
+set of this property is acknowledged with `CMD_PROP_IS` for
+`PROP_LAST_STATUS` carrying `STATUS_OK` and the command's TID; the
+NCP **MUST NOT** emit `CMD_PROP_IS` for this property itself. Success
+**MUST NOT** be reported before the new value is in effect for
+subsequent pairing attempts and, where the device supports
+persistence, durably stored; a value that cannot be applied or stored
+is reported with an appropriate error status and leaves the previous
+PIN state unchanged.
 
 The PIN persists across resets and power cycles. It is write-only:
 `CMD_PROP_GET` for this property **MUST** fail with
