@@ -7,6 +7,7 @@
 //! ```sh
 //! cargo run --example companion_probe --features serial-radio -- \
 //!     /dev/cu.usbmodemXXXX [--tx]
+//! cargo run --example companion_probe --features ble-radio -- --scan-ble
 //! ```
 //!
 //! The default RF profile matches the firmware's MeshCore-US bringup
@@ -24,9 +25,16 @@ use umsh::hal::{Radio, TxOptions};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let first = args.next().ok_or(
-        "usage: companion_probe <serial-port> [--tx|--check] | --ble [selector] [--tx|--check]",
+        "usage: companion_probe <serial-port> [--tx|--check] | --ble [selector] [--tx|--check] | --scan-ble",
     )?;
     let rest: Vec<String> = args.collect();
+
+    if first == "--scan-ble" {
+        #[cfg(feature = "ble-radio")]
+        return scan_ble().await;
+        #[cfg(not(feature = "ble-radio"))]
+        return Err("the ble-radio feature is required for --scan-ble".into());
+    }
     let do_tx = rest.iter().any(|arg| arg == "--tx");
     let check_only = rest.iter().any(|arg| arg == "--check");
     let pin_update = rest.iter().find_map(|arg| {
@@ -69,6 +77,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(not(feature = "serial-radio"))]
     Err("the serial-radio feature is required for a serial path".into())
+}
+
+#[cfg(feature = "ble-radio")]
+async fn scan_ble() -> Result<(), Box<dyn std::error::Error>> {
+    use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+    use btleplug::platform::Manager;
+
+    let service = uuid::Uuid::from_u128(umsh::companion::gatt::SERVICE_UUID);
+    let manager = Manager::new().await?;
+    let adapters = manager.adapters().await?;
+    if adapters.is_empty() {
+        return Err("no BLE adapters found".into());
+    }
+
+    for adapter in &adapters {
+        adapter
+            .start_scan(ScanFilter {
+                services: vec![service],
+            })
+            .await?;
+    }
+    println!("scanning passively for Companion Link advertisements ...");
+    tokio::time::sleep(core::time::Duration::from_secs(8)).await;
+
+    let mut found = 0usize;
+    for adapter in &adapters {
+        for peripheral in adapter.peripherals().await? {
+            let Some(properties) = peripheral.properties().await? else {
+                continue;
+            };
+            if !properties.services.contains(&service) {
+                continue;
+            }
+            found += 1;
+            let name = properties.local_name.as_deref().unwrap_or("<unnamed>");
+            let rssi = properties
+                .rssi
+                .map_or_else(|| "n/a".to_owned(), |rssi| format!("{rssi} dBm"));
+            #[cfg(target_os = "macos")]
+            println!("id={}  name={}  rssi={}", peripheral.id(), name, rssi);
+            #[cfg(not(target_os = "macos"))]
+            println!(
+                "address={}  id={}  name={}  rssi={}",
+                properties.address,
+                peripheral.id(),
+                name,
+                rssi,
+            );
+        }
+        adapter.stop_scan().await?;
+    }
+
+    if found == 0 {
+        return Err("no Companion Link advertisements found".into());
+    }
+    Ok(())
 }
 
 async fn run_probe<L: FrameLink>(
