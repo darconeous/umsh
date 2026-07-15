@@ -83,7 +83,8 @@ host is attached:
   list ((#prop-dev-peers))
 * the RF configuration (`PROP_PHY_*`), including `PROP_PHY_ENABLED`, and
   the duty-cycle limit
-* device behavior settings (property identifiers 68–95, reserved for
+* the human-readable device name (`PROP_DEV_NAME`)
+* device behavior settings (property identifiers 69–95, reserved for
   future definition: repeater policy, positioning, periodic advertisement
   of the device identity, and similar)
 * transport configuration such as `PROP_BLE_PAIRING_PIN`
@@ -593,6 +594,7 @@ Id  | Mnemonic                      | Commands                 | Description
 65  | `PROP_DEV_PRIVATE_KEY`        | Set                      | Device identity private key (write-only)
 66  | `PROP_DEV_CHANNEL_KEYS`       | Get, Set, Insert, Remove | Device identity channel keys
 67  | `PROP_DEV_PEERS`              | Get, Set, Insert, Remove | Device identity peer list
+68  | `PROP_DEV_NAME`               | Get, Set                 | Human-readable device name
 96  | `PROP_HOST_KEY`               | Get, Set                 | Tethered host identity public key
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
@@ -733,6 +735,28 @@ secret material.
 How the device node uses this list (management access control, secure
 diagnostics, and so on) is application behavior outside the scope of this
 protocol.
+
+### PROP 68: `PROP_DEV_NAME` {#prop-dev-name}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_DEV_NAME`
+* Value Type: 1–64 octets of UTF-8, without U+0000
+* Post-Reset Value: Implementation-defined default, or restored from saved state
+
+The operator-assigned, human-readable name of the physical companion-radio
+device. It is independent of the device and host cryptographic identities and
+**MUST NOT** be derived from a bonded host or other host-domain state.
+
+Setting the property changes the live name immediately. Like other ordinary
+device-domain configuration, it is included in a `CMD_SAVE` snapshot but is
+not independently persisted merely by being set. Applications and transports
+that present the device to a person **SHOULD** use this value when practical.
+They **MAY** shorten it to fit a constrained presentation, but **MUST NOT**
+split a UTF-8 code point when doing so.
+
+The name is intentionally public metadata. Operators should assume that any
+value used in discovery advertisements can be observed by nearby devices.
 
 ### PROP 96: `PROP_HOST_KEY` {#prop-host-key}
 
@@ -1197,6 +1221,7 @@ Code | Name                | Requires          | Grants
 35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgement delegation
 36   | `CAP_SAVE`          | —                 | `CMD_SAVE`, `CMD_RESTORE`, `PROP_SAVED`, and boot-time restoration of saved state
 37   | `CAP_DEV_IDENTITY`  | —                 | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
+38   | `CAP_DEV_NAME`      | —                 | `PROP_DEV_NAME`
 
 An NCP **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. `CMD_PROP_INSERT`/`CMD_PROP_REMOVE`, `CMD_CLEAR`,

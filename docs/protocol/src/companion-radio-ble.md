@@ -201,7 +201,12 @@ While powered and not attached, the NCP **SHOULD** advertise as
 connectable and include the Companion Link Service UUID in its
 advertising data or scan response, so hosts can discover companion
 radios by service rather than by name. The advertised local name is
-implementation-specific.
+implementation-specific unless the NCP advertises `CAP_DEV_NAME`. Such an NCP
+**SHOULD** use its current `PROP_DEV_NAME` as the advertised local name,
+shortening it without splitting a UTF-8 code point when the advertising or scan
+response payload cannot hold the complete value. A name changed while a BLE
+connection is active takes effect on the next advertising cycle; changing it
+does not require disconnecting the attached host.
 
 While a host is attached over another transport (for example, an open
 companion session over USB-CDC), the NCP **SHOULD** suspend

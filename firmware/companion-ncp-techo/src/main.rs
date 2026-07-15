@@ -1,7 +1,7 @@
 // LilyGO T-Echo companion-radio NCP firmware.
 //
 // Exposes the SX1262 as a host-controlled PHY speaking the minimal
-// companion-radio protocol (docs/protocol/src/companion-radio-minimal.md)
+// companion-radio protocol plus advertised full-profile extensions
 // over USB-CDC/HDLC-Lite and encrypted+bonded BLE GATT/SAR. The UMSH MAC does not run here:
 // the host owns it and drives this device through
 // `umsh::companion_radio::CompanionRadio`.
@@ -120,7 +120,9 @@ mod firmware {
     use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
-    use umsh_companion_ncp::{Effect, RadioSettings, Session, SessionConfig, TxPower};
+    use umsh_companion_ncp::{
+        Effect, MAX_DEVICE_NAME_LEN, RadioSettings, Session, SessionConfig, TxPower,
+    };
     use umsh_radio_loraphy::{
         MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
         coding_rate_from_denom, spreading_factor_from_u8,
@@ -156,6 +158,7 @@ mod firmware {
     /// Nordic's SDC buffer configuration accepts 27..=251 octets.
     const SDC_PACKET_SIZE: u16 = 251;
     const BLE_VALUE_MAX: usize = 244;
+    const DEFAULT_DEVICE_NAME: &str = "UMSH T-Echo NCP";
 
     #[gatt_server]
     struct CompanionServer {
@@ -208,6 +211,7 @@ mod firmware {
                     "; ble-bonds=4"
                 ),
             },
+            default_device_name: DEFAULT_DEVICE_NAME,
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
             // private-network word 0x12 → SX126x registers 0x1424.
@@ -530,6 +534,10 @@ mod firmware {
     static OUT_USB_CH: Channel<ThreadModeRawMutex, OutFrame, 4> = Channel::new();
     static OUT_BLE_CH: Channel<ThreadModeRawMutex, OutFrame, 4> = Channel::new();
 
+    type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
+    static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
+    static DEVICE_NAME_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
     /// Published session epoch, checked by each transport at framing edges.
     static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
 
@@ -763,6 +771,7 @@ mod firmware {
     async fn apply_effect(session: &Session, effect: Option<Effect>) {
         match effect {
             Some(Effect::ApplyRadio(settings)) => {
+                publish_device_name(session).await;
                 // The session validates values against the same discrete
                 // sets these converters accept, so None here is
                 // unreachable; bail out defensively rather than panic.
@@ -798,9 +807,22 @@ mod firmware {
                 };
                 RADIO_CH.tx.send(TxRequest { data, power_dbm }).await;
             }
+            Some(Effect::DeviceNameChanged) => publish_device_name(session).await,
             // SampleRssi needs `&mut Session` + the emitter, so it is handled
             // inline in ncp_task rather than here.
             Some(Effect::SampleRssi { .. }) | Some(Effect::SetPairingPin { .. }) | None => {}
+        }
+    }
+
+    async fn publish_device_name(session: &Session) {
+        let bytes = session.device_name().as_bytes();
+        let mut current = DEVICE_NAME.lock().await;
+        if current.as_slice() == bytes {
+            return;
+        }
+        current.clear();
+        if current.extend_from_slice(bytes).is_ok() {
+            DEVICE_NAME_CHANGED.signal(());
         }
     }
 
@@ -980,20 +1002,32 @@ mod firmware {
         server: &'server CompanionServer<'values>,
     ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
         const SERVICE_UUID_LE: [u8; 16] = gatt::SERVICE_UUID.to_le_bytes();
+        let name = {
+            let configured = DEVICE_NAME.lock().await;
+            if configured.is_empty() {
+                DeviceName::from_slice(DEFAULT_DEVICE_NAME.as_bytes()).expect("default name fits")
+            } else {
+                configured.clone()
+            }
+        };
+        let adv_name_len = utf8_prefix_len(name.as_slice(), 8);
         let mut adv_data = [0u8; 31];
         let adv_len = AdStructure::encode_slice(
             &[
                 AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
                 AdStructure::CompleteServiceUuids128(&[SERVICE_UUID_LE]),
-                AdStructure::ShortenedLocalName(b"UMSH NCP"),
+                AdStructure::ShortenedLocalName(&name[..adv_name_len]),
             ],
             &mut adv_data,
         )?;
+        let scan_name_len = utf8_prefix_len(name.as_slice(), 29);
+        let scan_name = if scan_name_len == name.len() {
+            AdStructure::CompleteLocalName(&name[..scan_name_len])
+        } else {
+            AdStructure::ShortenedLocalName(&name[..scan_name_len])
+        };
         let mut scan_data = [0u8; 31];
-        let scan_len = AdStructure::encode_slice(
-            &[AdStructure::CompleteLocalName(b"UMSH T-Echo NCP")],
-            &mut scan_data,
-        )?;
+        let scan_len = AdStructure::encode_slice(&[scan_name], &mut scan_data)?;
         debug_log(format_args!(
             "advertising start adv-bytes={} scan-bytes={}",
             adv_len, scan_len
@@ -1013,6 +1047,15 @@ mod firmware {
         let connection = raw_connection.with_attribute_server(server)?;
         debug_log(format_args!("advertising gatt-server attached"));
         Ok(connection)
+    }
+
+    fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
+        let text = core::str::from_utf8(bytes).expect("validated device name");
+        let mut len = bytes.len().min(maximum);
+        while !text.is_char_boundary(len) {
+            len -= 1;
+        }
+        len
     }
 
     async fn send_ble_frame(
@@ -1479,8 +1522,14 @@ mod firmware {
                 ADV_POLICY_CHANGED.wait().await;
                 continue;
             }
-            match select(advertise(peripheral, server), ADV_POLICY_CHANGED.wait()).await {
-                Either::First(Ok(connection)) => {
+            match select3(
+                advertise(peripheral, server),
+                ADV_POLICY_CHANGED.wait(),
+                DEVICE_NAME_CHANGED.wait(),
+            )
+            .await
+            {
+                Either3::First(Ok(connection)) => {
                     match gatt_connection(stack, store, server, &connection).await {
                         Ok(()) => debug_log(format_args!("gatt connection task ended ok")),
                         Err(error) => {
@@ -1488,8 +1537,11 @@ mod firmware {
                         }
                     }
                 }
-                Either::First(Err(error)) => debug_log(format_args!("advertising error={error:?}")),
-                Either::Second(()) => debug_log(format_args!("advertising policy changed")),
+                Either3::First(Err(error)) => {
+                    debug_log(format_args!("advertising error={error:?}"))
+                }
+                Either3::Second(()) => debug_log(format_args!("advertising policy changed")),
+                Either3::Third(()) => debug_log(format_args!("advertising device name changed")),
             }
         }
     }
@@ -1714,7 +1766,7 @@ mod firmware {
                         let _ = arbitration.advertising_allowed();
                         set_advertising_allowed(true);
                     }
-                    let effect = session.reset(boot_reason, &mut |_frame: &[u8]| {});
+                    let effect = session.attach(boot_reason, &mut |_frame: &[u8]| {});
                     apply_effect(&session, Some(effect)).await;
                 }
                 Either3::First(InEvent::Detached(transport)) => {

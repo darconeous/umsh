@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
-//! NCP-side session engine for the minimal companion-radio protocol.
+//! NCP-side session engine for the minimal companion-radio protocol and
+//! independently advertised full-profile extensions.
 //!
 //! [`Session`] is a pure state machine: it consumes decoded
 //! companion-link frames (framing such as HDLC-Lite is handled by the
@@ -30,4 +31,4 @@ pub mod duty;
 pub mod session;
 
 pub use duty::DutyTracker;
-pub use session::{Effect, RadioSettings, Session, SessionConfig, TxPower};
+pub use session::{Effect, MAX_DEVICE_NAME_LEN, RadioSettings, Session, SessionConfig, TxPower};
