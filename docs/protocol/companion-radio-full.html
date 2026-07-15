@@ -1,0 +1,1343 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Full Companion Radio Protocol - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-4c32735f.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="full-companion-radio-protocol"><a class="header" href="#full-companion-radio-protocol">Full Companion Radio Protocol</a></h1>
+<p>This chapter defines the <strong>full</strong> companion-radio protocol: a strict superset
+of the <a href="companion-radio-minimal.html">Minimal Companion Radio Protocol</a>. An NCP
+implementing this chapter implements everything in the minimal protocol —
+the frame format, packed unsigned integers, commands, properties, status
+codes, reset codes, and capabilities defined there apply here unchanged and
+are not repeated. The protocol version remains <strong>6.0</strong>; a host discovers
+which full-protocol features an NCP implements through <code>PROP_CAPS</code>
+(see (#full-capabilities)), not through the version number.</p>
+<p>The minimal protocol treats the NCP as a raw radio pipe: the host runs the
+entire UMSH MAC and the NCP moves frames. The full protocol keeps that
+division of labor — the host still owns the MAC and its own private keys —
+and adds narrowly scoped <strong>assistance</strong> so the NCP can be useful while the
+host is asleep or disconnected:</p>
+<ul>
+<li><strong>Receive filtering</strong> — the NCP learns which frames are relevant so it does
+not deliver (or wake the host for) unrelated traffic.</li>
+<li><strong>Inbound queueing</strong> — frames received while no host is attached are
+retained and delivered when the host asks for them.</li>
+<li><strong>Key provisioning</strong> — the host installs channel keys and pairwise peer
+keys so the NCP can recognize traffic for the host’s identity, including
+blind unicast, and authenticate it.</li>
+<li><strong>Acknowledgement delegation</strong> — for peers whose pairwise keys are
+provisioned, the NCP can send MAC acks on the host’s behalf while the host
+is away.</li>
+<li><strong>Saved state</strong> — the NCP can snapshot its configuration to non-volatile
+storage and resume autonomous operation after a power cycle with no host
+present.</li>
+</ul>
+<p>There is no outbound queueing. A transmit either happens or fails while the
+host is attached to observe the result.</p>
+<h2 id="identity-model"><a class="header" href="#identity-model">Identity Model</a></h2>
+<p>The full protocol supports exactly two node identities:</p>
+<ul>
+<li>
+<p><strong>The device identity</strong> — a node belonging to the companion radio itself,
+used for in-band management, diagnostics, and (in future revisions)
+repeater and advertisement behavior. Its Ed25519 private key is held by
+the NCP: it is either generated on the device or installed once by the
+host (see (#prop-dev-private-key)), and it is never readable through this
+protocol.</p>
+</li>
+<li>
+<p><strong>The tethered host identity</strong> — the single UMSH identity owned by the
+attached host. Of the identity keypair itself, the NCP holds only the
+32-byte public key; the host’s private key <strong>MUST NOT</strong> be transferred
+to the NCP, and this protocol provides no mechanism for doing so (see
+<a href="companion-radio.html#security-boundary">Security Boundary</a>). The NCP may
+additionally hold host-domain state derived or delegated by the host —
+channel keys, per-peer symmetric keys, filters, and queued traffic — as
+defined in this chapter.</p>
+</li>
+</ul>
+<p>Because the NCP never holds the host’s private key, it cannot perform ECDH
+on the host’s behalf. All pairwise key material the NCP uses for the host
+identity is derived by the host and explicitly provisioned per peer (see
+(#prop-host-peer-keys)). The device identity is different: the NCP holds
+that private key, so it performs its own key agreement and needs only peer
+<em>public</em> keys (see (#prop-dev-peers)).</p>
+<h2 id="state-classes"><a class="header" href="#state-classes">State Classes</a></h2>
+<p>Every piece of NCP state belongs to exactly one of three classes. The
+classes determine what survives a host attach, a change of host, and a
+power cycle.</p>
+<h3 id="session-state"><a class="header" href="#session-state">Session State</a></h3>
+<p>State that exists only while a host is attached: transaction (TID)
+correlation, transport reassembly buffers, and session-scoped properties —
+currently only <code>PROP_MAC_PROMISCUOUS</code>. Session state is reset to defaults
+on every attach. Resetting it never affects radio operation.</p>
+<h3 id="device-domain"><a class="header" href="#device-domain">Device Domain</a></h3>
+<p>State that belongs to the companion radio itself, independent of which
+host is attached:</p>
+<ul>
+<li>the device identity keypair (independently persisted; never part of
+the saved snapshot — see (#saved-state))</li>
+<li>the device identity’s channel keys ((#prop-dev-channel-keys)) and peer
+list ((#prop-dev-peers))</li>
+<li>the RF configuration (<code>PROP_PHY_*</code>), including <code>PROP_PHY_ENABLED</code>, and
+the duty-cycle limit</li>
+<li>device behavior settings (property identifiers 68–95, reserved for
+future definition: repeater policy, positioning, periodic advertisement
+of the device identity, and similar)</li>
+<li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
+</ul>
+<p>The RF configuration is deliberately device-domain: a site repeater keeps
+its frequency and regulatory limits no matter which phone pairs with it.
+An attached host may still reconfigure it at any time.</p>
+<h3 id="host-domain"><a class="header" href="#host-domain">Host Domain</a></h3>
+<p>State that belongs to the currently configured tethered host identity:</p>
+<ul>
+<li><code>PROP_HOST_KEY</code> itself</li>
+<li>the host’s channel keys and peer keys</li>
+<li>the receive filter table and acknowledgement-delegation policy</li>
+<li>the inbound queue: its configuration and its contents</li>
+</ul>
+<h3 id="host-replacement"><a class="header" href="#host-replacement">Host Replacement</a></h3>
+<p>The host domain is keyed by <code>PROP_HOST_KEY</code>. Setting <code>PROP_HOST_KEY</code> to a
+value <strong>different</strong> from its current value — including setting it to empty
+— <strong>MUST</strong> atomically reset the entire host domain to defaults: the key
+tables and filter table are cleared, <code>PROP_HOST_AUTO_ACK</code> reverts to
+false, and the inbound queue is discarded. The wipe <strong>MUST</strong> also apply to
+the host-domain portion of any saved state (see (#saved-state)), so that a
+power cycle cannot resurrect a previous host’s provisioning.</p>
+<p>Setting <code>PROP_HOST_KEY</code> to its current value is idempotent and has no side
+effects.</p>
+<p>This rule is what makes re-pairing safe: when a companion radio is paired
+with a different phone, the new host configures its own identity and the
+previous host’s keys, filters, and queued traffic cease to exist — while
+the device domain (the radio’s own identity, channels, and settings) is
+untouched.</p>
+<h2 id="attach-sync"><a class="header" href="#attach-sync">Attach, Detach, and Synchronization</a></h2>
+<p>How attach and detach are detected is defined by the transport binding:</p>
+<ul>
+<li><strong>BLE</strong> — enabling/disabling notifications on Frame Out, as specified in
+<a href="companion-radio-ble.html#attach-semantics">Companion Radio over BLE</a>.</li>
+<li><strong>USB-CDC</strong> — assertion and deassertion of DTR on the companion
+interface.</li>
+<li><strong>Bare UART</strong> — implementation-defined. An NCP with no way to detect
+host presence MAY treat the host as permanently attached, in which case
+it never enters detached operation and offline assistance
+((#inbound-queueing), (#ack-delegation)) is unavailable on that
+transport.</li>
+</ul>
+<p>On attach, the NCP <strong>MUST</strong> reset session state (see (#state-classes)) and
+<strong>MUST NOT</strong> modify the device or host domains in any way. In particular,
+the PHY is not disabled and no property outside session state changes
+value. The NCP <strong>MUST NOT</strong> emit any frame before attach, and emits no
+unsolicited notification as a result of the attach itself.</p>
+<p>Because attach no longer implies any known default state, the host
+synchronizes by <em>fetching</em>, not by assuming. The following post-attach
+procedure is <strong>RECOMMENDED</strong>:</p>
+<ol>
+<li><code>CMD_PROP_GET</code> for <code>PROP_LAST_STATUS</code>. If it returns a reset code (see
+<a href="companion-radio-minimal.html#reset-codes">Reset Codes</a>), the NCP has
+reset since the last host command, so any state that is not restored
+from saved state (notably queue contents) has been lost.</li>
+<li><code>CMD_PROP_GET</code> for <code>PROP_HOST_KEY</code>, and verify it matches the host’s
+own identity. If it does not, another host has taken over the radio
+since this host last attached; the queue and provisioning belong to
+that identity, and this host must decide whether to take the radio
+over (see (#host-replacement)) before doing anything else.</li>
+<li><code>CMD_PROP_GET</code> for the device-domain and host-domain properties the
+host depends on (<code>PROP_SAVED</code>, the <code>PROP_PHY_*</code> configuration,
+<code>PROP_HOST_RX_QUEUE_COUNT</code>, and the digest forms of the key tables),
+reconciling or re-provisioning as needed.</li>
+<li>Issue <code>CMD_QUEUE_DRAIN</code> when actually ready to process backlogged
+traffic.</li>
+</ol>
+<p>More generally, a host <strong>MUST</strong> tolerate unsolicited <code>CMD_PROP_IS</code>,
+<code>CMD_PROP_INSERTED</code>, and <code>CMD_PROP_REMOVED</code> notifications at any time
+while attached, updating its view of the affected property accordingly:
+NCP state can change for reasons the host did not initiate, and
+publication of the new authoritative value is how the protocol reports
+that.</p>
+<p>On detach, the NCP discards session state, keeps operating with the
+current device- and host-domain state, and begins detached operation:
+accepted frames are queued rather than delivered, and acknowledgement
+delegation (if enabled) becomes active.</p>
+<h2 id="saved-state"><a class="header" href="#saved-state">Saved State</a></h2>
+<p>An NCP advertising <code>CAP_SAVE</code> can snapshot its provisioning to
+non-volatile storage so that it can operate autonomously across power
+cycles — the radio can be powered on in the morning with no phone present,
+restore its configuration, enable the PHY, and resume queueing and
+acknowledging on the host’s behalf.</p>
+<ul>
+<li><code>CMD_SAVE</code> (see (#cmd-save)) atomically writes the current device
+domain and host domain — including the RF configuration and the current
+value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage, replacing any
+previous snapshot. Two things are never part of a snapshot: <strong>queue
+contents</strong>, and the <strong>device identity keypair</strong>, which is independently
+persisted the moment it is installed or generated (see
+(#prop-dev-private-key)) and is changed only by explicit provisioning
+or <code>CMD_CLEAR</code> — neither <code>CMD_RESTORE</code> nor a reboot can revert the
+device identity to an earlier key.</li>
+<li>At boot, if a snapshot exists, the NCP <strong>MUST</strong> restore it and resume
+operation accordingly <em>before</em> processing any host command: the RF
+configuration is applied, the PHY is re-enabled if it was enabled when
+saved, and detached operation (filtering, queueing, acknowledgement
+delegation) begins immediately. If no snapshot exists, all properties
+take their documented post-reset values.</li>
+<li><code>CMD_RESTORE</code> (see (#cmd-restore)) reverts to the snapshot on demand,
+letting the host abort uncommitted configuration changes — without
+rebooting the hardware or dropping the companion link. It is observable
+either as a protocol reset (<code>STATUS_RESET_RESTORED</code>) or as a series of
+property-update publications; hosts handle both.</li>
+<li><code>CMD_CLEAR</code> (see (#cmd-clear)) erases the snapshot and all other
+persisted provisioning, including the device identity private key. It
+does not modify live (in-RAM) state; a subsequent <code>CMD_RST</code> completes a
+factory reset. Transport-level state such as BLE bonds is not affected.</li>
+<li><code>PROP_SAVED</code> (see (#prop-saved)) reports whether a snapshot exists.</li>
+</ul>
+<p>Saving is explicit rather than automatic: nothing is written to
+non-volatile storage when properties change (the exceptions are the device
+identity, <code>PROP_BLE_PAIRING_PIN</code>, and the durable host-domain wipe of
+(#host-replacement)). This gives the host control over flash wear and a
+well-defined “known good” configuration, and it means a radio never
+persists provisioning its host did not deliberately ask to keep.</p>
+<p>Two consequences deserve emphasis:</p>
+<ul>
+<li><strong>Post-reset values come from the snapshot.</strong> <code>CMD_RST</code> reverts
+properties to their post-reset values, as always — but on an NCP with a
+snapshot, the post-reset value of every saved property is its saved
+value, not its documented default. Factory defaults are restored by
+<code>CMD_CLEAR</code> followed by <code>CMD_RST</code>. A host that implements only the
+minimal protocol and expects documented defaults after <code>CMD_RST</code> will
+find the PHY already configured and enabled on a radio that was
+provisioned for autonomous operation; such a host still works if it
+explicitly sets the properties it cares about.</li>
+<li><strong>Queue contents and replay baselines are not saved.</strong> Frames queued
+before a power loss are gone afterward, even if they were acknowledged
+on the host’s behalf — the sender believes them delivered. Likewise the
+per-peer frame-counter baselines used by acknowledgement delegation
+restart (see <a href="security.html#counter-resynchronization">Counter Resynchronization</a>).
+Implementations MAY persist the queue to narrow this window, but hosts
+<strong>MUST NOT</strong> rely on it.</li>
+</ul>
+<h2 id="additional-commands"><a class="header" href="#additional-commands">Additional Commands</a></h2>
+<p>The full protocol assigns the four command identifiers reserved by the
+minimal protocol for table operations, and adds three more:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Dir</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>4</td><td><code>CMD_PROP_INSERT</code></td><td>Host-&gt;NCP</td><td>Insert an item into a multi-value property</td></tr>
+<tr><td>5</td><td><code>CMD_PROP_REMOVE</code></td><td>Host-&gt;NCP</td><td>Remove an item from a multi-value property</td></tr>
+<tr><td>7</td><td><code>CMD_PROP_INSERTED</code></td><td>NCP-&gt;Host</td><td>Item-inserted notification</td></tr>
+<tr><td>8</td><td><code>CMD_PROP_REMOVED</code></td><td>NCP-&gt;Host</td><td>Item-removed notification</td></tr>
+<tr><td>11</td><td><code>CMD_QUEUE_DRAIN</code></td><td>Host-&gt;NCP</td><td>Deliver queued inbound frames</td></tr>
+<tr><td>12</td><td><code>CMD_SAVE</code></td><td>Host-&gt;NCP</td><td>Save state to non-volatile storage</td></tr>
+<tr><td>13</td><td><code>CMD_CLEAR</code></td><td>Host-&gt;NCP</td><td>Erase all saved state</td></tr>
+<tr><td>14</td><td><code>CMD_RESTORE</code></td><td>Host-&gt;NCP</td><td>Restore state from the saved snapshot</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cmd-prop-insert"><a class="header" href="#cmd-prop-insert">CMD 4: (Host -&gt; NCP) <code>CMD_PROP_INSERT</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  ITEM VALUE ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_INSERT</code></p>
+<p>Insert item into property. Commands the NCP to add the given item to the
+given multi-value property, and to emit a <code>CMD_PROP_INSERTED</code> command for
+that property if successful.</p>
+<p>The payload for this command is the property identifier encoded in the
+packed unsigned integer format, followed by exactly one item encoded in the
+property’s <strong>item form</strong> (see (#multi-value-properties)). The item is
+<strong>not</strong> preceded by a length prefix, regardless of whether the property
+uses item length prefixes in its multi-item value form; the framing layer
+bounds the item.</p>
+<p>If the item is already present the command fails with <code>STATUS_ALREADY</code>,
+except where a property defines replacement semantics for matching items
+(see, e.g., (#prop-host-peer-keys)). If the property exists but is not a
+multi-value property, the command fails with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-remove"><a class="header" href="#cmd-prop-remove">CMD 5: (Host -&gt; NCP) <code>CMD_PROP_REMOVE</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  ITEM SELECTOR ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_REMOVE</code></p>
+<p>Remove item from property. Commands the NCP to remove the item matching the
+given selector from the given multi-value property, and to emit a
+<code>CMD_PROP_REMOVED</code> command for that property if successful.</p>
+<p>The payload for this command is the property identifier encoded in the
+packed unsigned integer format, followed by an item selector. Each
+multi-value property documents its selector form; unless stated otherwise
+it is the full item value.</p>
+<p>If no matching item is present, the command fails with
+<code>STATUS_ITEM_NOT_FOUND</code>. If the property exists but is not a multi-value
+property, the command fails with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-prop-inserted"><a class="header" href="#cmd-prop-inserted">CMD 7: (NCP -&gt; Host) <code>CMD_PROP_INSERTED</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  ITEM DIGEST ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_INSERTED</code></p>
+<p>Item-inserted notification. Sent by the NCP in response to a successful
+<code>CMD_PROP_INSERT</code> (with the TID of that command), or unsolicited with a TID
+of zero when the NCP adds an item to a multi-value property for its own
+reasons.</p>
+<p>The payload is the property identifier followed by the inserted item in the
+property’s <strong>digest form</strong> (see (#multi-value-properties)) — never in a
+form containing key material.</p>
+<h3 id="cmd-prop-removed"><a class="header" href="#cmd-prop-removed">CMD 8: (NCP -&gt; Host) <code>CMD_PROP_REMOVED</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  ITEM DIGEST ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_REMOVED</code></p>
+<p>Item-removed notification. Sent by the NCP in response to a successful
+<code>CMD_PROP_REMOVE</code> (with the TID of that command), or unsolicited with a TID
+of zero when the NCP removes an item from a multi-value property for its
+own reasons.</p>
+<p>The payload is the property identifier followed by the removed item in the
+property’s digest form.</p>
+<h3 id="cmd-queue-drain"><a class="header" href="#cmd-queue-drain">CMD 11: (Host -&gt; NCP) <code>CMD_QUEUE_DRAIN</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | STREAM_KEY (PUI, 1-3 bytes) ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_QUEUE_DRAIN</code></p>
+<p>Deliver queued inbound frames. Commands the NCP to deliver every frame
+currently held in the inbound queue associated with the given stream (for
+this protocol, <code>STR_PHY_RAW</code>), oldest first, as ordinary <code>CMD_STR_RECV</code>
+commands carrying the buffered-frame metadata described in
+(#buffered-metadata).</p>
+<p>Queued frames are <strong>only</strong> delivered in response to this command; attaching
+to the NCP does not by itself cause queued frames to be delivered (see
+(#inbound-queueing)). This lets the host finish synchronizing its session
+and signal that it is actually ready to process backlogged traffic.</p>
+<p>The command’s completion boundary is captured when the command is
+received: the frame at the tail of the queue at that moment is the last
+frame the command covers. If the command was sent with a non-zero TID, the
+NCP reports completion by emitting <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code>
+with <code>STATUS_OK</code> and the matching TID immediately after delivering that
+frame; frames arriving after the command was received <strong>MUST NOT</strong> delay
+the response. Draining an empty queue succeeds immediately.</p>
+<p>Frames that arrive while a drain is in progress are appended to the queue
+(they are not interleaved as live deliveries mid-drain) and continue to be
+delivered, with buffered metadata, after the response; live delivery
+resumes once the queue is empty.</p>
+<p>If the stream key does not identify a stream with an inbound queue, the
+command fails with <code>STATUS_PROP_NOT_FOUND</code>. If the NCP does not implement
+queueing (<code>CAP_HOST_RX_QUEUE</code> not advertised), the command fails with
+<code>STATUS_UNIMPLEMENTED</code>.</p>
+<p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
+accordingly to the status code for the error.</p>
+<h3 id="cmd-save"><a class="header" href="#cmd-save">CMD 12: (Host -&gt; NCP) <code>CMD_SAVE</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |    CMD_SAVE   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_SAVE</code></p>
+<p>Save state. Commands the NCP to atomically write the current device domain
+and host domain to non-volatile storage as described in (#saved-state),
+replacing any existing snapshot. The command payload SHOULD be empty and
+MUST be ignored.</p>
+<p>The response is a <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with the command’s
+TID: <code>STATUS_OK</code> once the snapshot is durably stored, or an appropriate
+error status (for example <code>STATUS_NOMEM</code>) if it is not; on failure the
+previous snapshot, if any, MUST remain intact.</p>
+<p>This command is only available on NCPs advertising <code>CAP_SAVE</code>; otherwise
+it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
+<h3 id="cmd-clear"><a class="header" href="#cmd-clear">CMD 13: (Host -&gt; NCP) <code>CMD_CLEAR</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |   CMD_CLEAR   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_CLEAR</code></p>
+<p>Clear saved state. Commands the NCP to erase from non-volatile storage the
+saved snapshot and all other persisted provisioning, including the device
+identity private key. Live (in-RAM) state is unaffected; transport-level
+state such as BLE bonds and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected. A
+<code>CMD_CLEAR</code> followed by <code>CMD_RST</code> restores factory protocol behavior.</p>
+<p>The command payload SHOULD be empty and MUST be ignored. The response is a
+<code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with the command’s TID.</p>
+<p>Unlike <code>CMD_SAVE</code>, this command is available regardless of capabilities;
+an NCP with nothing persisted succeeds trivially.</p>
+<h3 id="cmd-restore"><a class="header" href="#cmd-restore">CMD 14: (Host -&gt; NCP) <code>CMD_RESTORE</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |  CMD_RESTORE  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_RESTORE</code></p>
+<p>Restore saved state. Commands the NCP to revert its device-domain and
+host-domain <strong>configuration</strong> to the contents of the saved snapshot (see
+(#saved-state)). Regardless of how completion is reported (below), the
+resulting state is the same:</p>
+<ul>
+<li>saved properties take their saved values, and the saved RF
+configuration and PHY enable state are applied;</li>
+<li>the hardware is not reset, and the transport link and attach state are
+preserved;</li>
+<li>the inbound queue contents and per-peer replay baselines are preserved
+— except that if the snapshot’s host key differs from the live
+<code>PROP_HOST_KEY</code>, the host-replacement rule (see (#host-replacement))
+applies as part of the revert;</li>
+<li>independently persisted state outside the snapshot — the device
+identity keypair and <code>PROP_BLE_PAIRING_PIN</code> — is not affected; and</li>
+<li>the saved snapshot itself is not modified.</li>
+</ul>
+<p>Together with <code>CMD_SAVE</code>, this provides a commit/abort pattern: the host
+can make live configuration changes and either persist them with
+<code>CMD_SAVE</code> or discard them with <code>CMD_RESTORE</code>.</p>
+<p>The command payload SHOULD be empty and SHOULD NOT be processed. An NCP
+reports a successful restore in one of two forms, both valid; the two
+forms differ only in reporting and in session-state handling, never in
+the resulting configuration or retained data:</p>
+<ul>
+<li>
+<p><strong>Reset form</strong> — the NCP additionally resets its protocol session
+state (transaction bookkeeping and session-scoped properties), as on
+attach. As with <code>CMD_RST</code>, the TID is ignored; completion is signaled
+by an unsolicited <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> carrying the
+reset code <code>STATUS_RESET_RESTORED</code> (see (#full-reset-codes)). On
+receiving it, the host discards its cached view of all properties and
+assumes saved properties hold their saved values; dynamic read-only
+properties (such as <code>PROP_HOST_RX_QUEUE_COUNT</code>) reflect live state and
+are re-fetched.</p>
+</li>
+<li>
+<p><strong>Update form</strong> — the NCP applies the revert in place, emitting an
+unsolicited <code>CMD_PROP_IS</code> (in digest form, where applicable) for
+<strong>every property whose value changed</strong>, and then reports completion
+with <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> carrying <code>STATUS_OK</code> and the
+command’s TID. Session state is not reset in this form.</p>
+</li>
+</ul>
+<p>A host <strong>MUST</strong> handle both forms: it treats <code>STATUS_RESET_RESTORED</code> as
+full reversion to saved values, applies any unsolicited property updates,
+and recognizes completion by either the reset notification or the
+matching-TID <code>STATUS_OK</code>. This is not an extra burden in practice — hosts
+must already tolerate unsolicited <code>CMD_PROP_IS</code> value changes at any time
+(see (#attach-sync)). A host that does not know the snapshot’s contents
+(for example, because a previous session saved it) re-fetches the
+properties it depends on, exactly as in the post-attach procedure.</p>
+<p>If an error occurs — in particular <code>STATUS_INVALID_STATE</code> when no snapshot
+exists (see <code>PROP_SAVED</code>) — the value of the emitted <code>PROP_LAST_STATUS</code>
+will be set accordingly, no state is modified, and no reset code is
+emitted.</p>
+<p>This command is only available on NCPs advertising <code>CAP_SAVE</code>; otherwise
+it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
+<h2 id="multi-value-properties"><a class="header" href="#multi-value-properties">Multi-Value Properties</a></h2>
+<p>A <strong>multi-value property</strong> holds an unordered set of items rather than a
+single value. The minimal protocol already contains one (<code>PROP_CAPS</code>, which
+is constant); the full protocol adds mutable ones.</p>
+<p>Each multi-value property defines two encodings for its items:</p>
+<ul>
+<li>the <strong>item form</strong>, used when the host writes items (<code>CMD_PROP_SET</code>,
+<code>CMD_PROP_INSERT</code>); and</li>
+<li>the <strong>digest form</strong>, used whenever the NCP reports items
+(<code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>).</li>
+</ul>
+<p>For most properties the two forms are identical. They differ exactly where
+the item form contains symmetric key material: the digest form of such a
+property omits or replaces the key material so that secrets can never be
+read back (see (#provisioning-security)).</p>
+<p>The commands valid on a mutable multi-value property are:</p>
+<ul>
+<li><code>CMD_PROP_GET</code> — the NCP replies with <code>CMD_PROP_IS</code> whose value is the
+concatenation of all items in digest form. If the property is documented
+as having an item length prefix, each item is preceded by its length in
+octets encoded as a packed unsigned integer; properties whose reported
+items are fixed-size omit the prefix.</li>
+<li><code>CMD_PROP_SET</code> — replaces the entire contents with the items encoded in
+the value, each in item form (with the same length-prefix rule). Setting
+an empty value clears the property. Success is reported with a
+<code>CMD_PROP_IS</code> carrying the new complete value in digest form.</li>
+<li><code>CMD_PROP_INSERT</code> / <code>CMD_PROP_REMOVE</code> — add or remove one item, as
+defined above.</li>
+</ul>
+<p>Hosts manipulating large tables <strong>SHOULD</strong> prefer <code>Insert</code>/<code>Remove</code> over
+whole-table <code>Set</code>, since a full table may not fit comfortably in one frame
+on all transports.</p>
+<h2 id="mutation-atomicity"><a class="header" href="#mutation-atomicity">Mutation Atomicity</a></h2>
+<p>State-changing operations in this protocol are transactional and fail
+closed:</p>
+<ul>
+<li>The NCP <strong>MUST</strong> validate a complete request before changing any state.
+A whole-table <code>CMD_PROP_SET</code> whose value contains any invalid item fails
+without applying any of it.</li>
+<li>Whole-table replacement is atomic: no observer of NCP behavior (frame
+filtering, acknowledgement decisions) sees a mixture of the old and new
+contents.</li>
+<li>Operations that include durable writes — <code>CMD_SAVE</code>, <code>CMD_CLEAR</code>,
+installing or generating the device identity, setting
+<code>PROP_BLE_PAIRING_PIN</code>, and the durable host-domain wipe of
+(#host-replacement) — <strong>MUST NOT</strong> report success before the durable
+write has completed.</li>
+<li>On any failure, the prior live and durable state remains unchanged, and
+the NCP <strong>MUST NOT</strong> emit <code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, or
+<code>CMD_PROP_REMOVED</code> notifications describing a partially applied change.</li>
+<li>Host replacement is atomic in the same sense: at no point may the NCP
+operate with a mixture of the old and new hosts’ keys, filters, or
+policy. If the durable wipe of the old host domain cannot be completed,
+the <code>CMD_PROP_SET</code> of <code>PROP_HOST_KEY</code> <strong>MUST</strong> fail, leaving the old
+host domain fully in effect and the new host key not installed.</li>
+</ul>
+<h2 id="property-allocation"><a class="header" href="#property-allocation">Property Allocation</a></h2>
+<p>The full protocol allocates property identifiers by state class:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Range</th><th>Class</th></tr>
+</thead>
+<tbody>
+<tr><td>48–63</td><td>Session-scoped and global protocol state</td></tr>
+<tr><td>64–95</td><td>Device domain (<code>PROP_DEV_*</code>)</td></tr>
+<tr><td>96–127</td><td>Host domain (<code>PROP_HOST_*</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unassigned identifiers in these ranges are reserved.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>48</td><td><code>PROP_MAC_PROMISCUOUS</code></td><td>Get, Set</td><td>Deliver all frames (session-scoped)</td></tr>
+<tr><td>49</td><td><code>PROP_SAVED</code></td><td>Get</td><td>Saved snapshot exists</td></tr>
+<tr><td>64</td><td><code>PROP_DEV_KEY</code></td><td>Get</td><td>Device identity public key</td></tr>
+<tr><td>65</td><td><code>PROP_DEV_PRIVATE_KEY</code></td><td>Set</td><td>Device identity private key (write-only)</td></tr>
+<tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
+<tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
+<tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
+<tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
+<tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
+<tr><td>99</td><td><code>PROP_HOST_RX_FILTERS</code></td><td>Get, Set, Insert, Remove</td><td>Host receive filter table</td></tr>
+<tr><td>100</td><td><code>PROP_HOST_AUTO_ACK</code></td><td>Get, Set</td><td>Acknowledgement delegation enable</td></tr>
+<tr><td>101</td><td><code>PROP_HOST_RX_QUEUE_COUNT</code></td><td>Get</td><td>Frames currently queued</td></tr>
+<tr><td>102</td><td><code>PROP_HOST_RX_QUEUE_CAPACITY</code></td><td>Get, Set</td><td>Queue capacity in frames</td></tr>
+<tr><td>103</td><td><code>PROP_HOST_RX_QUEUE_DROPPED</code></td><td>Get</td><td>Frames dropped from the queue</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="prop-mac-promiscuous"><a class="header" href="#prop-mac-promiscuous">PROP 48: <code>PROP_MAC_PROMISCUOUS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write, Session-Scoped</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_FILTER</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Attach Value: 0 (false)</li>
+</ul>
+<p>When true, every frame the PHY successfully receives is delivered to the
+host over <code>STR_PHY_RAW</code>, bypassing receive filtering. This is a live-session
+diagnostic mode: frames that are delivered <em>only</em> because of promiscuous
+mode are never queued while the host is detached, and never acknowledged on
+the host’s behalf.</p>
+<p>This is the only session-scoped property: it reverts to false on every
+attach.</p>
+<h3 id="prop-saved"><a class="header" href="#prop-saved">PROP 49: <code>PROP_SAVED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_SAVE</code></li>
+<li>Value Type: BOOL</li>
+</ul>
+<p>True if a saved snapshot exists in non-volatile storage (see
+(#saved-state)) — that is, if the NCP is armed for autonomous operation
+across a power cycle.</p>
+<h3 id="prop-dev-key"><a class="header" href="#prop-dev-key">PROP 64: <code>PROP_DEV_KEY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Value Type: 32 octets, or empty</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>The Ed25519 public key of the companion radio’s <strong>device identity</strong>
+(see (#identity-model)), or an empty value if no device identity is
+configured. The public key is also emitted as the success response when the
+private key is installed or generated (see (#prop-dev-private-key)).</p>
+<p>Frames addressed to the device identity are processed by the NCP itself.
+They are additionally delivered or queued to the host only if they
+independently match the host’s receive filtering (see (#receive-filtering)).</p>
+<h3 id="prop-dev-private-key"><a class="header" href="#prop-dev-private-key">PROP 65: <code>PROP_DEV_PRIVATE_KEY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Write-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Value Type: 32 octets, or empty</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>Installs or generates the device identity private key:</p>
+<ul>
+<li>Setting a 32-octet value installs it as the device identity’s Ed25519
+private key.</li>
+<li>Setting an <strong>empty</strong> value commands the NCP to generate a fresh private
+key entirely on-device from its cryptographically secure random number
+generator. On-device generation is <strong>RECOMMENDED</strong> over installation,
+since a generated key never exists anywhere but the radio.</li>
+</ul>
+<p>In both cases, success is reported by emitting <code>CMD_PROP_IS</code> for
+<strong><code>PROP_DEV_KEY</code></strong> — carrying the resulting <em>public</em> key — with the
+command’s TID. The private key itself is never emitted. Success <strong>MUST NOT</strong>
+be reported before the new identity is in effect and durably stored.
+Replacing an existing device identity is permitted; implementations
+<strong>SHOULD</strong> treat the device identity’s peer list and channel keys as
+still valid, since they are not derived from the identity key.</p>
+<p>This property is write-only: <code>CMD_PROP_GET</code> <strong>MUST</strong> fail with
+<code>STATUS_UNIMPLEMENTED</code> and <strong>MUST NOT</strong> disclose the value or whether an
+identity is configured (use <code>PROP_DEV_KEY</code> for that).</p>
+<p>The device identity is <strong>not</strong> part of the saved snapshot (see
+(#saved-state)): it is durably persisted as soon as it is installed or
+generated, and it is changed only by another set of this property or by
+<code>CMD_CLEAR</code>. <code>CMD_RESTORE</code> never reverts it.</p>
+<p>Installing a private key is subject to the same transport security
+requirements as all key provisioning (see (#provisioning-security)).</p>
+<h3 id="prop-dev-channel-keys"><a class="header" href="#prop-dev-channel-keys">PROP 66: <code>PROP_DEV_CHANNEL_KEYS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Item Form: 32 octets (the channel key)</li>
+<li>Digest Form: 2 octets (the derived channel identifier)</li>
+<li>Remove Selector: the 32-octet channel key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> belonging to
+the <strong>device identity</strong> — channels the radio’s own node participates in
+(for example, a site-infrastructure management channel). These are
+independent of the host domain: they survive host replacement and are
+distinct from <code>PROP_HOST_CHANNEL_KEYS</code>.</p>
+<p>For each key the NCP derives the 2-byte
+<a href="packet-types.html#channel-identifier-derivation">channel identifier</a> and the
+channel’s <code>K_enc</code>/<code>K_mic</code>
+(see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>). The
+digest form reported for each entry is that derived channel identifier;
+the key itself is never read back.</p>
+<p>Device channel keys do <strong>not</strong> create implicit host receive filters:
+frames on these channels are consumed by the device node and reach the
+host only through the host’s own filtering.</p>
+<h3 id="prop-dev-peers"><a class="header" href="#prop-dev-peers">PROP 67: <code>PROP_DEV_PEERS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Item Form: 32 octets (the peer’s Ed25519 public key)</li>
+<li>Digest Form: identical to the item form</li>
+<li>Remove Selector: the 32-octet public key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The <strong>device identity’s</strong> peer list: the set of peer public keys the
+device node recognizes and may communicate with securely. Because the NCP
+holds the device identity’s private key, it performs its own key agreement
+(<a href="security.html#unicast-key-agreement">Unicast Key Agreement</a>) for these
+peers — no symmetric keys are provisioned, and the entries contain no
+secret material.</p>
+<p>How the device node uses this list (management access control, secure
+diagnostics, and so on) is application behavior outside the scope of this
+protocol.</p>
+<h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_FILTER</code></li>
+<li>Value Type: 32 octets, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The Ed25519 public key of the <strong>tethered host identity</strong>. Setting this
+property tells the NCP which node identity it is assisting; an empty value
+means no host identity is configured.</p>
+<p>Setting this property to a value different from its current value resets
+the entire host domain, durably, as specified in (#host-replacement).
+Setting it to its current value is idempotent.</p>
+<p>A configured host key acts as an implicit destination-hint receive filter
+(see (#receive-filtering)).</p>
+<h3 id="prop-host-channel-keys"><a class="header" href="#prop-host-channel-keys">PROP 97: <code>PROP_HOST_CHANNEL_KEYS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_KEYS</code></li>
+<li>Item Form: 32 octets (the channel key)</li>
+<li>Digest Form: 2 octets (the derived channel identifier)</li>
+<li>Remove Selector: the 32-octet channel key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> provisioned
+for the <strong>host identity</strong>. For each key the NCP derives the channel
+identifier and the channel <code>K_enc</code>/<code>K_mic</code>; the digest form is the derived
+channel identifier, and the key itself is never read back.</p>
+<p>Each derived channel identifier acts as an implicit channel receive filter
+(see (#receive-filtering)). Host channel keys serve two assistance
+purposes:</p>
+<ul>
+<li>recognizing multicast traffic on the host’s channels while the host is
+detached, so it can be queued; and</li>
+<li>recognizing <strong>blind unicast</strong> traffic addressed to the host identity,
+which requires the channel key to decrypt the concealed
+destination/source addresses (see
+<a href="packet-types.html#blind-unicast-processing">Blind Unicast Processing</a>) and
+to form the combined
+<a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a> used
+for authentication and acknowledgement.</li>
+</ul>
+<p>Channel keys are group-membership credentials, not host private keys, so
+provisioning them is consistent with the
+<a href="companion-radio.html#security-boundary">security boundary</a>. They still grant
+whoever holds the NCP the ability to read and send traffic on those
+channels; see (#provisioning-security).</p>
+<h3 id="prop-host-peer-keys"><a class="header" href="#prop-host-peer-keys">PROP 98: <code>PROP_HOST_PEER_KEYS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_KEYS</code></li>
+<li>Item Form: Structure, 64 octets</li>
+<li>Digest Form: 32 octets (the peer’s public key)</li>
+<li>Remove Selector: the 32-octet peer public key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>Pairwise symmetric key material provisioned for specific already-known
+peers of the host identity. The item form is:</p>
+<pre><code>+---------------------+-----------+-----------+
+| PEER_PUBLIC_KEY     |   K_ENC   |   K_MIC   |
++---------------------+-----------+-----------+
+        32 B              16 B        16 B
+</code></pre>
+<p>Figure: Peer key entry item form</p>
+<p>Where <code>PEER_PUBLIC_KEY</code> is the peer’s Ed25519 public key and <code>K_ENC</code> and
+<code>K_MIC</code> are the stable pairwise keys for the (host, peer) pair, derived by
+the <strong>host</strong> as described in
+<a href="security.html#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>. The NCP
+never derives these itself — it cannot, because it does not hold the host’s
+private key.</p>
+<p>As an exception to the usual <code>CMD_PROP_INSERT</code> duplicate rule, inserting an
+entry whose <code>PEER_PUBLIC_KEY</code> matches an existing entry replaces that
+entry. The digest form is the peer public key alone: <code>K_ENC</code> and <code>K_MIC</code>
+are never read back.</p>
+<p>Provisioned peer keys let the NCP authenticate inbound unicast and blind
+unicast from those specific peers and acknowledge it on the host’s behalf
+(see (#ack-delegation)). They grant no capability regarding any other peer,
+and do not allow the NCP to establish new pairwise relationships.</p>
+<h3 id="prop-host-rx-filters"><a class="header" href="#prop-host-rx-filters">PROP 99: <code>PROP_HOST_RX_FILTERS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_FILTER</code></li>
+<li>Item Form: Structure</li>
+<li>Digest Form: identical to the item form</li>
+<li>Remove Selector: the full item</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The explicit receive filter table. Each item is a filter entry:</p>
+<pre><code>+-------------+----------------------+
+| FILTER_TYPE | FILTER_VALUE ...
++-------------+----------------------+
+     1 B          type-specific
+</code></pre>
+<p>Figure: Filter entry format</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Name</th><th>Value</th><th>Matches</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>FILTER_DEST_HINT</code></td><td>3 octets</td><td>Frames whose destination hint field equals the value</td></tr>
+<tr><td>1</td><td><code>FILTER_CHANNEL_ID</code></td><td>2 octets</td><td>Channel-addressed frames (<code>MCST</code>, <code>BUNI</code>, <code>BUAR</code>) whose channel identifier equals the value</td></tr>
+<tr><td>2</td><td><code>FILTER_PKT_TYPE</code></td><td>1 octet</td><td>Frames whose FCF packet-type field equals the value (0–7)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Entries with an unrecognized <code>FILTER_TYPE</code>, or whose value length does not
+match the type, fail with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>See (#receive-filtering) for how this table combines with the implicit
+filters derived from <code>PROP_HOST_KEY</code> and <code>PROP_HOST_CHANNEL_KEYS</code>.</p>
+<h3 id="prop-host-auto-ack"><a class="header" href="#prop-host-auto-ack">PROP 100: <code>PROP_HOST_AUTO_ACK</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_AUTO_ACK</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>When true, the NCP sends MAC acknowledgements on behalf of the host
+identity for qualifying frames received while the host is detached, as
+specified in (#ack-delegation). When false, the NCP never transmits on the
+host identity’s behalf.</p>
+<h3 id="prop-host-rx-queue-count"><a class="header" href="#prop-host-rx-queue-count">PROP 101: <code>PROP_HOST_RX_QUEUE_COUNT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_RX_QUEUE</code></li>
+<li>Value Type: UINT16_LE</li>
+<li>Units: frames</li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The number of frames currently held in the inbound queue. The host
+typically reads this right after attaching to decide whether (and when) to
+issue <code>CMD_QUEUE_DRAIN</code>.</p>
+<h3 id="prop-host-rx-queue-capacity"><a class="header" href="#prop-host-rx-queue-capacity">PROP 102: <code>PROP_HOST_RX_QUEUE_CAPACITY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_RX_QUEUE</code> (<code>CMD_PROP_SET</code> support is <strong>OPTIONAL</strong>)</li>
+<li>Value Type: UINT16_LE</li>
+<li>Units: frames</li>
+<li>Post-Reset Value: Implementation-Specific, or restored from saved state</li>
+</ul>
+<p>The maximum number of frames the inbound queue can hold. NCPs with a fixed
+queue size fail <code>CMD_PROP_SET</code> with <code>STATUS_UNIMPLEMENTED</code>; NCPs that allow
+adjustment fail values they cannot honor with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<h3 id="prop-host-rx-queue-dropped"><a class="header" href="#prop-host-rx-queue-dropped">PROP 103: <code>PROP_HOST_RX_QUEUE_DROPPED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_RX_QUEUE</code></li>
+<li>Value Type: UINT32_LE</li>
+<li>Units: frames</li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The cumulative number of frames discarded from the inbound queue — evicted
+by the circular queue-full policy or otherwise not retained (see
+(#inbound-queueing)) — since the NCP last reset. A non-zero increase
+across a detached interval tells the host that its view of that interval
+is incomplete. The counter wraps modulo 2^32.</p>
+<h2 id="receive-filtering"><a class="header" href="#receive-filtering">Receive Filtering</a></h2>
+<p>Receive filtering determines which successfully received frames are
+<strong>accepted</strong> for the host — delivered live when the host is attached, or
+queued when it is not.</p>
+<p>The NCP evaluates each received frame against the union of:</p>
+<ul>
+<li>the <strong>explicit filters</strong> in <code>PROP_HOST_RX_FILTERS</code>;</li>
+<li>an <strong>implicit destination-hint filter</strong> for the first 3 bytes of
+<code>PROP_HOST_KEY</code>, when a host key is configured; and</li>
+<li>an <strong>implicit channel filter</strong> for the derived channel identifier of each
+key in <code>PROP_HOST_CHANNEL_KEYS</code>.</li>
+</ul>
+<p>A frame matching any filter is accepted. Hints and channel identifiers are
+prefilters, not proof (see <a href="addressing.html">Addressing</a>); filtering by them
+can only over-accept, never mis-reject, and the host performs full
+cryptographic verification as usual.</p>
+<p>The implicit destination-hint filter matches unicast traffic addressed to
+the host identity and also <a href="packet-types.html#mac-ack-packet">MAC Ack</a>
+packets returning to it, since a MAC ack’s <code>DST</code> field carries the same
+3-byte public-key prefix. Encrypted blind unicast addressed to the host is
+matched through its channel filter (its destination hint is concealed on
+the wire); the NCP MAY additionally use a provisioned channel key to
+decrypt the address block and narrow the match.</p>
+<p>Traffic the implicit filters do not cover — broadcasts and beacons, for
+example — must be requested explicitly (e.g., a <code>FILTER_PKT_TYPE</code> entry
+with value 0). Device-domain state never creates implicit host filters:
+frames for the device identity or its channels reach the host only if the
+host’s own filtering matches them.</p>
+<p><strong>Compatibility rule:</strong> when no host key is configured, no host channel
+keys are provisioned, and the explicit filter table is empty, filtering is
+considered unconfigured and <strong>every</strong> successfully received frame is
+accepted. This is exactly the minimal protocol’s behavior, so a host that
+implements only the minimal protocol observes no difference on a
+full-protocol NCP in its factory state. As soon as any filter (implicit or
+explicit) exists, only matching frames are accepted.</p>
+<p>Promiscuous mode (see (#prop-mac-promiscuous)) bypasses filtering for live
+delivery only.</p>
+<h2 id="inbound-queueing"><a class="header" href="#inbound-queueing">Inbound Queueing</a></h2>
+<p>When <code>CAP_HOST_RX_QUEUE</code> is supported and the host is <strong>detached</strong>,
+accepted frames are placed in a FIFO inbound queue instead of being
+discarded. Each queue entry records the frame, its receive metadata (RSSI,
+LQI, SNR), the time of reception, and whether the NCP acknowledged it (see
+(#ack-delegation)).</p>
+<p>When the host is <strong>attached</strong>, accepted frames are delivered live over
+<code>STR_PHY_RAW</code> exactly as in the minimal protocol. Attaching does not flush
+the queue: frames queued while the host was away remain queued until the
+host issues <code>CMD_QUEUE_DRAIN</code> (see (#cmd-queue-drain)). Frames received
+after attach are therefore delivered live even while older frames remain
+queued. A host that wants to process the backlog first drains before
+processing live traffic; <code>RX_AGE</code> in the buffered-frame metadata gives
+coarse (one-second) relative timing but is not sufficient to reconstruct
+a strict total order — and UMSH itself does not guarantee in-order
+delivery in any case.</p>
+<p>The queue is <strong>circular</strong>: when a new frame is accepted and the queue is
+full, the oldest queued frame is discarded and the new frame is appended.
+The queue therefore always holds the most recent accepted traffic. Every
+frame discarded by this eviction increments
+<code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
+<p>Eviction can discard a frame that was already acknowledged on the host’s
+behalf — the sender believes it delivered, but the host will never
+receive it. This is the same best-effort custody semantic that applies to
+power loss (see (#ack-delegation) and (#saved-state)): a delegated ack
+asserts volatile custody, not guaranteed delivery.</p>
+<p>Duplicate detection for queueing uses the standard final-destination
+mechanisms of <a href="security.html#replay-detection">replay detection</a>: per-peer
+frame-counter state and the recent accepted-MIC cache used for the
+backward window, where the NCP holds the keys to apply them. A frame
+identified as a previously accepted frame <strong>MUST NOT</strong> consume an
+additional queue slot; it is coalesced with the existing entry. A
+<a href="packet-options.html#route-retry-option-6">Route Retry</a> form of a queued
+frame is the same logical packet (same MIC and frame counter) and
+coalesces with it. Coalescing a duplicate is separate from acknowledging
+it — a coalesced duplicate may still have its ack retransmitted under the
+duplicate-acknowledgement window (see (#ack-delegation)). For frames the
+NCP cannot authenticate (no provisioned keys), no protocol-defined
+duplicate detection applies and each received frame occupies its own
+entry.</p>
+<h3 id="buffered-metadata"><a class="header" href="#buffered-metadata">Buffered-Frame Metadata</a></h3>
+<p>The <code>Recv</code> metadata of <code>STR_PHY_RAW</code>
+(see <a href="companion-radio-minimal.html#str-radio-raw">Metadata for Recv</a>) is
+extended with two trailing fields:</p>
+<ul>
+<li><code>RX_FLAGS</code> (<code>u8</code>): Buffered-frame flags
+<ul>
+<li><code>RX_FLAG_BUFFERED</code> Bit 0: The frame was held in the inbound queue and
+is being delivered by <code>CMD_QUEUE_DRAIN</code>.</li>
+<li><code>RX_FLAG_ACKED</code> Bit 1: The NCP already transmitted a MAC ack for this
+frame on the host’s behalf. The host <strong>MUST NOT</strong> send another ack for
+it.</li>
+<li>All other bits: <em>RESERVED</em>, transmitted as zero</li>
+</ul>
+</li>
+<li><code>RX_AGE</code> (<code>u32</code>, little-endian): Seconds elapsed between reception of the
+frame and its delivery to the host. Zero for live delivery.</li>
+</ul>
+<p>As with the existing metadata fields, the metadata may be truncated at any
+field boundary; absent fields are treated as zero. Live deliveries MAY
+therefore continue to omit these fields entirely, which keeps the encoding
+byte-compatible with the minimal protocol.</p>
+<h2 id="ack-delegation"><a class="header" href="#ack-delegation">Acknowledgement Delegation</a></h2>
+<p>With <code>PROP_HOST_AUTO_ACK</code> enabled, the NCP acknowledges qualifying inbound
+frames so that senders’ retransmission logic is satisfied while the host is
+away. The NCP <strong>MUST</strong> transmit a MAC ack for a received frame if and only
+if all of the following hold:</p>
+<ol>
+<li><code>PROP_HOST_AUTO_ACK</code> is true and no host is attached.</li>
+<li>The frame’s packet type requests acknowledgement: <code>UNAR</code>, or <code>BUAR</code>
+where the NCP also holds the frame’s channel key.</li>
+<li>The frame is addressed to the host identity: its (possibly decrypted)
+destination hint matches <code>PROP_HOST_KEY</code>, and its source resolves to
+an entry in <code>PROP_HOST_PEER_KEYS</code> — by full public key when the <code>S</code>
+flag is set, or by unique 3-byte prefix match otherwise.</li>
+<li>The frame authenticates: its MIC verifies under the pairwise <code>K_MIC</code>
+for <code>UNAR</code>, or under the combined
+<a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>
+for <code>BUAR</code>.</li>
+<li>The frame is accepted as new by the
+<a href="security.html#replay-detection">replay-detection rules</a>, applied per
+provisioned peer. The NCP advances a peer’s replay baseline only when
+it accepts a frame from that peer into the queue; a frame it fails to
+store leaves the baseline unchanged, so its retransmissions remain
+acceptable later.</li>
+<li>The frame was placed in the inbound queue (see (#inbound-queueing)).
+Because the queue is circular, placement normally succeeds by evicting
+the oldest entry when full; a frame that nevertheless cannot be stored
+(for example, one exceeding the NCP’s buffer) is not acknowledged, so
+the sender keeps retrying until the host returns.</li>
+</ol>
+<p><strong>Duplicates.</strong> An authenticated frame that replay detection identifies as
+a previously accepted frame — typically a retransmission whose original
+ack was lost — is not queued again, but the NCP <strong>MAY</strong> retransmit its
+acknowledgement under the core
+<a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>:
+only when the frame authenticates and its counter is no more than 8 behind
+the peer’s baseline, and without advancing or otherwise modifying the
+replay baseline. Re-acknowledging a duplicate is independent of queue
+coalescing (see (#inbound-queueing)) and does not mark anything newly
+accepted. Frames farther behind the baseline <strong>MUST NOT</strong> be acknowledged.</p>
+<p><strong>Reboot.</strong> Per-peer replay baselines are not saved (see (#saved-state)).
+After an NCP reset, the first authenticated frame accepted from a
+provisioned peer re-establishes that peer’s baseline at face value,
+exactly as on first contact (see
+<a href="security.html#counter-resynchronization">Counter Resynchronization</a>). The
+consequence is that after a reboot, previously captured authenticated
+frames may be accepted, queued, and acknowledged if replayed in a counter
+sequence acceptable from the newly established baseline. The host MAC
+remains authoritative for duplicate suppression when the frames are
+eventually delivered, so this creates a limited availability and
+resource-consumption window (queue slots and delegated acks), but it does
+not permit forgery or duplicate application delivery. Implementations
+concerned about this threat <strong>MAY</strong> persist a compact per-peer counter
+watermark (batched or range-reserved to limit flash wear), but hosts
+<strong>MUST NOT</strong> assume they do.</p>
+<p><strong>Custody.</strong> A delegated ack acknowledges <em>volatile</em> custody by default:
+the frame is held in RAM until drained, and the loss window on power
+failure is documented in (#saved-state). Implementations that persist the
+queue provide durable custody, but hosts and application protocols
+<strong>MUST NOT</strong> rely on it.</p>
+<p>The acknowledgement is an ordinary
+<a href="packet-types.html#mac-ack-packet">MAC Ack packet</a>: <code>DST</code> is the first 3
+bytes of the peer’s public key, and the 8-byte ack tag is computed as
+specified in <a href="security.html#ack-tag-construction">Ack Tag Construction</a>,
+using the provisioned pairwise keys (combined with the channel keys for
+<code>BUAR</code>). If the original frame carried a flood hop count, the ack’s
+<code>FHOPS_REM</code> is initialized from the original frame’s <code>FHOPS_ACC</code>.</p>
+<p>Delegated ack transmissions use the NCP’s normal transmit path and are
+subject to the configured duty-cycle limit; the NCP <strong>MUST NOT</strong> exceed the
+limit to send an ack. An ack that cannot be sent leaves the queued frame
+marked unacknowledged.</p>
+<p>Frames that are accepted but fail any of conditions 2–5 — no peer key, no
+channel key, authentication impossible to evaluate — are still queued
+(subject to filtering); they are simply not acknowledged. The host
+performs its own verification after draining and may ack late if the
+application finds that useful.</p>
+<p>While a host is attached, the NCP never acks on its behalf: live-delivered
+frames are the host’s responsibility. Acks generated by the <strong>device
+identity</strong> for its own traffic are ordinary device-node behavior and are
+not governed by this section.</p>
+<h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
+<p>Provisioning moves real key material onto the NCP, within the limits of the
+<a href="companion-radio.html#security-boundary">security boundary</a>: channel keys and
+per-peer symmetric keys — and the device identity’s own private key —
+but never the host’s private key. The rules:</p>
+<ul>
+<li><strong>All symmetric key material, and the device identity private key, is
+write-only.</strong> <code>CMD_PROP_GET</code> and all NCP-emitted notifications report
+key-bearing properties in their digest forms
+(see (#multi-value-properties)): peer public keys without <code>K_ENC</code>/<code>K_MIC</code>,
+derived channel identifiers instead of channel keys, and never the
+device private key. This holds for <strong>both</strong> identities’ key tables.
+Digest forms let the host verify <em>what</em> is provisioned after a
+reconnect without any secret ever crossing the link a second time —
+which matters because more than one host may be able to attach over the
+radio’s lifetime (transport bonds are possession credentials, not
+identity credentials), and a later host must not be able to extract an
+earlier host’s keys.</li>
+<li>Commands that carry key material — <code>CMD_PROP_SET</code> and <code>CMD_PROP_INSERT</code>
+for the key tables, and any set of <code>PROP_DEV_PRIVATE_KEY</code> — <strong>MUST NOT</strong>
+be carried over a transport that does not meet the requirements of the
+transport’s security binding: physical possession for serial transports,
+or an encrypted bonded LESC link as specified in
+<a href="companion-radio-ble.html#ble-security">Companion Radio over BLE</a>.</li>
+<li>A compromised or stolen NCP exposes the provisioned channels, the
+provisioned pairwise conversations, and its own device identity, but
+cannot impersonate the host to any new peer, cannot sign as the host,
+and cannot decrypt traffic for peers or channels that were never
+provisioned.</li>
+<li>Hosts <strong>SHOULD</strong> provision the minimum useful set of peers and channels,
+<strong>SHOULD</strong> remove entries that are no longer needed, and <strong>SHOULD</strong>
+prefer on-device generation of the device identity over installing one.</li>
+<li>An NCP advertising <code>CAP_SAVE</code> <strong>MUST</strong> store persisted key material in
+the most protected storage available to it.</li>
+</ul>
+<h2 id="additional-status-codes"><a class="header" href="#additional-status-codes">Additional Status Codes</a></h2>
+<p>The full protocol assigns two additional status codes
+(see <a href="companion-radio-minimal.html#status-codes">Status Codes</a>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
+<tr><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="status_already"><a class="header" href="#status_already"><code>STATUS_ALREADY</code></a></dt>
+<dd>The requested state is already in effect; in particular, the item passed
+to <code>CMD_PROP_INSERT</code> is already present in the property.</dd>
+<dt id="status_item_not_found"><a class="header" href="#status_item_not_found"><code>STATUS_ITEM_NOT_FOUND</code></a></dt>
+<dd>The item or selector passed to <code>CMD_PROP_REMOVE</code> does not match any item
+in the property.</dd>
+</dl>
+<h2 id="full-reset-codes"><a class="header" href="#full-reset-codes">Additional Reset Codes</a></h2>
+<p>The full protocol assigns one additional reset code
+(see <a href="companion-radio-minimal.html#reset-codes">Reset Codes</a>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>115</td><td><code>STATUS_RESET_RESTORED</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="status_reset_restored"><a class="header" href="#status_reset_restored"><code>STATUS_RESET_RESTORED</code></a></dt>
+<dd>Protocol reset into the saved snapshot, emitted when an NCP completes
+<code>CMD_RESTORE</code> in its reset form (see (#cmd-restore)). Unlike the other
+reset codes, this one does not indicate a hardware or firmware restart:
+the transport link and attach state survive it. Like
+<code>STATUS_RESET_SOFTWARE</code>, it is emitted during normal operation and does
+not indicate a problem.</dd>
+</dl>
+<h2 id="full-capabilities"><a class="header" href="#full-capabilities">Additional Capabilities</a></h2>
+<p>The full protocol assigns the following capability codes
+(see <a href="companion-radio-minimal.html#capabilities">Capabilities</a>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td>—</td><td><code>PROP_HOST_KEY</code>, <code>PROP_MAC_PROMISCUOUS</code>, <code>PROP_HOST_RX_FILTERS</code>, and the receive-filtering behavior</td></tr>
+<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td>The inbound queue, its properties, <code>CMD_QUEUE_DRAIN</code>, and the buffered-frame metadata</td></tr>
+<tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><code>PROP_HOST_CHANNEL_KEYS</code> and <code>PROP_HOST_PEER_KEYS</code></td></tr>
+<tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><code>PROP_HOST_AUTO_ACK</code> and acknowledgement delegation</td></tr>
+<tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><code>CMD_SAVE</code>, <code>CMD_RESTORE</code>, <code>PROP_SAVED</code>, and boot-time restoration of saved state</td></tr>
+<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>An NCP <strong>MUST NOT</strong> advertise a capability without also advertising the
+capabilities it requires. <code>CMD_PROP_INSERT</code>/<code>CMD_PROP_REMOVE</code>, <code>CMD_CLEAR</code>,
+and the two additional status codes are part of the base protocol and need
+no capability; an NCP that defines no mutable multi-value properties simply
+has nothing to apply them to.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="companion-radio-minimal.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="companion-radio-ble.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="companion-radio-minimal.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="companion-radio-ble.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

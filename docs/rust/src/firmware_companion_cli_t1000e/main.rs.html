@@ -692,11 +692,10 @@
 <a href=#692 id=692 data-nosnippet>692</a>        spawner.spawn(power_task(saadc, sensor_rail).unwrap());
 <a href=#693 id=693 data-nosnippet>693</a>        spawner.spawn(mac_task(host).unwrap());
 <a href=#694 id=694 data-nosnippet>694</a>        spawner.spawn(beacon_task(beacon_node).unwrap());
-<a href=#695 id=695 data-nosnippet>695</a>        spawner.spawn(
-<a href=#696 id=696 data-nosnippet>696</a>            cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap(),
-<a href=#697 id=697 data-nosnippet>697</a>        );
-<a href=#698 id=698 data-nosnippet>698</a>
-<a href=#699 id=699 data-nosnippet>699</a>        join(usb.run(), heartbeat(led, wdt_handle)).<span class="kw">await</span>;
-<a href=#700 id=700 data-nosnippet>700</a>    }
-<a href=#701 id=701 data-nosnippet>701</a>}
+<a href=#695 id=695 data-nosnippet>695</a>        spawner
+<a href=#696 id=696 data-nosnippet>696</a>            .spawn(cli_task(node, local_key, storage, rx, prev_panic_buf, prev_panic_len).unwrap());
+<a href=#697 id=697 data-nosnippet>697</a>
+<a href=#698 id=698 data-nosnippet>698</a>        join(usb.run(), heartbeat(led, wdt_handle)).<span class="kw">await</span>;
+<a href=#699 id=699 data-nosnippet>699</a>    }
+<a href=#700 id=700 data-nosnippet>700</a>}
 </code></pre></div></section></main></body></html>

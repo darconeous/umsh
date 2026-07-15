@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
+            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-1226d456.js"></script>
+        <script src="toc-4c32735f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -174,68 +174,86 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h2 id="companion-radio"><a class="header" href="#companion-radio">Companion Radio</a></h2>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>This section remains partly exploratory, but it now describes the intended
-architecture more concretely.</p>
-</blockquote>
+                        <h1 id="companion-radio"><a class="header" href="#companion-radio">Companion Radio</a></h1>
 <p>A <strong>companion radio</strong> is a radio device that exposes UMSH capability to another
 device such as a phone, tablet, laptop, or small computer. The companion radio
 is not merely a dumb modem, but it is also not normally the primary home of the
 user’s long-term UMSH identity.</p>
+<p>This chapter describes the architecture: what a companion radio is, where the
+security boundary sits, and which responsibilities belong to each side. The
+protocol itself is specified in three companion chapters:</p>
+<ul>
+<li>the <a href="companion-radio-minimal.html">Minimal Companion Radio Protocol</a> defines
+the frame format, core commands, and the property/stream surface needed to
+configure and use a LoRa radio as a raw frame pipe</li>
+<li>the <a href="companion-radio-full.html">Full Companion Radio Protocol</a> is a strict
+superset that adds receive filtering, inbound queueing, key provisioning,
+and acknowledgement delegation</li>
+<li><a href="companion-radio-ble.html">Companion Radio over BLE</a> binds the protocol to
+BLE GATT; serial transports (UART, USB-CDC) use HDLC-Lite framing as
+described in the minimal protocol</li>
+</ul>
 <p>The intended model is:</p>
 <ul>
-<li>the <strong>phone or computer</strong> owns the user’s long-term identities</li>
+<li>the <strong>phone or computer</strong> owns the user’s long-term identity</li>
 <li>the <strong>companion radio</strong> owns the physical LoRa transceiver and any always-on
 firmware services</li>
-<li>the companion radio may also host one or more <strong>local radio-owned nodes</strong> for
-device management, maintenance, or shared-site infrastructure use</li>
+<li>the companion radio may also host a <strong>local radio-owned node</strong> for
+device management and diagnostics</li>
 </ul>
 <p>This differs from systems where the radio itself is the user’s primary mesh
 identity. In UMSH, the user-facing identity usually lives on the host device,
 not in the radio.</p>
 <p>That separation has important consequences:</p>
 <ul>
-<li>the companion radio does not normally hold the user’s long-term private key</li>
+<li>the companion radio does not hold the user’s long-term private key</li>
 <li>the host device remains the authority for user identity, contacts, and
 high-level application behavior</li>
 <li>the radio may still perform some limited actions while disconnected if the
 host has provisioned the necessary state in advance</li>
 </ul>
-<h2 id="roles"><a class="header" href="#roles">Roles</a></h2>
-<p>It is useful to distinguish three logical roles that may coexist on one
-physical companion radio.</p>
-<h3 id="1-radio-owned-local-node"><a class="header" href="#1-radio-owned-local-node">1. Radio-Owned Local Node</a></h3>
-<p>The companion radio may host a node that belongs to the radio itself. This node
-exists even when no phone is attached and can be used for:</p>
+<h2 id="identities"><a class="header" href="#identities">Identities</a></h2>
+<p>A companion radio deals with at most two node identities:</p>
+<h3 id="the-device-identity"><a class="header" href="#the-device-identity">The Device Identity</a></h3>
+<p>The companion radio may host a node that belongs to the radio itself. This
+node exists even when no phone is attached and can be used for:</p>
 <ul>
 <li>in-band management</li>
 <li>diagnostics</li>
 <li>repeater or bridge behavior</li>
 <li>announcing the presence or capabilities of the radio</li>
 </ul>
-<p>By default, such a node need not advertise itself with ordinary beacons.</p>
-<h3 id="2-tethered-host-identities"><a class="header" href="#2-tethered-host-identities">2. Tethered Host Identities</a></h3>
-<p>A phone or computer may attach directly to the companion radio and use it as
-its radio interface. In this mode, the host’s own UMSH identities remain on the
-host, but the radio forwards traffic for them and may cache some related state.</p>
-<h3 id="3-bridged-or-shared-service"><a class="header" href="#3-bridged-or-shared-service">3. Bridged or Shared Service</a></h3>
-<p>A companion radio may also serve as a shared bridge for one or more nearby
-devices, much like a repeater or gateway. In this role it may forward traffic
-without being the primary owner of the identities using it.</p>
-<p>These modes are not mutually exclusive. For example, a single radio might:</p>
-<ul>
-<li>host its own hidden management node</li>
-<li>act as a user’s tethered personal radio</li>
-<li>also expose a shared bridged service to other nearby devices</li>
-</ul>
+<p>By default, such a node need not advertise itself with ordinary beacons. Its
+private key is either generated on the radio itself (preferred) or installed
+once by the host; it is never readable back over the companion link. The
+host can read the corresponding public key at any time.</p>
+<p>The device identity, its channel keys, its peer list, and the radio’s own
+settings (RF configuration, and eventually repeater policy, positioning, and
+advertisement behavior) form the <strong>device domain</strong>: state that belongs to
+the radio and survives a change of host.</p>
+<h3 id="the-tethered-host-identity"><a class="header" href="#the-tethered-host-identity">The Tethered Host Identity</a></h3>
+<p>A phone or computer attaches to the companion radio and uses it as its radio
+interface. The host’s UMSH identity remains on the host: the radio learns only
+the identity’s public key, forwards traffic for it, and may cache narrowly
+scoped related state (channel keys, per-peer symmetric keys, queued inbound
+frames).</p>
+<p>The companion-radio protocol supports exactly <strong>one</strong> tethered host identity
+at a time. A host application that manages multiple user identities is
+expected to select one for the radio to assist; it can still send and receive
+traffic for others through the raw frame stream while attached.</p>
+<p>Everything provisioned for the host identity — its public key, channel keys,
+peer keys, filters, and queued inbound traffic — forms the <strong>host domain</strong>:
+state that is keyed by the host identity and wiped wholesale when a
+different host identity takes over the radio. Pairing the radio with a new
+phone therefore starts the host state over cleanly while leaving the
+radio’s own identity and settings untouched.</p>
 <h2 id="operating-modes"><a class="header" href="#operating-modes">Operating Modes</a></h2>
 <h3 id="tethered"><a class="header" href="#tethered">Tethered</a></h3>
 <p>In <strong>tethered</strong> mode, a host device uses the companion radio almost as though
-the radio were a local hardware peripheral. This is the most direct mode and is
-expected to be the common case for phones.</p>
-<p>Tethered mode should support:</p>
+the radio were a local hardware peripheral. This is the most direct mode and
+is expected to be the common case for phones. It is the mode the companion
+protocol chapters specify.</p>
+<p>Tethered mode supports:</p>
 <ul>
 <li>radio configuration</li>
 <li>raw UMSH frame transmit and receive</li>
@@ -244,27 +262,26 @@ expected to be the common case for phones.</p>
 </ul>
 <h3 id="bridged"><a class="header" href="#bridged">Bridged</a></h3>
 <p>In <strong>bridged</strong> mode, the companion radio behaves more like an infrastructure
-service. One or more host devices may submit traffic through it, or it may
-forward traffic on their behalf subject to local policy.</p>
+service. One or more nearby devices may submit traffic through it, or it may
+forward traffic on their behalf subject to local policy, without being the
+primary owner of the identities using it.</p>
 <p>Bridged mode is useful for:</p>
 <ul>
 <li>a fixed radio shared by multiple users in one location</li>
 <li>a site gateway that extends range for nearby devices</li>
 <li>deployments where the host device is intermittent but the radio remains on</li>
 </ul>
-<p>Bridged mode should not be confused with the <strong>tethered companion-link
-protocol</strong> described later in this chapter. Tethering is one host talking to
-its own companion radio over a local control link. Bridging is a separate local
-access problem in which nearby devices are treated more like peers or clients
-of the radio itself.</p>
+<p>Bridged mode should not be confused with the tethered companion-link
+protocol. Tethering is one host talking to its own companion radio over a
+local control link. Bridging is a separate local access problem in which
+nearby devices are treated more like peers or clients of the radio itself.
+Bridging is not yet specified; see <a href="#ble-as-a-local-bearer">BLE As A Local
+Bearer</a> for the design space.</p>
 <h3 id="hybrid-use"><a class="header" href="#hybrid-use">Hybrid Use</a></h3>
-<p>A real device may use both modes at once. For example:</p>
-<ul>
-<li>a phone is tethered for its user’s personal traffic</li>
-<li>a second device is bridged through the same radio</li>
-<li>the radio’s own local node remains available for management</li>
-</ul>
-<p>The companion-radio protocol therefore must not assume exclusivity.</p>
+<p>A real device may use both modes at once. For example, a phone is tethered
+for its user’s personal traffic while the radio’s own local node remains
+available for management. The companion-radio protocol therefore must not
+assume exclusivity.</p>
 <h2 id="security-boundary"><a class="header" href="#security-boundary">Security Boundary</a></h2>
 <p>The fundamental rule is:</p>
 <blockquote>
@@ -283,8 +300,6 @@ material, depending on what offline behavior is desired.</p>
 <li>multicast channel keys</li>
 <li>pairwise symmetric keys derived for specific peers</li>
 <li>receive filters tied to specific identities, hints, or packet classes</li>
-<li>queued outbound traffic awaiting transmission</li>
-<li>queued inbound traffic awaiting host delivery</li>
 </ul>
 <h3 id="material-that-must-not-be-provisioned"><a class="header" href="#material-that-must-not-be-provisioned">Material That Must Not Be Provisioned</a></h3>
 <p>The companion-radio protocol must not provide a mechanism for provisioning:</p>
@@ -296,563 +311,138 @@ material, depending on what offline behavior is desired.</p>
 <ul>
 <li>broad contact databases unrelated to radio operation</li>
 </ul>
-<h2 id="why-provision-pairwise-keys-at-all"><a class="header" href="#why-provision-pairwise-keys-at-all">Why Provision Pairwise Keys At All?</a></h2>
-<p>If the radio does not have the host’s long-term private key, it cannot perform
-fresh ECDH on the host’s behalf. That means it cannot derive new pairwise state
-for previously unknown peers by itself.</p>
+<h2 id="why-provision-keys-at-all"><a class="header" href="#why-provision-keys-at-all">Why Provision Keys At All?</a></h2>
+<p>If the radio does not have the host’s private key, it cannot perform fresh
+ECDH on the host’s behalf. That means it cannot derive new pairwise state for
+previously unknown peers by itself.</p>
 <p>Nevertheless, there are useful cases where the host may deliberately preload
-pairwise symmetric keys for <strong>specific already-known peers</strong>. Examples include:</p>
+symmetric key material for <strong>specific already-known peers and channels</strong>:</p>
 <ul>
-<li>allowing the radio to recognize and surface urgent messages from known peers</li>
-<li>sending MAC ACKs on the host node’s behalf while the host is briefly asleep or
-disconnected</li>
-<li>enabling simple keyword or alert matching for specific secure conversations</li>
+<li><strong>Pairwise peer keys</strong> let the radio authenticate inbound secure traffic
+from those peers and send MAC acks on the host’s behalf while the host is
+asleep or disconnected, so that senders’ retransmission logic is satisfied.</li>
+<li><strong>Channel keys</strong> let the radio recognize multicast traffic on the host’s
+channels — and, importantly, <strong>blind unicast</strong> traffic addressed to the
+host, whose destination and source addresses are concealed under the
+channel key (see <a href="packet-types.html#blind-unicast-packet">Blind Unicast
+Packet</a>). Without the channel key the
+radio cannot even tell such traffic is for the host.</li>
 </ul>
-<p>This does not grant the radio the full power of the host’s long-term identity.
-It only grants limited capability for the specific peers whose pairwise keys
-were provisioned.</p>
-<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
-<p>The companion-radio interface should be thought of as four capability groups:</p>
+<p>This does not grant the radio the full power of the host’s identity. It only
+grants limited capability for the specific peers and channels that were
+provisioned. The <a href="companion-radio-full.html#provisioning-security">Full Companion Radio
+Protocol</a> specifies the exact
+mechanism and its security consequences.</p>
+<h2 id="capability-groups"><a class="header" href="#capability-groups">Capability Groups</a></h2>
+<p>The companion-radio interface can be thought of as four capability groups.
+The minimal protocol covers the first two; the full protocol adds the rest.</p>
 <h3 id="a-radio-control"><a class="header" href="#a-radio-control">A. Radio Control</a></h3>
-<p>The host needs to configure the physical radio link, but this interface should
-not be LoRa-specific in shape where that can be avoided. Different radios may
-have different parameter sets.</p>
-<p>At minimum, the host should be able to:</p>
+<p>The host needs to configure the physical radio link, but this interface
+should not be LoRa-specific in shape where that can be avoided. Different
+radios may have different parameter sets.</p>
+<p>At minimum, the host can:</p>
 <ul>
-<li>select the physical transport profile or channel plan</li>
 <li>configure frequency, bandwidth, spreading factor, coding rate, power, and
 similar link parameters where applicable</li>
 <li>query device capabilities and current active configuration</li>
 <li>observe radio health and diagnostics</li>
+<li>observe and limit transmit duty cycle</li>
 </ul>
 <h3 id="b-frame-data-plane"><a class="header" href="#b-frame-data-plane">B. Frame Data Plane</a></h3>
-<p>The host should be able to use the companion radio as a transport for UMSH
-frames.</p>
-<p>At minimum, the interface should provide:</p>
+<p>The host uses the companion radio as a transport for UMSH frames:</p>
 <ul>
 <li>transmit of raw complete UMSH frames</li>
-<li>receive of raw complete UMSH frames</li>
-<li>transmit result / queued / dropped indications</li>
-<li>optional RSSI/SNR and similar receive metadata</li>
+<li>receive of raw complete UMSH frames, with RSSI/SNR receive metadata</li>
+<li>transmit result indications</li>
 </ul>
-<p>This keeps the layering clean: the companion-radio link carries UMSH frames, not
-re-encoded UMSH semantics.</p>
+<p>This keeps the layering clean: the companion-radio link carries UMSH frames,
+not re-encoded UMSH semantics. One practical consequence is that the host can
+also communicate with the companion radio’s own local UMSH node using
+ordinary UMSH frames sent over this stream, rather than requiring a separate
+bespoke message path for such traffic.</p>
 <h3 id="c-receive-filtering-and-wake-policy"><a class="header" href="#c-receive-filtering-and-wake-policy">C. Receive Filtering and Wake Policy</a></h3>
-<p>A major value of the companion radio is letting the host sleep while the radio
-stays awake. For that to work, the radio needs filtering capability so it only
-wakes the host when a frame is relevant.</p>
-<p>Useful filters include:</p>
-<ul>
-<li>destination hint</li>
-<li>destination full key, if present</li>
-<li>channel identifier</li>
-<li>packet type</li>
-<li>ACK tag</li>
-<li>“all packets”</li>
-</ul>
-<p>It may also be useful to support higher-level policy such as:</p>
-<ul>
-<li>wake only on packets matching known peers</li>
-<li>wake only on packets for certain channels</li>
-<li>wake only on packets that require host attention</li>
-<li>enqueue packets for later delivery without waking the host immediately</li>
-</ul>
+<p>A major value of the companion radio is letting the host sleep while the
+radio stays awake. For that to work, the radio needs filtering capability so
+it only wakes the host when a frame is relevant. The full protocol derives
+filters implicitly from the provisioned host identity and channel keys, and
+lets the host add explicit filters by destination hint, channel identifier,
+or packet type — or switch to promiscuous delivery for diagnostics.</p>
 <h3 id="d-offline-assistance"><a class="header" href="#d-offline-assistance">D. Offline Assistance</a></h3>
 <p>The companion radio may be asked to do limited work while the host is
-disconnected.</p>
-<p>Examples include:</p>
+disconnected:</p>
 <ul>
-<li>buffering inbound frames until the host reconnects</li>
-<li>storing outbound frames prepared by the host for later transmission</li>
-<li>periodically transmitting configured beacons or advertisements</li>
+<li>buffering inbound frames until the host reconnects and asks for them</li>
+<li>sending MAC acks for the host identity, for peers whose pairwise keys were
+provisioned</li>
 <li>matching known-peer secure traffic against simple local rules</li>
-<li>sending MAC ACKs for pre-provisioned identities and peers</li>
 </ul>
-<p>These should remain tightly scoped. The radio is assisting the host, not fully
-impersonating it in the general case.</p>
+<p>These remain tightly scoped: the radio is assisting the host, not
+impersonating it in the general case. Outbound traffic is deliberately <strong>not</strong>
+queued — a transmit either happens or fails while the host is attached to
+observe the result.</p>
 <h2 id="suggested-capability-matrix"><a class="header" href="#suggested-capability-matrix">Suggested Capability Matrix</a></h2>
-<p>The table below summarizes which side should normally own which function.</p>
+<p>The table below summarizes which side owns which function.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Capability</th><th>Host</th><th>Companion radio</th></tr>
 </thead>
 <tbody>
-<tr><td>Long-term private identity key</td><td>Yes</td><td>Normally no</td></tr>
-<tr><td>Fresh pairwise derivation for arbitrary new peers</td><td>Yes</td><td>Normally no</td></tr>
+<tr><td>Long-term private identity key</td><td>Yes</td><td>No</td></tr>
+<tr><td>Fresh pairwise derivation for arbitrary new peers</td><td>Yes</td><td>No</td></tr>
 <tr><td>Raw frame transmit / receive</td><td>Optional</td><td>Yes</td></tr>
-<tr><td>Radio parameter control</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Radio parameter control</td><td>Configure</td><td>Enforce</td></tr>
 <tr><td>Receive filtering</td><td>Configure</td><td>Enforce</td></tr>
-<tr><td>Beacon scheduling</td><td>Configure</td><td>Execute</td></tr>
-<tr><td>Channel keys</td><td>Optional</td><td>Optional</td></tr>
-<tr><td>Preloaded pairwise keys for known peers</td><td>Optional</td><td>Optional</td></tr>
-<tr><td>MAC ACKs for preloaded secure peers while host disconnected</td><td>Configure/policy</td><td>Possible</td></tr>
-<tr><td>Message queueing while host absent</td><td>Consume</td><td>Perform</td></tr>
+<tr><td>Channel keys</td><td>Yes</td><td>Optional, provisioned</td></tr>
+<tr><td>Pairwise keys for known peers</td><td>Yes</td><td>Optional, provisioned</td></tr>
+<tr><td>MAC acks for provisioned peers while host disconnected</td><td>Configure/policy</td><td>Perform</td></tr>
+<tr><td>Inbound queueing while host absent</td><td>Drain/consume</td><td>Perform</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="state-synchronization"><a class="header" href="#state-synchronization">State Synchronization</a></h2>
-<p>A companion radio and host will often need to synchronize state incrementally
-rather than all at once.</p>
-<p>Important state classes include:</p>
-<ul>
-<li>configured local host-owned identities</li>
-<li>pinned peers</li>
-<li>auto-learned peers, if the host wants visibility into them</li>
-<li>channel keys</li>
-<li>queued inbound/outbound frames</li>
-<li>beacon schedules</li>
-<li>alert/filter policy</li>
-<li>frame-counter reservations, if the radio is allowed to send on behalf of a
-host-owned identity</li>
-</ul>
-<p>This does not mean all such state must be mirrored perfectly at all times.
-Instead, the interface should let the host be explicit about what authority the
-radio has been granted.</p>
 <h2 id="low-power-expectations"><a class="header" href="#low-power-expectations">Low-Power Expectations</a></h2>
 <p>A companion radio is especially useful when the host processor should remain
-asleep most of the time. The architecture should support:</p>
+asleep most of the time. The architecture supports:</p>
 <ul>
 <li>the radio remaining awake while the host sleeps</li>
-<li>filtering and queueing happening on the radio side</li>
-<li>host wakeup only when a policy match occurs or buffered data crosses a
-threshold</li>
-<li>reconnect and drain of queued events without losing radio continuity</li>
+<li>filtering, acknowledgement, and queueing happening on the radio side</li>
+<li>host wakeup only when relevant traffic arrives</li>
+<li>reconnect and drain of queued frames without losing radio continuity</li>
 </ul>
 <p>This fits well with the broader UMSH design goal that devices should wait on
 real events rather than spin in polling loops.</p>
 <h2 id="companion-link-protocol"><a class="header" href="#companion-link-protocol">Companion-Link Protocol</a></h2>
-<p>This protocol is for the <strong>tethered</strong> companion-radio use case: one host device
-talking directly to one companion radio over a local link such as BLE, USB, or
-UART.</p>
-<p>It is not the same thing as treating BLE itself as a local ad-hoc mesh or
-bridge medium. If a deployment wants nearby devices to discover one another and
-exchange UMSH frames over BLE as peers, that is a separate bearer problem and
-should not be conflated with the tethered companion-link protocol described
-here.</p>
-<p>The companion-radio link itself is outside the core UMSH LoRa MAC. However, it
-should ideally be a single transport-independent protocol that can run over:</p>
+<p>The tethered companion link is a single transport-independent protocol,
+inspired by the framing discipline of Spinel but with a UMSH-specific
+command and property namespace. The same frames run over:</p>
 <ul>
-<li>BLE</li>
-<li>USB</li>
-<li>UART / serial</li>
-<li>TCP or other local transports, if desired</li>
+<li>UART / USB-CDC serial, using HDLC-Lite framing</li>
+<li>BLE, using the GATT frame transport of
+<a href="companion-radio-ble.html">Companion Radio over BLE</a></li>
+<li>any other reliable, ordered, flow-controlled local transport</li>
 </ul>
-<p>This avoids inventing one protocol for BLE, another for serial, and a third for
-USB. Instead, the system should define one <strong>companion-link framing and message
-protocol</strong>, then adapt that protocol to whatever local transport is available.</p>
-<p>This protocol is <strong>not</strong> intended to solve the bridge or repeater access case
-for nearby devices. In that case, BLE is not just a cable replacement between a
-host and its own radio. BLE itself becomes a local bearer over which nearby
-devices discover the radio, submit frames, receive frames, or otherwise
-participate in a small local network. That requires a separate bearer design.</p>
-<p>The following is a suggested direction, not yet a normative wire standard.</p>
-<h3 id="recommended-shape"><a class="header" href="#recommended-shape">Recommended Shape</a></h3>
-<p>Use a unified framed message protocol in which every host-to-radio or
-radio-to-host interaction is carried inside one companion-link frame. The frame
-payload indicates what kind of message it contains, for example:</p>
+<p>The key structural ideas:</p>
 <ul>
-<li>command request</li>
-<li>command response</li>
-<li>event notification</li>
-<li>raw received UMSH frame</li>
-<li>transmit request for a raw UMSH frame</li>
-<li>buffered-frame delivery</li>
+<li>lightweight binary framing with a one-byte header and small transaction
+identifiers, allowing up to seven in-flight host commands</li>
+<li><strong>properties</strong> for simple state — a change is confirmed by publication of
+the new authoritative value, and asynchronous state changes use the same
+publication form</li>
+<li><strong>streams</strong> for packet-like flows such as raw UMSH frames, which are not
+modeled as state</li>
+<li>unsolicited notifications share the grammar of solicited responses</li>
 </ul>
-<p>This keeps the protocol consistent across transports and avoids designing
-separate “control channels” and “data channels” when the overall medium is
-already low-speed and latency-tolerant.</p>
-<h3 id="why-a-unified-framed-protocol-is-preferable"><a class="header" href="#why-a-unified-framed-protocol-is-preferable">Why A Unified Framed Protocol Is Preferable</a></h3>
-<p>For companion-radio use, the important problem is not maximizing throughput
-through parallel logical channels. The more important goals are:</p>
-<ul>
-<li>one protocol to implement and debug</li>
-<li>one protocol that can be reused over BLE, USB, and serial</li>
-<li>simple framing and resynchronization after transport disruption</li>
-<li>clear sequencing of requests, events, and frame deliveries</li>
-<li>transport independence</li>
-</ul>
-<p>Given the low-speed, high-latency nature of the radio side of the system, a
-single orderly framed protocol is usually more valuable than splitting control
-and data into distinct lanes.</p>
-<h3 id="spinel-like-direction"><a class="header" href="#spinel-like-direction">Spinel-Like Direction</a></h3>
-<p>A good starting point is a protocol that largely mirrors the low-level framing
-discipline of Spinel while defining a completely UMSH-specific command and
-object namespace.</p>
-<p>The important ideas to preserve are:</p>
-<ul>
-<li>lightweight binary framing</li>
-<li>small transaction identifiers</li>
-<li>support for multiple in-flight host commands</li>
-<li>state changes communicated by publication of the new authoritative value</li>
-<li>asynchronous indications using the same general message grammar as
-synchronous replies</li>
-</ul>
-<p>The important idea <strong>not</strong> to cargo-cult is that everything must be forced into
-the property model. Properties are for simple state. Commands are verbs.
-Streams are for event-like or packet-like flows.</p>
-<p>This section intentionally defines only the byte-level frame shape and the
-general semantic categories. It does <strong>not</strong> attempt to fully specify the final
-command set.</p>
-<h3 id="companion-link-wire-frame"><a class="header" href="#companion-link-wire-frame">Companion-Link Wire Frame</a></h3>
-<p>Inside whatever outer transport framing is used (GATT write/notify payload,
-L2CAP payload, SLIP/COBS-encoded serial frame, etc.), each logical
-companion-link frame should have the following structure:</p>
-<pre><code class="language-text">+--------+-------------+-------------------+
-| Header | Command/Key | Command arguments |
-+--------+-------------+-------------------+
-  1 byte   packed uint     zero or more bytes
-</code></pre>
-<p>The first octet is the <strong>link header</strong>:</p>
-<pre><code class="language-text">  7 6   5 4 3   2 1 0
-+-----+-------+-------+
-|  P  |  IID  |  TID  |
-+-----+-------+-------+
-</code></pre>
-<p>Where:</p>
-<ul>
-<li><code>P</code> is a 2-bit protocol-pattern, a <code>10</code> in binary.
-<ul>
-<li>the initial value should be fixed so receivers can quickly reject garbage
-or incompatible major revisions</li>
-</ul>
-</li>
-<li><code>IID</code> is a 3-bit interface identifier
-<ul>
-<li><code>0</code> should be the default companion-radio interface</li>
-<li>other values may later identify additional logical services or vendor
-extensions</li>
-</ul>
-</li>
-<li><code>TID</code> is a 3-bit transaction identifier
-<ul>
-<li><code>0</code> is reserved for unsolicited indications and stream traffic</li>
-<li><code>1..7</code> are host-issued transactions</li>
-</ul>
-</li>
-</ul>
-<p>This preserves the useful “up to seven in-flight host commands” property.</p>
-<h3 id="packed-integer-encoding"><a class="header" href="#packed-integer-encoding">Packed Integer Encoding</a></h3>
-<p>Command identifiers, object identifiers, lengths, and similar scalar values
-should use a compact packed-unsigned-integer encoding in the style of Spinel.
-This keeps common operations to one or two octets while allowing the namespace
-to grow later.</p>
-<p>The exact packed integer encoding can be finalized later, but the intent is:</p>
-<ul>
-<li>small numeric IDs occupy one octet</li>
-<li>larger IDs may spill into subsequent octets</li>
-<li>receivers can parse the stream incrementally without ambiguity</li>
-</ul>
-<h3 id="fundamental-semantic-categories"><a class="header" href="#fundamental-semantic-categories">Fundamental Semantic Categories</a></h3>
-<p>The companion-link protocol should distinguish:</p>
-<ul>
-<li><strong>commands</strong>, which are verbs</li>
-<li><strong>properties</strong>, which are simple pieces of state</li>
-<li><strong>streams</strong>, which are event-like or packet-like flows</li>
-</ul>
-<p>Commands are not objects. They are operations applied to properties or streams.</p>
-<p>The namespace may still need to distinguish at least two kinds of named object:</p>
-<ul>
-<li>property identifiers</li>
-<li>stream identifiers</li>
-</ul>
-<p>These may share one numeric registry or be separated later, but they must
-remain semantically distinct.</p>
-<h4 id="property"><a class="header" href="#property">Property</a></h4>
-<p>A <strong>property</strong> is simple state that is naturally described as “this interface
-currently has this value.”</p>
-<p>Examples:</p>
-<ul>
-<li>repeater enabled/disabled</li>
-<li>current RF profile</li>
-<li>configured wake policy</li>
-<li>current battery status</li>
-<li>statistics counters</li>
-</ul>
-<p>Properties are appropriate when:</p>
-<ul>
-<li>the value is queryable</li>
-<li>the value may change asynchronously</li>
-<li>the authoritative confirmation of a change is publication of the new value</li>
-</ul>
-<p>Properties are <strong>not</strong> appropriate for queued actions, packet ingress/egress,
-or multi-phase workflows.</p>
-<h4 id="stream"><a class="header" href="#stream">Stream</a></h4>
-<p>A <strong>stream</strong> is an event-like or packet-like flow that is not well modeled as
-stable state.</p>
-<p>Examples:</p>
-<ul>
-<li>received UMSH frames</li>
-<li>transmit status events</li>
-<li>buffered frame delivery</li>
-<li>diagnostic log records</li>
-</ul>
-<p>Streams are generally one-way publications. They may optionally support
-flow-control or acknowledgement commands, but they are not properties.</p>
-<h3 id="fundamental-command-vocabulary"><a class="header" href="#fundamental-command-vocabulary">Fundamental Command Vocabulary</a></h3>
-<p>The starting command vocabulary should be small and generic:</p>
-<ul>
-<li><code>Noop</code></li>
-<li><code>Reset</code></li>
-<li><code>Get</code></li>
-<li><code>Set</code></li>
-<li><code>Insert</code></li>
-<li><code>Remove</code></li>
-<li><code>Send</code></li>
-<li><code>Received</code></li>
-<li><code>ValueIs</code></li>
-<li><code>LastStatus</code></li>
-</ul>
-<p>The intended roles are:</p>
-<ul>
-<li><code>Get(key)</code>
-<ul>
-<li>asks for the authoritative value of a property</li>
-</ul>
-</li>
-<li><code>Set(key, value)</code>
-<ul>
-<li>requests that a property be changed</li>
-<li>successful completion is normally reported by a matching <code>ValueIs(key, value)</code> indication rather than by inventing a separate “set succeeded”
-payload shape</li>
-</ul>
-</li>
-<li><code>Insert(key, value)</code>
-<ul>
-<li>adds one member to a list- or table-like property</li>
-</ul>
-</li>
-<li><code>Remove(key, value-or-selector)</code>
-<ul>
-<li>removes one member from a list- or table-like property</li>
-</ul>
-</li>
-<li><code>Send(stream, value)</code>
-<ul>
-<li>sends one item into a stream</li>
-<li>typical examples include host-to-radio frame submission or host
-acknowledgement/consumption of buffered stream items</li>
-</ul>
-</li>
-<li><code>Received(stream, value)</code>
-<ul>
-<li>publishes one item received or emitted on a stream</li>
-<li>typical examples include radio-to-host UMSH frame delivery, transmit status
-events, wake events, or log records</li>
-</ul>
-</li>
-<li><code>ValueIs(key, value)</code>
-<ul>
-<li>publishes the authoritative current value of a property</li>
-<li>used both for replies to <code>Get</code>/<code>Set</code>/<code>Insert</code>/<code>Remove</code> and for asynchronous
-change notification</li>
-</ul>
-</li>
-<li><code>LastStatus(code, ...)</code>
-<ul>
-<li>reports completion status when there is no more specific authoritative
-publication to send, or when a command fails</li>
-</ul>
-</li>
-</ul>
-<p>If the protocol later needs additional verbs, they should be added explicitly
-rather than pretending a new class of action is really a property update.</p>
-<h3 id="object-namespace"><a class="header" href="#object-namespace">Object Namespace</a></h3>
-<p>Properties and streams may share one numeric namespace if desired, but the
-specification must make their semantic category explicit.</p>
-<p>In other words:</p>
-<ul>
-<li>sharing one encoding space is acceptable</li>
-<li>pretending every named thing in that space is a property is not</li>
-</ul>
-<p>Every standardized object identifier should therefore be documented with:</p>
-<ul>
-<li>its semantic category: <code>property</code> or <code>stream</code></li>
-<li>which verbs are valid for it</li>
-<li>whether it may emit unsolicited <code>ValueIs</code> or <code>Received</code> indications</li>
-</ul>
-<h3 id="publication-model"><a class="header" href="#publication-model">Publication Model</a></h3>
-<p>For properties, the authoritative rule should be:</p>
-<ul>
-<li>the result of changing a property is publication of the new value</li>
-</ul>
-<p>For example:</p>
-<pre><code class="language-text">Host  -&gt; Set(Prop::RepeaterEnabled, true)
-Radio -&gt; ValueIs(Prop::RepeaterEnabled, true)
-</code></pre>
-<p>If the value later changes for some other reason, the same <code>ValueIs</code> form is
-used again:</p>
-<pre><code class="language-text">Radio -&gt; ValueIs(Prop::RepeaterEnabled, false)
-</code></pre>
-<p>This makes state reconstruction from an observed packet trace straightforward.</p>
-<h3 id="streams-and-indications"><a class="header" href="#streams-and-indications">Streams And Indications</a></h3>
-<p>Stream traffic uses explicit stream verbs rather than property publication.</p>
-<p>For example:</p>
-<pre><code class="language-text">Host  -&gt; Send(Stream::UmshFrames, tx-envelope)
-Radio -&gt; Received(Stream::TransmitState, queued)
-Radio -&gt; Received(Stream::TransmitState, transmitted)
-Radio -&gt; Received(Stream::TransmitState, acked)
-</code></pre>
-<p>Or:</p>
-<pre><code class="language-text">Radio -&gt; Received(Stream::UmshFrames, rx-envelope)
-</code></pre>
-<p>Unsolicited indications use <code>TID = 0</code>.</p>
-<p>Typical examples:</p>
-<ul>
-<li><code>Stream::UmshFrames</code></li>
-<li><code>Stream::TransmitState</code></li>
-<li><code>Stream::BufferedFrameReady</code></li>
-<li><code>Stream::LogRecord</code></li>
-</ul>
-<p>These are not property publications even if they use the same packed integer
-encoding and frame grammar.</p>
-<h3 id="transactions-and-ordering"><a class="header" href="#transactions-and-ordering">Transactions And Ordering</a></h3>
-<p>The host may have up to seven in-flight requests per interface because <code>TID</code>
-values <code>1..7</code> are available concurrently.</p>
-<p>The radio should:</p>
-<ul>
-<li>preserve the <code>TID</code> on direct replies</li>
-<li>use <code>TID = 0</code> for unsolicited indications</li>
-<li>avoid requiring strict global serialization unless a specific command family
-needs it</li>
-</ul>
-<p>This allows pipelining without abandoning observability.</p>
-<h3 id="initial-object-families"><a class="header" href="#initial-object-families">Initial Object Families</a></h3>
-<p>A first draft of the UMSH companion-link namespace would likely include at
-least the following families:</p>
-<ul>
-<li>protocol identity and capabilities</li>
-<li>radio configuration and current RF state</li>
-<li>repeater policy and wake/filter policy</li>
-<li>buffered inbound/outbound queue state</li>
-<li>transmit and queue-control streams</li>
-<li>received-frame and transmit-status streams</li>
-<li>companion health, battery, and diagnostics</li>
-</ul>
-<p>The exact object numbers are intentionally left open for now.</p>
-<h3 id="initial-candidate-properties-and-streams"><a class="header" href="#initial-candidate-properties-and-streams">Initial Candidate Properties And Streams</a></h3>
-<p>Using the Spinel core specification in <code>/Users/darco/Projects/spinel-spec</code> as a
-model, the most useful first pass is probably to separate candidate objects
-into:</p>
-<ul>
-<li>constant single-value properties</li>
-<li>mutable single-value properties</li>
-<li>multi-value or table-like properties</li>
-<li>stream properties</li>
-</ul>
-<p>The table below is intentionally only a starting point. It is meant to make the
-object surface concrete enough to review, rename, split, or delete.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Candidate object</th><th>Kind</th><th>Likely verbs</th><th>Why it likely exists</th></tr>
-</thead>
-<tbody>
-<tr><td><code>PROP_PROTOCOL_VERSION</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Companion-link major/minor version so the host can reject incompatible radios early</td></tr>
-<tr><td><code>PROP_RADIO_VERSION</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Human-readable firmware/build identifier for the companion radio</td></tr>
-<tr><td><code>PROP_INTERFACE_TYPE</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Identifies this as a UMSH companion-radio interface rather than some other service</td></tr>
-<tr><td><code>PROP_CAPS</code></td><td>Property, multi-value constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Advertises supported capabilities, optional features, and available object families</td></tr>
-<tr><td><code>PROP_INTERFACE_COUNT</code></td><td>Property, constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of logical interfaces or services exposed by the companion</td></tr>
-<tr><td><code>PROP_LAST_STATUS</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Last command status or reset reason; useful for failures and post-reset synchronization</td></tr>
-<tr><td><code>PROP_POWER_STATE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Companion-radio power mode such as offline, standby, low-power, online</td></tr>
-<tr><td><code>PROP_HOST_ATTACH_STATE</code></td><td>Property, mutable or read-only</td><td><code>Get</code>, <code>Set?</code>, <code>ValueIs</code></td><td>Whether a host session is attached, suspended, draining, or detached</td></tr>
-<tr><td><code>PROP_BATTERY_STATE</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Battery percentage, voltage, charging state, or external-power presence</td></tr>
-<tr><td><code>PROP_DEVICE_HEALTH</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Compact overall health summary for quick status display</td></tr>
-<tr><td><code>PROP_RF_PROFILE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Selected RF profile or channel plan name/ID</td></tr>
-<tr><td><code>PROP_RF_REGION</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Current regulatory region or UMSH region profile</td></tr>
-<tr><td><code>PROP_RF_FREQUENCY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Actual center frequency when direct tuning is exposed</td></tr>
-<tr><td><code>PROP_RF_BANDWIDTH</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Radio bandwidth</td></tr>
-<tr><td><code>PROP_RF_SPREADING_FACTOR</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>LoRa spreading factor</td></tr>
-<tr><td><code>PROP_RF_CODING_RATE</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>LoRa coding rate</td></tr>
-<tr><td><code>PROP_RF_TX_POWER</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Radio TX power</td></tr>
-<tr><td><code>PROP_RF_RSSI</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Latest RSSI snapshot if the host wants direct radio diagnostics</td></tr>
-<tr><td><code>PROP_RF_SNR</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Latest SNR snapshot if the host wants direct radio diagnostics</td></tr>
-<tr><td><code>PROP_REPEATER_ENABLED</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Turns repeater forwarding behavior on or off</td></tr>
-<tr><td><code>PROP_REPEATER_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Encodes repeater thresholds and policy such as min RSSI/SNR and region restrictions</td></tr>
-<tr><td><code>PROP_STATION_CALLSIGN</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Callsign used by the radio’s own repeater behavior where required</td></tr>
-<tr><td><code>PROP_WAKE_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>High-level wake behavior while the host sleeps</td></tr>
-<tr><td><code>PROP_WAKE_REASON</code></td><td>Property, read-only async</td><td><code>Get</code>, <code>ValueIs</code></td><td>Most recent wake cause, with optional unsolicited publication</td></tr>
-<tr><td><code>PROP_RECEIVE_FILTERS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Filter table controlling what wakes the host or gets buffered</td></tr>
-<tr><td><code>PROP_BUFFER_LIMITS</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Queue capacities, thresholds, or retention policy</td></tr>
-<tr><td><code>PROP_BUFFERED_RX_COUNT</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of buffered inbound items waiting for the host</td></tr>
-<tr><td><code>PROP_BUFFERED_TX_COUNT</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Number of queued outbound items awaiting transmission</td></tr>
-<tr><td><code>PROP_BUFFERED_RX_POLICY</code></td><td>Property, mutable</td><td><code>Get</code>, <code>Set</code>, <code>ValueIs</code></td><td>Policy for retaining and aging buffered inbound items</td></tr>
-<tr><td><code>PROP_INSTALLED_IDENTITIES</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Host-provided identity contexts the radio is allowed to assist</td></tr>
-<tr><td><code>PROP_INSTALLED_CHANNEL_KEYS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Shared channel keys provisioned to the companion</td></tr>
-<tr><td><code>PROP_INSTALLED_PEER_KEYS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Pairwise symmetric peer material provisioned for limited offline assistance</td></tr>
-<tr><td><code>PROP_BEACON_JOBS</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Periodic beacon/advertisement jobs owned by the companion</td></tr>
-<tr><td><code>PROP_STATS_COUNTERS</code></td><td>Property, read-only</td><td><code>Get</code>, <code>ValueIs</code></td><td>Packet/queue/retry counters suitable for UI and diagnostics</td></tr>
-<tr><td><code>PROP_UNSOL_UPDATE_FILTER</code></td><td>Property, multi-value mutable</td><td><code>Get</code>, <code>Set</code>, <code>Insert</code>, <code>Remove</code>, <code>ValueIs</code>, <code>Inserted</code>, <code>Removed</code></td><td>Filters which properties are allowed to generate unsolicited <code>ValueIs</code> updates</td></tr>
-<tr><td><code>PROP_UNSOL_UPDATE_LIST</code></td><td>Property, multi-value constant</td><td><code>Get</code>, <code>ValueIs</code></td><td>Lists properties capable of unsolicited publication</td></tr>
-<tr><td><code>STREAM_DEBUG_LOG</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Human-readable debug/log output from the companion</td></tr>
-<tr><td><code>STREAM_UMSH_FRAMES</code></td><td>Stream, input/output</td><td><code>Send</code>, <code>Received</code></td><td>Carries raw UMSH frames across the host/radio boundary, with direction-specific envelopes for transmit and receive metadata</td></tr>
-<tr><td><code>STREAM_TRANSMIT_STATUS</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Reports queued, transmitted, forwarded, acked, timed-out, or dropped outcomes</td></tr>
-<tr><td><code>STREAM_BUFFERED_RX</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Delivers previously buffered inbound frames when the host drains them</td></tr>
-<tr><td><code>STREAM_WAKE_EVENT</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Wake-trigger events such as matching frame, timer, queue threshold, or button press</td></tr>
-<tr><td><code>STREAM_DIAGNOSTIC_EVENT</code></td><td>Stream, output-only</td><td><code>Received</code></td><td>Structured diagnostic/fault events that are not well modeled as properties</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="umsh-frame-stream"><a class="header" href="#umsh-frame-stream">UMSH Frame Stream</a></h3>
-<p>The most important stream is the raw <strong>UMSH frame stream</strong> across the
-host/radio boundary.</p>
-<p>This stream is best modeled as a single bidirectional stream rather than as
-separate “transmit” and “receive” streams.</p>
-<p>The stream carries raw UMSH frames together with associated local metadata:</p>
-<ul>
-<li><code>Send(STREAM_UMSH_FRAMES, tx-envelope)</code>
-<ul>
-<li>host to radio</li>
-<li>requests transmission of one raw UMSH frame</li>
-</ul>
-</li>
-<li><code>Received(STREAM_UMSH_FRAMES, rx-envelope)</code>
-<ul>
-<li>radio to host</li>
-<li>reports reception of one raw UMSH frame</li>
-</ul>
-</li>
-</ul>
-<p>The envelope contents are direction-specific:</p>
-<ul>
-<li>a <strong>TX envelope</strong> would normally contain:
-<ul>
-<li>raw UMSH frame bytes</li>
-<li>any companion-link-local transmit metadata or policy hints</li>
-</ul>
-</li>
-<li>an <strong>RX envelope</strong> would normally contain:
-<ul>
-<li>raw UMSH frame bytes</li>
-<li>receive metadata such as RSSI, SNR, timestamp, queue origin, or buffering
-information</li>
-</ul>
-</li>
-</ul>
-<p>This stream is fundamentally about moving raw UMSH traffic across the
-host/radio boundary. It is not a separate application protocol.</p>
-<p>One practical consequence is that the host can also communicate with the
-companion radio’s own local UMSH node using ordinary UMSH frames sent over this
-stream, rather than requiring a separate bespoke message path for such traffic.</p>
-<h3 id="additional-command-candidates"><a class="header" href="#additional-command-candidates">Additional Command Candidates</a></h3>
-<p>The objects above imply a few likely verbs or verb families beyond the very
-basic ones already listed:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Candidate command</th><th>Why it may be needed</th></tr>
-</thead>
-<tbody>
-<tr><td><code>Send</code></td><td>Natural fit for input or bidirectional streams such as <code>STREAM_UMSH_FRAMES</code></td></tr>
-<tr><td><code>Received</code></td><td>Natural fit for output or bidirectional streams such as <code>STREAM_UMSH_FRAMES</code> or <code>STREAM_TRANSMIT_STATUS</code></td></tr>
-<tr><td><code>Acknowledge</code> or <code>Advance</code></td><td>Likely useful if buffered stream delivery needs explicit host acknowledgement without overloading <code>Send</code></td></tr>
-<tr><td><code>Clear</code></td><td>May be clearer than <code>Set(empty)</code> for some queues, logs, or statistics</td></tr>
-<tr><td><code>Describe</code></td><td>May be useful if the host wants schema-like detail for complex properties or stream item formats</td></tr>
-</tbody>
-</table>
-</div>
-<p>These are only candidates. A stricter design may decide that some of these are
-unnecessary and can be replaced by better property or stream definitions.</p>
+<p>The <a href="companion-radio-minimal.html">Minimal Companion Radio Protocol</a> defines
+the wire format and the subset sufficient for a raw radio; the
+<a href="companion-radio-full.html">Full Companion Radio Protocol</a> layers the
+assistance features on top without changing the framing or the version.</p>
+<p>Whatever the transport, the companion link is a privileged interface: an
+attached host commands transmission with arbitrary content, timing, and
+power, and provisioning moves real key material onto the radio. On serial
+transports this is protected by physical possession; the BLE binding
+specifies an equivalent barrier
+(see <a href="companion-radio-ble.html#ble-security">Security</a>), and key provisioning
+must never be carried over a transport that provides less.</p>
 <h2 id="ble-as-a-local-bearer"><a class="header" href="#ble-as-a-local-bearer">BLE As A Local Bearer</a></h2>
 <p>If BLE is used for more than tethering, it should be treated as a separate
 local bearer concept rather than an extension of the companion-link protocol.</p>
@@ -863,8 +453,8 @@ over a local link</li>
 <li><strong>connectionless or mesh-style local participation</strong>, where multiple nearby
 devices can observe, relay, or respond</li>
 </ul>
-<p>The first case is what the companion-link protocol in this chapter is about.
-The second case is a different design problem.</p>
+<p>The first case is what the companion-link protocol is about. The second case
+is a different design problem.</p>
 <p>For clarity:</p>
 <ul>
 <li><strong>tethered companion-link</strong> means “my host talks to my radio”</li>
@@ -874,8 +464,8 @@ exchange nearby UMSH-related traffic over BLE”</li>
 <p>The first is point-to-point control and framing. The second is local network
 access.</p>
 <h3 id="plausible-ble-building-blocks"><a class="header" href="#plausible-ble-building-blocks">Plausible BLE Building Blocks</a></h3>
-<p>BLE does have modes that are closer to local ad-hoc participation than ordinary
-GATT tethering:</p>
+<p>BLE does have modes that are closer to local ad-hoc participation than
+ordinary GATT tethering:</p>
 <ul>
 <li>ordinary LE advertising for one-to-many broadcast</li>
 <li>periodic advertising for scheduled connectionless broadcast</li>
@@ -902,8 +492,7 @@ advertising-bearer and GATT-bearer styles of participation</li>
 payload sizes are large enough to be practical for whole-frame carriage. In
 BLE, an attribute value may be up to 512 octets, which in practice corresponds
 to the familiar “ATT MTU up to 517 bytes” figure once ATT overhead is included.
-That is comfortably in the range needed for a unified framed companion-link
-protocol.</p>
+That is comfortably in the range needed for the companion-link protocol.</p>
 <p>Advertising-oriented bearers are different. Their payloads are much smaller,
 and they should therefore be treated as:</p>
 <ul>
@@ -931,24 +520,12 @@ and they should therefore be treated as:</p>
 <p>This suggests a clean split:</p>
 <ul>
 <li>if the goal is <strong>host-to-radio tethering</strong>, prefer GATT first and L2CAP CoC
-where available</li>
+where available — this is what
+<a href="companion-radio-ble.html">Companion Radio over BLE</a> specifies</li>
 <li>if the goal is <strong>nearby-device participation over BLE</strong>, assume the bearer is
 constrained and design for small messages or fragmentation from the outset</li>
 </ul>
-<p>These suggest that BLE can support a local bearer for discovery and limited
-frame exchange. However, this should be specified separately from the tethered
-companion-radio protocol.</p>
-<h3 id="likely-design-guidance"><a class="header" href="#likely-design-guidance">Likely Design Guidance</a></h3>
-<p>If UMSH eventually wants BLE-based local participation, the cleaner approach is
-probably:</p>
-<ul>
-<li>keep the <strong>companion-link protocol</strong> for tethered host-to-radio control and
-frame exchange</li>
-<li>define a separate <strong>BLE local bearer</strong> for nearby-device participation</li>
-<li>ensure both can coexist on the same physical device without sharing message
-semantics unnecessarily</li>
-</ul>
-<p>That BLE local bearer would likely need its own answers for questions such as:</p>
+<p>That BLE local bearer would need its own answers for questions such as:</p>
 <ul>
 <li>how nearby devices discover an available bridge or repeater</li>
 <li>how access is authorized</li>
@@ -958,86 +535,21 @@ service messages</li>
 <li>how buffering, fairness, and airtime limits are handled when several nearby
 clients share one radio</li>
 </ul>
-<p>Bluetooth Mesh is particularly notable because the Bluetooth SIG already defines
-an <strong>advertising bearer</strong> and a <strong>GATT bearer</strong>, with Proxy nodes bridging
-between them. That architecture is conceptually similar to what a UMSH device
-may eventually want: one mode for direct tethered interaction and another for
-local many-to-many participation. At the same time, adopting Bluetooth Mesh
-itself would mean adopting a substantial stack, not just borrowing the bearer
-idea.</p>
-<h2 id="ble-adaptation-suggestion"><a class="header" href="#ble-adaptation-suggestion">BLE Adaptation Suggestion</a></h2>
-<p>If BLE is used, BLE should carry the unified companion-link protocol rather
-than defining a BLE-specific control protocol.</p>
-<h3 id="why-gatt-is-still-a-good-baseline"><a class="header" href="#why-gatt-is-still-a-good-baseline">Why GATT Is Still A Good Baseline</a></h3>
-<p>For phones, GATT is the most widely deployable BLE interface today. It works on
-Android and iOS without requiring unusual privileges or assuming support for
-less common BLE features.</p>
-<p>The simplest BLE mapping is therefore:</p>
-<ul>
-<li>one custom service</li>
-<li>one write characteristic from host to radio</li>
-<li>one notify characteristic from radio to host</li>
-</ul>
-<p>Each write or notification carries one or more companion-link frames, subject
-to the MTU and fragmentation rules of the transport.</p>
-<h3 id="optional-l2cap-coc"><a class="header" href="#optional-l2cap-coc">Optional L2CAP CoC</a></h3>
-<p>Where platform support is available, BLE L2CAP Credit-Based Channels may be a
-better transport for the same companion-link frames because they reduce GATT
-overhead and simplify fragmentation. But the protocol riding above should
-remain the same.</p>
-<h2 id="serial--usb-adaptation-suggestion"><a class="header" href="#serial--usb-adaptation-suggestion">Serial / USB Adaptation Suggestion</a></h2>
-<p>For UART or USB CDC serial, the same companion-link frames can be carried over a
-byte stream using an ordinary framing scheme such as:</p>
-<ul>
-<li>length-prefixed frames with CRC</li>
-<li>SLIP-style framing</li>
-<li>COBS framing</li>
-</ul>
-<p>The important part is that the message protocol above remains unchanged. The
-serial transport should not require a second command language.</p>
-<h3 id="raw-frame-carriage"><a class="header" href="#raw-frame-carriage">Raw Frame Carriage</a></h3>
-<p>Messages carrying raw UMSH frames should include:</p>
-<ul>
-<li>direction (<code>tx</code> request vs <code>rx</code> indication)</li>
-<li>frame length</li>
-<li>frame bytes</li>
-<li>optional metadata for received frames such as RSSI, SNR, and local timestamp</li>
-</ul>
-<p>Large frames may need fragmentation at the companion-link transport layer. That
-fragmentation belongs to the companion-radio link, not to UMSH itself.</p>
-<h3 id="reliability-model"><a class="header" href="#reliability-model">Reliability Model</a></h3>
-<p>For any transport, a good default is:</p>
-<ul>
-<li>host-originated requests use <code>TID = 1..7</code></li>
-<li>direct replies preserve the request <code>TID</code></li>
-<li>unsolicited indications and stream publications use <code>TID = 0</code></li>
-<li>buffered stream delivery remains queued until the host explicitly advances or
-acknowledges it</li>
-</ul>
-<p>This keeps the protocol lightweight while still allowing pipelining and
-post-facto reconstruction of companion-link state.</p>
-<h2 id="suggested-security-requirements-for-the-companion-link"><a class="header" href="#suggested-security-requirements-for-the-companion-link">Suggested Security Requirements For The Companion Link</a></h2>
-<p>Whatever transport is used, the companion-radio link should provide:</p>
-<ul>
-<li>authenticated pairing between host and radio</li>
-<li>authorization for which host may use which identities</li>
-<li>replay protection on companion-link control messages</li>
-<li>explicit policy for whether bridged clients may provision keys or only submit
-frames</li>
-</ul>
-<p>If BLE is used, link-layer encryption and bonding are helpful but should not be
-treated as the entire security story. The application protocol should still
-assume that authorization decisions matter.</p>
+<p>Bluetooth Mesh is particularly notable because the Bluetooth SIG already
+defines an <strong>advertising bearer</strong> and a <strong>GATT bearer</strong>, with Proxy nodes
+bridging between them. That architecture is conceptually similar to what a
+UMSH device may eventually want: one mode for direct tethered interaction and
+another for local many-to-many participation. At the same time, adopting
+Bluetooth Mesh itself would mean adopting a substantial stack, not just
+borrowing the bearer idea.</p>
 <h2 id="open-questions"><a class="header" href="#open-questions">Open Questions</a></h2>
 <p>The following items remain intentionally open:</p>
 <ul>
-<li>how much queued state the radio should persist durably</li>
-<li>whether the host should mirror all auto-learned peers or only pinned ones</li>
-<li>how MAC ACK delegation should be authorized per identity</li>
 <li>how much application-layer filtering is appropriate before violating layer
 separation</li>
-<li>whether bridged clients should be allowed to provision keys or only use
-pre-provisioned shared services</li>
+<li>whether and how the radio’s own device node should announce itself</li>
+<li>the design of a bridged / local-bearer mode, including whether bridged
+clients may provision keys or only use pre-provisioned shared services</li>
 </ul>
 <h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
 <p>A companion radio should be understood as a <strong>UMSH radio service with optional
@@ -1046,7 +558,7 @@ host keeps authority over long-term identity, while the radio contributes:</p>
 <ul>
 <li>always-on physical connectivity</li>
 <li>receive filtering and low-power wake support</li>
-<li>queued buffering</li>
+<li>inbound buffering and delegated acknowledgement for provisioned peers</li>
 <li>optional narrowly scoped offline assistance</li>
 </ul>
 <p>That split preserves UMSH’s cryptographic model while still making small,

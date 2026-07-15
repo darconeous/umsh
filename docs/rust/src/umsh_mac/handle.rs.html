@@ -264,169 +264,173 @@
 <a href=#264 id=264 data-nosnippet>264</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacError&lt;&lt;P::Radio <span class="kw">as </span>umsh_hal::Radio&gt;::Error&gt;&gt; {
 <a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">loop </span>{
 <a href=#266 id=266 data-nosnippet>266</a>            <span class="comment">// Phase 1: drain any ready transmit work.
-<a href=#267 id=267 data-nosnippet>267</a>            </span><span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>.drain_tx_queue(<span class="kw-2">&amp;mut </span>on_event).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#268 id=268 data-nosnippet>268</a>
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="comment">// Phase 2: wait for a radio frame or timer deadline. Acquire the
-<a href=#270 id=270 data-nosnippet>270</a>            // borrow briefly each poll so concurrent tasks can obtain it too.
-<a href=#271 id=271 data-nosnippet>271</a>            // `poll_with_mut` keeps us registered on the cell's wake condition
-<a href=#272 id=272 data-nosnippet>272</a>            // across Pending polls, so we re-poll both when the cell frees up
-<a href=#273 id=273 data-nosnippet>273</a>            // and when another handle mutates coordinator state (e.g.
-<a href=#274 id=274 data-nosnippet>274</a>            // `cli.send_unicast` enqueues a frame and drops its borrow) —
-<a href=#275 id=275 data-nosnippet>275</a>            // without that, TX queued by concurrent handles would sit until
-<a href=#276 id=276 data-nosnippet>276</a>            // the next radio/timer event. It also deregisters us around our
-<a href=#277 id=277 data-nosnippet>277</a>            // own borrow so our guard release cannot self-wake into a spin,
-<a href=#278 id=278 data-nosnippet>278</a>            // and the scoped ticket deregisters on drop so this wait can be
-<a href=#279 id=279 data-nosnippet>279</a>            // cancelled (e.g. losing a `select!` race) without leaking its
-<a href=#280 id=280 data-nosnippet>280</a>            // waker registration.
-<a href=#281 id=281 data-nosnippet>281</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; FRAME];
-<a href=#282 id=282 data-nosnippet>282</a>            <span class="kw">let </span><span class="kw-2">mut </span>cond_ticket = <span class="self">self</span>.mac.scoped_ticket();
-<a href=#283 id=283 data-nosnippet>283</a>            <span class="kw">let </span>reason = poll_fn(|cx| {
-<a href=#284 id=284 data-nosnippet>284</a>                <span class="self">self</span>.mac.poll_with_mut(cx, <span class="kw-2">&amp;mut </span>cond_ticket, |mac, cx| {
-<a href=#285 id=285 data-nosnippet>285</a>                    <span class="comment">// Register radio/timer wakers and check readiness in one shot.
-<a href=#286 id=286 data-nosnippet>286</a>                    </span>mac.poll_wait_for_wake(cx, <span class="kw-2">&amp;mut </span>buf)
-<a href=#287 id=287 data-nosnippet>287</a>                })
-<a href=#288 id=288 data-nosnippet>288</a>            })
-<a href=#289 id=289 data-nosnippet>289</a>            .<span class="kw">await
-<a href=#290 id=290 data-nosnippet>290</a>            </span>.map_err(MacError::Radio)<span class="question-mark">?</span>;
-<a href=#291 id=291 data-nosnippet>291</a>            drop(cond_ticket);
-<a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="comment">// Phases 3-5: re-acquire the borrow and finish the cycle.
-<a href=#294 id=294 data-nosnippet>294</a>            </span><span class="self">self</span>.mac
-<a href=#295 id=295 data-nosnippet>295</a>                .borrow_mut()
-<a href=#296 id=296 data-nosnippet>296</a>                .<span class="kw">await
-<a href=#297 id=297 data-nosnippet>297</a>                </span>.process_wake_reason(reason, <span class="kw-2">&amp;mut </span>buf, <span class="kw-2">&amp;mut </span>on_event)
-<a href=#298 id=298 data-nosnippet>298</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="comment">// Flush any pending TX or RX counter boundaries to durable storage.
-<a href=#301 id=301 data-nosnippet>301</a>            // Mirrors `Mac::next_event`. Errors are intentionally ignored —
-<a href=#302 id=302 data-nosnippet>302</a>            // persistence is best-effort and must not block the radio event
-<a href=#303 id=303 data-nosnippet>303</a>            // loop. Borrow is dropped before the next phase.
-<a href=#304 id=304 data-nosnippet>304</a>            </span>{
-<a href=#305 id=305 data-nosnippet>305</a>                <span class="kw">let </span><span class="kw-2">mut </span>mac = <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>;
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="kw">let _ </span>= mac.service_counter_persistence().<span class="kw">await</span>;
-<a href=#307 id=307 data-nosnippet>307</a>                <span class="kw">let _ </span>= mac.service_rx_counter_persistence().<span class="kw">await</span>;
-<a href=#308 id=308 data-nosnippet>308</a>            }
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a>            <span class="comment">// If new transmit work appeared during processing (e.g. a
-<a href=#311 id=311 data-nosnippet>311</a>            // retransmit was enqueued), loop back to drain it before
-<a href=#312 id=312 data-nosnippet>312</a>            // waiting again.
-<a href=#313 id=313 data-nosnippet>313</a>            </span><span class="kw">let </span>tx_empty = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>.tx_queue().is_empty();
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">if </span>!tx_empty {
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">continue</span>;
-<a href=#316 id=316 data-nosnippet>316</a>            }
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#318 id=318 data-nosnippet>318</a>        }
-<a href=#319 id=319 data-nosnippet>319</a>    }
-<a href=#320 id=320 data-nosnippet>320</a>
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// Drive the shared MAC forever, invoking `on_event` for delivered events.
-<a href=#322 id=322 data-nosnippet>322</a>    ///
-<a href=#323 id=323 data-nosnippet>323</a>    /// This is the preferred long-lived driver API for standalone MAC-backed tasks.
-<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub async fn </span>run(
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw-2">mut </span>on_event: <span class="kw">impl </span>FnMut(LocalIdentityId, <span class="kw">crate</span>::MacEventRef&lt;<span class="lifetime">'_</span>&gt;),
-<a href=#327 id=327 data-nosnippet>327</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacError&lt;&lt;P::Radio <span class="kw">as </span>umsh_hal::Radio&gt;::Error&gt;&gt; {
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">loop </span>{
-<a href=#329 id=329 data-nosnippet>329</a>            <span class="self">self</span>.next_event(<span class="kw-2">&amp;mut </span>on_event).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#330 id=330 data-nosnippet>330</a>        }
-<a href=#331 id=331 data-nosnippet>331</a>    }
-<a href=#332 id=332 data-nosnippet>332</a>
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Drive the shared MAC forever while ignoring emitted events.
-<a href=#334 id=334 data-nosnippet>334</a>    </span><span class="kw">pub async fn </span>run_quiet(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacError&lt;&lt;P::Radio <span class="kw">as </span>umsh_hal::Radio&gt;::Error&gt;&gt; {
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="self">self</span>.run(|<span class="kw">_</span>, <span class="kw">_</span>| {}).<span class="kw">await
-<a href=#336 id=336 data-nosnippet>336</a>    </span>}
-<a href=#337 id=337 data-nosnippet>337</a>
-<a href=#338 id=338 data-nosnippet>338</a>    <span class="doccomment">/// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
-<a href=#339 id=339 data-nosnippet>339</a>    </span><span class="kw">pub async fn </span>fill_random(<span class="kw-2">&amp;</span><span class="self">self</span>, dest: <span class="kw-2">&amp;mut </span>[u8]) {
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>.rng_mut().fill_bytes(dest);
-<a href=#341 id=341 data-nosnippet>341</a>    }
-<a href=#342 id=342 data-nosnippet>342</a>
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="doccomment">/// Returns the current coordinator clock time in milliseconds.
-<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">pub async fn </span>now_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="self">self</span>.mac.borrow().<span class="kw">await</span>.clock().now_ms()
-<a href=#346 id=346 data-nosnippet>346</a>    }
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
-<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="doccomment">/// Registers an ephemeral software identity with the shared coordinator.
-<a href=#350 id=350 data-nosnippet>350</a>    </span><span class="kw">pub async fn </span>register_ephemeral(
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#352 id=352 data-nosnippet>352</a>        parent: LocalIdentityId,
-<a href=#353 id=353 data-nosnippet>353</a>        identity: umsh_crypto::software::SoftwareIdentity,
-<a href=#354 id=354 data-nosnippet>354</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;LocalIdentityId, CapacityError&gt; {
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="self">self</span>.mac
-<a href=#356 id=356 data-nosnippet>356</a>            .borrow_mut()
-<a href=#357 id=357 data-nosnippet>357</a>            .<span class="kw">await
-<a href=#358 id=358 data-nosnippet>358</a>            </span>.register_ephemeral(parent, identity)
-<a href=#359 id=359 data-nosnippet>359</a>    }
-<a href=#360 id=360 data-nosnippet>360</a>
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
-<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="doccomment">/// Removes a previously registered ephemeral identity.
-<a href=#363 id=363 data-nosnippet>363</a>    </span><span class="kw">pub async fn </span>remove_ephemeral(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; bool {
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>.remove_ephemeral(id)
-<a href=#365 id=365 data-nosnippet>365</a>    }
-<a href=#366 id=366 data-nosnippet>366</a>
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="doccomment">/// Cancel a pending ACK-requested send, stopping retransmissions.
-<a href=#368 id=368 data-nosnippet>368</a>    ///
-<a href=#369 id=369 data-nosnippet>369</a>    /// Returns `true` if the pending ACK was found and removed.
-<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="kw">pub async fn </span>cancel_pending_ack(
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#372 id=372 data-nosnippet>372</a>        identity_id: LocalIdentityId,
-<a href=#373 id=373 data-nosnippet>373</a>        receipt: SendReceipt,
-<a href=#374 id=374 data-nosnippet>374</a>    ) -&gt; bool {
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="self">self</span>.mac
-<a href=#376 id=376 data-nosnippet>376</a>            .borrow_mut()
-<a href=#377 id=377 data-nosnippet>377</a>            .<span class="kw">await
-<a href=#378 id=378 data-nosnippet>378</a>            </span>.cancel_pending_ack(identity_id, receipt)
-<a href=#379 id=379 data-nosnippet>379</a>    }
-<a href=#380 id=380 data-nosnippet>380</a>
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="doccomment">/// Return the live TX frame counter for one identity, if registered.
-<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub async fn </span>frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="self">self</span>.mac
-<a href=#384 id=384 data-nosnippet>384</a>            .borrow()
-<a href=#385 id=385 data-nosnippet>385</a>            .<span class="kw">await
-<a href=#386 id=386 data-nosnippet>386</a>            </span>.identity(id)
-<a href=#387 id=387 data-nosnippet>387</a>            .map(|slot| slot.frame_counter())
-<a href=#388 id=388 data-nosnippet>388</a>    }
-<a href=#389 id=389 data-nosnippet>389</a>
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="doccomment">/// Return the persisted TX frame-counter boundary for one identity, if registered.
-<a href=#391 id=391 data-nosnippet>391</a>    </span><span class="kw">pub async fn </span>persisted_frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="self">self</span>.mac
-<a href=#393 id=393 data-nosnippet>393</a>            .borrow()
-<a href=#394 id=394 data-nosnippet>394</a>            .<span class="kw">await
-<a href=#395 id=395 data-nosnippet>395</a>            </span>.identity(id)
-<a href=#396 id=396 data-nosnippet>396</a>            .map(|slot| slot.persisted_counter())
-<a href=#397 id=397 data-nosnippet>397</a>    }
-<a href=#398 id=398 data-nosnippet>398</a>
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="doccomment">/// Invoke `f` for every peer currently registered in the shared registry.
-<a href=#400 id=400 data-nosnippet>400</a>    ///
-<a href=#401 id=401 data-nosnippet>401</a>    /// This covers all known peers, not just those with an active crypto session.
-<a href=#402 id=402 data-nosnippet>402</a>    </span><span class="kw">pub async fn </span>for_each_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(umsh_core::PublicKey)) {
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>mac = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>;
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">for </span>(<span class="kw">_</span>, info) <span class="kw">in </span>mac.peer_registry().iter() {
-<a href=#405 id=405 data-nosnippet>405</a>            f(info.public_key);
-<a href=#406 id=406 data-nosnippet>406</a>        }
-<a href=#407 id=407 data-nosnippet>407</a>    }
-<a href=#408 id=408 data-nosnippet>408</a>
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="doccomment">/// Invoke `f` for each peer with an established crypto state for `id`,
-<a href=#410 id=410 data-nosnippet>410</a>    /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
-<a href=#411 id=411 data-nosnippet>411</a>    </span><span class="kw">pub async fn </span>for_each_peer_counter(
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#413 id=413 data-nosnippet>413</a>        id: LocalIdentityId,
-<a href=#414 id=414 data-nosnippet>414</a>        f: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(umsh_core::PublicKey, u32, u32),
-<a href=#415 id=415 data-nosnippet>415</a>    ) {
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>mac = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>;
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = mac.identity(id) <span class="kw">else </span>{
-<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">return</span>;
-<a href=#419 id=419 data-nosnippet>419</a>        };
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">for </span>(peer_id, state) <span class="kw">in </span>slot.peer_crypto().iter() {
-<a href=#421 id=421 data-nosnippet>421</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(info) = mac.peer_registry().get(<span class="kw-2">*</span>peer_id) <span class="kw">else </span>{
-<a href=#422 id=422 data-nosnippet>422</a>                <span class="kw">continue</span>;
-<a href=#423 id=423 data-nosnippet>423</a>            };
-<a href=#424 id=424 data-nosnippet>424</a>            f(
-<a href=#425 id=425 data-nosnippet>425</a>                info.public_key,
-<a href=#426 id=426 data-nosnippet>426</a>                state.replay_window.last_accepted,
-<a href=#427 id=427 data-nosnippet>427</a>                state.persisted_rx_counter,
-<a href=#428 id=428 data-nosnippet>428</a>            );
-<a href=#429 id=429 data-nosnippet>429</a>        }
-<a href=#430 id=430 data-nosnippet>430</a>    }
-<a href=#431 id=431 data-nosnippet>431</a>}
+<a href=#267 id=267 data-nosnippet>267</a>            </span><span class="self">self</span>.mac
+<a href=#268 id=268 data-nosnippet>268</a>                .borrow_mut()
+<a href=#269 id=269 data-nosnippet>269</a>                .<span class="kw">await
+<a href=#270 id=270 data-nosnippet>270</a>                </span>.drain_tx_queue(<span class="kw-2">&amp;mut </span>on_event)
+<a href=#271 id=271 data-nosnippet>271</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#272 id=272 data-nosnippet>272</a>
+<a href=#273 id=273 data-nosnippet>273</a>            <span class="comment">// Phase 2: wait for a radio frame or timer deadline. Acquire the
+<a href=#274 id=274 data-nosnippet>274</a>            // borrow briefly each poll so concurrent tasks can obtain it too.
+<a href=#275 id=275 data-nosnippet>275</a>            // `poll_with_mut` keeps us registered on the cell's wake condition
+<a href=#276 id=276 data-nosnippet>276</a>            // across Pending polls, so we re-poll both when the cell frees up
+<a href=#277 id=277 data-nosnippet>277</a>            // and when another handle mutates coordinator state (e.g.
+<a href=#278 id=278 data-nosnippet>278</a>            // `cli.send_unicast` enqueues a frame and drops its borrow) —
+<a href=#279 id=279 data-nosnippet>279</a>            // without that, TX queued by concurrent handles would sit until
+<a href=#280 id=280 data-nosnippet>280</a>            // the next radio/timer event. It also deregisters us around our
+<a href=#281 id=281 data-nosnippet>281</a>            // own borrow so our guard release cannot self-wake into a spin,
+<a href=#282 id=282 data-nosnippet>282</a>            // and the scoped ticket deregisters on drop so this wait can be
+<a href=#283 id=283 data-nosnippet>283</a>            // cancelled (e.g. losing a `select!` race) without leaking its
+<a href=#284 id=284 data-nosnippet>284</a>            // waker registration.
+<a href=#285 id=285 data-nosnippet>285</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; FRAME];
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">let </span><span class="kw-2">mut </span>cond_ticket = <span class="self">self</span>.mac.scoped_ticket();
+<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">let </span>reason = poll_fn(|cx| {
+<a href=#288 id=288 data-nosnippet>288</a>                <span class="self">self</span>.mac.poll_with_mut(cx, <span class="kw-2">&amp;mut </span>cond_ticket, |mac, cx| {
+<a href=#289 id=289 data-nosnippet>289</a>                    <span class="comment">// Register radio/timer wakers and check readiness in one shot.
+<a href=#290 id=290 data-nosnippet>290</a>                    </span>mac.poll_wait_for_wake(cx, <span class="kw-2">&amp;mut </span>buf)
+<a href=#291 id=291 data-nosnippet>291</a>                })
+<a href=#292 id=292 data-nosnippet>292</a>            })
+<a href=#293 id=293 data-nosnippet>293</a>            .<span class="kw">await
+<a href=#294 id=294 data-nosnippet>294</a>            </span>.map_err(MacError::Radio)<span class="question-mark">?</span>;
+<a href=#295 id=295 data-nosnippet>295</a>            drop(cond_ticket);
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="comment">// Phases 3-5: re-acquire the borrow and finish the cycle.
+<a href=#298 id=298 data-nosnippet>298</a>            </span><span class="self">self</span>.mac
+<a href=#299 id=299 data-nosnippet>299</a>                .borrow_mut()
+<a href=#300 id=300 data-nosnippet>300</a>                .<span class="kw">await
+<a href=#301 id=301 data-nosnippet>301</a>                </span>.process_wake_reason(reason, <span class="kw-2">&amp;mut </span>buf, <span class="kw-2">&amp;mut </span>on_event)
+<a href=#302 id=302 data-nosnippet>302</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a>            <span class="comment">// Flush any pending TX or RX counter boundaries to durable storage.
+<a href=#305 id=305 data-nosnippet>305</a>            // Mirrors `Mac::next_event`. Errors are intentionally ignored —
+<a href=#306 id=306 data-nosnippet>306</a>            // persistence is best-effort and must not block the radio event
+<a href=#307 id=307 data-nosnippet>307</a>            // loop. Borrow is dropped before the next phase.
+<a href=#308 id=308 data-nosnippet>308</a>            </span>{
+<a href=#309 id=309 data-nosnippet>309</a>                <span class="kw">let </span><span class="kw-2">mut </span>mac = <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>;
+<a href=#310 id=310 data-nosnippet>310</a>                <span class="kw">let _ </span>= mac.service_counter_persistence().<span class="kw">await</span>;
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="kw">let _ </span>= mac.service_rx_counter_persistence().<span class="kw">await</span>;
+<a href=#312 id=312 data-nosnippet>312</a>            }
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="comment">// If new transmit work appeared during processing (e.g. a
+<a href=#315 id=315 data-nosnippet>315</a>            // retransmit was enqueued), loop back to drain it before
+<a href=#316 id=316 data-nosnippet>316</a>            // waiting again.
+<a href=#317 id=317 data-nosnippet>317</a>            </span><span class="kw">let </span>tx_empty = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>.tx_queue().is_empty();
+<a href=#318 id=318 data-nosnippet>318</a>            <span class="kw">if </span>!tx_empty {
+<a href=#319 id=319 data-nosnippet>319</a>                <span class="kw">continue</span>;
+<a href=#320 id=320 data-nosnippet>320</a>            }
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#322 id=322 data-nosnippet>322</a>        }
+<a href=#323 id=323 data-nosnippet>323</a>    }
+<a href=#324 id=324 data-nosnippet>324</a>
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// Drive the shared MAC forever, invoking `on_event` for delivered events.
+<a href=#326 id=326 data-nosnippet>326</a>    ///
+<a href=#327 id=327 data-nosnippet>327</a>    /// This is the preferred long-lived driver API for standalone MAC-backed tasks.
+<a href=#328 id=328 data-nosnippet>328</a>    </span><span class="kw">pub async fn </span>run(
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw-2">mut </span>on_event: <span class="kw">impl </span>FnMut(LocalIdentityId, <span class="kw">crate</span>::MacEventRef&lt;<span class="lifetime">'_</span>&gt;),
+<a href=#331 id=331 data-nosnippet>331</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacError&lt;&lt;P::Radio <span class="kw">as </span>umsh_hal::Radio&gt;::Error&gt;&gt; {
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">loop </span>{
+<a href=#333 id=333 data-nosnippet>333</a>            <span class="self">self</span>.next_event(<span class="kw-2">&amp;mut </span>on_event).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#334 id=334 data-nosnippet>334</a>        }
+<a href=#335 id=335 data-nosnippet>335</a>    }
+<a href=#336 id=336 data-nosnippet>336</a>
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="doccomment">/// Drive the shared MAC forever while ignoring emitted events.
+<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub async fn </span>run_quiet(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), MacError&lt;&lt;P::Radio <span class="kw">as </span>umsh_hal::Radio&gt;::Error&gt;&gt; {
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="self">self</span>.run(|<span class="kw">_</span>, <span class="kw">_</span>| {}).<span class="kw">await
+<a href=#340 id=340 data-nosnippet>340</a>    </span>}
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Fills a caller-provided buffer with random bytes from the shared coordinator RNG.
+<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">pub async fn </span>fill_random(<span class="kw-2">&amp;</span><span class="self">self</span>, dest: <span class="kw-2">&amp;mut </span>[u8]) {
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>.rng_mut().fill_bytes(dest);
+<a href=#345 id=345 data-nosnippet>345</a>    }
+<a href=#346 id=346 data-nosnippet>346</a>
+<a href=#347 id=347 data-nosnippet>347</a>    <span class="doccomment">/// Returns the current coordinator clock time in milliseconds.
+<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">pub async fn </span>now_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="self">self</span>.mac.borrow().<span class="kw">await</span>.clock().now_ms()
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
+<a href=#353 id=353 data-nosnippet>353</a>    </span><span class="doccomment">/// Registers an ephemeral software identity with the shared coordinator.
+<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="kw">pub async fn </span>register_ephemeral(
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#356 id=356 data-nosnippet>356</a>        parent: LocalIdentityId,
+<a href=#357 id=357 data-nosnippet>357</a>        identity: umsh_crypto::software::SoftwareIdentity,
+<a href=#358 id=358 data-nosnippet>358</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;LocalIdentityId, CapacityError&gt; {
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="self">self</span>.mac
+<a href=#360 id=360 data-nosnippet>360</a>            .borrow_mut()
+<a href=#361 id=361 data-nosnippet>361</a>            .<span class="kw">await
+<a href=#362 id=362 data-nosnippet>362</a>            </span>.register_ephemeral(parent, identity)
+<a href=#363 id=363 data-nosnippet>363</a>    }
+<a href=#364 id=364 data-nosnippet>364</a>
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
+<a href=#366 id=366 data-nosnippet>366</a>    </span><span class="doccomment">/// Removes a previously registered ephemeral identity.
+<a href=#367 id=367 data-nosnippet>367</a>    </span><span class="kw">pub async fn </span>remove_ephemeral(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; bool {
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="self">self</span>.mac.borrow_mut().<span class="kw">await</span>.remove_ephemeral(id)
+<a href=#369 id=369 data-nosnippet>369</a>    }
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="doccomment">/// Cancel a pending ACK-requested send, stopping retransmissions.
+<a href=#372 id=372 data-nosnippet>372</a>    ///
+<a href=#373 id=373 data-nosnippet>373</a>    /// Returns `true` if the pending ACK was found and removed.
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">pub async fn </span>cancel_pending_ack(
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#376 id=376 data-nosnippet>376</a>        identity_id: LocalIdentityId,
+<a href=#377 id=377 data-nosnippet>377</a>        receipt: SendReceipt,
+<a href=#378 id=378 data-nosnippet>378</a>    ) -&gt; bool {
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="self">self</span>.mac
+<a href=#380 id=380 data-nosnippet>380</a>            .borrow_mut()
+<a href=#381 id=381 data-nosnippet>381</a>            .<span class="kw">await
+<a href=#382 id=382 data-nosnippet>382</a>            </span>.cancel_pending_ack(identity_id, receipt)
+<a href=#383 id=383 data-nosnippet>383</a>    }
+<a href=#384 id=384 data-nosnippet>384</a>
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="doccomment">/// Return the live TX frame counter for one identity, if registered.
+<a href=#386 id=386 data-nosnippet>386</a>    </span><span class="kw">pub async fn </span>frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="self">self</span>.mac
+<a href=#388 id=388 data-nosnippet>388</a>            .borrow()
+<a href=#389 id=389 data-nosnippet>389</a>            .<span class="kw">await
+<a href=#390 id=390 data-nosnippet>390</a>            </span>.identity(id)
+<a href=#391 id=391 data-nosnippet>391</a>            .map(|slot| slot.frame_counter())
+<a href=#392 id=392 data-nosnippet>392</a>    }
+<a href=#393 id=393 data-nosnippet>393</a>
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="doccomment">/// Return the persisted TX frame-counter boundary for one identity, if registered.
+<a href=#395 id=395 data-nosnippet>395</a>    </span><span class="kw">pub async fn </span>persisted_frame_counter(<span class="kw-2">&amp;</span><span class="self">self</span>, id: LocalIdentityId) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="self">self</span>.mac
+<a href=#397 id=397 data-nosnippet>397</a>            .borrow()
+<a href=#398 id=398 data-nosnippet>398</a>            .<span class="kw">await
+<a href=#399 id=399 data-nosnippet>399</a>            </span>.identity(id)
+<a href=#400 id=400 data-nosnippet>400</a>            .map(|slot| slot.persisted_counter())
+<a href=#401 id=401 data-nosnippet>401</a>    }
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="doccomment">/// Invoke `f` for every peer currently registered in the shared registry.
+<a href=#404 id=404 data-nosnippet>404</a>    ///
+<a href=#405 id=405 data-nosnippet>405</a>    /// This covers all known peers, not just those with an active crypto session.
+<a href=#406 id=406 data-nosnippet>406</a>    </span><span class="kw">pub async fn </span>for_each_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(umsh_core::PublicKey)) {
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span>mac = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>;
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">for </span>(<span class="kw">_</span>, info) <span class="kw">in </span>mac.peer_registry().iter() {
+<a href=#409 id=409 data-nosnippet>409</a>            f(info.public_key);
+<a href=#410 id=410 data-nosnippet>410</a>        }
+<a href=#411 id=411 data-nosnippet>411</a>    }
+<a href=#412 id=412 data-nosnippet>412</a>
+<a href=#413 id=413 data-nosnippet>413</a>    <span class="doccomment">/// Invoke `f` for each peer with an established crypto state for `id`,
+<a href=#414 id=414 data-nosnippet>414</a>    /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
+<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">pub async fn </span>for_each_peer_counter(
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#417 id=417 data-nosnippet>417</a>        id: LocalIdentityId,
+<a href=#418 id=418 data-nosnippet>418</a>        f: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(umsh_core::PublicKey, u32, u32),
+<a href=#419 id=419 data-nosnippet>419</a>    ) {
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>mac = <span class="self">self</span>.mac.borrow().<span class="kw">await</span>;
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = mac.identity(id) <span class="kw">else </span>{
+<a href=#422 id=422 data-nosnippet>422</a>            <span class="kw">return</span>;
+<a href=#423 id=423 data-nosnippet>423</a>        };
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">for </span>(peer_id, state) <span class="kw">in </span>slot.peer_crypto().iter() {
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(info) = mac.peer_registry().get(<span class="kw-2">*</span>peer_id) <span class="kw">else </span>{
+<a href=#426 id=426 data-nosnippet>426</a>                <span class="kw">continue</span>;
+<a href=#427 id=427 data-nosnippet>427</a>            };
+<a href=#428 id=428 data-nosnippet>428</a>            f(
+<a href=#429 id=429 data-nosnippet>429</a>                info.public_key,
+<a href=#430 id=430 data-nosnippet>430</a>                state.replay_window.last_accepted,
+<a href=#431 id=431 data-nosnippet>431</a>                state.persisted_rx_counter,
+<a href=#432 id=432 data-nosnippet>432</a>            );
+<a href=#433 id=433 data-nosnippet>433</a>        }
+<a href=#434 id=434 data-nosnippet>434</a>    }
+<a href=#435 id=435 data-nosnippet>435</a>}
 </code></pre></div></section></main></body></html>

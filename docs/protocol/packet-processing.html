@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
+            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-1226d456.js"></script>
+        <script src="toc-4c32735f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -234,9 +234,12 @@
 </ul>
 </li>
 <li>
-<p><strong>Ack Processing</strong></p>
+<p><strong>Replay and Ack Processing</strong></p>
 <ul>
-<li>If the packet type requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack tag</a> from the full 16-byte CMAC and pairwise <code>K_enc</code>, prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
+<li>Apply the <a href="security.html#replay-detection">replay-detection rules</a>.</li>
+<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack tag</a> from the full 16-byte CMAC and pairwise <code>K_enc</code>, prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
+<li>If the authenticated packet is a previously received packet within the bounded <a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
+<li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>
 </ul>
 </li>
 <li>

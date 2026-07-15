@@ -408,329 +408,332 @@
 <a href=#408 id=408 data-nosnippet>408</a>            (
 <a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"ENC_DST_SRC"</span>,
 <a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"ENCRYPT(`DST || SRC`)"</span>,
-<a href=#411 id=411 data-nosnippet>411</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.options_range.end..blind_unicast_header.body_range.start]),
-<a href=#412 id=412 data-nosnippet>412</a>            ),
-<a href=#413 id=413 data-nosnippet>413</a>            (
-<a href=#414 id=414 data-nosnippet>414</a>                <span class="string">"ENC_PAYLOAD"</span>,
-<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"ENCRYPT(`\"Hello\"`)"</span>,
-<a href=#416 id=416 data-nosnippet>416</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.body_range.clone()]),
-<a href=#417 id=417 data-nosnippet>417</a>            ),
-<a href=#418 id=418 data-nosnippet>418</a>            (
-<a href=#419 id=419 data-nosnippet>419</a>                <span class="string">"MIC"</span>,
-<a href=#420 id=420 data-nosnippet>420</a>                <span class="string">"16 bytes"</span>,
-<a href=#421 id=421 data-nosnippet>421</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.mic_range.clone()]),
-<a href=#422 id=422 data-nosnippet>422</a>            ),
-<a href=#423 id=423 data-nosnippet>423</a>        ],
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw-2">&amp;</span>vectors.blind_unicast,
-<a href=#425 id=425 data-nosnippet>425</a>    );
-<a href=#426 id=426 data-nosnippet>426</a>
-<a href=#427 id=427 data-nosnippet>427</a>    out
-<a href=#428 id=428 data-nosnippet>428</a>}
+<a href=#411 id=411 data-nosnippet>411</a>                hex_spaced(
+<a href=#412 id=412 data-nosnippet>412</a>                    <span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.options_range.end
+<a href=#413 id=413 data-nosnippet>413</a>                        ..blind_unicast_header.body_range.start],
+<a href=#414 id=414 data-nosnippet>414</a>                ),
+<a href=#415 id=415 data-nosnippet>415</a>            ),
+<a href=#416 id=416 data-nosnippet>416</a>            (
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="string">"ENC_PAYLOAD"</span>,
+<a href=#418 id=418 data-nosnippet>418</a>                <span class="string">"ENCRYPT(`\"Hello\"`)"</span>,
+<a href=#419 id=419 data-nosnippet>419</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.body_range.clone()]),
+<a href=#420 id=420 data-nosnippet>420</a>            ),
+<a href=#421 id=421 data-nosnippet>421</a>            (
+<a href=#422 id=422 data-nosnippet>422</a>                <span class="string">"MIC"</span>,
+<a href=#423 id=423 data-nosnippet>423</a>                <span class="string">"16 bytes"</span>,
+<a href=#424 id=424 data-nosnippet>424</a>                hex_spaced(<span class="kw-2">&amp;</span>vectors.blind_unicast[blind_unicast_header.mic_range.clone()]),
+<a href=#425 id=425 data-nosnippet>425</a>            ),
+<a href=#426 id=426 data-nosnippet>426</a>        ],
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw-2">&amp;</span>vectors.blind_unicast,
+<a href=#428 id=428 data-nosnippet>428</a>    );
 <a href=#429 id=429 data-nosnippet>429</a>
-<a href=#430 id=430 data-nosnippet>430</a><span class="kw">struct </span>Phase1Vectors {
-<a href=#431 id=431 data-nosnippet>431</a>    node_a_private: [u8; <span class="number">32</span>],
-<a href=#432 id=432 data-nosnippet>432</a>    node_b_private: [u8; <span class="number">32</span>],
-<a href=#433 id=433 data-nosnippet>433</a>    node_a_public: PublicKey,
-<a href=#434 id=434 data-nosnippet>434</a>    node_b_public: PublicKey,
-<a href=#435 id=435 data-nosnippet>435</a>    shared_secret: SharedSecret,
-<a href=#436 id=436 data-nosnippet>436</a>    channel_key: ChannelKey,
-<a href=#437 id=437 data-nosnippet>437</a>    channel: DerivedChannelKeys,
-<a href=#438 id=438 data-nosnippet>438</a>    broadcast_hint: Vec&lt;u8&gt;,
-<a href=#439 id=439 data-nosnippet>439</a>    broadcast_full: Vec&lt;u8&gt;,
-<a href=#440 id=440 data-nosnippet>440</a>    unicast_encrypted: Vec&lt;u8&gt;,
-<a href=#441 id=441 data-nosnippet>441</a>    unicast_ackreq_fullsrc: Vec&lt;u8&gt;,
-<a href=#442 id=442 data-nosnippet>442</a>    multicast_encrypted: Vec&lt;u8&gt;,
-<a href=#443 id=443 data-nosnippet>443</a>    multicast_authenticated: Vec&lt;u8&gt;,
-<a href=#444 id=444 data-nosnippet>444</a>    unicast_with_options: Vec&lt;u8&gt;,
-<a href=#445 id=445 data-nosnippet>445</a>    blind_unicast: Vec&lt;u8&gt;,
-<a href=#446 id=446 data-nosnippet>446</a>}
-<a href=#447 id=447 data-nosnippet>447</a>
-<a href=#448 id=448 data-nosnippet>448</a><span class="kw">fn </span>generate_phase1_vectors() -&gt; Phase1Vectors {
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">let </span>engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+<a href=#430 id=430 data-nosnippet>430</a>    out
+<a href=#431 id=431 data-nosnippet>431</a>}
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a><span class="kw">struct </span>Phase1Vectors {
+<a href=#434 id=434 data-nosnippet>434</a>    node_a_private: [u8; <span class="number">32</span>],
+<a href=#435 id=435 data-nosnippet>435</a>    node_b_private: [u8; <span class="number">32</span>],
+<a href=#436 id=436 data-nosnippet>436</a>    node_a_public: PublicKey,
+<a href=#437 id=437 data-nosnippet>437</a>    node_b_public: PublicKey,
+<a href=#438 id=438 data-nosnippet>438</a>    shared_secret: SharedSecret,
+<a href=#439 id=439 data-nosnippet>439</a>    channel_key: ChannelKey,
+<a href=#440 id=440 data-nosnippet>440</a>    channel: DerivedChannelKeys,
+<a href=#441 id=441 data-nosnippet>441</a>    broadcast_hint: Vec&lt;u8&gt;,
+<a href=#442 id=442 data-nosnippet>442</a>    broadcast_full: Vec&lt;u8&gt;,
+<a href=#443 id=443 data-nosnippet>443</a>    unicast_encrypted: Vec&lt;u8&gt;,
+<a href=#444 id=444 data-nosnippet>444</a>    unicast_ackreq_fullsrc: Vec&lt;u8&gt;,
+<a href=#445 id=445 data-nosnippet>445</a>    multicast_encrypted: Vec&lt;u8&gt;,
+<a href=#446 id=446 data-nosnippet>446</a>    multicast_authenticated: Vec&lt;u8&gt;,
+<a href=#447 id=447 data-nosnippet>447</a>    unicast_with_options: Vec&lt;u8&gt;,
+<a href=#448 id=448 data-nosnippet>448</a>    blind_unicast: Vec&lt;u8&gt;,
+<a href=#449 id=449 data-nosnippet>449</a>}
 <a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a>    <span class="kw">let </span>node_a_private = [
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="number">0x11</span>, <span class="number">0x12</span>, <span class="number">0x13</span>, <span class="number">0x14</span>, <span class="number">0x15</span>, <span class="number">0x16</span>, <span class="number">0x17</span>, <span class="number">0x18</span>, <span class="number">0x19</span>, <span class="number">0x1A</span>, <span class="number">0x1B</span>, <span class="number">0x1C</span>, <span class="number">0x1D</span>, <span class="number">0x1E</span>, <span class="number">0x1F</span>,
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="number">0x20</span>, <span class="number">0x21</span>, <span class="number">0x22</span>, <span class="number">0x23</span>, <span class="number">0x24</span>, <span class="number">0x25</span>, <span class="number">0x26</span>, <span class="number">0x27</span>, <span class="number">0x28</span>, <span class="number">0x29</span>, <span class="number">0x2A</span>, <span class="number">0x2B</span>, <span class="number">0x2C</span>, <span class="number">0x2D</span>, <span class="number">0x2E</span>,
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="number">0x2F</span>, <span class="number">0x30</span>,
-<a href=#455 id=455 data-nosnippet>455</a>    ];
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">let </span>node_b_private = [
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="number">0x31</span>, <span class="number">0x32</span>, <span class="number">0x33</span>, <span class="number">0x34</span>, <span class="number">0x35</span>, <span class="number">0x36</span>, <span class="number">0x37</span>, <span class="number">0x38</span>, <span class="number">0x39</span>, <span class="number">0x3A</span>, <span class="number">0x3B</span>, <span class="number">0x3C</span>, <span class="number">0x3D</span>, <span class="number">0x3E</span>, <span class="number">0x3F</span>,
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="number">0x40</span>, <span class="number">0x41</span>, <span class="number">0x42</span>, <span class="number">0x43</span>, <span class="number">0x44</span>, <span class="number">0x45</span>, <span class="number">0x46</span>, <span class="number">0x47</span>, <span class="number">0x48</span>, <span class="number">0x49</span>, <span class="number">0x4A</span>, <span class="number">0x4B</span>, <span class="number">0x4C</span>, <span class="number">0x4D</span>, <span class="number">0x4E</span>,
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="number">0x4F</span>, <span class="number">0x50</span>,
-<a href=#460 id=460 data-nosnippet>460</a>    ];
-<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">let </span>node_a_identity = SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>node_a_private);
-<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">let </span>node_b_identity = SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>node_b_private);
-<a href=#463 id=463 data-nosnippet>463</a>    <span class="kw">let </span>node_a_public = <span class="kw-2">*</span>node_a_identity.public_key();
-<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">let </span>node_b_public = <span class="kw-2">*</span>node_b_identity.public_key();
-<a href=#465 id=465 data-nosnippet>465</a>    <span class="kw">let </span>shared_secret = node_a_identity.shared_secret_with(<span class="kw-2">&amp;</span>node_b_public).unwrap();
-<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>pairwise = engine.derive_pairwise_keys(<span class="kw-2">&amp;</span>shared_secret);
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>channel_key = ChannelKey([<span class="number">0x5A</span>; <span class="number">32</span>]);
-<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">let </span>channel = engine.derive_channel_keys(<span class="kw-2">&amp;</span>channel_key);
-<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">let </span>blind_keys = engine.derive_blind_keys(<span class="kw-2">&amp;</span>pairwise, <span class="kw-2">&amp;</span>channel);
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a>    Phase1Vectors {
-<a href=#472 id=472 data-nosnippet>472</a>        node_a_private,
-<a href=#473 id=473 data-nosnippet>473</a>        node_b_private,
-<a href=#474 id=474 data-nosnippet>474</a>        node_a_public,
-<a href=#475 id=475 data-nosnippet>475</a>        node_b_public,
-<a href=#476 id=476 data-nosnippet>476</a>        shared_secret,
-<a href=#477 id=477 data-nosnippet>477</a>        channel_key,
-<a href=#478 id=478 data-nosnippet>478</a>        broadcast_hint: build_broadcast_hint(<span class="kw-2">&amp;</span>node_a_public),
-<a href=#479 id=479 data-nosnippet>479</a>        broadcast_full: build_broadcast_full(<span class="kw-2">&amp;</span>node_a_public),
-<a href=#480 id=480 data-nosnippet>480</a>        unicast_encrypted: build_unicast_encrypted(
-<a href=#481 id=481 data-nosnippet>481</a>            <span class="kw-2">&amp;</span>engine,
-<a href=#482 id=482 data-nosnippet>482</a>            <span class="kw-2">&amp;</span>pairwise,
-<a href=#483 id=483 data-nosnippet>483</a>            <span class="kw-2">&amp;</span>node_a_public,
-<a href=#484 id=484 data-nosnippet>484</a>            node_b_public.hint(),
-<a href=#485 id=485 data-nosnippet>485</a>        ),
-<a href=#486 id=486 data-nosnippet>486</a>        unicast_ackreq_fullsrc: build_unicast_ackreq_fullsrc(
-<a href=#487 id=487 data-nosnippet>487</a>            <span class="kw-2">&amp;</span>engine,
-<a href=#488 id=488 data-nosnippet>488</a>            <span class="kw-2">&amp;</span>pairwise,
-<a href=#489 id=489 data-nosnippet>489</a>            <span class="kw-2">&amp;</span>node_a_public,
-<a href=#490 id=490 data-nosnippet>490</a>            node_b_public.hint(),
-<a href=#491 id=491 data-nosnippet>491</a>        ),
-<a href=#492 id=492 data-nosnippet>492</a>        multicast_encrypted: build_multicast_encrypted(<span class="kw-2">&amp;</span>engine, <span class="kw-2">&amp;</span>channel, <span class="kw-2">&amp;</span>node_a_public),
-<a href=#493 id=493 data-nosnippet>493</a>        multicast_authenticated: build_multicast_authenticated(<span class="kw-2">&amp;</span>engine, <span class="kw-2">&amp;</span>channel, <span class="kw-2">&amp;</span>node_a_public),
-<a href=#494 id=494 data-nosnippet>494</a>        unicast_with_options: build_unicast_with_options(
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw-2">&amp;</span>engine,
-<a href=#496 id=496 data-nosnippet>496</a>            <span class="kw-2">&amp;</span>pairwise,
-<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw-2">&amp;</span>node_a_public,
-<a href=#498 id=498 data-nosnippet>498</a>            node_b_public.hint(),
-<a href=#499 id=499 data-nosnippet>499</a>        ),
-<a href=#500 id=500 data-nosnippet>500</a>        blind_unicast: build_blind_unicast(
-<a href=#501 id=501 data-nosnippet>501</a>            <span class="kw-2">&amp;</span>engine,
-<a href=#502 id=502 data-nosnippet>502</a>            <span class="kw-2">&amp;</span>blind_keys,
-<a href=#503 id=503 data-nosnippet>503</a>            <span class="kw-2">&amp;</span>channel,
-<a href=#504 id=504 data-nosnippet>504</a>            <span class="kw-2">&amp;</span>node_a_public,
-<a href=#505 id=505 data-nosnippet>505</a>            node_b_public.hint(),
-<a href=#506 id=506 data-nosnippet>506</a>        ),
-<a href=#507 id=507 data-nosnippet>507</a>        channel,
-<a href=#508 id=508 data-nosnippet>508</a>    }
-<a href=#509 id=509 data-nosnippet>509</a>}
-<a href=#510 id=510 data-nosnippet>510</a>
-<a href=#511 id=511 data-nosnippet>511</a><span class="kw">fn </span>build_broadcast_hint(node_a: <span class="kw-2">&amp;</span>PublicKey) -&gt; Vec&lt;u8&gt; {
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">64</span>];
-<a href=#513 id=513 data-nosnippet>513</a>    PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#514 id=514 data-nosnippet>514</a>        .broadcast()
-<a href=#515 id=515 data-nosnippet>515</a>        .source_hint(node_a.hint())
-<a href=#516 id=516 data-nosnippet>516</a>        .build()
-<a href=#517 id=517 data-nosnippet>517</a>        .unwrap()
-<a href=#518 id=518 data-nosnippet>518</a>        .to_vec()
-<a href=#519 id=519 data-nosnippet>519</a>}
-<a href=#520 id=520 data-nosnippet>520</a>
-<a href=#521 id=521 data-nosnippet>521</a><span class="kw">fn </span>build_broadcast_full(node_a: <span class="kw-2">&amp;</span>PublicKey) -&gt; Vec&lt;u8&gt; {
-<a href=#522 id=522 data-nosnippet>522</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">64</span>];
-<a href=#523 id=523 data-nosnippet>523</a>    PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#524 id=524 data-nosnippet>524</a>        .broadcast()
-<a href=#525 id=525 data-nosnippet>525</a>        .source_full(node_a)
-<a href=#526 id=526 data-nosnippet>526</a>        .build()
-<a href=#527 id=527 data-nosnippet>527</a>        .unwrap()
-<a href=#528 id=528 data-nosnippet>528</a>        .to_vec()
-<a href=#529 id=529 data-nosnippet>529</a>}
-<a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a><span class="kw">fn </span>build_unicast_encrypted(
-<a href=#532 id=532 data-nosnippet>532</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#533 id=533 data-nosnippet>533</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
-<a href=#534 id=534 data-nosnippet>534</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#535 id=535 data-nosnippet>535</a>    dst: NodeHint,
-<a href=#536 id=536 data-nosnippet>536</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
-<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#539 id=539 data-nosnippet>539</a>        .unicast(dst)
-<a href=#540 id=540 data-nosnippet>540</a>        .source_hint(node_a.hint())
-<a href=#541 id=541 data-nosnippet>541</a>        .frame_counter(<span class="number">42</span>)
-<a href=#542 id=542 data-nosnippet>542</a>        .encrypted()
-<a href=#543 id=543 data-nosnippet>543</a>        .mic_size(MicSize::Mic16)
-<a href=#544 id=544 data-nosnippet>544</a>        .payload(<span class="string">b"Hello"</span>)
-<a href=#545 id=545 data-nosnippet>545</a>        .build()
-<a href=#546 id=546 data-nosnippet>546</a>        .unwrap();
-<a href=#547 id=547 data-nosnippet>547</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
-<a href=#548 id=548 data-nosnippet>548</a>    packet.as_bytes().to_vec()
-<a href=#549 id=549 data-nosnippet>549</a>}
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a><span class="kw">fn </span>build_unicast_ackreq_fullsrc(
-<a href=#552 id=552 data-nosnippet>552</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#553 id=553 data-nosnippet>553</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
-<a href=#554 id=554 data-nosnippet>554</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#555 id=555 data-nosnippet>555</a>    dst: NodeHint,
-<a href=#556 id=556 data-nosnippet>556</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
-<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#559 id=559 data-nosnippet>559</a>        .unicast(dst)
-<a href=#560 id=560 data-nosnippet>560</a>        .source_full(node_a)
-<a href=#561 id=561 data-nosnippet>561</a>        .frame_counter(<span class="number">1</span>)
-<a href=#562 id=562 data-nosnippet>562</a>        .ack_requested()
-<a href=#563 id=563 data-nosnippet>563</a>        .encrypted()
-<a href=#564 id=564 data-nosnippet>564</a>        .mic_size(MicSize::Mic16)
-<a href=#565 id=565 data-nosnippet>565</a>        .payload(<span class="string">b"hey"</span>)
-<a href=#566 id=566 data-nosnippet>566</a>        .build()
-<a href=#567 id=567 data-nosnippet>567</a>        .unwrap();
-<a href=#568 id=568 data-nosnippet>568</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
-<a href=#569 id=569 data-nosnippet>569</a>    packet.as_bytes().to_vec()
-<a href=#570 id=570 data-nosnippet>570</a>}
-<a href=#571 id=571 data-nosnippet>571</a>
-<a href=#572 id=572 data-nosnippet>572</a><span class="kw">fn </span>build_multicast_encrypted(
-<a href=#573 id=573 data-nosnippet>573</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#574 id=574 data-nosnippet>574</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
-<a href=#575 id=575 data-nosnippet>575</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#576 id=576 data-nosnippet>576</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#577 id=577 data-nosnippet>577</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#579 id=579 data-nosnippet>579</a>        .multicast(channel.channel_id)
-<a href=#580 id=580 data-nosnippet>580</a>        .source_hint(node_a.hint())
-<a href=#581 id=581 data-nosnippet>581</a>        .frame_counter(<span class="number">5</span>)
-<a href=#582 id=582 data-nosnippet>582</a>        .encrypted()
-<a href=#583 id=583 data-nosnippet>583</a>        .mic_size(MicSize::Mic16)
-<a href=#584 id=584 data-nosnippet>584</a>        .payload(<span class="string">b"Hello"</span>)
-<a href=#585 id=585 data-nosnippet>585</a>        .build()
-<a href=#586 id=586 data-nosnippet>586</a>        .unwrap();
-<a href=#587 id=587 data-nosnippet>587</a>    <span class="kw">let </span>keys = PairwiseKeys {
-<a href=#588 id=588 data-nosnippet>588</a>        k_enc: channel.k_enc,
-<a href=#589 id=589 data-nosnippet>589</a>        k_mic: channel.k_mic,
-<a href=#590 id=590 data-nosnippet>590</a>    };
-<a href=#591 id=591 data-nosnippet>591</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, <span class="kw-2">&amp;</span>keys).unwrap();
-<a href=#592 id=592 data-nosnippet>592</a>    packet.as_bytes().to_vec()
-<a href=#593 id=593 data-nosnippet>593</a>}
-<a href=#594 id=594 data-nosnippet>594</a>
-<a href=#595 id=595 data-nosnippet>595</a><span class="kw">fn </span>build_multicast_authenticated(
-<a href=#596 id=596 data-nosnippet>596</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#597 id=597 data-nosnippet>597</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
-<a href=#598 id=598 data-nosnippet>598</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#599 id=599 data-nosnippet>599</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#600 id=600 data-nosnippet>600</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#602 id=602 data-nosnippet>602</a>        .multicast(channel.channel_id)
-<a href=#603 id=603 data-nosnippet>603</a>        .source_hint(node_a.hint())
-<a href=#604 id=604 data-nosnippet>604</a>        .frame_counter(<span class="number">3</span>)
-<a href=#605 id=605 data-nosnippet>605</a>        .mic_size(MicSize::Mic16)
-<a href=#606 id=606 data-nosnippet>606</a>        .payload(<span class="string">b"\x03Hello"</span>)
-<a href=#607 id=607 data-nosnippet>607</a>        .build()
-<a href=#608 id=608 data-nosnippet>608</a>        .unwrap();
-<a href=#609 id=609 data-nosnippet>609</a>    <span class="kw">let </span>keys = PairwiseKeys {
-<a href=#610 id=610 data-nosnippet>610</a>        k_enc: channel.k_enc,
-<a href=#611 id=611 data-nosnippet>611</a>        k_mic: channel.k_mic,
-<a href=#612 id=612 data-nosnippet>612</a>    };
-<a href=#613 id=613 data-nosnippet>613</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, <span class="kw-2">&amp;</span>keys).unwrap();
-<a href=#614 id=614 data-nosnippet>614</a>    packet.as_bytes().to_vec()
-<a href=#615 id=615 data-nosnippet>615</a>}
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a><span class="kw">fn </span>build_unicast_with_options(
-<a href=#618 id=618 data-nosnippet>618</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#619 id=619 data-nosnippet>619</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
-<a href=#620 id=620 data-nosnippet>620</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#621 id=621 data-nosnippet>621</a>    dst: NodeHint,
-<a href=#622 id=622 data-nosnippet>622</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#623 id=623 data-nosnippet>623</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
-<a href=#624 id=624 data-nosnippet>624</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#625 id=625 data-nosnippet>625</a>        .unicast(dst)
-<a href=#626 id=626 data-nosnippet>626</a>        .source_hint(node_a.hint())
-<a href=#627 id=627 data-nosnippet>627</a>        .frame_counter(<span class="number">10</span>)
-<a href=#628 id=628 data-nosnippet>628</a>        .encrypted()
-<a href=#629 id=629 data-nosnippet>629</a>        .flood_hops(<span class="number">4</span>)
-<a href=#630 id=630 data-nosnippet>630</a>        .trace_route()
-<a href=#631 id=631 data-nosnippet>631</a>        .region_code([<span class="number">0x78</span>, <span class="number">0x53</span>])
-<a href=#632 id=632 data-nosnippet>632</a>        .payload(<span class="string">b"hey"</span>)
-<a href=#633 id=633 data-nosnippet>633</a>        .build()
-<a href=#634 id=634 data-nosnippet>634</a>        .unwrap();
-<a href=#635 id=635 data-nosnippet>635</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
-<a href=#636 id=636 data-nosnippet>636</a>    packet.as_bytes().to_vec()
-<a href=#637 id=637 data-nosnippet>637</a>}
-<a href=#638 id=638 data-nosnippet>638</a>
-<a href=#639 id=639 data-nosnippet>639</a><span class="kw">fn </span>build_blind_unicast(
-<a href=#640 id=640 data-nosnippet>640</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
-<a href=#641 id=641 data-nosnippet>641</a>    blind_keys: <span class="kw-2">&amp;</span>PairwiseKeys,
-<a href=#642 id=642 data-nosnippet>642</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
-<a href=#643 id=643 data-nosnippet>643</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
-<a href=#644 id=644 data-nosnippet>644</a>    dst: NodeHint,
-<a href=#645 id=645 data-nosnippet>645</a>) -&gt; Vec&lt;u8&gt; {
-<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">160</span>];
-<a href=#647 id=647 data-nosnippet>647</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
-<a href=#648 id=648 data-nosnippet>648</a>        .blind_unicast(channel.channel_id, dst)
-<a href=#649 id=649 data-nosnippet>649</a>        .source_hint(node_a.hint())
-<a href=#650 id=650 data-nosnippet>650</a>        .frame_counter(<span class="number">7</span>)
-<a href=#651 id=651 data-nosnippet>651</a>        .mic_size(MicSize::Mic16)
-<a href=#652 id=652 data-nosnippet>652</a>        .payload(<span class="string">b"Hello"</span>)
-<a href=#653 id=653 data-nosnippet>653</a>        .build()
-<a href=#654 id=654 data-nosnippet>654</a>        .unwrap();
-<a href=#655 id=655 data-nosnippet>655</a>    engine
-<a href=#656 id=656 data-nosnippet>656</a>        .seal_blind_packet(<span class="kw-2">&amp;mut </span>packet, blind_keys, channel)
+<a href=#451 id=451 data-nosnippet>451</a><span class="kw">fn </span>generate_phase1_vectors() -&gt; Phase1Vectors {
+<a href=#452 id=452 data-nosnippet>452</a>    <span class="kw">let </span>engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+<a href=#453 id=453 data-nosnippet>453</a>
+<a href=#454 id=454 data-nosnippet>454</a>    <span class="kw">let </span>node_a_private = [
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="number">0x11</span>, <span class="number">0x12</span>, <span class="number">0x13</span>, <span class="number">0x14</span>, <span class="number">0x15</span>, <span class="number">0x16</span>, <span class="number">0x17</span>, <span class="number">0x18</span>, <span class="number">0x19</span>, <span class="number">0x1A</span>, <span class="number">0x1B</span>, <span class="number">0x1C</span>, <span class="number">0x1D</span>, <span class="number">0x1E</span>, <span class="number">0x1F</span>,
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="number">0x20</span>, <span class="number">0x21</span>, <span class="number">0x22</span>, <span class="number">0x23</span>, <span class="number">0x24</span>, <span class="number">0x25</span>, <span class="number">0x26</span>, <span class="number">0x27</span>, <span class="number">0x28</span>, <span class="number">0x29</span>, <span class="number">0x2A</span>, <span class="number">0x2B</span>, <span class="number">0x2C</span>, <span class="number">0x2D</span>, <span class="number">0x2E</span>,
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="number">0x2F</span>, <span class="number">0x30</span>,
+<a href=#458 id=458 data-nosnippet>458</a>    ];
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="kw">let </span>node_b_private = [
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="number">0x31</span>, <span class="number">0x32</span>, <span class="number">0x33</span>, <span class="number">0x34</span>, <span class="number">0x35</span>, <span class="number">0x36</span>, <span class="number">0x37</span>, <span class="number">0x38</span>, <span class="number">0x39</span>, <span class="number">0x3A</span>, <span class="number">0x3B</span>, <span class="number">0x3C</span>, <span class="number">0x3D</span>, <span class="number">0x3E</span>, <span class="number">0x3F</span>,
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="number">0x40</span>, <span class="number">0x41</span>, <span class="number">0x42</span>, <span class="number">0x43</span>, <span class="number">0x44</span>, <span class="number">0x45</span>, <span class="number">0x46</span>, <span class="number">0x47</span>, <span class="number">0x48</span>, <span class="number">0x49</span>, <span class="number">0x4A</span>, <span class="number">0x4B</span>, <span class="number">0x4C</span>, <span class="number">0x4D</span>, <span class="number">0x4E</span>,
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="number">0x4F</span>, <span class="number">0x50</span>,
+<a href=#463 id=463 data-nosnippet>463</a>    ];
+<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">let </span>node_a_identity = SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>node_a_private);
+<a href=#465 id=465 data-nosnippet>465</a>    <span class="kw">let </span>node_b_identity = SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>node_b_private);
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>node_a_public = <span class="kw-2">*</span>node_a_identity.public_key();
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>node_b_public = <span class="kw-2">*</span>node_b_identity.public_key();
+<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">let </span>shared_secret = node_a_identity.shared_secret_with(<span class="kw-2">&amp;</span>node_b_public).unwrap();
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">let </span>pairwise = engine.derive_pairwise_keys(<span class="kw-2">&amp;</span>shared_secret);
+<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">let </span>channel_key = ChannelKey([<span class="number">0x5A</span>; <span class="number">32</span>]);
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>channel = engine.derive_channel_keys(<span class="kw-2">&amp;</span>channel_key);
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>blind_keys = engine.derive_blind_keys(<span class="kw-2">&amp;</span>pairwise, <span class="kw-2">&amp;</span>channel);
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a>    Phase1Vectors {
+<a href=#475 id=475 data-nosnippet>475</a>        node_a_private,
+<a href=#476 id=476 data-nosnippet>476</a>        node_b_private,
+<a href=#477 id=477 data-nosnippet>477</a>        node_a_public,
+<a href=#478 id=478 data-nosnippet>478</a>        node_b_public,
+<a href=#479 id=479 data-nosnippet>479</a>        shared_secret,
+<a href=#480 id=480 data-nosnippet>480</a>        channel_key,
+<a href=#481 id=481 data-nosnippet>481</a>        broadcast_hint: build_broadcast_hint(<span class="kw-2">&amp;</span>node_a_public),
+<a href=#482 id=482 data-nosnippet>482</a>        broadcast_full: build_broadcast_full(<span class="kw-2">&amp;</span>node_a_public),
+<a href=#483 id=483 data-nosnippet>483</a>        unicast_encrypted: build_unicast_encrypted(
+<a href=#484 id=484 data-nosnippet>484</a>            <span class="kw-2">&amp;</span>engine,
+<a href=#485 id=485 data-nosnippet>485</a>            <span class="kw-2">&amp;</span>pairwise,
+<a href=#486 id=486 data-nosnippet>486</a>            <span class="kw-2">&amp;</span>node_a_public,
+<a href=#487 id=487 data-nosnippet>487</a>            node_b_public.hint(),
+<a href=#488 id=488 data-nosnippet>488</a>        ),
+<a href=#489 id=489 data-nosnippet>489</a>        unicast_ackreq_fullsrc: build_unicast_ackreq_fullsrc(
+<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw-2">&amp;</span>engine,
+<a href=#491 id=491 data-nosnippet>491</a>            <span class="kw-2">&amp;</span>pairwise,
+<a href=#492 id=492 data-nosnippet>492</a>            <span class="kw-2">&amp;</span>node_a_public,
+<a href=#493 id=493 data-nosnippet>493</a>            node_b_public.hint(),
+<a href=#494 id=494 data-nosnippet>494</a>        ),
+<a href=#495 id=495 data-nosnippet>495</a>        multicast_encrypted: build_multicast_encrypted(<span class="kw-2">&amp;</span>engine, <span class="kw-2">&amp;</span>channel, <span class="kw-2">&amp;</span>node_a_public),
+<a href=#496 id=496 data-nosnippet>496</a>        multicast_authenticated: build_multicast_authenticated(<span class="kw-2">&amp;</span>engine, <span class="kw-2">&amp;</span>channel, <span class="kw-2">&amp;</span>node_a_public),
+<a href=#497 id=497 data-nosnippet>497</a>        unicast_with_options: build_unicast_with_options(
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw-2">&amp;</span>engine,
+<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw-2">&amp;</span>pairwise,
+<a href=#500 id=500 data-nosnippet>500</a>            <span class="kw-2">&amp;</span>node_a_public,
+<a href=#501 id=501 data-nosnippet>501</a>            node_b_public.hint(),
+<a href=#502 id=502 data-nosnippet>502</a>        ),
+<a href=#503 id=503 data-nosnippet>503</a>        blind_unicast: build_blind_unicast(
+<a href=#504 id=504 data-nosnippet>504</a>            <span class="kw-2">&amp;</span>engine,
+<a href=#505 id=505 data-nosnippet>505</a>            <span class="kw-2">&amp;</span>blind_keys,
+<a href=#506 id=506 data-nosnippet>506</a>            <span class="kw-2">&amp;</span>channel,
+<a href=#507 id=507 data-nosnippet>507</a>            <span class="kw-2">&amp;</span>node_a_public,
+<a href=#508 id=508 data-nosnippet>508</a>            node_b_public.hint(),
+<a href=#509 id=509 data-nosnippet>509</a>        ),
+<a href=#510 id=510 data-nosnippet>510</a>        channel,
+<a href=#511 id=511 data-nosnippet>511</a>    }
+<a href=#512 id=512 data-nosnippet>512</a>}
+<a href=#513 id=513 data-nosnippet>513</a>
+<a href=#514 id=514 data-nosnippet>514</a><span class="kw">fn </span>build_broadcast_hint(node_a: <span class="kw-2">&amp;</span>PublicKey) -&gt; Vec&lt;u8&gt; {
+<a href=#515 id=515 data-nosnippet>515</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">64</span>];
+<a href=#516 id=516 data-nosnippet>516</a>    PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#517 id=517 data-nosnippet>517</a>        .broadcast()
+<a href=#518 id=518 data-nosnippet>518</a>        .source_hint(node_a.hint())
+<a href=#519 id=519 data-nosnippet>519</a>        .build()
+<a href=#520 id=520 data-nosnippet>520</a>        .unwrap()
+<a href=#521 id=521 data-nosnippet>521</a>        .to_vec()
+<a href=#522 id=522 data-nosnippet>522</a>}
+<a href=#523 id=523 data-nosnippet>523</a>
+<a href=#524 id=524 data-nosnippet>524</a><span class="kw">fn </span>build_broadcast_full(node_a: <span class="kw-2">&amp;</span>PublicKey) -&gt; Vec&lt;u8&gt; {
+<a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">64</span>];
+<a href=#526 id=526 data-nosnippet>526</a>    PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#527 id=527 data-nosnippet>527</a>        .broadcast()
+<a href=#528 id=528 data-nosnippet>528</a>        .source_full(node_a)
+<a href=#529 id=529 data-nosnippet>529</a>        .build()
+<a href=#530 id=530 data-nosnippet>530</a>        .unwrap()
+<a href=#531 id=531 data-nosnippet>531</a>        .to_vec()
+<a href=#532 id=532 data-nosnippet>532</a>}
+<a href=#533 id=533 data-nosnippet>533</a>
+<a href=#534 id=534 data-nosnippet>534</a><span class="kw">fn </span>build_unicast_encrypted(
+<a href=#535 id=535 data-nosnippet>535</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#536 id=536 data-nosnippet>536</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
+<a href=#537 id=537 data-nosnippet>537</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#538 id=538 data-nosnippet>538</a>    dst: NodeHint,
+<a href=#539 id=539 data-nosnippet>539</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
+<a href=#541 id=541 data-nosnippet>541</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#542 id=542 data-nosnippet>542</a>        .unicast(dst)
+<a href=#543 id=543 data-nosnippet>543</a>        .source_hint(node_a.hint())
+<a href=#544 id=544 data-nosnippet>544</a>        .frame_counter(<span class="number">42</span>)
+<a href=#545 id=545 data-nosnippet>545</a>        .encrypted()
+<a href=#546 id=546 data-nosnippet>546</a>        .mic_size(MicSize::Mic16)
+<a href=#547 id=547 data-nosnippet>547</a>        .payload(<span class="string">b"Hello"</span>)
+<a href=#548 id=548 data-nosnippet>548</a>        .build()
+<a href=#549 id=549 data-nosnippet>549</a>        .unwrap();
+<a href=#550 id=550 data-nosnippet>550</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
+<a href=#551 id=551 data-nosnippet>551</a>    packet.as_bytes().to_vec()
+<a href=#552 id=552 data-nosnippet>552</a>}
+<a href=#553 id=553 data-nosnippet>553</a>
+<a href=#554 id=554 data-nosnippet>554</a><span class="kw">fn </span>build_unicast_ackreq_fullsrc(
+<a href=#555 id=555 data-nosnippet>555</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#556 id=556 data-nosnippet>556</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
+<a href=#557 id=557 data-nosnippet>557</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#558 id=558 data-nosnippet>558</a>    dst: NodeHint,
+<a href=#559 id=559 data-nosnippet>559</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#562 id=562 data-nosnippet>562</a>        .unicast(dst)
+<a href=#563 id=563 data-nosnippet>563</a>        .source_full(node_a)
+<a href=#564 id=564 data-nosnippet>564</a>        .frame_counter(<span class="number">1</span>)
+<a href=#565 id=565 data-nosnippet>565</a>        .ack_requested()
+<a href=#566 id=566 data-nosnippet>566</a>        .encrypted()
+<a href=#567 id=567 data-nosnippet>567</a>        .mic_size(MicSize::Mic16)
+<a href=#568 id=568 data-nosnippet>568</a>        .payload(<span class="string">b"hey"</span>)
+<a href=#569 id=569 data-nosnippet>569</a>        .build()
+<a href=#570 id=570 data-nosnippet>570</a>        .unwrap();
+<a href=#571 id=571 data-nosnippet>571</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
+<a href=#572 id=572 data-nosnippet>572</a>    packet.as_bytes().to_vec()
+<a href=#573 id=573 data-nosnippet>573</a>}
+<a href=#574 id=574 data-nosnippet>574</a>
+<a href=#575 id=575 data-nosnippet>575</a><span class="kw">fn </span>build_multicast_encrypted(
+<a href=#576 id=576 data-nosnippet>576</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#577 id=577 data-nosnippet>577</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
+<a href=#578 id=578 data-nosnippet>578</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#579 id=579 data-nosnippet>579</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#580 id=580 data-nosnippet>580</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
+<a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#582 id=582 data-nosnippet>582</a>        .multicast(channel.channel_id)
+<a href=#583 id=583 data-nosnippet>583</a>        .source_hint(node_a.hint())
+<a href=#584 id=584 data-nosnippet>584</a>        .frame_counter(<span class="number">5</span>)
+<a href=#585 id=585 data-nosnippet>585</a>        .encrypted()
+<a href=#586 id=586 data-nosnippet>586</a>        .mic_size(MicSize::Mic16)
+<a href=#587 id=587 data-nosnippet>587</a>        .payload(<span class="string">b"Hello"</span>)
+<a href=#588 id=588 data-nosnippet>588</a>        .build()
+<a href=#589 id=589 data-nosnippet>589</a>        .unwrap();
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">let </span>keys = PairwiseKeys {
+<a href=#591 id=591 data-nosnippet>591</a>        k_enc: channel.k_enc,
+<a href=#592 id=592 data-nosnippet>592</a>        k_mic: channel.k_mic,
+<a href=#593 id=593 data-nosnippet>593</a>    };
+<a href=#594 id=594 data-nosnippet>594</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, <span class="kw-2">&amp;</span>keys).unwrap();
+<a href=#595 id=595 data-nosnippet>595</a>    packet.as_bytes().to_vec()
+<a href=#596 id=596 data-nosnippet>596</a>}
+<a href=#597 id=597 data-nosnippet>597</a>
+<a href=#598 id=598 data-nosnippet>598</a><span class="kw">fn </span>build_multicast_authenticated(
+<a href=#599 id=599 data-nosnippet>599</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#600 id=600 data-nosnippet>600</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
+<a href=#601 id=601 data-nosnippet>601</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#602 id=602 data-nosnippet>602</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#603 id=603 data-nosnippet>603</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#605 id=605 data-nosnippet>605</a>        .multicast(channel.channel_id)
+<a href=#606 id=606 data-nosnippet>606</a>        .source_hint(node_a.hint())
+<a href=#607 id=607 data-nosnippet>607</a>        .frame_counter(<span class="number">3</span>)
+<a href=#608 id=608 data-nosnippet>608</a>        .mic_size(MicSize::Mic16)
+<a href=#609 id=609 data-nosnippet>609</a>        .payload(<span class="string">b"\x03Hello"</span>)
+<a href=#610 id=610 data-nosnippet>610</a>        .build()
+<a href=#611 id=611 data-nosnippet>611</a>        .unwrap();
+<a href=#612 id=612 data-nosnippet>612</a>    <span class="kw">let </span>keys = PairwiseKeys {
+<a href=#613 id=613 data-nosnippet>613</a>        k_enc: channel.k_enc,
+<a href=#614 id=614 data-nosnippet>614</a>        k_mic: channel.k_mic,
+<a href=#615 id=615 data-nosnippet>615</a>    };
+<a href=#616 id=616 data-nosnippet>616</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, <span class="kw-2">&amp;</span>keys).unwrap();
+<a href=#617 id=617 data-nosnippet>617</a>    packet.as_bytes().to_vec()
+<a href=#618 id=618 data-nosnippet>618</a>}
+<a href=#619 id=619 data-nosnippet>619</a>
+<a href=#620 id=620 data-nosnippet>620</a><span class="kw">fn </span>build_unicast_with_options(
+<a href=#621 id=621 data-nosnippet>621</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#622 id=622 data-nosnippet>622</a>    pairwise: <span class="kw-2">&amp;</span>PairwiseKeys,
+<a href=#623 id=623 data-nosnippet>623</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#624 id=624 data-nosnippet>624</a>    dst: NodeHint,
+<a href=#625 id=625 data-nosnippet>625</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#626 id=626 data-nosnippet>626</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">128</span>];
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#628 id=628 data-nosnippet>628</a>        .unicast(dst)
+<a href=#629 id=629 data-nosnippet>629</a>        .source_hint(node_a.hint())
+<a href=#630 id=630 data-nosnippet>630</a>        .frame_counter(<span class="number">10</span>)
+<a href=#631 id=631 data-nosnippet>631</a>        .encrypted()
+<a href=#632 id=632 data-nosnippet>632</a>        .flood_hops(<span class="number">4</span>)
+<a href=#633 id=633 data-nosnippet>633</a>        .trace_route()
+<a href=#634 id=634 data-nosnippet>634</a>        .region_code([<span class="number">0x78</span>, <span class="number">0x53</span>])
+<a href=#635 id=635 data-nosnippet>635</a>        .payload(<span class="string">b"hey"</span>)
+<a href=#636 id=636 data-nosnippet>636</a>        .build()
+<a href=#637 id=637 data-nosnippet>637</a>        .unwrap();
+<a href=#638 id=638 data-nosnippet>638</a>    engine.seal_packet(<span class="kw-2">&amp;mut </span>packet, pairwise).unwrap();
+<a href=#639 id=639 data-nosnippet>639</a>    packet.as_bytes().to_vec()
+<a href=#640 id=640 data-nosnippet>640</a>}
+<a href=#641 id=641 data-nosnippet>641</a>
+<a href=#642 id=642 data-nosnippet>642</a><span class="kw">fn </span>build_blind_unicast(
+<a href=#643 id=643 data-nosnippet>643</a>    engine: <span class="kw-2">&amp;</span>SoftwareCryptoEngine,
+<a href=#644 id=644 data-nosnippet>644</a>    blind_keys: <span class="kw-2">&amp;</span>PairwiseKeys,
+<a href=#645 id=645 data-nosnippet>645</a>    channel: <span class="kw-2">&amp;</span>DerivedChannelKeys,
+<a href=#646 id=646 data-nosnippet>646</a>    node_a: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#647 id=647 data-nosnippet>647</a>    dst: NodeHint,
+<a href=#648 id=648 data-nosnippet>648</a>) -&gt; Vec&lt;u8&gt; {
+<a href=#649 id=649 data-nosnippet>649</a>    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">160</span>];
+<a href=#650 id=650 data-nosnippet>650</a>    <span class="kw">let </span><span class="kw-2">mut </span>packet = PacketBuilder::new(<span class="kw-2">&amp;mut </span>buf)
+<a href=#651 id=651 data-nosnippet>651</a>        .blind_unicast(channel.channel_id, dst)
+<a href=#652 id=652 data-nosnippet>652</a>        .source_hint(node_a.hint())
+<a href=#653 id=653 data-nosnippet>653</a>        .frame_counter(<span class="number">7</span>)
+<a href=#654 id=654 data-nosnippet>654</a>        .mic_size(MicSize::Mic16)
+<a href=#655 id=655 data-nosnippet>655</a>        .payload(<span class="string">b"Hello"</span>)
+<a href=#656 id=656 data-nosnippet>656</a>        .build()
 <a href=#657 id=657 data-nosnippet>657</a>        .unwrap();
-<a href=#658 id=658 data-nosnippet>658</a>    packet.as_bytes().to_vec()
-<a href=#659 id=659 data-nosnippet>659</a>}
-<a href=#660 id=660 data-nosnippet>660</a>
-<a href=#661 id=661 data-nosnippet>661</a><span class="kw">fn </span>render_example(
-<a href=#662 id=662 data-nosnippet>662</a>    out: <span class="kw-2">&amp;mut </span>String,
-<a href=#663 id=663 data-nosnippet>663</a>    title: <span class="kw-2">&amp;</span>str,
-<a href=#664 id=664 data-nosnippet>664</a>    description: <span class="kw-2">&amp;</span>str,
-<a href=#665 id=665 data-nosnippet>665</a>    fields: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>str, String)],
-<a href=#666 id=666 data-nosnippet>666</a>    bytes: <span class="kw-2">&amp;</span>[u8],
-<a href=#667 id=667 data-nosnippet>667</a>) {
-<a href=#668 id=668 data-nosnippet>668</a>    <span class="macro">writeln!</span>(out).unwrap();
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="macro">writeln!</span>(out, <span class="string">"## {}"</span>, title).unwrap();
-<a href=#670 id=670 data-nosnippet>670</a>    <span class="macro">writeln!</span>(out).unwrap();
-<a href=#671 id=671 data-nosnippet>671</a>    <span class="macro">writeln!</span>(out, <span class="string">"{}"</span>, description).unwrap();
-<a href=#672 id=672 data-nosnippet>672</a>    <span class="macro">writeln!</span>(out).unwrap();
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="macro">writeln!</span>(out, <span class="string">"| Field | Value | Hex |"</span>).unwrap();
-<a href=#674 id=674 data-nosnippet>674</a>    <span class="macro">writeln!</span>(out, <span class="string">"|---|---|---|"</span>).unwrap();
-<a href=#675 id=675 data-nosnippet>675</a>    <span class="kw">for </span>(field, value, hex) <span class="kw">in </span>fields {
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="macro">writeln!</span>(out, <span class="string">"| {} | {} | `{}` |"</span>, field, value, hex).unwrap();
-<a href=#677 id=677 data-nosnippet>677</a>    }
-<a href=#678 id=678 data-nosnippet>678</a>    <span class="macro">writeln!</span>(out).unwrap();
-<a href=#679 id=679 data-nosnippet>679</a>    <span class="macro">writeln!</span>(out, <span class="string">"```text"</span>).unwrap();
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="macro">writeln!</span>(out, <span class="string">"{}"</span>, wrap_hex_lines(bytes, <span class="number">16</span>)).unwrap();
-<a href=#681 id=681 data-nosnippet>681</a>    <span class="macro">writeln!</span>(out, <span class="string">"```"</span>).unwrap();
-<a href=#682 id=682 data-nosnippet>682</a>    <span class="macro">writeln!</span>(out).unwrap();
-<a href=#683 id=683 data-nosnippet>683</a>    <span class="macro">writeln!</span>(out, <span class="string">"Total: {} bytes."</span>, bytes.len()).unwrap();
-<a href=#684 id=684 data-nosnippet>684</a>}
-<a href=#685 id=685 data-nosnippet>685</a>
-<a href=#686 id=686 data-nosnippet>686</a><span class="kw">fn </span>hex_spaced(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; String {
-<a href=#687 id=687 data-nosnippet>687</a>    bytes
-<a href=#688 id=688 data-nosnippet>688</a>        .iter()
-<a href=#689 id=689 data-nosnippet>689</a>        .map(|byte| <span class="macro">format!</span>(<span class="string">"{:02X}"</span>, byte))
-<a href=#690 id=690 data-nosnippet>690</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#691 id=691 data-nosnippet>691</a>        .join(<span class="string">" "</span>)
-<a href=#692 id=692 data-nosnippet>692</a>}
-<a href=#693 id=693 data-nosnippet>693</a>
-<a href=#694 id=694 data-nosnippet>694</a><span class="kw">fn </span>hex_words(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; String {
-<a href=#695 id=695 data-nosnippet>695</a>    bytes
-<a href=#696 id=696 data-nosnippet>696</a>        .chunks(<span class="number">2</span>)
-<a href=#697 id=697 data-nosnippet>697</a>        .map(|chunk| {
-<a href=#698 id=698 data-nosnippet>698</a>            chunk
-<a href=#699 id=699 data-nosnippet>699</a>                .iter()
-<a href=#700 id=700 data-nosnippet>700</a>                .map(|byte| <span class="macro">format!</span>(<span class="string">"{:02X}"</span>, byte))
-<a href=#701 id=701 data-nosnippet>701</a>                .collect::&lt;String&gt;()
-<a href=#702 id=702 data-nosnippet>702</a>        })
-<a href=#703 id=703 data-nosnippet>703</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#704 id=704 data-nosnippet>704</a>        .join(<span class="string">" "</span>)
-<a href=#705 id=705 data-nosnippet>705</a>}
-<a href=#706 id=706 data-nosnippet>706</a>
-<a href=#707 id=707 data-nosnippet>707</a><span class="kw">fn </span>wrap_hex_lines(bytes: <span class="kw-2">&amp;</span>[u8], line_width: usize) -&gt; String {
-<a href=#708 id=708 data-nosnippet>708</a>    bytes
-<a href=#709 id=709 data-nosnippet>709</a>        .chunks(line_width)
-<a href=#710 id=710 data-nosnippet>710</a>        .map(hex_spaced)
-<a href=#711 id=711 data-nosnippet>711</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#712 id=712 data-nosnippet>712</a>        .join(<span class="string">"\n"</span>)
-<a href=#713 id=713 data-nosnippet>713</a>}
-<a href=#714 id=714 data-nosnippet>714</a>
-<a href=#715 id=715 data-nosnippet>715</a><span class="kw">fn </span>parse_header(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; PacketHeader {
-<a href=#716 id=716 data-nosnippet>716</a>    PacketHeader::parse(bytes).expect(<span class="string">"parse generated vector"</span>)
-<a href=#717 id=717 data-nosnippet>717</a>}
-<a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a><span class="attr">#[cfg(test)]
-<a href=#720 id=720 data-nosnippet>720</a></span><span class="kw">mod </span>tests {
-<a href=#721 id=721 data-nosnippet>721</a>    <span class="kw">use </span>std::fs;
-<a href=#722 id=722 data-nosnippet>722</a>
-<a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">use </span><span class="kw">super</span>::render_phase1_test_vectors_markdown;
-<a href=#724 id=724 data-nosnippet>724</a>
-<a href=#725 id=725 data-nosnippet>725</a>    <span class="attr">#[test]
-<a href=#726 id=726 data-nosnippet>726</a>    </span><span class="kw">fn </span>phase1_vectors_match_protocol_appendix() {
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>expected = render_phase1_test_vectors_markdown();
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">let </span>actual = fs::read_to_string(<span class="macro">concat!</span>(
-<a href=#729 id=729 data-nosnippet>729</a>            <span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>),
-<a href=#730 id=730 data-nosnippet>730</a>            <span class="string">"/../docs/protocol/src/test-vectors.md"
-<a href=#731 id=731 data-nosnippet>731</a>        </span>))
-<a href=#732 id=732 data-nosnippet>732</a>        .expect(<span class="string">"read protocol test vectors"</span>);
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="macro">assert_eq!</span>(actual, expected);
-<a href=#734 id=734 data-nosnippet>734</a>    }
-<a href=#735 id=735 data-nosnippet>735</a>}
+<a href=#658 id=658 data-nosnippet>658</a>    engine
+<a href=#659 id=659 data-nosnippet>659</a>        .seal_blind_packet(<span class="kw-2">&amp;mut </span>packet, blind_keys, channel)
+<a href=#660 id=660 data-nosnippet>660</a>        .unwrap();
+<a href=#661 id=661 data-nosnippet>661</a>    packet.as_bytes().to_vec()
+<a href=#662 id=662 data-nosnippet>662</a>}
+<a href=#663 id=663 data-nosnippet>663</a>
+<a href=#664 id=664 data-nosnippet>664</a><span class="kw">fn </span>render_example(
+<a href=#665 id=665 data-nosnippet>665</a>    out: <span class="kw-2">&amp;mut </span>String,
+<a href=#666 id=666 data-nosnippet>666</a>    title: <span class="kw-2">&amp;</span>str,
+<a href=#667 id=667 data-nosnippet>667</a>    description: <span class="kw-2">&amp;</span>str,
+<a href=#668 id=668 data-nosnippet>668</a>    fields: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>str, String)],
+<a href=#669 id=669 data-nosnippet>669</a>    bytes: <span class="kw-2">&amp;</span>[u8],
+<a href=#670 id=670 data-nosnippet>670</a>) {
+<a href=#671 id=671 data-nosnippet>671</a>    <span class="macro">writeln!</span>(out).unwrap();
+<a href=#672 id=672 data-nosnippet>672</a>    <span class="macro">writeln!</span>(out, <span class="string">"## {}"</span>, title).unwrap();
+<a href=#673 id=673 data-nosnippet>673</a>    <span class="macro">writeln!</span>(out).unwrap();
+<a href=#674 id=674 data-nosnippet>674</a>    <span class="macro">writeln!</span>(out, <span class="string">"{}"</span>, description).unwrap();
+<a href=#675 id=675 data-nosnippet>675</a>    <span class="macro">writeln!</span>(out).unwrap();
+<a href=#676 id=676 data-nosnippet>676</a>    <span class="macro">writeln!</span>(out, <span class="string">"| Field | Value | Hex |"</span>).unwrap();
+<a href=#677 id=677 data-nosnippet>677</a>    <span class="macro">writeln!</span>(out, <span class="string">"|---|---|---|"</span>).unwrap();
+<a href=#678 id=678 data-nosnippet>678</a>    <span class="kw">for </span>(field, value, hex) <span class="kw">in </span>fields {
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="macro">writeln!</span>(out, <span class="string">"| {} | {} | `{}` |"</span>, field, value, hex).unwrap();
+<a href=#680 id=680 data-nosnippet>680</a>    }
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="macro">writeln!</span>(out).unwrap();
+<a href=#682 id=682 data-nosnippet>682</a>    <span class="macro">writeln!</span>(out, <span class="string">"```text"</span>).unwrap();
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="macro">writeln!</span>(out, <span class="string">"{}"</span>, wrap_hex_lines(bytes, <span class="number">16</span>)).unwrap();
+<a href=#684 id=684 data-nosnippet>684</a>    <span class="macro">writeln!</span>(out, <span class="string">"```"</span>).unwrap();
+<a href=#685 id=685 data-nosnippet>685</a>    <span class="macro">writeln!</span>(out).unwrap();
+<a href=#686 id=686 data-nosnippet>686</a>    <span class="macro">writeln!</span>(out, <span class="string">"Total: {} bytes."</span>, bytes.len()).unwrap();
+<a href=#687 id=687 data-nosnippet>687</a>}
+<a href=#688 id=688 data-nosnippet>688</a>
+<a href=#689 id=689 data-nosnippet>689</a><span class="kw">fn </span>hex_spaced(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; String {
+<a href=#690 id=690 data-nosnippet>690</a>    bytes
+<a href=#691 id=691 data-nosnippet>691</a>        .iter()
+<a href=#692 id=692 data-nosnippet>692</a>        .map(|byte| <span class="macro">format!</span>(<span class="string">"{:02X}"</span>, byte))
+<a href=#693 id=693 data-nosnippet>693</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#694 id=694 data-nosnippet>694</a>        .join(<span class="string">" "</span>)
+<a href=#695 id=695 data-nosnippet>695</a>}
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a><span class="kw">fn </span>hex_words(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; String {
+<a href=#698 id=698 data-nosnippet>698</a>    bytes
+<a href=#699 id=699 data-nosnippet>699</a>        .chunks(<span class="number">2</span>)
+<a href=#700 id=700 data-nosnippet>700</a>        .map(|chunk| {
+<a href=#701 id=701 data-nosnippet>701</a>            chunk
+<a href=#702 id=702 data-nosnippet>702</a>                .iter()
+<a href=#703 id=703 data-nosnippet>703</a>                .map(|byte| <span class="macro">format!</span>(<span class="string">"{:02X}"</span>, byte))
+<a href=#704 id=704 data-nosnippet>704</a>                .collect::&lt;String&gt;()
+<a href=#705 id=705 data-nosnippet>705</a>        })
+<a href=#706 id=706 data-nosnippet>706</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#707 id=707 data-nosnippet>707</a>        .join(<span class="string">" "</span>)
+<a href=#708 id=708 data-nosnippet>708</a>}
+<a href=#709 id=709 data-nosnippet>709</a>
+<a href=#710 id=710 data-nosnippet>710</a><span class="kw">fn </span>wrap_hex_lines(bytes: <span class="kw-2">&amp;</span>[u8], line_width: usize) -&gt; String {
+<a href=#711 id=711 data-nosnippet>711</a>    bytes
+<a href=#712 id=712 data-nosnippet>712</a>        .chunks(line_width)
+<a href=#713 id=713 data-nosnippet>713</a>        .map(hex_spaced)
+<a href=#714 id=714 data-nosnippet>714</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#715 id=715 data-nosnippet>715</a>        .join(<span class="string">"\n"</span>)
+<a href=#716 id=716 data-nosnippet>716</a>}
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a><span class="kw">fn </span>parse_header(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; PacketHeader {
+<a href=#719 id=719 data-nosnippet>719</a>    PacketHeader::parse(bytes).expect(<span class="string">"parse generated vector"</span>)
+<a href=#720 id=720 data-nosnippet>720</a>}
+<a href=#721 id=721 data-nosnippet>721</a>
+<a href=#722 id=722 data-nosnippet>722</a><span class="attr">#[cfg(test)]
+<a href=#723 id=723 data-nosnippet>723</a></span><span class="kw">mod </span>tests {
+<a href=#724 id=724 data-nosnippet>724</a>    <span class="kw">use </span>std::fs;
+<a href=#725 id=725 data-nosnippet>725</a>
+<a href=#726 id=726 data-nosnippet>726</a>    <span class="kw">use </span><span class="kw">super</span>::render_phase1_test_vectors_markdown;
+<a href=#727 id=727 data-nosnippet>727</a>
+<a href=#728 id=728 data-nosnippet>728</a>    <span class="attr">#[test]
+<a href=#729 id=729 data-nosnippet>729</a>    </span><span class="kw">fn </span>phase1_vectors_match_protocol_appendix() {
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span>expected = render_phase1_test_vectors_markdown();
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>actual = fs::read_to_string(<span class="macro">concat!</span>(
+<a href=#732 id=732 data-nosnippet>732</a>            <span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>),
+<a href=#733 id=733 data-nosnippet>733</a>            <span class="string">"/../docs/protocol/src/test-vectors.md"
+<a href=#734 id=734 data-nosnippet>734</a>        </span>))
+<a href=#735 id=735 data-nosnippet>735</a>        .expect(<span class="string">"read protocol test vectors"</span>);
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="macro">assert_eq!</span>(actual, expected);
+<a href=#737 id=737 data-nosnippet>737</a>    }
+<a href=#738 id=738 data-nosnippet>738</a>}
 </code></pre></div></section></main></body></html>

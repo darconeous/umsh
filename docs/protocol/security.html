@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1c6aec33.js";
+            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-1226d456.js"></script>
+        <script src="toc-4c32735f.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -248,6 +248,23 @@ those counters is being used.</p>
 <p>If <code>delta</code> is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around <code>2^32</code> without requiring special overflow handling. The suggested default forward window is <strong>172800</strong>. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.</p>
 <p>Implementations that need to tolerate out-of-order delivery may also define a <strong>backward window</strong> — a small range of counter values <em>behind</em> the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is <strong>8</strong>. When a packet’s counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for <a href="repeater-operation.html#duplicate-suppression">duplicate suppression</a> in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.</p>
 <p>Regardless of window sizes, a packet must not be accepted if it is more than <strong>5 minutes</strong> out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a <a href="#counter-resynchronization">counter resynchronization</a>) establishes that node’s counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.</p>
+<h5 id="duplicate-acknowledgement-window"><a class="header" href="#duplicate-acknowledgement-window">Duplicate Acknowledgement Window</a></h5>
+<p>Rejecting a packet as a duplicate does not prohibit retransmitting its MAC
+acknowledgement. An authenticated packet that requests an acknowledgement and
+whose MIC identifies it as a previously received packet <strong>MAY</strong> be acknowledged
+again if its frame counter is no more than <strong>8</strong> counts behind the highest
+accepted counter for that traffic direction, inclusive. Equivalently:</p>
+<pre><code class="language-text">ack_distance = (last_accepted_counter - received_counter) mod 2^32
+</code></pre>
+<p>The duplicate may be acknowledged only when <code>ack_distance &lt;= 8</code>. A receiver
+<strong>MUST NOT</strong> acknowledge a replay farther behind the stored counter. Re-sending
+the acknowledgement is idempotent and allows a sender to recover when the
+original acknowledgement was lost; it does not accept the packet as new and
+<strong>MUST NOT</strong> advance or otherwise modify the stored replay baseline. A receiver
+may suppress duplicate delivery itself. In a split implementation, such as a
+companion radio and host MAC, it may instead pass the authenticated duplicate to
+the host, which is then responsible for suppressing duplicate application
+delivery.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">
