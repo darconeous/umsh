@@ -3,7 +3,7 @@
 *Drafted 2026-07-13. Phase measurements and the license check are
 recorded inline as phases complete.*
 
-## Implementation status — 2026-07-13
+## Implementation status — 2026-07-14
 
 Phases A, B, C, and the implementation portion of D are now present.
 The workspace is on `embassy-nrf` 0.11 / `embassy-sync` 0.8. Trouble
@@ -66,13 +66,66 @@ without presenting a PIN UI or enabling notifications. A disconnect and
 reconnect then arrived unencrypted with no IRK/table match and no LTK
 request, proving the rejected attempt left no stale phone-side bond.
 
-Still open before declaring the hardware phases complete: exercise
-fixed-PIN failures and lockout; run the Linux BlueZ pairing/recovery test;
-and perform the 30-minute/long soak. macOS
+The fixed-PIN failure path and lockout are now hardware-validated. Three
+wrong passkeys produced three `ConfirmValueFailed` authentication failures;
+the third set `locked=true` and disabled the pairing gate. A subsequent SMP
+Pairing Request was rejected immediately with Pairing Failed / Pairing Not
+Supported (`0x05`), without another PIN prompt. The continuous serial trace
+showed no intervening reset. The 30-minute serial control-plane soak is also
+complete; the BLE/live-LoRa long soak remains open. Still open before declaring
+the hardware phases complete: run the Linux BlueZ pairing/recovery test and
+the remaining BLE/live-LoRa and fault-injection exercises. macOS
 CoreBluetooth discovery did find the service, but both discovery and
 post-discovery operations can block indefinitely, so the host link now
 bounds each `btleplug` await with explicit timeouts; macOS attach remains
 to be completed after the phone security checks.
+
+The next validation increment made the two load-bearing pure
+policies host-testable. The lockout helper proves that only SMP Confirm Value
+Failed and DHKey Check Failed advance the saturating counter, with the third
+authentication failure locking pairing. The storage journal tests simulate a
+power cut after every byte boundary of both the snapshot-body write and the
+four-byte commit write: mount always selects the complete old record until the
+new commit word is complete, including across generation wraparound. These
+tests cover policy and recovery selection. The real-phone lockout exercise is
+now complete; the injected NVMC/MPSL failure test on hardware remains open.
+Transport arbitration is now a host-tested pure state machine as well: tests
+cover BLE-to-USB displacement, rejection of frames from the displaced
+transport, stale-detach immunity, no-session output suppression, advertising
+policy, and session-generation wraparound. The USB chunk and BLE segment loops
+now share a generation-checked iterator whose test changes the generation
+between two writes and proves the remaining writes are suppressed; the forced
+mid-frame hardware displacement check remains open. The optional `ble-radio`
+host path also has adapter-free tests for configuration bounds, multi-segment
+notification reassembly, malformed-segment recovery, and notification-channel
+disconnect propagation.
+
+The actual journal body/commit writer is now driven through mockable flash
+traits. Fault-injection tests separately fail page erase, record-body write,
+and final commit-word write, verify exact page/write bounds and ordering, and
+retain the exhaustive byte-boundary recovery coverage above. This proves the
+software's failure propagation and old-record selection, while an injected
+MPSL/NVMC failure followed by a physical power cycle remains a hardware gate.
+
+Reset diagnostics ruled out slow firmware initialization: instrumented
+hardware measured the complete LoRa + MPSL + bond store + SDC + USB path at
+62 ms. Auditing Adafruit nRF52 Bootloader 0.6.1 confirmed that its DFU event
+loop explicitly detects a watchdog inherited across a software reset and
+reloads all eight WDT channels. The supported handoff remains the normal
+atomic `GPREGRET=0x57` plus `SYSRESETREQ`; it preserves the strict 8 s
+application watchdog without requiring a special hard-reset path. Hardware
+validation confirmed that a 1200-baud DTR drop exposes `TECHOBOOT`, the volume
+remains mounted beyond the 8 s watchdog deadline, a complete UF2 copy
+succeeds, and the application returns with its bond journal intact. The
+earlier apparent reboot was not reproduced and does not justify weakening the
+watchdog or treating firmware initialization as pathologically slow.
+
+The serial `companion_link_soak` hardware run completed 180/180 property
+round trips over 30 minutes without a reset, disconnect, malformed response,
+or re-attach. Initial attach took 47,256 us. Property RTT min/average/max was
+657/818/1,686 us at a 10 s sample interval. This closes the non-mutating serial
+control-plane soak; it does not replace the BLE bearer or live-LoRa traffic
+soaks in Phase E.
 
 The repository's T-Echo bootloader configuration identifies the board's
 resident layout as S140 **v6.1.1** (application base `0x26000`), not the
@@ -234,8 +287,9 @@ tradeoff isn't relitigated later):
   is generically useful, so the fork is expected to be temporary. If
   upstream lands a different shape, converge on theirs at the next
   deliberate pin move; until then the pin only moves deliberately.
-- The C4 lockout reuses the same gate: overall,
-  `pairing_enabled = pairing_mode || (pin_configured && !locked_out)`.
+- The C4 lockout and D's bond capacity reuse the same gate: overall,
+  `pairing_enabled = bond_count < 4 && (pairing_mode ||
+  (pin_configured && !locked_out))`.
   With a PIN configured, this gate is what actually stops passkey
   bit-leak probing once the failure counter trips.
 
@@ -612,8 +666,9 @@ Policy truth table:
     UI rather than borrowed from the screenless-device gesture FSM.
   - Exit: new bond completes | bonded host establishes an encrypted
     connection | timer expiry.
-  - Pairing acceptance is the fork's gate, driven from one place:
-    `pairing_enabled = pairing_mode || (pin_configured && !locked_out)`.
+  - Pairing acceptance is the fork's gate, driven from one place (with D's
+    capacity term included once persistence lands): `pairing_enabled =
+    bond_count < 4 && (pairing_mode || (pin_configured && !locked_out))`.
   - LED: add a pairing-mode pattern to `LedEngine` timings.
 - **Lockout**: failed-pairing counter in `ble_task` (RAM; resets on a
   successful pairing or reboot). At 3, `locked_out = true` — the gate
@@ -697,6 +752,11 @@ bonded reconnect kills pairing mode.
   storage record format/commit protocol must also make power loss at
   any point select either the complete old value or the complete new
   value on reboot, never a partial record.
+- The runtime pairing gate tracks the number of durably stored bonds. At four
+  bonds it rejects pairing before constructing an SMP state machine, even when
+  pairing mode or a static PIN would otherwise enable pairing; a successful
+  local wipe immediately reopens capacity. Host policy tests cover every term
+  in this combined gate.
 - Bond persistence failure is fail-closed. A newly completed SMP bond
   is not eligible to attach until its keys have been committed. If
   that commit fails, disconnect the peer and delete the volatile bond
@@ -717,6 +777,11 @@ bond, and leave storage recoverable after an immediate power cycle.
 
 ## Phase E — hardware validation and polish
 
+- `companion_link_soak` is the repeatable, non-mutating control-plane harness
+  for this phase. It supports serial and BLE selectors, configurable duration,
+  interval, and BLE segment payload, and emits attach latency plus CSV
+  property-round-trip samples and min/average/max summaries. It does not send
+  LoRa traffic; `desktop_chat` remains the end-to-end live-traffic soak.
 - Soak: `desktop_chat --ble` for hours alongside live LoRa traffic;
   watch for WDT resets, missed TX confirmations, MAC-timer slippage
   from connection-interval latency.
