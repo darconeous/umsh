@@ -82,6 +82,48 @@ pub async fn render(
     wait_idle(busy).await;
 }
 
+/// Differential partial refresh using the SSD1681's current (0x24) and
+/// previous (0x26) image RAM. Only the byte-aligned bounding rectangle that
+/// changed is transferred and refreshed. Unlike [`render`], this uses the
+/// controller's fast partial waveform and therefore avoids the full-screen
+/// black/white flash during interactive UI updates.
+///
+/// `previous` must describe the frame currently visible on the panel. It is
+/// updated to `current` after the controller has synchronized both RAM planes.
+pub async fn render_partial(
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
+    busy: &mut Input<'_>,
+    previous: &mut [u8; BUF_SIZE],
+    current: &[u8; BUF_SIZE],
+) {
+    let Some((x0, x1, y0, y1)) = changed_bounds(previous, current) else {
+        return;
+    };
+
+    set_ram_area(spi, cs, dc, x0, x1, y0, y1).await;
+    write_window_ram(spi, cs, dc, 0x24, current, x0, x1, y0, y1).await;
+    cmd(spi, cs, dc, 0x22, &[0xFC]).await;
+    cmd(spi, cs, dc, 0x20, &[]).await;
+    wait_idle(busy).await;
+
+    // Match GxEPD2's fast-partial sequence: after the refresh, make both the
+    // previous and current controller buffers equal to the newly shown frame.
+    set_ram_area(spi, cs, dc, x0, x1, y0, y1).await;
+    write_window_ram(spi, cs, dc, 0x26, current, x0, x1, y0, y1).await;
+    set_ram_area(spi, cs, dc, x0, x1, y0, y1).await;
+    write_window_ram(spi, cs, dc, 0x24, current, x0, x1, y0, y1).await;
+    previous.copy_from_slice(current);
+
+    // Fast partial refresh leaves the panel-driving voltages enabled. The
+    // reference driver explicitly powers off afterward to prevent the image
+    // outside the refreshed window from fading toward grey.
+    cmd(spi, cs, dc, 0x22, &[0x83]).await;
+    cmd(spi, cs, dc, 0x20, &[]).await;
+    wait_idle(busy).await;
+}
+
 /// Deep Sleep Mode 1: lowest power, RAM retained, hardware reset required
 /// to wake. Use this once the final frame is on the glass and you don't
 /// expect to update again for a while.
@@ -185,5 +227,75 @@ async fn write_ram(
     let _ = spi.write(&cmd_buf).await;
     dc.set_high();
     let _ = spi.write(pixels).await;
+    cs.set_high();
+}
+
+/// Changed bounding rectangle in controller coordinates. X values are byte
+/// offsets into a 25-byte scanline; Y values and all upper bounds are exclusive.
+fn changed_bounds(
+    previous: &[u8; BUF_SIZE],
+    current: &[u8; BUF_SIZE],
+) -> Option<(usize, usize, usize, usize)> {
+    let mut x0 = BYTES_PER_ROW;
+    let mut x1 = 0;
+    let mut y0 = HEIGHT;
+    let mut y1 = 0;
+    for (index, (&old, &new)) in previous.iter().zip(current).enumerate() {
+        if old != new {
+            let x = index % BYTES_PER_ROW;
+            let y = index / BYTES_PER_ROW;
+            x0 = x0.min(x);
+            x1 = x1.max(x + 1);
+            y0 = y0.min(y);
+            y1 = y1.max(y + 1);
+        }
+    }
+    (x0 < x1 && y0 < y1).then_some((x0, x1, y0, y1))
+}
+
+async fn set_ram_area(
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+) {
+    let y_last = y1 - 1;
+    cmd(spi, cs, dc, 0x11, &[0x03]).await;
+    cmd(spi, cs, dc, 0x44, &[x0 as u8, (x1 - 1) as u8]).await;
+    cmd(
+        spi,
+        cs,
+        dc,
+        0x45,
+        &[y0 as u8, (y0 >> 8) as u8, y_last as u8, (y_last >> 8) as u8],
+    )
+    .await;
+    cmd(spi, cs, dc, 0x4E, &[x0 as u8]).await;
+    cmd(spi, cs, dc, 0x4F, &[y0 as u8, (y0 >> 8) as u8]).await;
+}
+
+async fn write_window_ram(
+    spi: &mut Spim<'_>,
+    cs: &mut Output<'_>,
+    dc: &mut Output<'_>,
+    command: u8,
+    pixels: &[u8; BUF_SIZE],
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+) {
+    let command_buf = [command];
+    cs.set_low();
+    dc.set_low();
+    let _ = spi.write(&command_buf).await;
+    dc.set_high();
+    for y in y0..y1 {
+        let row = y * BYTES_PER_ROW;
+        let _ = spi.write(&pixels[row + x0..row + x1]).await;
+    }
     cs.set_high();
 }

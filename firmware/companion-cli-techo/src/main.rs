@@ -42,12 +42,6 @@ fn main() {
 #[cfg(target_os = "none")]
 mod panic;
 
-// Low-level SSD1681 / GDEH0154D67 driver, used by display_task below.
-// Sibling of mod firmware so it can live at src/display.rs without
-// awkward #[path] gymnastics.
-#[cfg(target_os = "none")]
-mod display;
-
 #[cfg(target_os = "none")]
 mod cli_io;
 
@@ -79,8 +73,6 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 mod firmware {
     use core::sync::atomic::{AtomicU32, Ordering};
 
-    use super::display;
-
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
     use embassy_futures::select::{Either, select};
@@ -110,7 +102,7 @@ mod firmware {
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
     use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
-    use umsh_bsp_techo::{PowerSignaler, SHUTDOWN_SIGNAL, TechoMac, TechoPlatform};
+    use umsh_bsp_techo::{PowerSignaler, SHUTDOWN_SIGNAL, TechoMac, TechoPlatform, display};
     use umsh_core::{ChannelKey, PayloadType, PublicKey};
     use umsh_crypto::{
         CryptoEngine, NodeIdentity,
@@ -506,7 +498,7 @@ mod firmware {
         // tristate_pin() writes PIN_CNF = 0x02 (DIR=input, INPUT=disconnect,
         // PULL=none, DRIVE=0, SENSE=disabled) — clearing any SENSE bits.
         //
-        // E-paper SPI bus (SPIM2): SCK=P0.31, MOSI=P1.07, MISO=P0.29
+        // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
         // Radio SPI bus (TWISPI1): SCK=P0.19, MOSI=P0.22, MISO=P0.23
         // Radio control:           CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20

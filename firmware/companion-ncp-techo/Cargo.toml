@@ -10,6 +10,11 @@ repository.workspace = true
 # Hardware-diagnostic mode: keep BLE active while CDC is open and mirror
 # security/GATT lifecycle events as ASCII on the USB serial endpoint.
 ble-debug = ["trouble-host/security-debug"]
+# Diagnostic image for exercising runtime persistence failures on hardware.
+# Boot-critical initialization is allowed to complete; every later journal
+# write/erase returns an injected error before touching NVMC. Never enable in
+# a production image.
+ble-store-fault-inject = ["ble-debug"]
 # Recovery-only image used during hardware validation. On every boot of this
 # deliberately temporary image, clear persisted BLE bonds and the configured
 # pairing PIN before the host stack starts. Do not enable for production.
@@ -31,6 +36,7 @@ path = "src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display"] }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
@@ -56,6 +62,7 @@ embassy-sync = { version = "0.8", default-features = false }
 static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-graphics = { version = "0.8", default-features = false }
 # lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
 # no-op global logger so the firmware links without a debug transport.
 defmt = "0.3"

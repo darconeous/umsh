@@ -1280,6 +1280,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embassy-usb",
+ "embedded-graphics",
  "embedded-hal-bus",
  "heapless 0.8.0",
  "heapless 0.9.3",
@@ -1289,6 +1290,7 @@ dependencies = [
  "static_cell",
  "trouble-host",
  "umsh-bsp-nrf52840",
+ "umsh-bsp-techo",
  "umsh-companion",
  "umsh-companion-ncp",
  "umsh-hal",
@@ -2929,8 +2931,10 @@ name = "umsh-bsp-techo"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "embassy-nrf",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-graphics",
  "umsh-bsp-nrf52840",
  "umsh-crypto",
  "umsh-hal",
