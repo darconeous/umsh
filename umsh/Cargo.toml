@@ -51,8 +51,9 @@ required-features = ["cli"]
 name = "companion_probe"
 required-features = ["tokio-support"]
 
-[[example]]
-name = "companion_dump"
+[[bin]]
+name = "umsh-capture"
+path = "src/bin/umsh_capture.rs"
 required-features = ["tokio-support"]
 
 [[example]]
