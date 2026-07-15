@@ -497,6 +497,37 @@ impl BleFrameLink {
             operation_timeout: config.operation_timeout,
         })
     }
+
+    /// Capture the backend's view of a failed link, then make a bounded
+    /// best-effort disconnect so a subsequent discovery does not inherit a
+    /// stale CoreBluetooth/BlueZ connection object.
+    async fn diagnose_and_disconnect(&self, failure: String) -> CompanionRadioError {
+        use btleplug::api::Peripheral as _;
+
+        let connected = match tokio::time::timeout(
+            Duration::from_secs(2),
+            self.peripheral.is_connected(),
+        )
+        .await
+        {
+            Ok(Ok(value)) => value.to_string(),
+            Ok(Err(error)) => format!("error({error})"),
+            Err(_) => "query-timeout".into(),
+        };
+        let cleanup = match tokio::time::timeout(
+            Duration::from_secs(2),
+            self.peripheral.disconnect(),
+        )
+        .await
+        {
+            Ok(Ok(())) => "ok".into(),
+            Ok(Err(error)) => format!("error({error})"),
+            Err(_) => "timeout".into(),
+        };
+        CompanionRadioError::Transport(format!(
+            "{failure}; backend is_connected={connected}; disconnect cleanup={cleanup}"
+        ))
+    }
 }
 
 #[cfg(feature = "ble-radio")]
@@ -509,14 +540,25 @@ impl FrameLink for BleFrameLink {
             segment
                 .write_to(&mut value)
                 .expect("segment destination is exactly sized");
-            tokio::time::timeout(
+            let write = tokio::time::timeout(
                 self.operation_timeout,
                 self.peripheral
                     .write(&self.frame_in, &value, WriteType::WithResponse),
             )
-            .await
-            .map_err(|_| ble_timeout("writing Frame In"))?
-            .map_err(ble_error)?;
+            .await;
+            match write {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return Err(self
+                        .diagnose_and_disconnect(format!("BLE Frame In write failed: {error}"))
+                        .await);
+                }
+                Err(_) => {
+                    return Err(self
+                        .diagnose_and_disconnect("BLE timed out while writing Frame In".into())
+                        .await);
+                }
+            }
         }
         Ok(())
     }

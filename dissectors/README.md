@@ -173,6 +173,28 @@ installed to verify the plugin is working. To regenerate it:
 python3 dissectors/make_test_pcap.py dissectors/test_vectors.pcap
 ```
 
+## Companion-radio Capture Files
+
+The `umsh-capture` binary can write classic pcap files directly from a serial or BLE companion
+radio. Its portable encoding uses synthetic Ethernet/IPv4/UDP records so one file can contain
+both over-the-air LoRa packets and the underlying Spinel-inspired host/NCP conversation:
+
+```sh
+cargo run -p umsh --bin umsh-capture --features ble-radio -- \
+    --ble --pcap=techo.pcap --capture=both
+```
+
+Radio frames use UDP port 4242 and are handled by the main UMSH dissector. Companion frames use
+ports 4243 (host) and 4244 (NCP) and are handled by the included `UMSH Companion Radio`
+dissector. Display filters include `umsh`, `umsh.companion`,
+`umsh.companion.command`, and `umsh.companion.property`.
+Companion pcaps may expose sensitive property values and application traffic and should be
+treated as diagnostic secrets when stored or shared.
+
+`--pcap-raw --pcap-linktype=N` writes exact LoRa frame bytes under a caller-selected pcap
+`LINKTYPE`; it requires `--capture=radio`. This is intended for private/experimental link types
+whose Wireshark encapsulation is configured outside this plugin.
+
 ## Running Unit Tests
 
 Standalone Lua tests (no Wireshark required, Lua 5.3+):

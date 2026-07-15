@@ -151,7 +151,7 @@ or re-attach. Initial attach took 47,256 us. Property RTT min/average/max was
 control-plane soak; it does not replace the BLE bearer or live-LoRa traffic
 soaks in Phase E.
 
-The new `companion_dump` example establishes the requested computer-side live
+The new `umsh-capture` tool establishes the requested computer-side live
 packet-inspection path without serial/HDLC. It carries the existing
 Spinel-inspired companion commands, properties, resets, and asynchronous RX
 events over the BLE Companion Link GATT/SAR transport, configures the SX1262,
@@ -164,11 +164,24 @@ while a failed probe identifies a real stalled/disconnected path. The README
 documents the BLE-only invocation, pairing behavior, RF overrides, and idle
 diagnostics.
 
+A subsequent soak received 510 frames before a real transport failure at
+approximately 72.5 minutes. The final idle `PROP_PHY_RSSI` transaction
+succeeded, but the next probe timed out while writing Frame In, demonstrating
+that periodic GATT/RSSI traffic does not keep a broken link alive and that the
+failure is below the LoRa receive queue. The diagnostic now captures the
+backend's `is_connected` view, performs bounded disconnect cleanup, rediscovers
+and reconnects, preserves cumulative counters, and prints the retained NCP boot
+status for each new session. A later long-running BLE capture has not reproduced
+the failure; it is therefore treated as transient rather than a release gate for
+now. The recovery instrumentation remains available to capture evidence if it
+recurs.
+
 ### Remaining work — prioritized
 
-1. **Complete the BLE/live-LoRa soak.** Run `companion_dump --ble` for several
-   hours with representative RF traffic and retain the new idle-health output;
-   then run bidirectional `desktop_chat --ble` traffic and record duration,
+1. **Complete the BLE/live-LoRa soak.** Continue running the recovery-enabled
+   `umsh-capture --ble` with representative RF traffic and retain any failure
+   diagnostic plus the next session's boot status if the transient failure
+   recurs. Then run bidirectional `desktop_chat --ble` traffic and record duration,
    packet/TX-confirmation counts, reconnect behavior, and any WDT/reset event.
 2. **Exercise persistence failures on hardware.** Flash the dedicated
    `ble-store-fault-inject` image, provoke PIN and bond writes, verify that each
@@ -604,16 +617,22 @@ best-effort.
   default costs little.
 - **Disconnect** surfaces as `CompanionRadioError::Disconnected`.
 
-### B3 — examples
+### B3 — examples and operational tools
 
 `companion_probe` and `desktop_chat` accept `--ble [selector]` as an
 alternative to the serial path, gated on the `ble-radio` feature
 (new `[[example]] required-features` entries).
 
-`companion_dump` provides a BLE-first live RF inspection tool: it prints raw
+`umsh-capture` provides a BLE-first live RF inspection tool: it prints raw
 LoRa frames and receive metadata, attempts a UMSH decode without discarding
-foreign traffic, and periodically reads `PROP_PHY_RSSI` so an idle RF channel
-is distinguishable from a stalled BLE/NCP/radio path.
+foreign traffic (or suppresses it with `--umsh-only`), and periodically reads
+`PROP_PHY_RSSI` so an idle RF channel is distinguishable from a stalled
+BLE/NCP/radio path. It is a package binary rather than an example because live
+frame inspection and soak diagnostics are maintained operational tooling. It
+can also write portable Ethernet/UDP pcaps containing radio frames, raw
+companion-protocol frames, or both; the Wireshark plugin dissects both layers.
+A radio-only raw mode writes exact LoRa bytes with a caller-selected private
+pcap `LINKTYPE` value.
 
 **Exit criteria.** Loopback unit tests for `SerialFrameLink` parity,
 including two frames returned by one underlying read, a frame boundary

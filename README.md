@@ -198,9 +198,9 @@ Peers can also be pre-registered on the command line with `--peer <key>[:alias]`
 accepts the same key formats as `/peer add`. The `--group` and `--port` flags override the
 default multicast address and port if you need to run isolated sessions on the same machine.
 
-### Dump live LoRa packets through a BLE companion radio
+### Capture live LoRa and companion-protocol traffic
 
-The `companion_dump` example connects to a T-Echo NCP over BLE, configures and enables its
+The `umsh-capture` tool connects to a T-Echo NCP over BLE, configures and enables its
 SX1262, and prints every received LoRa frame with elapsed time, RSSI, SNR, raw bytes, and an
 attempted UMSH header decode. Traffic from another protocol is retained and labeled as not a
 valid UMSH packet rather than discarded.
@@ -211,14 +211,14 @@ nRF Connect; only one companion session can own the NCP at a time. Then run, fro
 root:
 
 ```sh
-cargo run -p umsh --example companion_dump --features ble-radio -- --ble
+cargo run -p umsh --bin umsh-capture --features ble-radio -- --ble
 ```
 
 If more than one Companion Link device is nearby, select the T-Echo by its primary advertised
 name:
 
 ```sh
-cargo run -p umsh --example companion_dump --features ble-radio -- \
+cargo run -p umsh --bin umsh-capture --features ble-radio -- \
     --ble "UMSH NCP"
 ```
 
@@ -232,7 +232,7 @@ The default RF profile is 910.525 MHz, LoRa SF7, 62.5 kHz bandwidth, coding rate
 word `0x1424`. Each parameter can be overridden explicitly:
 
 ```sh
-cargo run -p umsh --example companion_dump --features ble-radio -- \
+cargo run -p umsh --bin umsh-capture --features ble-radio -- \
     --ble "UMSH NCP" \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
@@ -240,8 +240,46 @@ cargo run -p umsh --example companion_dump --features ble-radio -- \
 While no frames arrive, the dumper performs a live channel-RSSI probe every 10 seconds and
 prints an `idle ... link=ok` line. This is expected during RF silence and confirms that the BLE
 connection, NCP command session, and radio runner are still responding. If one of those layers
-stalls or disconnects, the probe exits with a specific error instead of leaving a packet count
-apparently frozen. Change the interval with `--idle-probe-secs=N`.
+stalls or disconnects, the probe reports a specific error instead of leaving a packet count
+apparently frozen. On a BLE write failure, the diagnostic includes the platform backend's
+`is_connected` result and bounded disconnect-cleanup result. The dumper then rediscovers and
+reconnects after two seconds by default, preserves cumulative time/packet counters, and prints a
+new session number plus the NCP's retained boot status. This recovery is deliberately local to
+the diagnostic tool; normal stateful users of `CompanionRadio` still receive the failure.
+
+Change the probe interval with `--idle-probe-secs=N`, change recovery delay with
+`--reconnect-delay-secs=N`, or use `--no-reconnect` to exit on the first failed session.
+Use `--umsh-only` to suppress per-frame output for traffic that does not parse as a UMSH
+packet; idle/recovery diagnostics and periodic received/displayed/filtered progress counters
+remain visible even when the channel is busy with foreign traffic.
+
+Write a Wireshark-readable pcap with `--pcap=PATH`. The default captures
+over-the-air radio frames; `--capture=companion` instead records the complete
+Spinel-inspired host/NCP frame exchange, while `--capture=both` records both layers:
+
+```sh
+cargo run -p umsh --bin umsh-capture --features ble-radio -- \
+    --ble --pcap=techo.pcap --capture=both --umsh-only
+```
+
+Portable captures use synthetic Ethernet/IPv4/UDP encapsulation. Radio packets use UDP port
+4242 and work with the existing UMSH dissector. Companion frames use directional ports
+4243/4244 and the companion dissector included in the same plugin, which exposes transaction
+IDs, commands, properties, stream envelopes, radio metadata, and nested UMSH packets.
+Companion captures are diagnostic artifacts and may contain sensitive property values or
+application traffic; handle them accordingly before sharing.
+
+For an exact byte-for-byte LoRa payload capture under a private or experimental pcap link type,
+select radio-only raw mode and supply the numeric `LINKTYPE` value (decimal or `0x` hex):
+
+```sh
+cargo run -p umsh --bin umsh-capture --features ble-radio -- \
+    --ble --pcap=raw-lora.pcap --capture=radio \
+    --pcap-raw --pcap-linktype=147
+```
+
+Raw mode adds no per-packet header and deliberately does not mix capture layers. Wireshark must
+have a dissector configured for the chosen private `LINKTYPE` value.
 
 Use `--help` for the complete option list. Press Ctrl-C to stop the dump. A timeout while
 subscribing to Frame Out usually means the computer is not bonded and the T-Echo's pairing
