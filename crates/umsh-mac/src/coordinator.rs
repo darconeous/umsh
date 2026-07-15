@@ -2241,6 +2241,26 @@ impl<
                 if !Self::payload_is_allowed(header.packet_type(), payload) {
                     continue;
                 }
+                if header.ack_requested()
+                    && self.should_emit_destination_ack(&buf[..frame_len], header)
+                    && self.is_acknowledgeable_unicast_duplicate(
+                        local_id,
+                        peer_id,
+                        header,
+                        &buf[..frame_len],
+                    )
+                {
+                    let ack_tag = self.compute_received_ack_tag(
+                        &buf[..frame_len],
+                        header,
+                        body_range.clone(),
+                        &keys,
+                    );
+                    self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                        .ok();
+                    handled = true;
+                    break;
+                }
                 match self.unicast_replay_verdict(local_id, peer_id, header, &buf[..frame_len]) {
                     Some(ReplayVerdict::Accept) => {
                         let _ = self.accept_unicast_replay(
@@ -2515,6 +2535,26 @@ impl<
                         let payload = &buf[body_range.clone()];
                         if !Self::payload_is_allowed(header.packet_type(), payload) {
                             continue;
+                        }
+                        if header.ack_requested()
+                            && self.should_emit_destination_ack(&buf[..frame_len], header)
+                            && self.is_acknowledgeable_unicast_duplicate(
+                                local_id,
+                                peer_id,
+                                header,
+                                &buf[..frame_len],
+                            )
+                        {
+                            let ack_tag = self.compute_received_ack_tag(
+                                &buf[..frame_len],
+                                header,
+                                body_range.clone(),
+                                &blind_keys,
+                            );
+                            self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                                .ok();
+                            handled = true;
+                            break;
                         }
                         match self.unicast_replay_verdict(
                             local_id,
@@ -3257,6 +3297,26 @@ impl<
         self.identity_mut(local_id)
             .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
             .map(|state| state.replay_window.check(counter, mic, now_ms))
+    }
+
+    fn is_acknowledgeable_unicast_duplicate(
+        &self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+    ) -> bool {
+        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
+            return false;
+        };
+        let now_ms = self.clock.now_ms();
+        self.identity(local_id)
+            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+            .is_some_and(|state| {
+                state
+                    .replay_window
+                    .is_acknowledgeable_duplicate(counter, mic, now_ms)
+            })
     }
 
     fn try_accept_counter_resync_response(
