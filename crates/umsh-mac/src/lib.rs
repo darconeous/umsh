@@ -180,7 +180,9 @@
 
 use embedded_hal_async::delay::DelayNs;
 
-pub(crate) const RECENT_MIC_CAPACITY: usize = 8;
+// Retain the highest accepted counter plus all eight counters in the bounded
+// duplicate-acknowledgement window.
+pub(crate) const RECENT_MIC_CAPACITY: usize = 9;
 pub(crate) const REPLAY_BACKTRACK_SLOTS: u32 = 8;
 pub(crate) const REPLAY_STALE_MS: u64 = 5 * 60 * 1000;
 pub(crate) const MAX_SOURCE_ROUTE_HOPS: usize = 15;

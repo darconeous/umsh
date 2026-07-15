@@ -340,6 +340,34 @@ fn replay_window_rejects_replay_after_recent_mic_eviction() {
 }
 
 #[test]
+fn duplicate_ack_window_requires_exact_recent_mic_within_eight_counters() {
+    let mut window = ReplayWindow::new();
+    let original_mic = [0xA5; 8];
+    window.accept(10, &original_mic, 1);
+    for counter in 11..=18 {
+        window.accept(counter, &[counter as u8; 8], counter as u64);
+    }
+
+    assert!(window.is_acknowledgeable_duplicate(10, &original_mic, 19));
+    assert!(!window.is_acknowledgeable_duplicate(10, &[0x5A; 8], 19));
+
+    window.accept(19, &[19; 8], 20);
+    assert!(!window.is_acknowledgeable_duplicate(10, &original_mic, 21));
+}
+
+#[test]
+fn duplicate_ack_window_uses_modular_counter_distance() {
+    let mut window = ReplayWindow::new();
+    let mic = [0xA5; 8];
+    window.accept(u32::MAX, &mic, 1);
+    // Model a highest accepted counter that has wrapped while retaining the
+    // recent MIC for the packet immediately before the wrap.
+    window.last_accepted = 1;
+
+    assert!(window.is_acknowledgeable_duplicate(u32::MAX, &mic, 2));
+}
+
+#[test]
 fn receive_one_auto_replies_to_echo_request() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -1940,6 +1968,99 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
 }
 
 #[test]
+fn receive_one_reacks_duplicate_unicast_within_eight_counter_window() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"original",
+        true,
+        10,
+    );
+    let mut deliveries = 0;
+    assert!(
+        block_on(mac.receive_one(|_, event| {
+            if is_received_type(&event, PacketType::Unicast) {
+                deliveries += 1;
+            }
+        }))
+        .unwrap()
+    );
+    let original_ack = mac.tx_queue_mut().pop_next().unwrap().frame;
+
+    for counter in 11..=18 {
+        mac.radio_mut().queue_received_unicast_with_counter(
+            &remote,
+            &keys,
+            &dst_hint,
+            &[counter as u8],
+            false,
+            counter,
+        );
+        assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    }
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"original",
+        true,
+        10,
+    );
+    assert!(
+        block_on(mac.receive_one(|_, event| {
+            if is_received_type(&event, PacketType::Unicast) {
+                deliveries += 1;
+            }
+        }))
+        .unwrap()
+    );
+    let duplicate_ack = mac.tx_queue_mut().pop_next().unwrap().frame;
+
+    assert_eq!(deliveries, 1);
+    assert_eq!(duplicate_ack.as_slice(), original_ack.as_slice());
+
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"advance outside window",
+        false,
+        19,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    mac.radio_mut().queue_received_unicast_with_counter(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"original",
+        true,
+        10,
+    );
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
 fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -2703,6 +2824,71 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
     );
 
     assert_eq!(deliveries, 1);
+}
+
+#[test]
+fn receive_one_reacks_duplicate_blind_unicast_without_redelivery() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
+    mac.install_pairwise_keys(local_id, peer_id, pairwise.clone())
+        .unwrap();
+    mac.add_channel(channel_key).unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().queue_received_blind_unicast(
+        &remote,
+        &pairwise,
+        &channel_keys,
+        &dst_hint,
+        b"hello",
+        true,
+    );
+    mac.radio_mut().queue_received_blind_unicast(
+        &remote,
+        &pairwise,
+        &channel_keys,
+        &dst_hint,
+        b"hello",
+        true,
+    );
+
+    let mut deliveries = 0;
+    assert!(
+        block_on(mac.receive_one(|_, event| {
+            if is_received_type(&event, PacketType::BlindUnicast) {
+                deliveries += 1;
+            }
+        }))
+        .unwrap()
+    );
+    let original_ack = mac.tx_queue_mut().pop_next().unwrap().frame;
+
+    assert!(
+        block_on(mac.receive_one(|_, event| {
+            if is_received_type(&event, PacketType::BlindUnicast) {
+                deliveries += 1;
+            }
+        }))
+        .unwrap()
+    );
+    let duplicate_ack = mac.tx_queue_mut().pop_next().unwrap().frame;
+
+    assert_eq!(deliveries, 1);
+    assert_eq!(duplicate_ack.as_slice(), original_ack.as_slice());
 }
 
 #[test]

@@ -152,6 +152,21 @@ impl ReplayWindow {
         ReplayVerdict::Replay
     }
 
+    /// Return whether this is an exact, recently accepted packet eligible for
+    /// an idempotent duplicate acknowledgement.
+    ///
+    /// This deliberately requires both the bounded counter distance and a
+    /// matching retained MIC. Merely reusing an occupied counter does not prove
+    /// that the receiver previously accepted this logical packet.
+    pub fn is_acknowledgeable_duplicate(&self, counter: u32, mic: &[u8], now_ms: u64) -> bool {
+        if self.last_accepted_time_ms == 0 && self.recent_mics.is_empty() {
+            return false;
+        }
+
+        let ack_distance = self.last_accepted.wrapping_sub(counter);
+        ack_distance <= REPLAY_BACKTRACK_SLOTS && self.has_matching_recent_mic(counter, mic, now_ms)
+    }
+
     /// Record an accepted `counter` and `mic` at `now_ms`.
     pub fn accept(&mut self, counter: u32, mic: &[u8], now_ms: u64) {
         self.prune_recent_mics(now_ms);
