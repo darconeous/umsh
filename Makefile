@@ -3,6 +3,7 @@
 	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
 	flash-companion-cli-t1000e-serial \
+	build-companion-ncp-t1000e flash-companion-ncp-t1000e-serial \
 	build-companion-ncp-techo flash-companion-ncp-techo
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
@@ -56,6 +57,13 @@ DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
 flash-companion-cli-t1000e-serial: build-companion-cli-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
 		$(TARGET_DIR)/firmware-companion-cli-t1000e
+
+build-companion-ncp-t1000e:
+	cd firmware/companion-ncp-t1000e && cargo build --release
+
+flash-companion-ncp-t1000e-serial: build-companion-ncp-t1000e
+	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
+		$(TARGET_DIR)/firmware-companion-ncp-t1000e
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 

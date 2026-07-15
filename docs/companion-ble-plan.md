@@ -176,6 +176,44 @@ the failure; it is therefore treated as transient rather than a release gate for
 now. The recovery instrumentation remains available to capture evidence if it
 recurs.
 
+The Companion Link firmware is now ported to the Seeed SenseCAP T-1000E. The
+new `firmware-companion-ncp-t1000e` target shares the proven session,
+GATT/SAR, security, persistence, and transport-arbitration implementation with
+the T-Echo target while selecting the T-1000E's S140-v7 application origin
+(`0x27000`), LR1110 wiring and internal RF-switch table, 16-symbol receive
+preamble, active-high LED, battery monitor, buzzer, shutdown sequence, and
+button polarity. Its release image measures 376,758 bytes text, 6,104 bytes
+data, and 46,860 bytes BSS. The existing runtime button recognizer is retained:
+double press toggles buzzer silence, triple press enters UF2 DFU, and a
+three-second hold powers off. A short startup press is consumed as the board's
+normal wake gesture; remaining held for one second requests the spec's forced
+pairing window instead of entering the bootloader.
+
+Hardware validation on macOS confirms that the target advertises the Companion
+Link service as `UMSH T-1000E NCP`, accepts a configured passkey, completes the
+protected Frame-Out subscription and companion reset/property handshake over
+BLE, reports a successful durable commit for the resulting bond, reconnects
+without another pairing exchange, and continues reconnecting in the same boot
+after the temporary passkey is
+cleared. Persistence reported success, but restoration across a T-1000E reboot
+remains unverified because further startup testing was deferred. A live
+`umsh-capture` session configured the LR1110 at 910.525 MHz / SF7 / BW62.5 kHz /
+CR4/5 and completed an idle RSSI health probe over BLE (`link=ok`, -119 dBm).
+The USB attach/detach arbitration also behaved as specified; on macOS the
+serial client may leave DTR asserted after process exit, in which case an
+explicit 115200-baud DTR drop is required before BLE advertising resumes.
+
+One startup defect remains open. The first boot after some DFU updates held the
+initial buzzer tone for approximately one watchdog interval, then reset and
+played the normal startup chirp; the companion reset status subsequently
+reported `RESET_WATCHDOG`. The source now forces the buzzer PWM and enable pins
+low immediately after GPIO initialization and starts watchdog servicing before
+radio, flash, MPSL, and BLE initialization, while retaining the intentional
+short power-on chirp after the buzzer task starts. That watchdog-ordering
+revision builds for both boards but has deliberately not been reflashed after
+the operator chose to defer further startup-audio iteration. Forced pairing on
+the startup-held gesture therefore remains implemented but hardware-unverified.
+
 ### Remaining work — prioritized
 
 1. **Complete the BLE/live-LoRa soak.** Continue running the recovery-enabled
@@ -199,7 +237,13 @@ recurs.
    current, and supervision-timeout recovery; reconcile the task-layout header,
    this plan, and the protocol chapter only where observed behavior actually
    diverges.
-6. **Maintain the Trouble fork deliberately.** Prepare the consolidated
+6. **Close the T-1000E startup/force-pairing gate.** Instrument the first boot
+   after clearing BLE security state, verify that early watchdog servicing
+   prevents the observed reset and sustained buzzer tone, and then validate
+   that an ordinary short wake press is ignored while a continued one-second
+   startup hold opens pairing mode with existing bonds. Do not conflate this
+   gesture with bootloader entry.
+7. **Maintain the Trouble fork deliberately.** Prepare the consolidated
    upstreamable security fix for review and either converge on an accepted
    upstream shape or retain the audited revision pin with its test evidence.
 

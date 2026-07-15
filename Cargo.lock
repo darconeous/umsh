@@ -1268,6 +1268,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-companion-ncp-t1000e"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "lora-phy",
+ "nrf-mpsl",
+ "nrf-sdc",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-t1000e",
+ "umsh-companion",
+ "umsh-companion-ncp",
+ "umsh-hal",
+ "umsh-radio-loraphy",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "firmware-companion-ncp-techo"
 version = "0.1.0"
 dependencies = [
