@@ -134,6 +134,83 @@ pub fn generation_is_newer(candidate: u32, current: u32) -> bool {
     candidate != current && candidate.wrapping_sub(current) < (1 << 31)
 }
 
+/// Select the newest valid committed snapshot from `(flash_address, record)`
+/// pairs. Invalid, corrupt, and incompletely committed records are ignored.
+#[cfg(test)]
+pub fn latest_snapshot<'a>(
+    records: impl IntoIterator<Item = (u32, &'a [u8; SLOT_SIZE])>,
+) -> Option<(u32, Snapshot)> {
+    let mut latest: Option<(u32, Snapshot)> = None;
+    for (address, bytes) in records {
+        latest = consider_snapshot(latest, address, bytes);
+    }
+    latest
+}
+
+/// Consider one journal slot while mounting without retaining its flash buffer.
+pub fn consider_snapshot(
+    current: Option<(u32, Snapshot)>,
+    address: u32,
+    bytes: &[u8; SLOT_SIZE],
+) -> Option<(u32, Snapshot)> {
+    let Some(candidate) = Snapshot::decode(bytes) else {
+        return current;
+    };
+    if current
+        .as_ref()
+        .is_none_or(|(_, snapshot)| generation_is_newer(candidate.generation, snapshot.generation))
+    {
+        Some((address, candidate))
+    } else {
+        current
+    }
+}
+
+/// Flash writer used by the journal's two-stage record commit.
+#[allow(async_fn_in_trait)]
+pub trait RecordWriter {
+    type Error;
+
+    async fn write_record(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait PageEraser {
+    type Error;
+
+    async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitError<E> {
+    Body(E),
+    Commit(E),
+}
+
+/// Write a snapshot body first and its visibility marker last.
+///
+/// The caller must not publish the corresponding in-RAM snapshot until this
+/// returns `Ok(())`. A mount ignores either failure shape because the commit
+/// word remains incomplete.
+pub async fn write_committed_record<W: RecordWriter>(
+    writer: &mut W,
+    target: u32,
+    bytes: &[u8; SLOT_SIZE],
+) -> Result<(), CommitError<W::Error>> {
+    writer
+        .write_record(target, &bytes[..COMMIT_OFFSET])
+        .await
+        .map_err(CommitError::Body)?;
+    writer
+        .write_record(target + COMMIT_OFFSET as u32, &[0; 4])
+        .await
+        .map_err(CommitError::Commit)
+}
+
+pub async fn erase_journal_page<E: PageEraser>(eraser: &mut E, page: u32) -> Result<(), E::Error> {
+    eraser.erase_page(page, page + PAGE_SIZE).await
+}
+
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for &byte in bytes {
@@ -148,6 +225,50 @@ fn crc32(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::future::Future;
+    use core::task::{Context, Poll, Waker};
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut future = core::pin::pin!(future);
+        let mut context = Context::from_waker(Waker::noop());
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct MockWriter {
+        fail_call: Option<usize>,
+        calls: std::vec::Vec<(u32, std::vec::Vec<u8>)>,
+        erase_failure: bool,
+        erases: std::vec::Vec<(u32, u32)>,
+    }
+
+    impl RecordWriter for MockWriter {
+        type Error = usize;
+
+        async fn write_record(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            let call = self.calls.len();
+            self.calls.push((address, bytes.to_vec()));
+            if self.fail_call == Some(call) {
+                Err(call)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl PageEraser for MockWriter {
+        type Error = ();
+
+        async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
+            self.erases.push((start, end));
+            if self.erase_failure { Err(()) } else { Ok(()) }
+        }
+    }
 
     fn sample() -> Snapshot {
         let mut snapshot = Snapshot {
@@ -193,5 +314,125 @@ mod tests {
     fn generation_comparison_handles_wraparound() {
         assert!(generation_is_newer(0, u32::MAX));
         assert!(!generation_is_newer(u32::MAX, 0));
+    }
+
+    #[test]
+    fn journal_selects_newest_valid_record_across_wraparound() {
+        let mut old = sample();
+        old.generation = u32::MAX;
+        let mut old_bytes = old.encode();
+        old_bytes[COMMIT_OFFSET..].fill(0);
+
+        let mut new = sample();
+        new.generation = 0;
+        new.pin = Some(654_321);
+        let mut new_bytes = new.encode();
+        new_bytes[COMMIT_OFFSET..].fill(0);
+
+        assert_eq!(
+            latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &new_bytes)]),
+            Some((PAGE1, new))
+        );
+    }
+
+    #[test]
+    fn interrupted_new_record_never_replaces_committed_old_record() {
+        let mut old = sample();
+        old.generation = 7;
+        let mut old_bytes = old.encode();
+        old_bytes[COMMIT_OFFSET..].fill(0);
+
+        let mut new = sample();
+        new.generation = 8;
+        new.pin = Some(654_321);
+        let encoded_new = new.encode();
+
+        // Simulate power loss after every possible byte of the body write and
+        // after each byte of the final commit-word write. Until all four
+        // commit bytes are present, mount must recover the old snapshot.
+        for body_bytes in 0..=COMMIT_OFFSET {
+            let mut interrupted = [0xff; SLOT_SIZE];
+            interrupted[..body_bytes].copy_from_slice(&encoded_new[..body_bytes]);
+            assert_eq!(
+                latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &interrupted)]),
+                Some((PAGE0, old.clone())),
+                "body power cut after {body_bytes} bytes"
+            );
+        }
+        for commit_bytes in 0..4 {
+            let mut interrupted = encoded_new;
+            interrupted[COMMIT_OFFSET..COMMIT_OFFSET + commit_bytes].fill(0);
+            assert_eq!(
+                latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &interrupted)]),
+                Some((PAGE0, old.clone())),
+                "commit power cut after {commit_bytes} bytes"
+            );
+        }
+
+        let mut committed = encoded_new;
+        committed[COMMIT_OFFSET..].fill(0);
+        assert_eq!(
+            latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &committed)]),
+            Some((PAGE1, new))
+        );
+    }
+
+    #[test]
+    fn record_writer_faults_distinguish_body_and_commit_failures() {
+        let bytes = sample().encode();
+
+        let mut body_failure = MockWriter {
+            fail_call: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            block_on(write_committed_record(&mut body_failure, PAGE0, &bytes)),
+            Err(CommitError::Body(0))
+        );
+        assert_eq!(body_failure.calls.len(), 1);
+
+        let mut commit_failure = MockWriter {
+            fail_call: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            block_on(write_committed_record(&mut commit_failure, PAGE0, &bytes)),
+            Err(CommitError::Commit(1))
+        );
+        assert_eq!(commit_failure.calls.len(), 2);
+        assert_eq!(commit_failure.calls[0].0, PAGE0);
+        assert_eq!(commit_failure.calls[0].1, bytes[..COMMIT_OFFSET]);
+        assert_eq!(
+            commit_failure.calls[1],
+            (PAGE0 + COMMIT_OFFSET as u32, vec![0; 4])
+        );
+    }
+
+    #[test]
+    fn successful_record_write_commits_marker_last() {
+        let bytes = sample().encode();
+        let mut writer = MockWriter::default();
+        assert_eq!(
+            block_on(write_committed_record(&mut writer, PAGE1, &bytes)),
+            Ok(())
+        );
+        assert_eq!(writer.calls.len(), 2);
+        assert_eq!(writer.calls[0].0, PAGE1);
+        assert_eq!(writer.calls[0].1, bytes[..COMMIT_OFFSET]);
+        assert_eq!(writer.calls[1], (PAGE1 + COMMIT_OFFSET as u32, vec![0; 4]));
+    }
+
+    #[test]
+    fn journal_page_erase_propagates_failure_and_uses_exact_bounds() {
+        let mut failing = MockWriter {
+            erase_failure: true,
+            ..Default::default()
+        };
+        assert_eq!(block_on(erase_journal_page(&mut failing, PAGE1)), Err(()));
+        assert_eq!(failing.erases, vec![(PAGE1, PAGE1 + PAGE_SIZE)]);
+
+        let mut successful = MockWriter::default();
+        assert_eq!(block_on(erase_journal_page(&mut successful, PAGE0)), Ok(()));
+        assert_eq!(successful.erases, vec![(PAGE0, PAGE0 + PAGE_SIZE)]);
     }
 }
