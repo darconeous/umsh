@@ -1,6 +1,7 @@
-// LilyGO T-Echo companion-radio NCP firmware.
+// Companion-radio NCP firmware shared by the LilyGO T-Echo and Seeed
+// SenseCAP T-1000E targets. Cargo features select the board-specific glue.
 //
-// Exposes the SX1262 as a host-controlled PHY speaking the minimal
+// Exposes the board's LoRa radio as a host-controlled PHY speaking the minimal
 // companion-radio protocol plus advertised full-profile extensions
 // over USB-CDC/HDLC-Lite and encrypted+bonded BLE GATT/SAR. The UMSH MAC does not run here:
 // the host owns it and drives this device through
@@ -50,6 +51,13 @@ fn main() {
     // Host placeholder. This binary only runs on the embedded target.
 }
 
+// The T-1000E BSP also supports the on-device MAC/CLI firmware and therefore
+// links a small amount of alloc-using board glue. The NCP does not allocate in
+// steady state, but the final binary still needs a valid global allocator.
+#[cfg(all(target_os = "none", feature = "t1000e"))]
+#[global_allocator]
+static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
+
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_security;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -57,6 +65,7 @@ mod ble_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod transport_policy;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg_attr(feature = "t1000e", allow(dead_code))]
 mod ui;
 
 // The #[panic_handler] must live in the binary crate.
@@ -83,19 +92,27 @@ mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
     use super::ble_store::{self, Snapshot, StoredBond};
     use super::transport_policy::{SessionArbitration, Transport, generation_checked};
-    use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel, UiNotice};
+    use super::ui::UiNotice;
+    #[cfg(not(feature = "t1000e"))]
+    use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
+    use embassy_futures::select::{Either, Either3, select, select3};
+    #[cfg(not(feature = "t1000e"))]
+    use embassy_futures::select::{Either4, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
     use embassy_nrf::pac;
     use embassy_nrf::peripherals::{self, RNG};
+    #[cfg(feature = "t1000e")]
+    use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
+    #[cfg(feature = "t1000e")]
+    use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
@@ -109,7 +126,16 @@ mod firmware {
     use embassy_usb::{Builder, Config};
     use embedded_hal_bus::spi::ExclusiveDevice;
     use lora_phy::LoRa;
+    #[cfg(feature = "t1000e")]
+    use lora_phy::iv::GenericLr1110InterfaceVariant;
+    #[cfg(not(feature = "t1000e"))]
     use lora_phy::iv::GenericSx126xInterfaceVariant;
+    #[cfg(feature = "t1000e")]
+    use lora_phy::lr1110::{
+        Config as LoraConfig, Lr1110, TcxoCtrlVoltage, radio_kind_params::PaSelection,
+        variant::Lr1110 as Lr1110Chip,
+    };
+    #[cfg(not(feature = "t1000e"))]
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use nrf_sdc::mpsl::{self, MultiprotocolServiceLayer};
     use nrf_sdc::{self as sdc};
@@ -117,7 +143,14 @@ mod firmware {
     use trouble_host::prelude::*;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
+    use umsh_bsp_nrf52840::system_off::Port;
+    #[cfg(feature = "t1000e")]
+    use umsh_bsp_nrf52840::system_off::drive_pin_low;
+    #[cfg(not(feature = "t1000e"))]
+    use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
+    #[cfg(feature = "t1000e")]
+    use umsh_bsp_t1000e::RF_SWITCH;
+    #[cfg(not(feature = "t1000e"))]
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{
@@ -128,6 +161,8 @@ mod firmware {
         coding_rate_from_denom, spreading_factor_from_u8,
     };
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
+    #[cfg(feature = "t1000e")]
+    use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -138,11 +173,14 @@ mod firmware {
         RADIO       => nrf_sdc::mpsl::HighPrioInterruptHandler;
         TIMER0      => nrf_sdc::mpsl::HighPrioInterruptHandler;
         RTC0        => nrf_sdc::mpsl::HighPrioInterruptHandler;
+        // SPIM0 → LR1110 on the T-1000E.
+        TWISPI0     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
         // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
         // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
         // SPIM2 → SSD1681 e-paper SPI bus. embassy-nrf names this interrupt SPI2.
         SPI2        => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
+        SAADC       => embassy_nrf::saadc::InterruptHandler;
     });
 
     // ─── Configuration ───────────────────────────────────────────────────────
@@ -158,7 +196,10 @@ mod firmware {
     /// Nordic's SDC buffer configuration accepts 27..=251 octets.
     const SDC_PACKET_SIZE: u16 = 251;
     const BLE_VALUE_MAX: usize = 244;
+    #[cfg(not(feature = "t1000e"))]
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-Echo NCP";
+    #[cfg(feature = "t1000e")]
+    const DEFAULT_DEVICE_NAME: &str = "UMSH T-1000E NCP";
 
     #[gatt_server]
     struct CompanionServer {
@@ -182,35 +223,27 @@ mod firmware {
         frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
     }
 
+    fn ncp_version(bonds: u8) -> &'static str {
+        macro_rules! board_version {
+            ($name:literal) => {
+                match bonds {
+                    0 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=0"),
+                    1 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=1"),
+                    2 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=2"),
+                    3 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=3"),
+                    _ => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=4"),
+                }
+            };
+        }
+        #[cfg(not(feature = "t1000e"))]
+        return board_version!("umsh-ncp-techo");
+        #[cfg(feature = "t1000e")]
+        return board_version!("umsh-ncp-t1000e");
+    }
+
     fn session_config() -> SessionConfig {
         SessionConfig {
-            ncp_version: match BLE_BONDS_AT_BOOT.load(Ordering::Acquire) {
-                0 => concat!(
-                    "umsh-ncp-techo/0.1; ",
-                    env!("GIT_SHORT_SHA"),
-                    "; ble-bonds=0"
-                ),
-                1 => concat!(
-                    "umsh-ncp-techo/0.1; ",
-                    env!("GIT_SHORT_SHA"),
-                    "; ble-bonds=1"
-                ),
-                2 => concat!(
-                    "umsh-ncp-techo/0.1; ",
-                    env!("GIT_SHORT_SHA"),
-                    "; ble-bonds=2"
-                ),
-                3 => concat!(
-                    "umsh-ncp-techo/0.1; ",
-                    env!("GIT_SHORT_SHA"),
-                    "; ble-bonds=3"
-                ),
-                _ => concat!(
-                    "umsh-ncp-techo/0.1; ",
-                    env!("GIT_SHORT_SHA"),
-                    "; ble-bonds=4"
-                ),
-            },
+            ncp_version: ncp_version(BLE_BONDS_AT_BOOT.load(Ordering::Acquire)),
             default_device_name: DEFAULT_DEVICE_NAME,
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
@@ -238,13 +271,19 @@ mod firmware {
     // ─── Concrete types ──────────────────────────────────────────────────────
 
     type RadioSpiBus = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
+    #[cfg(not(feature = "t1000e"))]
     type RadioIv = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
+    #[cfg(feature = "t1000e")]
+    type RadioIv = GenericLr1110InterfaceVariant<Output<'static>, Input<'static>>;
+    #[cfg(not(feature = "t1000e"))]
     type RadioKind = Sx126x<RadioSpiBus, RadioIv, Sx1262>;
+    #[cfg(feature = "t1000e")]
+    type RadioKind = Lr1110<RadioSpiBus, RadioIv, Lr1110Chip>;
     type LoraRadio = LoRa<RadioKind, Delay>;
 
-    type TechoUsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
-    type TechoSender = embassy_usb::class::cdc_acm::Sender<'static, TechoUsbDriver>;
-    type TechoRescue = CdcAcmRescue<'static, TechoUsbDriver>;
+    type NcpUsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
+    type NcpSender = embassy_usb::class::cdc_acm::Sender<'static, NcpUsbDriver>;
+    type NcpRescue = CdcAcmRescue<'static, NcpUsbDriver>;
     type BleStoreMutex = Mutex<ThreadModeRawMutex, BleStore>;
 
     struct BleStore {
@@ -548,6 +587,10 @@ mod firmware {
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
     static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
+    /// Set when the T-1000E user button is held through power-on. This is
+    /// deliberately independent of bond count: physical presence opens one
+    /// pairing window even when existing bonds are present.
+    static FORCE_PAIRING_AT_BOOT: AtomicBool = AtomicBool::new(false);
     #[cfg(feature = "ble-store-fault-inject")]
     static BLE_STORE_FAULT_ARMED: AtomicBool = AtomicBool::new(false);
     static PAIRING_CONFIG_CH: Channel<ThreadModeRawMutex, Option<u32>, 1> = Channel::new();
@@ -555,10 +598,13 @@ mod firmware {
     static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static PAIRING_TIMER_RESET: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    #[cfg(not(feature = "t1000e"))]
     static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
     static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static UI_NOTICE: Signal<ThreadModeRawMutex, UiNotice> = Signal::new();
+    #[cfg(not(feature = "t1000e"))]
     static DISPLAY_SHUTDOWN: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    #[cfg(not(feature = "t1000e"))]
     static DISPLAY_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
     /// 0 = normal heartbeat, 1 = pairing mode, 2 = BLE state wiped.
     static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
@@ -617,6 +663,7 @@ mod firmware {
     }
 
     /// Fired by button_task on a 2 s hold; consumed by shutdown_task.
+    #[cfg(not(feature = "t1000e"))]
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     // ─── Outgoing frame staging ──────────────────────────────────────────────
@@ -1573,8 +1620,10 @@ mod firmware {
         }
         PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
         BLE_BOND_COUNT.store(initial.bonds.len() as u8, Ordering::Release);
-        PAIRING_MODE.store(initial.bonds.is_empty(), Ordering::Release);
-        BLE_LED_MODE.store(u8::from(initial.bonds.is_empty()), Ordering::Release);
+        let initial_pairing_mode =
+            initial.bonds.is_empty() || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire);
+        PAIRING_MODE.store(initial_pairing_mode, Ordering::Release);
+        BLE_LED_MODE.store(u8::from(initial_pairing_mode), Ordering::Release);
         UI_REFRESH.signal(());
         let io_capabilities = if initial.pin.is_some() {
             IoCapabilities::DisplayOnly
@@ -1582,7 +1631,7 @@ mod firmware {
             IoCapabilities::NoInputNoOutput
         };
         let initial_pairing_enabled = pairing_enabled(
-            initial.bonds.is_empty(),
+            initial_pairing_mode,
             initial.pin.is_some(),
             false,
             initial.bonds.len(),
@@ -1627,7 +1676,7 @@ mod firmware {
         let mut peripheral = stack.peripheral();
         let server_result =
             CompanionServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-                name: "UMSH T-Echo NCP",
+                name: DEFAULT_DEVICE_NAME,
                 appearance: &appearance::computer::GENERIC_COMPUTER,
             }));
         let server = match server_result {
@@ -1661,12 +1710,18 @@ mod firmware {
     /// runner. RX preamble 8 symbols, TX preamble 16 (MeshCore parity).
     #[embassy_executor::task]
     async fn radio_task(lora: LoraRadio) {
-        umsh_radio_loraphy::ncp_runner(lora, &RADIO_CH, &NCP_CTL, 8, 16).await;
+        #[cfg(not(feature = "t1000e"))]
+        const RX_PREAMBLE: u16 = 8;
+        // Hardware bring-up established that the LR1110 misses MeshCore-US
+        // traffic with an 8-symbol detector even though the SX1262 does not.
+        #[cfg(feature = "t1000e")]
+        const RX_PREAMBLE: u16 = 16;
+        umsh_radio_loraphy::ncp_runner(lora, &RADIO_CH, &NCP_CTL, RX_PREAMBLE, 16).await;
     }
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
-    async fn output_task(mut tx: TechoSender) {
+    async fn output_task(mut tx: NcpSender) {
         loop {
             #[cfg(feature = "ble-debug")]
             let outbound = match select(OUT_USB_CH.receive(), DEBUG_CH.receive()).await {
@@ -1699,7 +1754,7 @@ mod firmware {
     /// into INPUT_CH; `wait_connection` always precedes the read loop so
     /// a disconnected port never busy-loops.
     #[embassy_executor::task]
-    async fn usb_in_task(mut rx: TechoRescue) {
+    async fn usb_in_task(mut rx: NcpRescue) {
         loop {
             rx.wait_connection().await;
             debug_log(format_args!("usb debug attached"));
@@ -1829,6 +1884,7 @@ mod firmware {
         }
     }
 
+    #[cfg(not(feature = "t1000e"))]
     fn render_ui_frame(buf: &mut [u8; display::BUF_SIZE], model: UiModel) {
         use core::fmt::Write as _;
         use embedded_graphics::Drawable;
@@ -1902,6 +1958,7 @@ mod firmware {
         }
     }
 
+    #[cfg(not(feature = "t1000e"))]
     fn render_message_frame(buf: &mut [u8; display::BUF_SIZE], title: &str, detail: &str) {
         use embedded_graphics::Drawable;
         use embedded_graphics::geometry::Point;
@@ -1928,6 +1985,7 @@ mod firmware {
     /// Owns the e-paper bus and renders the BLE menu. Input is serialized
     /// through the full-refresh cycle so Select can never activate an item the
     /// user has not yet seen on the panel.
+    #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn display_task(
         mut spi: Spim<'static>,
@@ -2012,6 +2070,7 @@ mod firmware {
         }
     }
 
+    #[cfg(not(feature = "t1000e"))]
     fn techo_button_timings() -> ButtonTimings {
         ButtonTimings {
             max_click_hold: core::time::Duration::from_millis(500),
@@ -2025,6 +2084,7 @@ mod firmware {
     /// tested state machine used by T-1000E. Single advances, double selects,
     /// a 1–4 second hold released by the user goes back, and a continuing
     /// four-second hold always powers off.
+    #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
@@ -2075,6 +2135,7 @@ mod firmware {
     /// The capacitive touch button remains dedicated to the unusual e-paper
     /// backlight. T-Echo defines P0.11 as active-low with a pull-up: illuminate
     /// on a debounced low level and turn it off on the corresponding release.
+    #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn touch_task(mut touch: Input<'static>, mut backlight: Output<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(20);
@@ -2093,8 +2154,94 @@ mod firmware {
         }
     }
 
+    /// T-1000E piezo driver. Kept as a task shim so the BSP's generic async
+    /// runner is monomorphized in this binary.
+    #[cfg(feature = "t1000e")]
+    #[embassy_executor::task]
+    async fn t1000e_buzzer_task(pwm: SimplePwm<'static>, enable: Output<'static>) {
+        umsh_bsp_t1000e::buzzer::run(pwm, enable).await;
+    }
+
+    /// Preserve the T-1000E's established runtime recognizer and actions:
+    /// double-click toggles silence, triple-click enters UF2 DFU, and the
+    /// three-second long press powers off. A startup-held press has already
+    /// been consumed by the force-pairing ceremony, so it is ignored through
+    /// its release instead of becoming an immediate shutdown.
+    #[cfg(feature = "t1000e")]
+    #[embassy_executor::task]
+    async fn t1000e_button_task(mut button: Input<'static>, held_at_boot: bool) {
+        const DEBOUNCE: Duration = Duration::from_millis(10);
+
+        if held_at_boot {
+            button.wait_for_low().await;
+            Timer::after(DEBOUNCE).await;
+        }
+
+        let mut fsm = ButtonFsm::new(ButtonTimings::default());
+        let mut pressed = false;
+        loop {
+            let event = {
+                let now_ms = Instant::now().as_millis();
+                let edge_fut = async {
+                    if pressed {
+                        button.wait_for_low().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Release
+                    } else {
+                        button.wait_for_high().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Press
+                    }
+                };
+                let deadline = fsm.next_deadline().unwrap_or(now_ms.saturating_add(60_000));
+                match select(edge_fut, Timer::at(Instant::from_millis(deadline))).await {
+                    Either::First(edge) => {
+                        pressed = matches!(edge, ButtonEdge::Press);
+                        fsm.on_edge(edge, Instant::now().as_millis())
+                    }
+                    Either::Second(()) => fsm.poll(Instant::now().as_millis()),
+                }
+            };
+
+            match event {
+                Some(ButtonEvent::Single) => {
+                    // The NCP role has no autonomous MAC identity with which
+                    // to emit the CLI firmware's beacon. Retain its audible
+                    // single-press acknowledgement without stealing the press
+                    // for pairing; pairing requires the startup-held gesture.
+                    umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
+                }
+                Some(ButtonEvent::Double) => {
+                    umsh_bsp_t1000e::BUZZER_SILENCE_TOGGLE.signal(());
+                }
+                Some(ButtonEvent::Triple) => {
+                    umsh_bsp_nrf52840::gpregret::enter_dfu_uf2();
+                }
+                Some(ButtonEvent::Long) => {
+                    pressed = false;
+                    fsm = ButtonFsm::new(ButtonTimings::default());
+                    umsh_bsp_t1000e::SHUTDOWN_SIGNAL.signal(());
+                }
+                Some(ButtonEvent::Quad | ButtonEvent::VeryLong) | None => {}
+            }
+        }
+    }
+
+    #[cfg(feature = "t1000e")]
+    #[embassy_executor::task]
+    async fn t1000e_shutdown_task() -> ! {
+        umsh_bsp_t1000e::shutdown::run().await
+    }
+
+    #[cfg(feature = "t1000e")]
+    #[embassy_executor::task]
+    async fn t1000e_power_task(saadc: Saadc<'static, 1>, sensor_rail: Output<'static>) {
+        umsh_bsp_t1000e::power::run_battery_monitor(saadc, sensor_rail).await;
+    }
+
     /// Controlled power-off: put the e-paper controller to sleep, tri-state
     /// peripheral signal pins, drop the rail, and enter System OFF.
+    #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
         SHUTDOWN_SIGNAL.wait().await;
@@ -2147,7 +2294,23 @@ mod firmware {
 
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
+        #[cfg(feature = "t1000e")]
+        {
+            use core::mem::MaybeUninit;
+            const HEAP_SIZE: usize = 8192;
+            static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+            unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
+        }
+
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
+        // GPIO state survives the soft reset/DFU handoff. Silence the T-1000E
+        // piezo before any potentially lengthy radio, flash, or BLE work so a
+        // retained PWM/enable state cannot sound until the buzzer task starts.
+        #[cfg(feature = "t1000e")]
+        {
+            drive_pin_low(Port::P0, 25); // buzzer PWM input
+            drive_pin_low(Port::P1, 5); // buzzer driver enable
+        }
         // RESETREAS survives reset. Capture and clear it before starting the
         // watchdog so a later host query can distinguish a watchdog reboot
         // from a cold start or an external reset.
@@ -2162,13 +2325,48 @@ mod firmware {
 
         // Peripheral power enable (P0.12). Must be high before the LoRa
         // module is addressed. Ownership transfers to shutdown_task.
+        #[cfg(not(feature = "t1000e"))]
         let peripheral_power = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
+
+        // On T-1000E, seize LR1110 reset before any lengthy initialization.
+        // The user button is active-high. Holding it through power-on is the
+        // BLE spec's physical-presence ceremony; it must not invoke the
+        // bootloader. The runtime task suppresses this same press until release.
+        #[cfg(feature = "t1000e")]
+        let radio_rst = Output::new(p.P1_10, Level::Low, OutputDrive::Standard);
+        #[cfg(feature = "t1000e")]
+        let mut button = Input::new(p.P0_06, Pull::Down);
+        #[cfg(feature = "t1000e")]
+        cortex_m::asm::delay(640_000);
+        // A short press is how a powered-off T-1000E is started normally, so
+        // the initial HIGH level alone cannot distinguish force pairing. Only
+        // a press still held after one second is the deliberate ceremony.
+        #[cfg(feature = "t1000e")]
+        let force_pairing_at_boot = if button.is_high() {
+            match select(button.wait_for_low(), Timer::after_secs(1)).await {
+                Either::First(()) => false,
+                Either::Second(()) => button.is_high(),
+            }
+        } else {
+            false
+        };
+        #[cfg(feature = "t1000e")]
+        FORCE_PAIRING_AT_BOOT.store(force_pairing_at_boot, Ordering::Release);
 
         // WDT: 8 s timeout, petted by the heartbeat task every ~2 s.
         let mut wdt_config = WdtConfig::default();
         wdt_config.timeout_ticks = 32768 * 8;
         let (_wdt, [wdt_handle]) =
             Watchdog::try_new::<_, 1>(p.WDT, wdt_config).unwrap_or_else(|_| panic!("wdt"));
+        #[cfg(not(feature = "t1000e"))]
+        let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
+        #[cfg(feature = "t1000e")]
+        let led = Output::new(p.P0_24, Level::Low, OutputDrive::Standard);
+        // Service the watchdog throughout radio, persistence, MPSL, and BLE
+        // initialization. Deferring this task until the final steady-state
+        // join caused first-boot persistence to consume the entire watchdog
+        // window and reset once before the device became usable.
+        spawner.spawn(heartbeat(led, wdt_handle).unwrap());
 
         // A message in the panic slot means the last reset was a crash;
         // report that as the reset reason. The slot is cleared either way.
@@ -2195,6 +2393,7 @@ mod firmware {
         //   SPI bus: SCK=P0.19, MOSI=P0.22, MISO=P0.23 (TWISPI1)
         //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
         //   DIO2: internal RF switch; DIO3: 1.8 V TCXO.
+        #[cfg(not(feature = "t1000e"))]
         {
             let mut cfg = SpimConfig::default();
             // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0.
@@ -2232,6 +2431,37 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
+            spawner.spawn(radio_task(lora).unwrap());
+        }
+
+        // ── LR1110 LoRa radio (T-1000E) ─────────────────────────────────────
+        #[cfg(feature = "t1000e")]
+        {
+            let mut cfg = SpimConfig::default();
+            cfg.frequency = Frequency::M8;
+            let radio_bus = Spim::new(p.TWISPI0, Irqs, p.P0_11, p.P1_08, p.P1_09, cfg);
+            let radio_cs = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
+            let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
+            let radio_interrupt = Input::new(p.P1_01, Pull::Down);
+            let radio_busy = Input::new(p.P0_07, Pull::None);
+            let iv = GenericLr1110InterfaceVariant::new(
+                radio_rst,
+                radio_interrupt,
+                radio_busy,
+                None,
+                None,
+            )
+            .unwrap_or_else(|_| panic!("lr1110 iv"));
+            let lora_config = LoraConfig {
+                chip: Lr1110Chip::with_pa(PaSelection::Hp),
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V6),
+                use_dcdc: false,
+                rx_boost: true,
+                rf_switch: Some(RF_SWITCH),
+            };
+            let lora = LoRa::new(Lr1110::new(radio_spi, iv, lora_config), false, Delay)
+                .await
+                .unwrap_or_else(|_| panic!("radio init"));
             spawner.spawn(radio_task(lora).unwrap());
         }
 
@@ -2285,7 +2515,10 @@ mod firmware {
         }
         BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
         BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
-        PAIRING_MODE.store(ble_store.snapshot().bonds.is_empty(), Ordering::Release);
+        PAIRING_MODE.store(
+            ble_store.snapshot().bonds.is_empty() || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire),
+            Ordering::Release,
+        );
 
         let sdc_peripherals = sdc::Peripherals::new(
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
@@ -2315,7 +2548,6 @@ mod firmware {
             .unwrap_or_else(|_| panic!("sdc init"));
 
         // ── USB stack ────────────────────────────────────────────────────────
-        let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         // HardwareVbusDetect cannot share POWER with MPSL. This tethered NCP
         // treats USB as present/ready; CDC connection state still supplies the
         // protocol attach/detach edges used by advertising arbitration.
@@ -2325,8 +2557,16 @@ mod firmware {
 
         let mut config = Config::new(0x16c0, 0x27dd);
         config.manufacturer = Some("UMSH");
-        config.product = Some("T-Echo UMSH NCP");
-        config.serial_number = Some("companion-ncp-techo");
+        #[cfg(not(feature = "t1000e"))]
+        {
+            config.product = Some("T-Echo UMSH NCP");
+            config.serial_number = Some("companion-ncp-techo");
+        }
+        #[cfg(feature = "t1000e")]
+        {
+            config.product = Some("T-1000E UMSH NCP");
+            config.serial_number = Some("companion-ncp-t1000e");
+        }
         config.max_power = 100;
         config.max_packet_size_0 = 64;
 
@@ -2357,41 +2597,64 @@ mod firmware {
 
         // The touch button only controls the e-paper backlight. Menu input is
         // exclusively the side button below.
-        let touch = Input::new(p.P0_11, Pull::Up);
-        let backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
-        spawner.spawn(touch_task(touch, backlight).unwrap());
+        #[cfg(not(feature = "t1000e"))]
+        {
+            let touch = Input::new(p.P0_11, Pull::Up);
+            let backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
+            spawner.spawn(touch_task(touch, backlight).unwrap());
 
-        let mut display_config = SpimConfig::default();
-        display_config.frequency = Frequency::M4;
-        let display_spi = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, display_config);
-        let display_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
-        let display_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
-        let display_reset = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
-        let display_busy = Input::new(p.P0_03, Pull::None);
-        spawner.spawn(
-            display_task(
-                display_spi,
-                display_cs,
-                display_dc,
-                display_reset,
-                display_busy,
-            )
-            .unwrap(),
-        );
+            let mut display_config = SpimConfig::default();
+            display_config.frequency = Frequency::M4;
+            let display_spi = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, display_config);
+            let display_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
+            let display_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
+            let display_reset = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
+            let display_busy = Input::new(p.P0_03, Pull::None);
+            spawner.spawn(
+                display_task(
+                    display_spi,
+                    display_cs,
+                    display_dc,
+                    display_reset,
+                    display_busy,
+                )
+                .unwrap(),
+            );
 
-        let button = Input::new(p.P1_10, Pull::Up);
-        spawner.spawn(button_task(button).unwrap());
-        spawner.spawn(shutdown_task(peripheral_power).unwrap());
+            let button = Input::new(p.P1_10, Pull::Up);
+            spawner.spawn(button_task(button).unwrap());
+            spawner.spawn(shutdown_task(peripheral_power).unwrap());
+        }
 
-        join(
-            ble_app(controller, ble_store),
-            join(usb.run(), heartbeat(led, wdt_handle)),
-        )
-        .await;
+        #[cfg(feature = "t1000e")]
+        {
+            let mut buzzer_config = SimpleConfig::default();
+            buzzer_config.prescaler = Prescaler::Div16;
+            let buzzer_pwm = SimplePwm::new_1ch(p.PWM0, p.P0_25, &buzzer_config);
+            let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
+            spawner.spawn(t1000e_buzzer_task(buzzer_pwm, buzzer_enable).unwrap());
+            // The normal power-on chirp is intentional. Early startup already
+            // forced both buzzer pins low, so this is the first and only sound.
+            umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
+
+            let sensor_rail = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
+            let saadc = Saadc::new(
+                p.SAADC,
+                Irqs,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(p.P0_02)],
+            );
+            spawner.spawn(t1000e_power_task(saadc, sensor_rail).unwrap());
+            spawner.spawn(t1000e_button_task(button, force_pairing_at_boot).unwrap());
+            spawner.spawn(t1000e_shutdown_task().unwrap());
+        }
+
+        join(ble_app(controller, ble_store), usb.run()).await;
     }
 
     // ─── Heartbeat + WDT pet ─────────────────────────────────────────────────
 
+    #[embassy_executor::task]
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
         loop {
@@ -2404,20 +2667,34 @@ mod firmware {
                 } else {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
+                #[cfg(not(feature = "t1000e"))]
                 if on {
                     led.set_low();
                 } else {
                     led.set_high();
                 }
+                #[cfg(feature = "t1000e")]
+                if on {
+                    led.set_high();
+                } else {
+                    led.set_low();
+                }
                 Timer::after_millis(50).await;
                 continue;
             }
             let decision = engine.tick(Instant::now().as_millis());
-            // P0.14 is active-low: set_low() = LED on.
+            // T-Echo P0.14 is active-low; T-1000E P0.24 is active-high.
+            #[cfg(not(feature = "t1000e"))]
             if decision.on {
                 led.set_low()
             } else {
                 led.set_high()
+            }
+            #[cfg(feature = "t1000e")]
+            if decision.on {
+                led.set_high()
+            } else {
+                led.set_low()
             }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }

@@ -22,6 +22,7 @@ members = [
     "firmware/companion-cli-t1000e",
     "firmware/companion-cli-techo",
     "firmware/companion-cli-wio-tracker-l1",
+    "firmware/companion-ncp-t1000e",
     "firmware/companion-ncp-techo",
     "firmware/ble-spike-techo",
     "umsh",

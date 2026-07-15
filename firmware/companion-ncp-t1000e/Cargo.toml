@@ -1,56 +1,35 @@
 [package]
-name = "firmware-companion-ncp-techo"
-description = "LilyGO T-Echo companion-radio NCP firmware over USB-CDC and BLE GATT"
+name = "firmware-companion-ncp-t1000e"
+description = "Seeed SenseCAP T1000-E companion-radio NCP firmware over USB-CDC and BLE GATT"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["t1000e"]
 t1000e = []
-# Hardware-diagnostic mode: keep BLE active while CDC is open and mirror
-# security/GATT lifecycle events as ASCII on the USB serial endpoint.
 ble-debug = ["trouble-host/security-debug"]
-# Diagnostic image for exercising runtime persistence failures on hardware.
-# Boot-critical initialization is allowed to complete; every later journal
-# write/erase returns an injected error before touching NVMC. Never enable in
-# a production image.
 ble-store-fault-inject = ["ble-debug"]
-# Recovery-only image used during hardware validation. On every boot of this
-# deliberately temporary image, clear persisted BLE bonds and the configured
-# pairing PIN before the host stack starts. Do not enable for production.
 ble-wipe-on-boot = ["ble-debug"]
 
-# Companion-radio NCP firmware for the LilyGO T-Echo: exposes the
-# SX1262 as a host-controlled PHY speaking the minimal companion-radio
-# protocol over HDLC-Lite/USB-CDC and encrypted, bonded GATT/SAR BLE.
-# The UMSH MAC does not run on the
-# device in this role — the host owns it via `umsh::companion_radio`.
-#
-# Like the other firmware crates, this is in `workspace.members` but
-# NOT in `default-members`, so root-level `cargo check` does not try
-# to cross-compile it on the developer's host.
-
 [[bin]]
-name = "firmware-companion-ncp-techo"
-path = "src/main.rs"
+name = "firmware-companion-ncp-t1000e"
+# The protocol, security, transport-arbitration, and BLE implementation are
+# shared with the T-Echo NCP. Board differences are selected by `t1000e`.
+path = "../companion-ncp-techo/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display"] }
+umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = false }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
-# trouble-host's GATT value implementations use heapless 0.9.
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
 
-# Embedded-only deps. Gated on `target_os = "none"` so this crate still
-# parses and trivially compiles on host as an empty `fn main()`. The
-# real firmware build uses the embedded target via the .cargo/config.toml
-# in this directory.
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7" }
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
@@ -63,12 +42,8 @@ embassy-sync = { version = "0.8", default-features = false }
 static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
-embedded-graphics = { version = "0.8", default-features = false }
-# lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
-# no-op global logger so the firmware links without a debug transport.
+embedded-alloc = { version = "0.5", default-features = false }
 defmt = "0.3"
 nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
-# The pinned wrapper currently requires its central symbols while implementing
-# the controller traits, even though this firmware only uses the peripheral role.
 nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
 trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }

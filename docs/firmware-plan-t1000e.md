@@ -5,6 +5,21 @@ Seeed Studio SenseCap T1000E. Establishes the workspace structure (Approach A:
 BSP + App + thin Binary) and the safety contract for power and DFU that every
 subsequent firmware will inherit.
 
+## Deferred persistent-sleep behavior
+
+The T1000E's button is also its normal power-on control, so firmware must
+consume and ignore the short press that wakes an otherwise normally operating
+device. A startup hold may be assigned to a distinct physical-presence action
+such as BLE force-pairing only after a hold threshold distinguishes it from
+that ordinary wake press.
+
+A future power-state revision should persist an explicit "device is asleep"
+state. If power returns because a charger was connected while that state is
+set, the device should remain operationally asleep and only pulse the LED
+gently to show charging. Pressing the button at any time must clear the
+persistent sleep state and continue normal startup. This behavior is recorded
+here but is deliberately outside the current BLE NCP port.
+
 ## Assumptions to verify (before any code)
 
 1. **MCU:** nRF52840.
