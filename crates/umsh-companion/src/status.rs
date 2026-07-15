@@ -21,11 +21,14 @@ impl Status {
     pub const BUSY: Self = Self(12);
     pub const PROP_NOT_FOUND: Self = Self(13);
     pub const CCA_FAILURE: Self = Self(18);
-    pub const DUTY_LIMIT: Self = Self(19);
+    pub const ALREADY: Self = Self(19);
+    pub const ITEM_NOT_FOUND: Self = Self(20);
+    pub const DUTY_LIMIT: Self = Self(32);
 
     pub const RESET_POWER_ON: Self = Self(112);
     pub const RESET_EXTERNAL: Self = Self(113);
     pub const RESET_SOFTWARE: Self = Self(114);
+    pub const RESET_RESTORED: Self = Self(115);
     pub const RESET_CRASH: Self = Self(116);
     pub const RESET_ASSERT: Self = Self(117);
     pub const RESET_OTHER: Self = Self(118);
@@ -52,10 +55,13 @@ impl Status {
             Self::BUSY => "BUSY",
             Self::PROP_NOT_FOUND => "PROP_NOT_FOUND",
             Self::CCA_FAILURE => "CCA_FAILURE",
+            Self::ALREADY => "ALREADY",
+            Self::ITEM_NOT_FOUND => "ITEM_NOT_FOUND",
             Self::DUTY_LIMIT => "DUTY_LIMIT",
             Self::RESET_POWER_ON => "RESET_POWER_ON",
             Self::RESET_EXTERNAL => "RESET_EXTERNAL",
             Self::RESET_SOFTWARE => "RESET_SOFTWARE",
+            Self::RESET_RESTORED => "RESET_RESTORED",
             Self::RESET_CRASH => "RESET_CRASH",
             Self::RESET_ASSERT => "RESET_ASSERT",
             Self::RESET_OTHER => "RESET_OTHER",

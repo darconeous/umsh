@@ -431,7 +431,7 @@ mod tests {
     fn last_status_frame() {
         let mut buf = [0u8; 8];
         let len = last_status(&mut buf, 5, Status::DUTY_LIMIT).unwrap();
-        assert_eq!(&buf[..len], &[0x85, 0x06, 0x00, 0x13]);
+        assert_eq!(&buf[..len], &[0x85, 0x06, 0x00, 0x20]);
 
         let frame = Frame::parse(&buf[..len]).unwrap();
         let payload = PropPayload::parse(frame.payload).unwrap();
