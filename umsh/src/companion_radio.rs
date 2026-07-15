@@ -264,13 +264,66 @@ impl Default for BleFrameLinkConfig {
     }
 }
 
+#[cfg(feature = "ble-radio")]
+impl BleFrameLinkConfig {
+    fn validate(&self) -> Result<(), CompanionRadioError> {
+        if !(1..=511).contains(&self.segment_payload) {
+            return Err(CompanionRadioError::Protocol(
+                "BLE segment payload must be in 1..=511",
+            ));
+        }
+        if self.discovery_timeout.is_zero() || self.operation_timeout.is_zero() {
+            return Err(CompanionRadioError::Protocol(
+                "BLE discovery and operation timeouts must be nonzero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ble-radio")]
+struct BleNotificationReceiver {
+    notifications: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    reassembler: umsh_companion::gatt::Reassembler<{ umsh_companion::gatt::MAX_FRAME }>,
+}
+
+#[cfg(feature = "ble-radio")]
+impl BleNotificationReceiver {
+    fn new(notifications: tokio::sync::mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            notifications,
+            reassembler: umsh_companion::gatt::Reassembler::new(),
+        }
+    }
+
+    fn poll_recv_frame(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<Vec<u8>, CompanionRadioError>> {
+        loop {
+            match self.notifications.poll_recv(cx) {
+                core::task::Poll::Ready(Some(segment)) => {
+                    if let Some(Ok(frame)) = self.reassembler.push(&segment) {
+                        return core::task::Poll::Ready(Ok(frame.to_vec()));
+                    }
+                    // Transport-level malformed/oversize segments are dropped.
+                }
+                core::task::Poll::Ready(None) => {
+                    self.reassembler.reset();
+                    return core::task::Poll::Ready(Err(CompanionRadioError::Disconnected));
+                }
+                core::task::Poll::Pending => return core::task::Poll::Pending,
+            }
+        }
+    }
+}
+
 /// GATT/SAR frame transport backed by `btleplug`.
 #[cfg(feature = "ble-radio")]
 pub struct BleFrameLink {
     peripheral: btleplug::platform::Peripheral,
     frame_in: btleplug::api::Characteristic,
-    notifications: tokio::sync::mpsc::Receiver<Vec<u8>>,
-    reassembler: umsh_companion::gatt::Reassembler<{ umsh_companion::gatt::MAX_FRAME }>,
+    receiver: BleNotificationReceiver,
     segment_payload: usize,
     operation_timeout: Duration,
 }
@@ -288,11 +341,7 @@ impl BleFrameLink {
         use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
         use futures_util::StreamExt;
 
-        if !(1..=511).contains(&config.segment_payload) {
-            return Err(CompanionRadioError::Protocol(
-                "BLE segment payload must be in 1..=511",
-            ));
-        }
+        config.validate()?;
 
         let manager = btleplug::platform::Manager::new()
             .await
@@ -333,9 +382,9 @@ impl BleFrameLink {
                     let selected = selector.is_none_or(|selector| {
                         id == selector || name.is_some_and(|name| name.contains(selector))
                     });
-                    let advertises_service = properties.as_ref().is_some_and(|properties| {
-                        properties.services.iter().any(|uuid| *uuid == service)
-                    });
+                    let advertises_service = properties
+                        .as_ref()
+                        .is_some_and(|properties| properties.services.contains(&service));
                     if selected && advertises_service {
                         matches.push(peripheral);
                     }
@@ -418,8 +467,7 @@ impl BleFrameLink {
         Ok(Self {
             peripheral,
             frame_in,
-            notifications,
-            reassembler: umsh_companion::gatt::Reassembler::new(),
+            receiver: BleNotificationReceiver::new(notifications),
             segment_payload: config.segment_payload,
             operation_timeout: config.operation_timeout,
         })
@@ -452,21 +500,7 @@ impl FrameLink for BleFrameLink {
         &mut self,
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Result<Vec<u8>, CompanionRadioError>> {
-        loop {
-            match self.notifications.poll_recv(cx) {
-                core::task::Poll::Ready(Some(segment)) => {
-                    if let Some(Ok(frame)) = self.reassembler.push(&segment) {
-                        return core::task::Poll::Ready(Ok(frame.to_vec()));
-                    }
-                    // Transport-level malformed/oversize segments are dropped.
-                }
-                core::task::Poll::Ready(None) => {
-                    self.reassembler.reset();
-                    return core::task::Poll::Ready(Err(CompanionRadioError::Disconnected));
-                }
-                core::task::Poll::Pending => return core::task::Poll::Pending,
-            }
-        }
+        self.receiver.poll_recv_frame(cx)
     }
 }
 
@@ -487,6 +521,8 @@ pub struct CompanionRadio<L> {
     max_frame_size: usize,
     t_frame_ms: u32,
     ncp_version: String,
+    /// Hardware reset cause retained by the NCP before our protocol reset.
+    boot_status: Status,
     next_tid: u8,
 }
 
@@ -506,6 +542,7 @@ where
             max_frame_size: 0,
             t_frame_ms: 0,
             ncp_version: String::new(),
+            boot_status: Status::RESET_UNKNOWN,
             next_tid: 1,
         };
         radio.initialize().await?;
@@ -517,7 +554,18 @@ where
         &self.ncp_version
     }
 
+    /// Reset cause reported by the NCP immediately after transport attach.
+    pub fn boot_status(&self) -> Status {
+        self.boot_status
+    }
+
     async fn initialize(&mut self) -> Result<(), CompanionRadioError> {
+        // The reset-status property is deliberately read before CMD_RST. The
+        // protocol requires the NCP to retain its hardware boot cause for this
+        // first query; CMD_RST would replace it with RESET_SOFTWARE.
+        let boot_status = self.get_prop(prop::LAST_STATUS).await?;
+        self.boot_status = decode_status(&boot_status);
+
         // Reset and wait for the reset notification. The TID is
         // ignored for CMD_RST; the notification is unsolicited.
         let mut buf = [0u8; 2];
@@ -1004,6 +1052,7 @@ mod tests {
                     Cmd::PropGet => {
                         let key = PropPayload::parse(frame.payload).unwrap().key;
                         let value: Vec<u8> = match key {
+                            prop::LAST_STATUS => vec![Status::RESET_POWER_ON.0 as u8],
                             prop::PROTOCOL_VERSION => {
                                 vec![ids::PROTOCOL_MAJOR_VERSION, ids::PROTOCOL_MINOR_VERSION]
                             }
@@ -1130,11 +1179,67 @@ mod tests {
         assert_eq!(link.recv_frame().await.unwrap(), b"second");
     }
 
+    #[cfg(feature = "ble-radio")]
+    #[test]
+    fn ble_link_config_rejects_invalid_values_without_opening_an_adapter() {
+        let mut config = BleFrameLinkConfig::default();
+        assert!(config.validate().is_ok());
+        config.segment_payload = 0;
+        assert!(matches!(
+            config.validate(),
+            Err(CompanionRadioError::Protocol(_))
+        ));
+        config.segment_payload = 512;
+        assert!(matches!(
+            config.validate(),
+            Err(CompanionRadioError::Protocol(_))
+        ));
+        config.segment_payload = 19;
+        config.operation_timeout = Duration::ZERO;
+        assert!(matches!(
+            config.validate(),
+            Err(CompanionRadioError::Protocol(_))
+        ));
+    }
+
+    #[cfg(feature = "ble-radio")]
+    #[tokio::test]
+    async fn ble_notification_receiver_reassembles_and_recovers_from_malformed_segment() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut receiver = BleNotificationReceiver::new(rx);
+
+        // Reserved header bits are malformed and must be dropped without
+        // poisoning the next valid frame.
+        tx.send(vec![0x01, 0xff]).await.unwrap();
+        let frame = b"a frame larger than one tiny GATT segment";
+        for segment in umsh_companion::gatt::segments(frame, 7) {
+            let mut value = vec![0; segment.payload().len() + 1];
+            segment.write_to(&mut value).unwrap();
+            tx.send(value).await.unwrap();
+        }
+
+        let received = core::future::poll_fn(|cx| receiver.poll_recv_frame(cx))
+            .await
+            .unwrap();
+        assert_eq!(received, frame);
+    }
+
+    #[cfg(feature = "ble-radio")]
+    #[tokio::test]
+    async fn ble_notification_channel_close_surfaces_disconnect() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut receiver = BleNotificationReceiver::new(rx);
+        drop(tx);
+        let result = core::future::poll_fn(|cx| receiver.poll_recv_frame(cx)).await;
+        assert!(matches!(result, Err(CompanionRadioError::Disconnected)));
+    }
+
     #[tokio::test]
     async fn initialization_handshake() {
         let radio = attached_radio().await;
         assert_eq!(radio.max_frame_size(), 255);
         assert_eq!(radio.ncp_version(), "fake-ncp/0.1");
+        assert_eq!(radio.boot_status(), Status::RESET_POWER_ON);
         assert!(radio.t_frame_ms() > 0);
     }
 
