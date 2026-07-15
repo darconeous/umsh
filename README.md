@@ -200,8 +200,8 @@ default multicast address and port if you need to run isolated sessions on the s
 
 ### Capture live LoRa and companion-protocol traffic
 
-The `umsh-capture` tool connects to a T-Echo NCP over BLE, configures and enables its
-SX1262, and prints every received LoRa frame with elapsed time, RSSI, SNR, raw bytes, and an
+The `umsh-capture` tool connects to a T-Echo or T-1000E NCP over BLE, configures and enables its
+LoRa radio, and prints every received frame with elapsed time, RSSI, SNR, raw bytes, and an
 attempted UMSH header decode. Traffic from another protocol is retained and labeled as not a
 valid UMSH packet rather than discarded.
 
@@ -214,15 +214,22 @@ root:
 cargo run -p umsh --bin umsh-capture --features ble-radio -- --ble
 ```
 
-If more than one Companion Link device is nearby, select the T-Echo by its primary advertised
-name:
+If more than one Companion Link device is nearby, select the board by its advertised name:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH NCP"
+    --ble "UMSH T-1000E NCP"
 ```
 
-Pairing is mediated by the operating system. Enter the T-Echo's configured six-digit BLE PIN
+The T-Echo advertises as `UMSH T-Echo NCP`.
+
+To verify advertising without connecting or provoking pairing, use the bounded passive scanner:
+
+```sh
+cargo run -p umsh --example companion_probe --features ble-radio -- --scan-ble
+```
+
+Pairing is mediated by the operating system. Enter the NCP's configured six-digit BLE PIN
 if prompted. The protected subscription allows up to 90 seconds for the pairing UI and PIN
 entry, independently of the shorter timeout used by ordinary GATT operations. On Linux, enable
 a `bluetoothctl` agent and pair/trust the device before running the dumper if the automatic
@@ -233,7 +240,7 @@ word `0x1424`. Each parameter can be overridden explicitly:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH NCP" \
+    --ble "UMSH T-1000E NCP" \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
 
