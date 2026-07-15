@@ -626,6 +626,31 @@ where
         &self.ncp_version
     }
 
+    /// Fetch the NCP's human-readable `PROP_DEV_NAME`.
+    pub async fn device_name(&mut self) -> Result<String, CompanionRadioError> {
+        let value = self.get_prop(prop::DEV_NAME).await?;
+        let name = core::str::from_utf8(&value)
+            .map_err(|_| CompanionRadioError::Protocol("malformed PROP_DEV_NAME"))?;
+        if name.is_empty() || value.len() > 64 || value.contains(&0) {
+            return Err(CompanionRadioError::Protocol("malformed PROP_DEV_NAME"));
+        }
+        Ok(name.to_owned())
+    }
+
+    /// Set the NCP's human-readable `PROP_DEV_NAME`.
+    pub async fn set_device_name(&mut self, name: &str) -> Result<(), CompanionRadioError> {
+        if name.is_empty() || name.len() > 64 || name.as_bytes().contains(&0) {
+            return Err(CompanionRadioError::Protocol("invalid PROP_DEV_NAME"));
+        }
+        let authoritative = self.set_prop(prop::DEV_NAME, name.as_bytes()).await?;
+        if authoritative != name.as_bytes() {
+            return Err(CompanionRadioError::Protocol(
+                "PROP_DEV_NAME response mismatch",
+            ));
+        }
+        Ok(())
+    }
+
     /// Reset cause reported by the NCP immediately after transport attach.
     pub fn boot_status(&self) -> Status {
         self.boot_status
@@ -1333,6 +1358,16 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, CompanionRadioError::Protocol(_)));
+    }
+
+    #[tokio::test]
+    async fn device_name_typed_accessors_round_trip_and_validate() {
+        let mut radio = attached_radio().await;
+        radio.set_device_name("Field Radio 📻").await.unwrap();
+        assert_eq!(radio.device_name().await.unwrap(), "Field Radio 📻");
+        assert!(radio.set_device_name("").await.is_err());
+        assert!(radio.set_device_name(&"x".repeat(65)).await.is_err());
+        assert!(radio.set_device_name("bad\0name").await.is_err());
     }
 
     #[tokio::test]

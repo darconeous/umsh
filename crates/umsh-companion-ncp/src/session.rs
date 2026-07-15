@@ -12,6 +12,9 @@ use crate::duty::DutyTracker;
 /// Largest radio payload the session can carry (SX126x-class limit).
 pub const MAX_MTU: usize = 255;
 
+/// Maximum UTF-8 byte length of `PROP_DEV_NAME`.
+pub const MAX_DEVICE_NAME_LEN: usize = 64;
+
 /// Room for a `CMD_STR_RECV` frame around a full-MTU payload.
 const SCRATCH: usize = MAX_MTU + 24;
 
@@ -48,6 +51,8 @@ pub enum TxPower {
 pub struct SessionConfig {
     /// `PROP_NCP_VERSION` string (without NUL terminator).
     pub ncp_version: &'static str,
+    /// Factory/post-reset value of `PROP_DEV_NAME`.
+    pub default_device_name: &'static str,
     /// `PROP_PHY_MTU`; must not exceed [`MAX_MTU`].
     pub mtu: u16,
     /// The only sync word this firmware can use; `PROP_PHY_LORA_SW`
@@ -84,6 +89,9 @@ pub enum Effect {
     /// Apply and persist a new BLE pairing PIN, then complete the deferred
     /// property transaction with [`Session::respond_pin_set`].
     SetPairingPin { tid: u8, pin: Option<u32> },
+    /// The live human-readable device name changed. Transports that expose a
+    /// name should refresh it without disrupting the active session.
+    DeviceNameChanged,
 }
 
 struct PendingTx {
@@ -105,6 +113,8 @@ pub struct Session {
     duty_limit: u16,
     duty: DutyTracker,
     last_status: Status,
+    device_name: [u8; MAX_DEVICE_NAME_LEN],
+    device_name_len: usize,
     pending: Option<PendingTx>,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
@@ -114,14 +124,20 @@ pub struct Session {
 impl Session {
     pub fn new(config: SessionConfig) -> Self {
         debug_assert!(usize::from(config.mtu) <= MAX_MTU);
+        debug_assert!(valid_device_name(config.default_device_name.as_bytes()));
         let mut settings = config.defaults;
         settings.enabled = false;
+        let mut device_name = [0; MAX_DEVICE_NAME_LEN];
+        let device_name_len = config.default_device_name.len();
+        device_name[..device_name_len].copy_from_slice(config.default_device_name.as_bytes());
         Self {
             config,
             settings,
             duty_limit: config.default_duty_limit,
             duty: DutyTracker::new(),
             last_status: Status::RESET_POWER_ON,
+            device_name,
+            device_name_len,
             pending: None,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
@@ -132,6 +148,12 @@ impl Session {
     /// The active radio settings.
     pub fn settings(&self) -> RadioSettings {
         self.settings
+    }
+
+    /// Current UTF-8 `PROP_DEV_NAME` value.
+    pub fn device_name(&self) -> &str {
+        core::str::from_utf8(&self.device_name[..self.device_name_len])
+            .expect("validated device name")
     }
 
     /// Payload of the transmit requested by [`Effect::StartTransmit`].
@@ -156,11 +178,31 @@ impl Session {
     /// reset with the given reason, and return the radio effect
     /// restoring the default (disabled) radio configuration.
     ///
-    /// Used both for `CMD_RST` (with [`Status::RESET_SOFTWARE`]) and at
-    /// boot or host attach with the boot reason.
+    /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). Host attach uses
+    /// [`Self::attach`] so device-domain configuration survives attachment.
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
+        self.reset_inner(reason, true, emit)
+    }
+
+    /// Reset host-session state for a newly attached transport while
+    /// preserving device-domain configuration such as `PROP_DEV_NAME`.
+    pub fn attach(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
+        self.reset_inner(reason, false, emit)
+    }
+
+    fn reset_inner(
+        &mut self,
+        reason: Status,
+        reset_device_name: bool,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Effect {
         self.settings = self.config.defaults;
         self.settings.enabled = false;
+        if reset_device_name {
+            self.device_name_len = self.config.default_device_name.len();
+            self.device_name[..self.device_name_len]
+                .copy_from_slice(self.config.default_device_name.as_bytes());
+        }
         self.duty_limit = self.config.default_duty_limit;
         self.duty.reset();
         self.pending = None;
@@ -357,6 +399,16 @@ impl Session {
             };
             return Some(Effect::SetPairingPin { tid, pin });
         }
+        if key == prop::DEV_NAME {
+            if !valid_device_name(value) {
+                self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                return None;
+            }
+            self.device_name[..value.len()].copy_from_slice(value);
+            self.device_name_len = value.len();
+            self.send_prop_is(tid, key, value, emit);
+            return Some(Effect::DeviceNameChanged);
+        }
         let radio_affecting = match self.apply_prop_set(key, value) {
             Ok(radio_affecting) => radio_affecting,
             Err(status) => {
@@ -522,7 +574,12 @@ impl Session {
             prop::INTERFACE_TYPE => pui::encode(ids::INTERFACE_TYPE, out).unwrap_or(0),
             prop::CAPS => {
                 let mut len = 0;
-                for capability in [cap::WRITABLE_RAW_STREAM, cap::PHY_DUTY_LIMIT, cap::PHY_LORA] {
+                for capability in [
+                    cap::WRITABLE_RAW_STREAM,
+                    cap::PHY_DUTY_LIMIT,
+                    cap::DEV_NAME,
+                    cap::PHY_LORA,
+                ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
                 len
@@ -548,6 +605,7 @@ impl Session {
             }
             prop::PHY_MTU => put(out, &self.config.mtu.to_le_bytes()),
             prop::PHY_LORA_SW => put(out, &self.config.sync_word.to_le_bytes()),
+            prop::DEV_NAME => put(out, &self.device_name[..self.device_name_len]),
             prop::PHY_DUTY_NOW => put(out, &self.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.duty_limit.to_le_bytes()),
             _ => return PropValue::Unknown,
@@ -624,6 +682,12 @@ fn parse_u32(value: &[u8]) -> Result<u32, Status> {
     }
 }
 
+fn valid_device_name(value: &[u8]) -> bool {
+    (1..=MAX_DEVICE_NAME_LEN).contains(&value.len())
+        && !value.contains(&0)
+        && core::str::from_utf8(value).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,6 +695,7 @@ mod tests {
     fn test_session() -> Session {
         Session::new(SessionConfig {
             ncp_version: "test-ncp/0.1",
+            default_device_name: "Test UMSH NCP",
             mtu: 255,
             sync_word: 0x1424,
             min_tx_power_dbm: -9,
@@ -688,7 +753,7 @@ mod tests {
     }
 
     fn set(session: &mut Session, key: u32, value: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 80];
         let len = frame::prop_set(&mut buf, 2, key, value).unwrap();
         dispatch(session, &buf[..len], 0)
     }
@@ -743,6 +808,7 @@ mod tests {
         let mut session = test_session();
         assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 0]);
         assert_eq!(get(&mut session, prop::NCP_VERSION), b"test-ncp/0.1\0");
+        assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH NCP");
         assert_eq!(get(&mut session, prop::PHY_MTU), 255u16.to_le_bytes());
         assert_eq!(
             pui::decode(&get(&mut session, prop::INTERFACE_TYPE))
@@ -772,8 +838,43 @@ mod tests {
         }
         assert_eq!(
             caps,
-            [cap::WRITABLE_RAW_STREAM, cap::PHY_DUTY_LIMIT, cap::PHY_LORA]
+            [
+                cap::WRITABLE_RAW_STREAM,
+                cap::PHY_DUTY_LIMIT,
+                cap::DEV_NAME,
+                cap::PHY_LORA
+            ]
         );
+    }
+
+    #[test]
+    fn device_name_round_trips_survives_attach_and_resets_to_default() {
+        let mut session = test_session();
+        let configured = "Field Radio 📻";
+        let (emitted, effect) = set(&mut session, prop::DEV_NAME, configured.as_bytes());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::DEV_NAME);
+        assert_eq!(value, configured.as_bytes());
+        assert_eq!(effect, Some(Effect::DeviceNameChanged));
+        assert_eq!(session.device_name(), configured);
+
+        let _ = session.attach(Status::RESET_EXTERNAL, &mut |_| {});
+        assert_eq!(get(&mut session, prop::DEV_NAME), configured.as_bytes());
+
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH NCP");
+    }
+
+    #[test]
+    fn device_name_rejects_empty_invalid_nul_and_oversize_values() {
+        let mut session = test_session();
+        let oversize = [b'x'; MAX_DEVICE_NAME_LEN + 1];
+        for bad in [&[][..], &[0xff][..], b"bad\0name", &oversize[..]] {
+            let (emitted, effect) = set(&mut session, prop::DEV_NAME, bad);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+        assert_eq!(session.device_name(), "Test UMSH NCP");
     }
 
     #[test]

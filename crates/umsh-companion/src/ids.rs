@@ -39,6 +39,8 @@ pub mod prop {
     pub const PHY_MTU: u32 = 42;
     /// LoRa sync word, SX126x-style 16-bit (`PROP_PHY_LORA_SW`).
     pub const PHY_LORA_SW: u32 = 43;
+    /// Human-readable device name (`PROP_DEV_NAME`).
+    pub const DEV_NAME: u32 = 68;
     /// Transmit duty usage over the past hour (`PROP_PHY_DUTY_NOW`).
     pub const PHY_DUTY_NOW: u32 = 4820;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
@@ -61,6 +63,8 @@ pub mod cap {
     pub const PHY_DUTY_LIMIT: u32 = 16;
     /// `CAP_PHY_LORA`
     pub const PHY_LORA: u32 = 515;
+    /// `CAP_DEV_NAME`
+    pub const DEV_NAME: u32 = 38;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
