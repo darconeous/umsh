@@ -24,7 +24,9 @@
 //   - ble_app:           advertising + encrypted/bond-gated GATT/SAR edges,
 //                        pairing policy, generation-tagged OUT_BLE_CH, and
 //                        MPSL-coordinated PIN/bond persistence
-//   - button_task:       runtime 2 s shutdown
+//   - button_task:       resolves the side button into display-menu gestures
+//   - display_task:      owns the e-paper BLE menu
+//   - touch_task:        preserves the touch button's backlight control
 //   - shutdown_task:     tri-states peripheral pins, drops the rail,
 //                        enters System OFF
 //
@@ -54,6 +56,8 @@ mod ble_security;
 mod ble_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod transport_policy;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod ui;
 
 // The #[panic_handler] must live in the binary crate.
 #[cfg(target_os = "none")]
@@ -79,12 +83,13 @@ mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
     use super::ble_store::{self, Snapshot, StoredBond};
     use super::transport_policy::{SessionArbitration, Transport, generation_checked};
+    use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel, UiNotice};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, Either3, select, select3};
+    use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
@@ -113,12 +118,14 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
+    use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{Effect, RadioSettings, Session, SessionConfig, TxPower};
     use umsh_radio_loraphy::{
         MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
         coding_rate_from_denom, spreading_factor_from_u8,
     };
+    use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
 
     bind_interrupts!(struct Irqs {
@@ -132,6 +139,8 @@ mod firmware {
         // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
         // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
+        // SPIM2 → SSD1681 e-paper SPI bus. embassy-nrf names this interrupt SPI2.
+        SPI2        => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
     });
 
     // ─── Configuration ───────────────────────────────────────────────────────
@@ -244,6 +253,14 @@ mod firmware {
         type Error = ();
 
         async fn write_record(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            #[cfg(feature = "ble-store-fault-inject")]
+            if BLE_STORE_FAULT_ARMED.load(Ordering::Acquire) {
+                debug_log(format_args!(
+                    "store fault-inject write address=0x{address:06x} len={}",
+                    bytes.len(),
+                ));
+                return Err(());
+            }
             self.write(address, bytes).await.map_err(|_| ())
         }
     }
@@ -252,6 +269,13 @@ mod firmware {
         type Error = ();
 
         async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
+            #[cfg(feature = "ble-store-fault-inject")]
+            if BLE_STORE_FAULT_ARMED.load(Ordering::Acquire) {
+                debug_log(format_args!(
+                    "store fault-inject erase start=0x{start:06x} end=0x{end:06x}",
+                ));
+                return Err(());
+            }
             self.erase(start, end).await.map_err(|_| ())
         }
     }
@@ -516,11 +540,18 @@ mod firmware {
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
     static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
+    #[cfg(feature = "ble-store-fault-inject")]
+    static BLE_STORE_FAULT_ARMED: AtomicBool = AtomicBool::new(false);
     static PAIRING_CONFIG_CH: Channel<ThreadModeRawMutex, Option<u32>, 1> = Channel::new();
     static PAIRING_CONFIG_ACK: Signal<ThreadModeRawMutex, bool> = Signal::new();
     static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static PAIRING_TIMER_RESET: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
+    static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static UI_NOTICE: Signal<ThreadModeRawMutex, UiNotice> = Signal::new();
+    static DISPLAY_SHUTDOWN: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static DISPLAY_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
     /// 0 = normal heartbeat, 1 = pairing mode, 2 = BLE state wiped.
     static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
 
@@ -700,6 +731,7 @@ mod firmware {
         PAIRING_MODE.store(state.pairing_mode, Ordering::Release);
         PAIRING_FAILURES.store(state.failures, Ordering::Release);
         PAIRING_LOCKED_OUT.store(state.locked_out, Ordering::Release);
+        UI_REFRESH.signal(());
     }
 
     async fn persist_bond(store: &BleStoreMutex, bond: &BondInformation) -> Result<usize, ()> {
@@ -795,6 +827,7 @@ mod firmware {
                     debug_log(format_args!("pairing window expired"));
                     PAIRING_MODE.store(false, Ordering::Release);
                     BLE_LED_MODE.store(0, Ordering::Release);
+                    UI_REFRESH.signal(());
                     apply_pairing_gate(stack);
                 }
                 Either::Second(()) => debug_log(format_args!("pairing timer reset")),
@@ -868,6 +901,14 @@ mod firmware {
                     debug_log(format_args!("pairing mode requested"));
                     PAIRING_MODE.store(true, Ordering::Release);
                     BLE_LED_MODE.store(1, Ordering::Release);
+                    let unavailable = PAIRING_LOCKED_OUT.load(Ordering::Acquire)
+                        || usize::from(BLE_BOND_COUNT.load(Ordering::Acquire))
+                            >= ble_store::MAX_BONDS;
+                    UI_NOTICE.signal(if unavailable {
+                        UiNotice::PairingUnavailable
+                    } else {
+                        UiNotice::PairingStarted
+                    });
                     PAIRING_TIMER_RESET.signal(());
                     apply_pairing_gate(stack);
                 }
@@ -912,8 +953,10 @@ mod firmware {
                         PAIRING_TIMER_RESET.signal(());
                         apply_pairing_gate(stack);
                         debug_log(format_args!("security wipe complete"));
+                        UI_NOTICE.signal(UiNotice::BondsCleared);
                     } else {
                         debug_log(format_args!("security wipe flash=FAILED"));
+                        UI_NOTICE.signal(UiNotice::ClearFailed);
                     }
                 }
             }
@@ -1092,6 +1135,7 @@ mod firmware {
                             }
                         };
                         BLE_BOND_COUNT.store(persisted_bonds as u8, Ordering::Release);
+                        UI_REFRESH.signal(());
                         debug_log(format_args!(
                             "pairing bond persist=ok peer={} kind={} irk={} bonded={} level={:?}",
                             bond.identity.addr,
@@ -1203,6 +1247,7 @@ mod firmware {
                                 Ok(count) => {
                                     debug_log(format_args!("protected bond persist=ok"));
                                     BLE_BOND_COUNT.store(count as u8, Ordering::Release);
+                                    UI_REFRESH.signal(());
                                     apply_pairing_gate(stack);
                                     true
                                 }
@@ -1478,6 +1523,7 @@ mod firmware {
         BLE_BOND_COUNT.store(initial.bonds.len() as u8, Ordering::Release);
         PAIRING_MODE.store(initial.bonds.is_empty(), Ordering::Release);
         BLE_LED_MODE.store(u8::from(initial.bonds.is_empty()), Ordering::Release);
+        UI_REFRESH.signal(());
         let io_capabilities = if initial.pin.is_some() {
             IoCapabilities::DisplayOnly
         } else {
@@ -1731,42 +1777,289 @@ mod firmware {
         }
     }
 
-    /// Long-press watcher for the user button on P1.10 (active-low,
-    /// pull-up). A two-second hold fires SHUTDOWN_SIGNAL. Pairing and bond
-    /// management belong to the T-Echo's display UI, not a boot-time hold
-    /// gesture intended for screenless devices.
+    fn render_ui_frame(buf: &mut [u8; display::BUF_SIZE], model: UiModel) {
+        use core::fmt::Write as _;
+        use embedded_graphics::Drawable;
+        use embedded_graphics::geometry::Point;
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_10X20;
+        use embedded_graphics::pixelcolor::BinaryColor;
+        use embedded_graphics::text::{Baseline, Text};
+        use heapless::String;
+
+        buf.fill(0xff);
+        let mut fb = display::EpdFb(buf);
+        let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+        let mut y = 8;
+        let mut line = |text: &str| {
+            let _ = Text::with_baseline(text, Point::new(5, y), style, Baseline::Top).draw(&mut fb);
+            y += 27;
+        };
+
+        line("UMSH BLE");
+        match model.page() {
+            Page::Menu(item) => {
+                line(match item {
+                    MenuItem::Status => "> Status",
+                    MenuItem::StartPairing => "> Start pairing",
+                    MenuItem::ClearBonds => "> Clear bonds",
+                });
+
+                let mut bonds: String<20> = String::new();
+                let _ = write!(
+                    bonds,
+                    "Bonds: {}/{}",
+                    BLE_BOND_COUNT.load(Ordering::Acquire),
+                    ble_store::MAX_BONDS
+                );
+                line(&bonds);
+
+                let pairing = if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+                    "Pairing: LOCKED"
+                } else if PAIRING_MODE.load(Ordering::Acquire) {
+                    "Pairing: open"
+                } else {
+                    "Pairing: closed"
+                };
+                line(pairing);
+                line(match item {
+                    MenuItem::Status => match model.notice() {
+                        Some(UiNotice::PairingStarted) => "Pairing started",
+                        Some(UiNotice::PairingUnavailable) => "Pair unavailable",
+                        Some(UiNotice::BondsCleared) => "Bonds cleared",
+                        Some(UiNotice::ClearFailed) => "CLEAR FAILED",
+                        None => "2x: no action",
+                    },
+                    MenuItem::StartPairing => "2x: start",
+                    MenuItem::ClearBonds => "2x: continue",
+                });
+                line("1x: next");
+                line("hold: back");
+            }
+            Page::ConfirmClear { clear_selected } => {
+                line("Clear all bonds?");
+                line(if clear_selected {
+                    "  Cancel"
+                } else {
+                    "> Cancel"
+                });
+                line(if clear_selected { "> CLEAR" } else { "  CLEAR" });
+                line("1x/hold: toggle");
+                line("2x: confirm");
+            }
+        }
+    }
+
+    fn render_message_frame(buf: &mut [u8; display::BUF_SIZE], title: &str, detail: &str) {
+        use embedded_graphics::Drawable;
+        use embedded_graphics::geometry::Point;
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_10X20;
+        use embedded_graphics::pixelcolor::BinaryColor;
+        use embedded_graphics::text::{Baseline, Text};
+
+        buf.fill(0xff);
+        let mut fb = display::EpdFb(buf);
+        let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+        let center_x = |text: &str| (display::WIDTH as i32 - text.len() as i32 * 10) / 2;
+        let _ = Text::with_baseline(title, Point::new(center_x(title), 70), style, Baseline::Top)
+            .draw(&mut fb);
+        let _ = Text::with_baseline(
+            detail,
+            Point::new(center_x(detail), 105),
+            style,
+            Baseline::Top,
+        )
+        .draw(&mut fb);
+    }
+
+    /// Owns the e-paper bus and renders the BLE menu. Input is serialized
+    /// through the full-refresh cycle so Select can never activate an item the
+    /// user has not yet seen on the panel.
     #[embassy_executor::task]
-    async fn button_task(mut button: Input<'static>) {
-        const HOLD: Duration = Duration::from_secs(2);
+    async fn display_task(
+        mut spi: Spim<'static>,
+        mut cs: Output<'static>,
+        mut dc: Output<'static>,
+        mut rst: Output<'static>,
+        mut busy: Input<'static>,
+    ) {
+        let mut model = UiModel::new();
+        let mut shown = [0xff; display::BUF_SIZE];
+        let mut next = [0xff; display::BUF_SIZE];
+        render_ui_frame(&mut next, model);
+        display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
+        display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
+        shown.copy_from_slice(&next);
+
         loop {
-            button.wait_for_low().await;
-            match select(button.wait_for_high(), Timer::after(HOLD)).await {
-                Either::First(()) => {
-                    // Released before HOLD — no-op.
+            match select4(
+                UI_INPUT_CH.receive(),
+                UI_REFRESH.wait(),
+                UI_NOTICE.wait(),
+                DISPLAY_SHUTDOWN.wait(),
+            )
+            .await
+            {
+                Either4::First(input) => {
+                    debug_log(format_args!("ui input={input:?}"));
+                    let effect = model.apply(input);
+                    match effect {
+                        Some(UiEffect::StartPairing) => {
+                            render_message_frame(&mut next, "Starting", "pairing mode...");
+                            display::render_partial(
+                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                            )
+                            .await;
+                            PAIRING_MODE_REQUEST.signal(());
+                        }
+                        Some(UiEffect::ClearBonds) => {
+                            render_message_frame(&mut next, "Clearing", "bonds + PIN...");
+                            display::render_partial(
+                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                            )
+                            .await;
+                            BLE_WIPE_REQUEST.signal(());
+                        }
+                        None => {
+                            render_ui_frame(&mut next, model);
+                            display::render_partial(
+                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                            )
+                            .await;
+                        }
+                    }
                 }
-                Either::Second(()) => {
-                    SHUTDOWN_SIGNAL.signal(());
-                    button.wait_for_high().await;
+                Either4::Second(()) => {
+                    model.clear_notice();
+                    render_ui_frame(&mut next, model);
+                    display::render_partial(
+                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                    )
+                    .await;
+                }
+                Either4::Third(notice) => {
+                    model.set_notice(notice);
+                    render_ui_frame(&mut next, model);
+                    display::render_partial(
+                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                    )
+                    .await;
+                }
+                Either4::Fourth(()) => {
+                    render_message_frame(&mut next, "Sleeping", "Good night");
+                    display::render_partial(
+                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
+                    )
+                    .await;
+                    display::sleep(&mut spi, &mut cs, &mut dc).await;
+                    DISPLAY_SHUTDOWN_DONE.signal(());
+                    core::future::pending::<()>().await;
                 }
             }
         }
     }
 
-    /// Controlled power-off: tri-state peripheral signal pins, drop the
-    /// peripheral rail, enter System OFF. No MAC counters or display
-    /// handshake in this firmware. See companion-cli-techo for the
-    /// rationale behind each tri-stated pin.
+    fn techo_button_timings() -> ButtonTimings {
+        ButtonTimings {
+            max_click_hold: core::time::Duration::from_millis(500),
+            inter_click_gap: core::time::Duration::from_millis(400),
+            long_press: core::time::Duration::from_secs(1),
+            very_long_press: Some(core::time::Duration::from_secs(4)),
+        }
+    }
+
+    /// Resolves the P1.10 side button (active-low, pull-up) through the same
+    /// tested state machine used by T-1000E. Single advances, double selects,
+    /// a 1–4 second hold released by the user goes back, and a continuing
+    /// four-second hold always powers off.
+    #[embassy_executor::task]
+    async fn button_task(mut button: Input<'static>) {
+        const DEBOUNCE: Duration = Duration::from_millis(10);
+        let mut fsm = ButtonFsm::new(techo_button_timings());
+        let mut pressed = button.is_low();
+        loop {
+            let event = {
+                let now_ms = Instant::now().as_millis();
+                let edge_fut = async {
+                    if pressed {
+                        button.wait_for_high().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Release
+                    } else {
+                        button.wait_for_low().await;
+                        Timer::after(DEBOUNCE).await;
+                        ButtonEdge::Press
+                    }
+                };
+                let deadline = fsm.next_deadline().unwrap_or(now_ms.saturating_add(60_000));
+                match select(edge_fut, Timer::at(Instant::from_millis(deadline))).await {
+                    Either::First(edge) => {
+                        pressed = matches!(edge, ButtonEdge::Press);
+                        fsm.on_edge(edge, Instant::now().as_millis())
+                    }
+                    Either::Second(()) => fsm.poll(Instant::now().as_millis()),
+                }
+            };
+
+            let input = match event {
+                Some(ButtonEvent::Single) => Some(UiInput::Forward),
+                Some(ButtonEvent::Double) => Some(UiInput::Select),
+                Some(ButtonEvent::Long) => Some(UiInput::Backward),
+                Some(ButtonEvent::VeryLong) => {
+                    pressed = false;
+                    fsm = ButtonFsm::new(techo_button_timings());
+                    SHUTDOWN_SIGNAL.signal(());
+                    None
+                }
+                Some(ButtonEvent::Triple | ButtonEvent::Quad) | None => None,
+            };
+            if let Some(input) = input {
+                UI_INPUT_CH.send(input).await;
+            }
+        }
+    }
+
+    /// The capacitive touch button remains dedicated to the unusual e-paper
+    /// backlight. T-Echo defines P0.11 as active-low with a pull-up: illuminate
+    /// on a debounced low level and turn it off on the corresponding release.
+    #[embassy_executor::task]
+    async fn touch_task(mut touch: Input<'static>, mut backlight: Output<'static>) {
+        const DEBOUNCE: Duration = Duration::from_millis(20);
+        loop {
+            touch.wait_for_low().await;
+            Timer::after(DEBOUNCE).await;
+            if !touch.is_low() {
+                continue;
+            }
+            backlight.set_high();
+            debug_log(format_args!("backlight on=true"));
+            touch.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
+            backlight.set_low();
+            debug_log(format_args!("backlight on=false"));
+        }
+    }
+
+    /// Controlled power-off: put the e-paper controller to sleep, tri-state
+    /// peripheral signal pins, drop the rail, and enter System OFF.
     #[embassy_executor::task]
     async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
         SHUTDOWN_SIGNAL.wait().await;
 
-        // E-paper SPI bus (SPIM2): SCK=P0.31, MOSI=P1.07, MISO=P0.29
+        DISPLAY_SHUTDOWN.signal(());
+        let _ = select(
+            DISPLAY_SHUTDOWN_DONE.wait(),
+            Timer::after(Duration::from_secs(5)),
+        )
+        .await;
+
+        // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
         // Radio SPI bus (TWISPI1): SCK=P0.19, MOSI=P0.22, MISO=P0.23
         // Radio control:           CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
-        // (E-paper pins are unconfigured in this firmware; tri-stating
-        // them anyway is harmless and keeps the list identical to the
-        // CLI firmware.)
+        // The display and touch tasks still own these pins; direct PIN_CNF
+        // writes are deliberate here because every task is about to lose power.
         for (port, pin) in [
             (Port::P0, 31u8),
             (Port::P1, 7u8),
@@ -1775,6 +2068,8 @@ mod firmware {
             (Port::P0, 28u8),
             (Port::P0, 2u8),
             (Port::P0, 3u8),
+            (Port::P0, 11u8), // touch input ← async wait may have set SENSE
+            (Port::P1, 11u8), // e-paper backlight
             (Port::P0, 19u8),
             (Port::P0, 22u8),
             (Port::P0, 23u8),
@@ -1938,6 +2233,7 @@ mod firmware {
         }
         BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
         BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
+        PAIRING_MODE.store(ble_store.snapshot().bonds.is_empty(), Ordering::Release);
 
         let sdc_peripherals = sdc::Peripherals::new(
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
@@ -1954,6 +2250,13 @@ mod firmware {
                 .set_local_irk(local_irk)
                 .await
                 .unwrap_or_else(|_| panic!("local irk persist"));
+        }
+        #[cfg(feature = "ble-store-fault-inject")]
+        {
+            BLE_STORE_FAULT_ARMED.store(true, Ordering::Release);
+            debug_log(format_args!(
+                "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
+            ));
         }
         let mut sdc_memory = sdc::Mem::<8192>::new();
         let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
@@ -1999,6 +2302,30 @@ mod firmware {
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
         spawner.spawn(ncp_task(boot_reason).unwrap());
+
+        // The touch button only controls the e-paper backlight. Menu input is
+        // exclusively the side button below.
+        let touch = Input::new(p.P0_11, Pull::Up);
+        let backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
+        spawner.spawn(touch_task(touch, backlight).unwrap());
+
+        let mut display_config = SpimConfig::default();
+        display_config.frequency = Frequency::M4;
+        let display_spi = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_07, p.P0_29, display_config);
+        let display_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
+        let display_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
+        let display_reset = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
+        let display_busy = Input::new(p.P0_03, Pull::None);
+        spawner.spawn(
+            display_task(
+                display_spi,
+                display_cs,
+                display_dc,
+                display_reset,
+                display_busy,
+            )
+            .unwrap(),
+        );
 
         let button = Input::new(p.P1_10, Pull::Up);
         spawner.spawn(button_task(button).unwrap());

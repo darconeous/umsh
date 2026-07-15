@@ -250,6 +250,10 @@ pub struct BleFrameLinkConfig {
     pub discovery_timeout: Duration,
     /// Maximum duration for each CoreBluetooth/BlueZ link operation.
     pub operation_timeout: Duration,
+    /// Maximum duration for the protected Frame-Out subscription. Unlike an
+    /// ordinary GATT operation, this may include OS-mediated pairing and human
+    /// PIN entry.
+    pub pairing_timeout: Duration,
 }
 
 #[cfg(feature = "ble-radio")]
@@ -260,6 +264,7 @@ impl Default for BleFrameLinkConfig {
             segment_payload: 19,
             discovery_timeout: Duration::from_secs(10),
             operation_timeout: Duration::from_secs(10),
+            pairing_timeout: Duration::from_secs(90),
         }
     }
 }
@@ -272,9 +277,12 @@ impl BleFrameLinkConfig {
                 "BLE segment payload must be in 1..=511",
             ));
         }
-        if self.discovery_timeout.is_zero() || self.operation_timeout.is_zero() {
+        if self.discovery_timeout.is_zero()
+            || self.operation_timeout.is_zero()
+            || self.pairing_timeout.is_zero()
+        {
             return Err(CompanionRadioError::Protocol(
-                "BLE discovery and operation timeouts must be nonzero",
+                "BLE discovery, operation, and pairing timeouts must be nonzero",
             ));
         }
         Ok(())
@@ -415,54 +423,71 @@ impl BleFrameLink {
             }
         };
 
-        let is_connected =
-            tokio::time::timeout(config.operation_timeout, peripheral.is_connected())
-                .await
-                .map_err(|_| CompanionRadioError::Timeout)?
-                .map_err(ble_error)?;
-        if !is_connected {
-            tokio::time::timeout(config.operation_timeout, peripheral.connect())
-                .await
-                .map_err(|_| CompanionRadioError::Timeout)?
-                .map_err(ble_error)?;
-        }
-        tokio::time::timeout(config.operation_timeout, peripheral.discover_services())
-            .await
-            .map_err(|_| CompanionRadioError::Timeout)?
-            .map_err(ble_error)?;
-        let frame_in_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_IN_UUID);
-        let frame_out_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_OUT_UUID);
-        let characteristics = peripheral.characteristics();
-        let frame_in = characteristics
-            .iter()
-            .find(|characteristic| characteristic.uuid == frame_in_uuid)
-            .cloned()
-            .ok_or(CompanionRadioError::Protocol("missing BLE Frame In"))?;
-        let frame_out = characteristics
-            .iter()
-            .find(|characteristic| characteristic.uuid == frame_out_uuid)
-            .cloned()
-            .ok_or(CompanionRadioError::Protocol("missing BLE Frame Out"))?;
-
-        let mut stream = tokio::time::timeout(config.operation_timeout, peripheral.notifications())
-            .await
-            .map_err(|_| CompanionRadioError::Timeout)?
-            .map_err(ble_error)?;
-        let (tx, notifications) = tokio::sync::mpsc::channel(32);
-        tokio::spawn(async move {
-            while let Some(notification) = stream.next().await {
-                if notification.uuid == frame_out_uuid && tx.send(notification.value).await.is_err()
-                {
-                    break;
-                }
+        let setup = async {
+            let is_connected =
+                tokio::time::timeout(config.operation_timeout, peripheral.is_connected())
+                    .await
+                    .map_err(|_| ble_timeout("querying connection state"))?
+                    .map_err(ble_error)?;
+            if !is_connected {
+                tokio::time::timeout(config.operation_timeout, peripheral.connect())
+                    .await
+                    .map_err(|_| ble_timeout("connecting"))?
+                    .map_err(ble_error)?;
             }
-        });
-        // This security-gated CCCD write is the protocol attach edge. Pairing
-        // prompts are mediated by the host OS.
-        tokio::time::timeout(config.operation_timeout, peripheral.subscribe(&frame_out))
-            .await
-            .map_err(|_| CompanionRadioError::Timeout)?
-            .map_err(ble_error)?;
+            tokio::time::timeout(config.operation_timeout, peripheral.discover_services())
+                .await
+                .map_err(|_| ble_timeout("discovering services"))?
+                .map_err(ble_error)?;
+
+            let frame_in_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_IN_UUID);
+            let frame_out_uuid = uuid::Uuid::from_u128(umsh_companion::gatt::FRAME_OUT_UUID);
+            let characteristics = peripheral.characteristics();
+            let frame_in = characteristics
+                .iter()
+                .find(|characteristic| characteristic.uuid == frame_in_uuid)
+                .cloned()
+                .ok_or(CompanionRadioError::Protocol("missing BLE Frame In"))?;
+            let frame_out = characteristics
+                .iter()
+                .find(|characteristic| characteristic.uuid == frame_out_uuid)
+                .cloned()
+                .ok_or(CompanionRadioError::Protocol("missing BLE Frame Out"))?;
+
+            let mut stream =
+                tokio::time::timeout(config.operation_timeout, peripheral.notifications())
+                    .await
+                    .map_err(|_| ble_timeout("opening notifications"))?
+                    .map_err(ble_error)?;
+            let (tx, notifications) = tokio::sync::mpsc::channel(32);
+            tokio::spawn(async move {
+                while let Some(notification) = stream.next().await {
+                    if notification.uuid == frame_out_uuid
+                        && tx.send(notification.value).await.is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            // This security-gated CCCD write is the protocol attach edge.
+            // Pairing prompts are mediated by the host OS.
+            tokio::time::timeout(config.pairing_timeout, peripheral.subscribe(&frame_out))
+                .await
+                .map_err(|_| ble_timeout("subscribing to Frame Out"))?
+                .map_err(ble_error)?;
+            Ok::<_, CompanionRadioError>((frame_in, notifications))
+        }
+        .await;
+
+        let (frame_in, notifications) = match setup {
+            Ok(setup) => setup,
+            Err(error) => {
+                // Failed setup must not leave the single-connection NCP
+                // occupied and invisible to the next retry.
+                let _ = tokio::time::timeout(Duration::from_secs(1), peripheral.disconnect()).await;
+                return Err(error);
+            }
+        };
 
         Ok(Self {
             peripheral,
@@ -490,7 +515,7 @@ impl FrameLink for BleFrameLink {
                     .write(&self.frame_in, &value, WriteType::WithResponse),
             )
             .await
-            .map_err(|_| CompanionRadioError::Timeout)?
+            .map_err(|_| ble_timeout("writing Frame In"))?
             .map_err(ble_error)?;
         }
         Ok(())
@@ -507,6 +532,11 @@ impl FrameLink for BleFrameLink {
 #[cfg(feature = "ble-radio")]
 fn ble_error(error: btleplug::Error) -> CompanionRadioError {
     CompanionRadioError::Transport(error.to_string())
+}
+
+#[cfg(feature = "ble-radio")]
+fn ble_timeout(operation: &'static str) -> CompanionRadioError {
+    CompanionRadioError::Transport(format!("BLE timed out while {operation}"))
 }
 
 /// Companion radio attached over a frame link, usable as a
@@ -1196,6 +1226,12 @@ mod tests {
         ));
         config.segment_payload = 19;
         config.operation_timeout = Duration::ZERO;
+        assert!(matches!(
+            config.validate(),
+            Err(CompanionRadioError::Protocol(_))
+        ));
+        config.operation_timeout = Duration::from_secs(1);
+        config.pairing_timeout = Duration::ZERO;
         assert!(matches!(
             config.validate(),
             Err(CompanionRadioError::Protocol(_))

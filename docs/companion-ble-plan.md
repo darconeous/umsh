@@ -32,10 +32,10 @@ four-bond + PIN persistence through MPSL-coordinated flash, and the
 pairing-mode and bond-wipe policy. The initially implemented 3 s pairing /
 10 s BLE-wipe boot gesture was based on a screenless-device interaction
 model and has been removed from the T-Echo firmware; the T-Echo must expose
-those actions through its display UI. After the hardware fixes,
-its non-debug release image measures 371,998 bytes text, 6,104 bytes
-data, and 37,940 bytes BSS (378,114-byte flash payload). On hardware it
-completes the USB reset/property
+those actions through its display UI. With that UI now linked, its non-debug
+release image measures 391,642 bytes text, 6,104 bytes data, and 44,092 bytes
+BSS (397,746-byte flash payload) in the 760 KiB application window. On hardware
+it completes the USB reset/property
 handshake (`umsh-ncp-techo/0.1`, MTU 255), advertises as `UMSH NCP`, and
 is visible/connectable in nRF Connect. PIN `123456` was transactionally
 committed on hardware; nRF Connect then bonded, enabled the protected
@@ -72,13 +72,15 @@ the third set `locked=true` and disabled the pairing gate. A subsequent SMP
 Pairing Request was rejected immediately with Pairing Failed / Pairing Not
 Supported (`0x05`), without another PIN prompt. The continuous serial trace
 showed no intervening reset. The 30-minute serial control-plane soak is also
-complete; the BLE/live-LoRa long soak remains open. Still open before declaring
-the hardware phases complete: run the Linux BlueZ pairing/recovery test and
-the remaining BLE/live-LoRa and fault-injection exercises. macOS
-CoreBluetooth discovery did find the service, but both discovery and
-post-discovery operations can block indefinitely, so the host link now
-bounds each `btleplug` await with explicit timeouts; macOS attach remains
-to be completed after the phone security checks.
+complete; the BLE/live-LoRa long soak remains open. macOS CoreBluetooth now
+completes discovery, connection, protected Frame-Out subscription, the
+companion reset/property handshake, SX1262 configuration, and live packet
+reception. Because CoreBluetooth operations can otherwise block indefinitely,
+the host link bounds every `btleplug` stage with an explicit timeout and allows
+90 seconds specifically for the OS-mediated protected CCCD subscription and
+PIN entry. Still open before declaring the hardware phases complete: the Linux
+BlueZ pairing/recovery test and the remaining extended BLE/live-LoRa,
+forced-displacement, and storage-fault exercises.
 
 The next validation increment made the two load-bearing pure
 policies host-testable. The lockout helper proves that only SMP Confirm Value
@@ -106,6 +108,28 @@ and final commit-word write, verify exact page/write bounds and ordering, and
 retain the exhaustive byte-boundary recovery coverage above. This proves the
 software's failure propagation and old-record selection, while an injected
 MPSL/NVMC failure followed by a physical power cycle remains a hardware gate.
+The `ble-store-fault-inject` diagnostic feature now supplies that hardware
+path: boot-critical local-IRK initialization completes first, then every
+runtime record write and page erase fails before touching NVMC while the USB
+debug trace reports the fail-closed handling. The feature builds separately
+and is never enabled in the production image.
+
+The T-Echo's on-screen BLE menu is implemented and its core interaction has
+been validated on hardware. The proven SSD1681 driver has moved into
+`umsh-bsp-techo`, with BSP features keeping display-only consumers independent
+of the MAC/heap stack. The side button uses the tested T-1000E edge/deadline
+recognizer with a T-Echo-specific second hold threshold: single press advances,
+double press selects, release after a 1-second hold goes backward, and a
+continuing 4-second hold displays `Sleeping` and powers off without first
+issuing Back. The touch button retains its board-conventional function as an
+active-low, pull-up, **momentary** backlight control: the lamp follows the
+physical press state and is not toggled on edges. Clear Bonds defaults to
+Cancel and requires a visible choice change plus a second explicit Select.
+Differential SSD1681 updates, explicit partial-update power-off, navigation,
+sleep, and touch polarity were exercised on the real panel and accepted as a
+usable checkpoint. The menu policy and two-stage hold behavior are also covered
+by host tests. A final destructive-action pass should still reconfirm Start
+Pairing and Clear Bonds end-to-end while the remaining persistence tests run.
 
 Reset diagnostics ruled out slow firmware initialization: instrumented
 hardware measured the complete LoRa + MPSL + bond store + SDC + USB path at
@@ -126,6 +150,45 @@ or re-attach. Initial attach took 47,256 us. Property RTT min/average/max was
 657/818/1,686 us at a 10 s sample interval. This closes the non-mutating serial
 control-plane soak; it does not replace the BLE bearer or live-LoRa traffic
 soaks in Phase E.
+
+The new `companion_dump` example establishes the requested computer-side live
+packet-inspection path without serial/HDLC. It carries the existing
+Spinel-inspired companion commands, properties, resets, and asynchronous RX
+events over the BLE Companion Link GATT/SAR transport, configures the SX1262,
+and prints every received LoRa frame with RF metadata, raw bytes, and attempted
+UMSH decoding. A macOS run received 53 real over-the-air frames. That count is
+not a queue or protocol limit; the dumper now issues a `PROP_PHY_RSSI` request
+after each configurable idle interval. An `idle ... link=ok` line proves the
+BLE link, NCP session, and SX1262 runner remain responsive during RF silence,
+while a failed probe identifies a real stalled/disconnected path. The README
+documents the BLE-only invocation, pairing behavior, RF overrides, and idle
+diagnostics.
+
+### Remaining work — prioritized
+
+1. **Complete the BLE/live-LoRa soak.** Run `companion_dump --ble` for several
+   hours with representative RF traffic and retain the new idle-health output;
+   then run bidirectional `desktop_chat --ble` traffic and record duration,
+   packet/TX-confirmation counts, reconnect behavior, and any WDT/reset event.
+2. **Exercise persistence failures on hardware.** Flash the dedicated
+   `ble-store-fault-inject` image, provoke PIN and bond writes, verify that each
+   fails closed before NVMC is touched, power-cycle immediately, and confirm
+   that the prior committed journal and pairing state remain usable. Reflash
+   production firmware afterward.
+3. **Force transport displacement at frame boundaries.** Displace BLE with USB
+   and USB with BLE during multi-segment/multi-chunk output, proving generation
+   checks suppress the stale tail and both transports attach cleanly afterward.
+4. **Run the Linux/BlueZ host matrix.** Pair through a `bluetoothctl` agent,
+   subscribe through `btleplug`, receive live frames, disconnect/reconnect, and
+   recover from a deliberately removed/asymmetric bond.
+5. **Finish Phase-E measurements and release notes.** Record BLE attach latency,
+   RTT/throughput at representative ATT MTUs, advertising/connected idle
+   current, and supervision-timeout recovery; reconcile the task-layout header,
+   this plan, and the protocol chapter only where observed behavior actually
+   diverges.
+6. **Maintain the Trouble fork deliberately.** Prepare the consolidated
+   upstreamable security fix for review and either converge on an accepted
+   upstream shape or retain the audited revision pin with its test evidence.
 
 The repository's T-Echo bootloader configuration identifies the board's
 resident layout as S140 **v6.1.1** (application base `0x26000`), not the
@@ -547,6 +610,11 @@ best-effort.
 alternative to the serial path, gated on the `ble-radio` feature
 (new `[[example]] required-features` entries).
 
+`companion_dump` provides a BLE-first live RF inspection tool: it prints raw
+LoRa frames and receive metadata, attempts a UMSH decode without discarding
+foreign traffic, and periodically reads `PROP_PHY_RSSI` so an idle RF channel
+is distinguishable from a stalled BLE/NCP/radio path.
+
 **Exit criteria.** Loopback unit tests for `SerialFrameLink` parity,
 including two frames returned by one underlying read, a frame boundary
 with a partial successor, and cancellation with buffered tail bytes;
@@ -659,11 +727,13 @@ Policy truth table:
   - Entry at boot: no bonds → auto pairing mode, 30 s timer. Bonds
     present → only after the user explicitly requests pairing from the
     T-Echo's on-screen BLE UI.
-  - The e-paper display presents pairing state and the pairing action;
-    the user/touch controls operate that UI. This is an explicit visible
-    interaction, not a hidden boot-time hold-duration gesture. The exact
-    menu and control mapping must be defined with the rest of the T-Echo
-    UI rather than borrowed from the screenless-device gesture FSM.
+  - The e-paper display presents bond count, pairing state, Start Pairing, and
+    Clear Bonds. The side button mapping is single press = forward, double
+    press = select, release after a 1-second hold = backward, and a continuing
+    4-second hold = power off. The second threshold extends the proven T-1000E
+    recognizer without changing its default behavior. The capacitive touch
+    button retains its board-conventional backlight-toggle role and is not a
+    hidden pairing gesture.
   - Exit: new bond completes | bonded host establishes an encrypted
     connection | timer expiry.
   - Pairing acceptance is the fork's gate, driven from one place (with D's
@@ -821,7 +891,7 @@ Nordic license identity and required notices.
 | MPSL interrupt priorities vs. SPIM/USBD latency (SX1262 BUSY timing, CDC) | Phase 0 coexistence checks with the radio initialized; Phase E soak. |
 | btleplug: no portable ATT MTU query | 19-octet conservative default host→NCP; NCP→host uses true MTU; config override; investigate per-platform in B2. |
 | btleplug platform quirks (macOS UUID-not-MAC ids, BlueZ agent, Windows pairing) | B2 scopes macOS + Linux; document per-OS pairing flow; Windows best-effort. |
-| T-Echo pairing/bond-management UI is not yet integrated into the NCP firmware | Reuse the proven e-paper driver, define the visible menu/control mapping explicitly, and validate pairing entry and destructive confirmation on hardware in C4/D. |
+| T-Echo destructive bond-management action could be invoked accidentally | Clear Bonds defaults to Cancel and needs a visible choice change plus a second Select; core panel/navigation/momentary-touch/sleep behavior is hardware-validated, with a final end-to-end destructive-action pass retained in D. |
 | SDC binary license | Checked before Phase C merges (see Dependency pinning). |
 
 ## Deferred (tracked, not planned here)

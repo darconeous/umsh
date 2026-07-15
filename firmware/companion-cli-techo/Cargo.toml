@@ -24,7 +24,7 @@ name = "firmware-companion-cli-techo"
 path = "src/main.rs"
 
 [dependencies]
-umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false }
+umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display", "platform", "power"] }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 heapless = { version = "0.8", default-features = false }

@@ -3,7 +3,7 @@
 //! Resolves a stream of raw [`ButtonEdge`] events plus a monotonic
 //! millisecond clock into the high-level [`ButtonEvent`]s the UX is
 //! defined in terms of: single, double, triple, and quadruple clicks,
-//! plus long-press.
+//! plus long-press and an optional very-long-press.
 //!
 //! The machine is **pure logic** — no embassy, no hardware, no I/O — so
 //! it can be exhaustively unit-tested with synthetic time. Callers are
@@ -26,9 +26,14 @@
 //!   Quad fires immediately on the fourth release without waiting for
 //!   the gap; single / double / triple fire after the gap elapses with
 //!   no further press.
-//! - Holding the button continuously for `long_press` produces
-//!   [`ButtonEvent::Long`] *while the button is still pressed* and
-//!   consumes any clicks accumulated before the hold began.
+//! - By default, holding the button continuously for `long_press` produces
+//!   [`ButtonEvent::Long`] *while the button is still pressed* and consumes
+//!   any clicks accumulated before the hold began.
+//! - When `very_long_press` is configured, releasing between `long_press`
+//!   and `very_long_press` produces [`ButtonEvent::Long`]. Remaining held
+//!   through `very_long_press` produces [`ButtonEvent::VeryLong`] without
+//!   first emitting `Long`. This supports a navigational hold plus a distinct
+//!   always-available sleep hold.
 //! - Releases longer than `max_click_hold` but shorter than
 //!   `long_press` are *discarded clicks*; if there are accumulated
 //!   prior clicks they are emitted, otherwise nothing fires. This
@@ -55,6 +60,7 @@ pub enum ButtonEvent {
     Triple,
     Quad,
     Long,
+    VeryLong,
 }
 
 /// Tunable timings. Defaults match the values in
@@ -69,6 +75,10 @@ pub struct ButtonTimings {
     pub inter_click_gap: Duration,
     /// Continuous hold duration that triggers [`ButtonEvent::Long`].
     pub long_press: Duration,
+    /// Optional second hold threshold. When present, `Long` is emitted on
+    /// release after `long_press`, while [`ButtonEvent::VeryLong`] fires at
+    /// this deadline while the button remains held.
+    pub very_long_press: Option<Duration>,
 }
 
 impl Default for ButtonTimings {
@@ -77,6 +87,7 @@ impl Default for ButtonTimings {
             max_click_hold: Duration::from_millis(500),
             inter_click_gap: Duration::from_millis(400),
             long_press: Duration::from_secs(3),
+            very_long_press: None,
         }
     }
 }
@@ -161,10 +172,18 @@ impl ButtonFsm {
     pub fn poll(&mut self, now_ms: u64) -> Option<ButtonEvent> {
         match self.state {
             State::Pressed { pressed_at, .. }
-                if elapsed(pressed_at, now_ms) >= self.timings.long_press =>
+                if elapsed(pressed_at, now_ms)
+                    >= self
+                        .timings
+                        .very_long_press
+                        .unwrap_or(self.timings.long_press) =>
             {
                 self.state = State::LongFired;
-                Some(ButtonEvent::Long)
+                Some(if self.timings.very_long_press.is_some() {
+                    ButtonEvent::VeryLong
+                } else {
+                    ButtonEvent::Long
+                })
             }
 
             State::WaitingForNext {
@@ -184,7 +203,11 @@ impl ButtonFsm {
     pub fn next_deadline(&self) -> Option<u64> {
         match self.state {
             State::Pressed { pressed_at, .. } => {
-                Some(pressed_at + self.timings.long_press.as_millis() as u64)
+                let deadline = self
+                    .timings
+                    .very_long_press
+                    .unwrap_or(self.timings.long_press);
+                Some(pressed_at + deadline.as_millis() as u64)
             }
             State::WaitingForNext { released_at, .. } => {
                 Some(released_at + self.timings.inter_click_gap.as_millis() as u64)
@@ -201,7 +224,20 @@ impl ButtonFsm {
     ) -> Option<ButtonEvent> {
         let hold = elapsed(pressed_at, now_ms);
 
-        if hold >= self.timings.long_press {
+        if let Some(very_long) = self.timings.very_long_press {
+            if hold >= very_long {
+                // The deadline should normally fire from poll. Preserve the
+                // event if the caller only observes the eventual release.
+                self.state = State::Idle;
+                return Some(ButtonEvent::VeryLong);
+            }
+            if hold >= self.timings.long_press {
+                self.state = State::Idle;
+                return Some(ButtonEvent::Long);
+            }
+        }
+
+        if self.timings.very_long_press.is_none() && hold >= self.timings.long_press {
             // Long-press should have already fired in poll; on the off
             // chance it didn't (e.g. poll wasn't called), fire it now.
             self.state = State::Idle;
@@ -260,6 +296,7 @@ mod tests {
             max_click_hold: Duration::from_millis(500),
             inter_click_gap: Duration::from_millis(400),
             long_press: Duration::from_secs(5),
+            very_long_press: None,
         })
     }
 
@@ -365,6 +402,58 @@ mod tests {
         assert_eq!(
             fsm.on_edge(ButtonEdge::Release, 6_000),
             Some(ButtonEvent::Long)
+        );
+    }
+
+    #[test]
+    fn two_stage_hold_emits_long_on_release_without_firing_early() {
+        let mut fsm = ButtonFsm::new(ButtonTimings {
+            max_click_hold: Duration::from_millis(500),
+            inter_click_gap: Duration::from_millis(400),
+            long_press: Duration::from_secs(1),
+            very_long_press: Some(Duration::from_secs(4)),
+        });
+        fsm.on_edge(ButtonEdge::Press, 0);
+
+        // Crossing the navigation-hold threshold while still pressed does
+        // not emit anything; the user can continue holding for sleep.
+        assert_eq!(fsm.poll(1_000), None);
+        assert_eq!(fsm.poll(2_500), None);
+        assert_eq!(
+            fsm.on_edge(ButtonEdge::Release, 2_500),
+            Some(ButtonEvent::Long)
+        );
+    }
+
+    #[test]
+    fn two_stage_hold_emits_only_very_long_at_second_deadline() {
+        let mut fsm = ButtonFsm::new(ButtonTimings {
+            max_click_hold: Duration::from_millis(500),
+            inter_click_gap: Duration::from_millis(400),
+            long_press: Duration::from_secs(1),
+            very_long_press: Some(Duration::from_secs(4)),
+        });
+        fsm.on_edge(ButtonEdge::Press, 0);
+
+        assert_eq!(fsm.next_deadline(), Some(4_000));
+        assert_eq!(fsm.poll(3_999), None);
+        assert_eq!(fsm.poll(4_000), Some(ButtonEvent::VeryLong));
+        assert_eq!(fsm.poll(5_000), None);
+        assert_eq!(fsm.on_edge(ButtonEdge::Release, 5_100), None);
+    }
+
+    #[test]
+    fn two_stage_very_long_survives_a_missed_poll() {
+        let mut fsm = ButtonFsm::new(ButtonTimings {
+            max_click_hold: Duration::from_millis(500),
+            inter_click_gap: Duration::from_millis(400),
+            long_press: Duration::from_secs(1),
+            very_long_press: Some(Duration::from_secs(4)),
+        });
+        fsm.on_edge(ButtonEdge::Press, 0);
+        assert_eq!(
+            fsm.on_edge(ButtonEdge::Release, 4_500),
+            Some(ButtonEvent::VeryLong)
         );
     }
 

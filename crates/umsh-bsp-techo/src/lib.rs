@@ -21,15 +21,18 @@
 //! See `docs/lilygo-techo-hardware.md` for the firmware-derived
 //! hardware reference.
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "display"))]
+pub mod display;
+
+#[cfg(all(target_os = "none", feature = "platform"))]
 pub mod platform;
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "power"))]
 pub mod power;
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "platform"))]
 pub use platform::{TechoMac, TechoPlatform};
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "power"))]
 pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
 
 // TODO: implement (see docs/firmware-plan-techo.md):
@@ -37,5 +40,4 @@ pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
 //   pub mod board;          // `Board::init()` and the composed Platform impl.
 //   pub mod power;          // P0.12 peripheral-rail switch.
 //   pub mod indicators;      // blue LED (P0.14, active-low).
-//   pub mod display;        // SSD1681 SPI bus + control pins.
 //   pub mod usb;            // USB-CDC plumbing on top of umsh-bsp-nrf52840.

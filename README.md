@@ -198,6 +198,56 @@ Peers can also be pre-registered on the command line with `--peer <key>[:alias]`
 accepts the same key formats as `/peer add`. The `--group` and `--port` flags override the
 default multicast address and port if you need to run isolated sessions on the same machine.
 
+### Dump live LoRa packets through a BLE companion radio
+
+The `companion_dump` example connects to a T-Echo NCP over BLE, configures and enables its
+SX1262, and prints every received LoRa frame with elapsed time, RSSI, SNR, raw bytes, and an
+attempted UMSH header decode. Traffic from another protocol is retained and labeled as not a
+valid UMSH packet rather than discarded.
+
+On the T-Echo, choose **Start Pairing** from the BLE menu before connecting a computer for the
+first time. Stop any serial companion-radio tool and disconnect other BLE-central apps such as
+nRF Connect; only one companion session can own the NCP at a time. Then run, from the repository
+root:
+
+```sh
+cargo run -p umsh --example companion_dump --features ble-radio -- --ble
+```
+
+If more than one Companion Link device is nearby, select the T-Echo by its primary advertised
+name:
+
+```sh
+cargo run -p umsh --example companion_dump --features ble-radio -- \
+    --ble "UMSH NCP"
+```
+
+Pairing is mediated by the operating system. Enter the T-Echo's configured six-digit BLE PIN
+if prompted. The protected subscription allows up to 90 seconds for the pairing UI and PIN
+entry, independently of the shorter timeout used by ordinary GATT operations. On Linux, enable
+a `bluetoothctl` agent and pair/trust the device before running the dumper if the automatic
+subscription is rejected.
+
+The default RF profile is 910.525 MHz, LoRa SF7, 62.5 kHz bandwidth, coding rate 4/5, and sync
+word `0x1424`. Each parameter can be overridden explicitly:
+
+```sh
+cargo run -p umsh --example companion_dump --features ble-radio -- \
+    --ble "UMSH NCP" \
+    --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
+```
+
+While no frames arrive, the dumper performs a live channel-RSSI probe every 10 seconds and
+prints an `idle ... link=ok` line. This is expected during RF silence and confirms that the BLE
+connection, NCP command session, and radio runner are still responding. If one of those layers
+stalls or disconnects, the probe exits with a specific error instead of leaving a packet count
+apparently frozen. Change the interval with `--idle-probe-secs=N`.
+
+Use `--help` for the complete option list. Press Ctrl-C to stop the dump. A timeout while
+subscribing to Frame Out usually means the computer is not bonded and the T-Echo's pairing
+window is closed; select **Start Pairing** and retry. If discovery finds no device, ensure the
+T-Echo is awake and that neither a serial companion session nor another BLE central is attached.
+
 ### Inspecting packets with Wireshark
 
 Since the desktop chat uses UDP multicast, you can capture traffic in real time
