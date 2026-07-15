@@ -293,7 +293,8 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
             }
         }
 
-        for body in remote_echoes.borrow_mut().drain(..) {
+        let pending_echoes: Vec<_> = remote_echoes.borrow_mut().drain(..).collect();
+        for body in pending_echoes {
             let _ = remote_chat
                 .send_text(&format!("echo: {body}"), &default_chat_options())
                 .await;
@@ -338,7 +339,7 @@ async fn run_serial_chat(
                 std::io::Error::other(format!("companion attach failed: {error:?}"))
             })?;
         println!("companion radio: {}", radio.ncp_version());
-        return run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await;
+        run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await
     }
 
     #[cfg(not(feature = "serial-radio"))]
@@ -372,7 +373,7 @@ async fn run_ble_chat(
             .await
             .map_err(|error| std::io::Error::other(format!("BLE attach failed: {error:?}")))?;
         println!("companion radio: {}", radio.ncp_version());
-        return run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await;
+        run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await
     }
     #[cfg(not(feature = "ble-radio"))]
     {

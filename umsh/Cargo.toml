@@ -52,6 +52,10 @@ name = "companion_probe"
 required-features = ["tokio-support"]
 
 [[example]]
+name = "companion_link_soak"
+required-features = ["tokio-support"]
+
+[[example]]
 name = "generate_phase1_vectors"
 required-features = ["software-crypto"]
 
