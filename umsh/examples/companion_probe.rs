@@ -78,6 +78,7 @@ async fn run_probe<L: FrameLink>(
     pin_update: Option<Option<u32>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("ncp version: {}", radio.ncp_version());
+    println!("boot status: {:?}", radio.boot_status());
     println!(
         "mtu: {} bytes, worst-case airtime: {} ms",
         radio.max_frame_size(),

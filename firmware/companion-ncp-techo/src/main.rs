@@ -49,7 +49,11 @@ fn main() {
 }
 
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod ble_security;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod transport_policy;
 
 // The #[panic_handler] must live in the binary crate.
 #[cfg(target_os = "none")]
@@ -72,7 +76,9 @@ mod defmt_logger {
 
 #[cfg(target_os = "none")]
 mod firmware {
+    use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
     use super::ble_store::{self, Snapshot, StoredBond};
+    use super::transport_policy::{SessionArbitration, Transport, generation_checked};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
@@ -82,6 +88,7 @@ mod firmware {
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
+    use embassy_nrf::pac;
     use embassy_nrf::peripherals::{self, RNG};
     use embassy_nrf::rng;
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
@@ -233,6 +240,22 @@ mod firmware {
         slot: Option<u32>,
     }
 
+    impl ble_store::RecordWriter for nrf_mpsl::Flash<'static> {
+        type Error = ();
+
+        async fn write_record(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.write(address, bytes).await.map_err(|_| ())
+        }
+    }
+
+    impl ble_store::PageEraser for nrf_mpsl::Flash<'static> {
+        type Error = ();
+
+        async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
+            self.erase(start, end).await.map_err(|_| ())
+        }
+    }
+
     impl BleStore {
         fn mount(mut flash: nrf_mpsl::Flash<'static>) -> Self {
             let mut latest: Option<(u32, Snapshot)> = None;
@@ -243,18 +266,10 @@ mod firmware {
                 while address < page + ble_store::PAGE_SIZE {
                     let mut bytes = [0u8; ble_store::SLOT_SIZE];
                     if flash.read(address, &mut bytes).is_ok() {
-                        if let Some(snapshot) = Snapshot::decode(&bytes) {
+                        if Snapshot::decode(&bytes).is_some() {
                             valid_records = valid_records.saturating_add(1);
-                            let replace = latest.as_ref().is_none_or(|(_, current)| {
-                                ble_store::generation_is_newer(
-                                    snapshot.generation,
-                                    current.generation,
-                                )
-                            });
-                            if replace {
-                                latest = Some((address, snapshot));
-                            }
                         }
+                        latest = ble_store::consider_snapshot(latest, address, &bytes);
                     } else {
                         read_failures = read_failures.saturating_add(1);
                     }
@@ -325,9 +340,7 @@ mod firmware {
                         ble_store::PAGE0
                     };
                     debug_log(format_args!("store erase begin page=0x{page:06x}"));
-                    if self
-                        .flash
-                        .erase(page, page + ble_store::PAGE_SIZE)
+                    if ble_store::erase_journal_page(&mut self.flash, page)
                         .await
                         .is_err()
                     {
@@ -344,28 +357,22 @@ mod firmware {
                 "store body-write begin generation={} target=0x{target:06x}",
                 snapshot.generation
             ));
-            if self
-                .flash
-                .write(target, &bytes[..ble_store::COMMIT_OFFSET])
-                .await
-                .is_err()
-            {
-                debug_log(format_args!(
-                    "store body-write=FAILED target=0x{target:06x}"
-                ));
-                return Err(());
-            }
-            debug_log(format_args!("store body-write=ok target=0x{target:06x}"));
-            if self
-                .flash
-                .write(target + ble_store::COMMIT_OFFSET as u32, &[0; 4])
-                .await
-                .is_err()
-            {
-                debug_log(format_args!(
-                    "store commit-write=FAILED target=0x{target:06x}"
-                ));
-                return Err(());
+            match ble_store::write_committed_record(&mut self.flash, target, &bytes).await {
+                Ok(()) => debug_log(format_args!(
+                    "store body-write=ok commit-write=ok target=0x{target:06x}"
+                )),
+                Err(ble_store::CommitError::Body(())) => {
+                    debug_log(format_args!(
+                        "store body-write=FAILED target=0x{target:06x}"
+                    ));
+                    return Err(());
+                }
+                Err(ble_store::CommitError::Commit(())) => {
+                    debug_log(format_args!(
+                        "store body-write=ok commit-write=FAILED target=0x{target:06x}"
+                    ));
+                    return Err(());
+                }
             }
             self.snapshot = snapshot;
             self.slot = Some(target);
@@ -482,13 +489,6 @@ mod firmware {
 
     const FRAME_IN_MAX: usize = 300;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Transport {
-        Usb,
-        #[allow(dead_code)]
-        Ble,
-    }
-
     /// Framing-free receive path and connection edges into ncp_task.
     enum InEvent {
         Attached(Transport),
@@ -512,6 +512,7 @@ mod firmware {
     /// RAM-only until BLE persistence lands. `u32::MAX` means unset.
     static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
     static BLE_BONDS_AT_BOOT: AtomicU8 = AtomicU8::new(0);
+    static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
     static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
@@ -666,17 +667,45 @@ mod firmware {
 
     fn apply_pairing_gate<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) {
         let pin_configured = PAIRING_PIN.load(Ordering::Acquire) != u32::MAX;
-        let enabled = PAIRING_MODE.load(Ordering::Acquire)
-            || (pin_configured && !PAIRING_LOCKED_OUT.load(Ordering::Acquire));
+        let bonds = usize::from(BLE_BOND_COUNT.load(Ordering::Acquire));
+        let enabled = pairing_enabled(
+            PAIRING_MODE.load(Ordering::Acquire),
+            pin_configured,
+            PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+            bonds,
+            ble_store::MAX_BONDS,
+        );
         stack.set_pairing_enabled(enabled);
         debug_log(format_args!(
-            "pairing gate enabled={} mode={} pin={} locked={} failures={}",
+            "pairing gate enabled={} mode={} pin={} locked={} failures={} bonds={}/{}",
             enabled,
             PAIRING_MODE.load(Ordering::Acquire),
             pin_configured,
             PAIRING_LOCKED_OUT.load(Ordering::Acquire),
             PAIRING_FAILURES.load(Ordering::Acquire),
+            bonds,
+            ble_store::MAX_BONDS,
         ));
+    }
+
+    fn pairing_runtime() -> PairingRuntime {
+        PairingRuntime {
+            pairing_mode: PAIRING_MODE.load(Ordering::Acquire),
+            failures: PAIRING_FAILURES.load(Ordering::Acquire),
+            locked_out: PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+        }
+    }
+
+    fn publish_pairing_runtime(state: PairingRuntime) {
+        PAIRING_MODE.store(state.pairing_mode, Ordering::Release);
+        PAIRING_FAILURES.store(state.failures, Ordering::Release);
+        PAIRING_LOCKED_OUT.store(state.locked_out, Ordering::Release);
+    }
+
+    async fn persist_bond(store: &BleStoreMutex, bond: &BondInformation) -> Result<usize, ()> {
+        let mut store = store.lock().await;
+        store.add_bond(bond).await?;
+        Ok(store.snapshot().bonds.len())
     }
 
     fn build_sdc<'d, const N: usize>(
@@ -846,6 +875,7 @@ mod firmware {
                     debug_log(format_args!("security wipe requested"));
                     if store.lock().await.clear_security().await.is_ok() {
                         debug_log(format_args!("security wipe flash=ok"));
+                        BLE_BOND_COUNT.store(0, Ordering::Release);
                         let mut identities: heapless::Vec<Identity, { ble_store::MAX_BONDS }> =
                             heapless::Vec::new();
                         stack.with_bond_information(|bonds| {
@@ -890,13 +920,16 @@ mod firmware {
         }
     }
 
-    fn counts_toward_lockout(error: &trouble_host::Error) -> bool {
-        matches!(
-            error,
-            trouble_host::Error::Security(
-                PairingFailedReason::ConfirmValueFailed | PairingFailedReason::DHKeyCheckFailed
-            )
-        )
+    fn classify_pairing_failure(error: &trouble_host::Error) -> PairingFailureClass {
+        match error {
+            trouble_host::Error::Security(PairingFailedReason::ConfirmValueFailed) => {
+                PairingFailureClass::ConfirmValue
+            }
+            trouble_host::Error::Security(PairingFailedReason::DHKeyCheckFailed) => {
+                PairingFailureClass::DhKeyCheck
+            }
+            _ => PairingFailureClass::Other,
+        }
     }
 
     async fn advertise<'values, 'server, C: Controller>(
@@ -955,13 +988,12 @@ mod firmware {
         let segment_payload = usize::from(conn.raw().att_mtu())
             .saturating_sub(4)
             .clamp(1, BLE_VALUE_MAX - 1);
-        for segment in gatt::segments(&outbound.frame, segment_payload) {
-            if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
-                debug_log(format_args!(
-                    "ble outbound segmentation stopped generation-changed"
-                ));
-                break;
-            }
+        let mut segments = generation_checked(
+            gatt::segments(&outbound.frame, segment_payload),
+            outbound.generation,
+            || SESSION_GEN.load(Ordering::Acquire),
+        );
+        for segment in segments.by_ref() {
             let mut value: heapless09::Vec<u8, BLE_VALUE_MAX> = heapless09::Vec::new();
             value
                 .push(segment.header())
@@ -974,6 +1006,11 @@ mod firmware {
                 .frame_out
                 .notify(conn, &value, false)
                 .await?;
+        }
+        if segments.stale() {
+            debug_log(format_args!(
+                "ble outbound segmentation stopped generation-changed"
+            ));
         }
         Ok(())
     }
@@ -1035,22 +1072,26 @@ mod firmware {
                             conn.raw().disconnect();
                             break;
                         }
-                        if store.lock().await.add_bond(&bond).await.is_err() {
-                            debug_log(format_args!("pairing bond persist=FAILED"));
-                            match stack.remove_bond_information(bond.identity) {
-                                Ok(()) => {
-                                    debug_log(format_args!("pairing unpersisted bond remove=ok"))
+                        let persisted_bonds = match persist_bond(store, &bond).await {
+                            Ok(count) => count,
+                            Err(()) => {
+                                debug_log(format_args!("pairing bond persist=FAILED"));
+                                match stack.remove_bond_information(bond.identity) {
+                                    Ok(()) => debug_log(format_args!(
+                                        "pairing unpersisted bond remove=ok"
+                                    )),
+                                    Err(error) => debug_log(format_args!(
+                                        "pairing unpersisted bond remove=FAILED error={error:?}"
+                                    )),
                                 }
-                                Err(error) => debug_log(format_args!(
-                                    "pairing unpersisted bond remove=FAILED error={error:?}"
-                                )),
+                                debug_log(format_args!(
+                                    "disconnect initiated by pairing persistence failure"
+                                ));
+                                conn.raw().disconnect();
+                                break;
                             }
-                            debug_log(format_args!(
-                                "disconnect initiated by pairing persistence failure"
-                            ));
-                            conn.raw().disconnect();
-                            break;
-                        }
+                        };
+                        BLE_BOND_COUNT.store(persisted_bonds as u8, Ordering::Release);
                         debug_log(format_args!(
                             "pairing bond persist=ok peer={} kind={} irk={} bonded={} level={:?}",
                             bond.identity.addr,
@@ -1059,11 +1100,14 @@ mod firmware {
                             bond.is_bonded,
                             bond.security_level,
                         ));
-                        PAIRING_FAILURES.store(0, Ordering::Release);
-                        PAIRING_MODE.store(false, Ordering::Release);
-                        BLE_LED_MODE.store(0, Ordering::Release);
-                        apply_pairing_gate(stack);
                     }
+                    // Trouble may report a successful peripheral pairing with
+                    // bond=None and expose the completed bond at the first
+                    // protected GATT edge. Pairing success still resets the
+                    // failure counter and closes the window in that case.
+                    publish_pairing_runtime(pairing_runtime().pairing_succeeded());
+                    BLE_LED_MODE.store(0, Ordering::Release);
+                    apply_pairing_gate(stack);
                 }
                 Either3::First(GattConnectionEvent::PassKeyDisplay(_)) => {
                     debug_log(format_args!("passkey display requested"));
@@ -1088,17 +1132,23 @@ mod firmware {
                         conn.raw().security_level(),
                     ));
                     if bond.is_some() || conn.raw().is_bonded_peer() {
-                        PAIRING_MODE.store(false, Ordering::Release);
+                        publish_pairing_runtime(pairing_runtime().bonded_reconnect());
                         BLE_LED_MODE.store(0, Ordering::Release);
                         apply_pairing_gate(stack);
                     }
                 }
                 Either3::First(GattConnectionEvent::PairingFailed(error)) => {
                     debug_log(format_args!("pairing-failed error={error:?}"));
-                    if counts_toward_lockout(&error) {
-                        let failures = PAIRING_FAILURES.fetch_add(1, Ordering::AcqRel) + 1;
-                        if failures >= 3 {
-                            PAIRING_LOCKED_OUT.store(true, Ordering::Release);
+                    let failure = classify_pairing_failure(&error);
+                    if failure.counts_toward_lockout() {
+                        let before = pairing_runtime();
+                        let after = before.record_failure(failure);
+                        publish_pairing_runtime(after);
+                        debug_log(format_args!(
+                            "pairing authentication-failures={} locked={}",
+                            after.failures, after.locked_out,
+                        ));
+                        if after.locked_out && !before.locked_out {
                             apply_pairing_gate(stack);
                         }
                     }
@@ -1149,23 +1199,27 @@ mod firmware {
                                 debug_log(format_args!("protected bond identity=pending"));
                                 false
                             }
-                            Some(bond) if store.lock().await.add_bond(&bond).await.is_ok() => {
-                                debug_log(format_args!("protected bond persist=ok"));
-                                true
-                            }
-                            Some(bond) => {
-                                debug_log(format_args!("protected bond persist=FAILED"));
-                                bond_persist_failed = true;
-                                match stack.remove_bond_information(bond.identity) {
-                                    Ok(()) => debug_log(format_args!(
-                                        "protected unpersisted bond remove=ok"
-                                    )),
-                                    Err(error) => debug_log(format_args!(
-                                        "protected unpersisted bond remove=FAILED error={error:?}"
-                                    )),
+                            Some(bond) => match persist_bond(store, &bond).await {
+                                Ok(count) => {
+                                    debug_log(format_args!("protected bond persist=ok"));
+                                    BLE_BOND_COUNT.store(count as u8, Ordering::Release);
+                                    apply_pairing_gate(stack);
+                                    true
                                 }
-                                false
-                            }
+                                Err(()) => {
+                                    debug_log(format_args!("protected bond persist=FAILED"));
+                                    bond_persist_failed = true;
+                                    match stack.remove_bond_information(bond.identity) {
+                                        Ok(()) => debug_log(format_args!(
+                                            "protected unpersisted bond remove=ok"
+                                        )),
+                                        Err(error) => debug_log(format_args!(
+                                            "protected unpersisted bond remove=FAILED error={error:?}"
+                                        )),
+                                    }
+                                    false
+                                }
+                            },
                             None => {
                                 debug_log(format_args!("protected bond lookup=missing"));
                                 false
@@ -1421,6 +1475,7 @@ mod firmware {
             ));
         }
         PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
+        BLE_BOND_COUNT.store(initial.bonds.len() as u8, Ordering::Release);
         PAIRING_MODE.store(initial.bonds.is_empty(), Ordering::Release);
         BLE_LED_MODE.store(u8::from(initial.bonds.is_empty()), Ordering::Release);
         let io_capabilities = if initial.pin.is_some() {
@@ -1428,15 +1483,22 @@ mod firmware {
         } else {
             IoCapabilities::NoInputNoOutput
         };
+        let initial_pairing_enabled = pairing_enabled(
+            initial.bonds.is_empty(),
+            initial.pin.is_some(),
+            false,
+            initial.bonds.len(),
+            ble_store::MAX_BONDS,
+        );
         debug_log(format_args!(
             "ble stack configure io={io_capabilities:?} pairing-enabled={} fixed-passkey={}",
-            initial.bonds.is_empty() || initial.pin.is_some(),
+            initial_pairing_enabled,
             initial.pin.is_some(),
         ));
         let stack_builder = trouble_host::new(controller, &mut resources)
             .set_random_address(ble_identity_address())
             .set_io_capabilities(io_capabilities)
-            .set_pairing_enabled(initial.bonds.is_empty() || initial.pin.is_some())
+            .set_pairing_enabled(initial_pairing_enabled)
             .set_fixed_passkey(initial.pin);
         let stack = match stack_builder {
             Ok(builder) => {
@@ -1527,10 +1589,9 @@ mod firmware {
             let Ok(len) = hdlc::encode_frame(&outbound.frame, &mut wire) else {
                 continue;
             };
-            for chunk in wire[..len].chunks(64) {
-                if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
-                    break;
-                }
+            for chunk in generation_checked(wire[..len].chunks(64), outbound.generation, || {
+                SESSION_GEN.load(Ordering::Acquire)
+            }) {
                 let _ = tx.write_packet(chunk).await;
             }
         }
@@ -1579,8 +1640,7 @@ mod firmware {
     async fn ncp_task(boot_reason: Status) {
         let mut session = Session::new(session_config());
         let mut emitter = Emitter::new();
-        let mut active = None;
-        let mut generation = SESSION_GEN.load(Ordering::Acquire);
+        let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
 
         loop {
             // Only wait for a TX completion while one is outstanding,
@@ -1599,31 +1659,31 @@ mod firmware {
                     // Silent: the reset notice is only sent for CMD_RST,
                     // so the host never races a stray notice during its
                     // own reset handshake.
-                    generation = SESSION_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-                    active = Some(transport);
+                    arbitration.attach(transport);
+                    SESSION_GEN.store(arbitration.generation(), Ordering::Release);
                     #[cfg(not(feature = "ble-debug"))]
-                    set_advertising_allowed(transport != Transport::Usb);
+                    set_advertising_allowed(arbitration.advertising_allowed());
                     #[cfg(feature = "ble-debug")]
-                    set_advertising_allowed(true);
+                    {
+                        let _ = arbitration.advertising_allowed();
+                        set_advertising_allowed(true);
+                    }
                     let effect = session.reset(boot_reason, &mut |_frame: &[u8]| {});
                     apply_effect(&session, Some(effect)).await;
                 }
                 Either3::First(InEvent::Detached(transport)) => {
-                    if active == Some(transport) {
-                        active = None;
+                    if arbitration.detach(transport) {
                         set_advertising_allowed(true);
                     }
                 }
                 Either3::First(InEvent::Frame(transport, frame_bytes)) => {
-                    if active == Some(transport) {
+                    if arbitration.accepts_frame(transport) {
                         let now_ms = Instant::now().as_millis();
                         let effect =
                             session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
                                 emitter.push(frame)
                             });
-                        emitter
-                            .flush(active.map(|transport| (transport, generation)))
-                            .await;
+                        emitter.flush(arbitration.destination()).await;
                         match effect {
                             Some(Effect::SampleRssi { tid }) => {
                                 // Round-trip to the radio runner for an
@@ -1634,9 +1694,7 @@ mod firmware {
                                 session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
                                     emitter.push(frame)
                                 });
-                                emitter
-                                    .flush(active.map(|transport| (transport, generation)))
-                                    .await;
+                                emitter.flush(arbitration.destination()).await;
                             }
                             Some(Effect::SetPairingPin { tid, pin }) => {
                                 PAIRING_CONFIG_CH.send(pin).await;
@@ -1646,9 +1704,7 @@ mod firmware {
                                     applied.then_some(()).ok_or(()),
                                     &mut |frame: &[u8]| emitter.push(frame),
                                 );
-                                emitter
-                                    .flush(active.map(|transport| (transport, generation)))
-                                    .await;
+                                emitter.flush(arbitration.destination()).await;
                             }
                             other => apply_effect(&session, other).await,
                         }
@@ -1662,18 +1718,14 @@ mod firmware {
                         info.lqi,
                         &mut |frame: &[u8]| emitter.push(frame),
                     );
-                    emitter
-                        .flush(active.map(|transport| (transport, generation)))
-                        .await;
+                    emitter.flush(arbitration.destination()).await;
                 }
                 Either3::Third(result) => {
                     let now_ms = Instant::now().as_millis();
                     session.on_tx_result(result.is_ok(), now_ms, &mut |frame: &[u8]| {
                         emitter.push(frame)
                     });
-                    emitter
-                        .flush(active.map(|transport| (transport, generation)))
-                        .await;
+                    emitter.flush(arbitration.destination()).await;
                 }
             }
         }
@@ -1749,6 +1801,11 @@ mod firmware {
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
+        // RESETREAS survives reset. Capture and clear it before starting the
+        // watchdog so a later host query can distinguish a watchdog reboot
+        // from a cold start or an external reset.
+        let hardware_reset_reasons = pac::POWER.resetreas().read();
+        pac::POWER.resetreas().write(|reasons| reasons.0 = u32::MAX);
         #[cfg(feature = "ble-debug")]
         {
             set_security_trace_handler(Some(trouble_security_trace));
@@ -1773,6 +1830,14 @@ mod firmware {
             if slot.read().is_some() {
                 slot.clear();
                 Status::RESET_CRASH
+            } else if hardware_reset_reasons.dog() {
+                Status::RESET_WATCHDOG
+            } else if hardware_reset_reasons.lockup() {
+                Status::RESET_CRASH
+            } else if hardware_reset_reasons.resetpin() {
+                Status::RESET_EXTERNAL
+            } else if hardware_reset_reasons.sreq() {
+                Status::RESET_SOFTWARE
             } else {
                 Status::RESET_POWER_ON
             }
@@ -1872,6 +1937,7 @@ mod firmware {
             ));
         }
         BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
+        BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
 
         let sdc_peripherals = sdc::Peripherals::new(
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
