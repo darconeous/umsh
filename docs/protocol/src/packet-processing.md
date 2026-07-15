@@ -42,8 +42,11 @@ This chapter describes how a receiving node processes an incoming packet. This p
 6. **Payload type validation**
    - If the payload type is not allowed for this packet type (see [Payload and Packet Type Compatibility](payload-format.md#payload-and-packet-type-compatibility)), drop.
 
-7. **Ack Processing**
-   - If the packet type requests an ACK, the receiving node (i.e., the final destination) computes the [ack tag](security.md#ack-tag-construction) from the full 16-byte CMAC and pairwise `K_enc`, prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see [MAC Ack Packet](packet-types.md#mac-ack-packet).
+7. **Replay and Ack Processing**
+   - Apply the [replay-detection rules](security.md#replay-detection).
+   - If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the [ack tag](security.md#ack-tag-construction) from the full 16-byte CMAC and pairwise `K_enc`, prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see [MAC Ack Packet](packet-types.md#mac-ack-packet).
+   - If the authenticated packet is a previously received packet within the bounded [duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window), the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.
+   - Otherwise, if replay detection rejects the packet, drop it without acknowledging it.
 
 8. **Application processing**
    - Continue processing the application payload.
