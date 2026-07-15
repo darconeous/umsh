@@ -14,7 +14,10 @@ transport:
 
 The specific subset of the protocol documented here is the minimal set needed
 to configure and use a LoRa radio. All other concerns are left out to make it
-easier to implement this initial step.
+easier to implement this initial step. The
+[Full Companion Radio Protocol](companion-radio-full.md) is a strict superset
+of this document, adding receive filtering, inbound queueing, key
+provisioning, and acknowledgement delegation.
 
 In this document, we refer to the companion radio as the "NCP" or "network
 control processor". This is a carry-over from Thread, but it seems appropriate
@@ -157,9 +160,11 @@ Id | Mnemonic         | Dir       | Description
 9  | `CMD_STR_SEND`   | Host->NCP | Send data to a stream
 10 | `CMD_STR_RECV`   | NCP->Host | Receive data from a stream
 
-Command identifiers 4, 5, 7, and 8 are reserved for property insert/remove
-operations and their corresponding notifications, which may be added in a
-future version of this protocol.
+Command identifiers 4, 5, 7, and 8 are assigned to property insert/remove
+operations and their corresponding notifications, defined in the
+[Full Companion Radio Protocol](companion-radio-full.md). They are listed
+here as reserved because no property defined in this document uses them; a
+minimal-only NCP simply responds to them with `STATUS_INVALID_COMMAND`.
 
 ### CMD 0: (Host -> NCP) `CMD_NOP` {#cmd-noop}
 
@@ -694,7 +699,7 @@ Id | Name
 12 | `STATUS_BUSY`
 13 | `STATUS_PROP_NOT_FOUND`
 18 | `STATUS_CCA_FAILURE`
-19 | `STATUS_DUTY_LIMIT`
+32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
 : Indicates that the operation has completed successfully.
@@ -751,6 +756,16 @@ All status codes which fall into the inclusive range of 112-127 are considered
 provide a way to differentiate different causes of resets. If the first command
 the host sends to the NCP after a reset is to fetch `PROP_LAST_STATUS`, then
 the reset code **MUST** be returned.
+
+> [!NOTE]
+> On an NCP implementing the
+> [Full Companion Radio Protocol](companion-radio-full.md#saved-state) that
+> holds a saved snapshot, the post-reset value of every saved property is
+> its saved value rather than the documented default. A host **MUST NOT**
+> assume that a reset implies documented factory defaults; it should fetch
+> or explicitly set the properties it depends on. Without a snapshot — in
+> particular on any minimal-only NCP — the documented post-reset values
+> apply unconditionally.
 
 Id  | Name
 ----|------------------------

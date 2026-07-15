@@ -86,6 +86,28 @@ Implementations that need to tolerate out-of-order delivery may also define a **
 
 Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
+##### Duplicate Acknowledgement Window {#duplicate-acknowledgement-window}
+
+Rejecting a packet as a duplicate does not prohibit retransmitting its MAC
+acknowledgement. An authenticated packet that requests an acknowledgement and
+whose MIC identifies it as a previously received packet **MAY** be acknowledged
+again if its frame counter is no more than **8** counts behind the highest
+accepted counter for that traffic direction, inclusive. Equivalently:
+
+```text
+ack_distance = (last_accepted_counter - received_counter) mod 2^32
+```
+
+The duplicate may be acknowledged only when `ack_distance <= 8`. A receiver
+**MUST NOT** acknowledge a replay farther behind the stored counter. Re-sending
+the acknowledgement is idempotent and allows a sender to recover when the
+original acknowledgement was lost; it does not accept the packet as new and
+**MUST NOT** advance or otherwise modify the stored replay baseline. A receiver
+may suppress duplicate delivery itself. In a split implementation, such as a
+companion radio and host MAC, it may instead pass the authenticated duplicate to
+the host, which is then responsible for suppressing duplicate application
+delivery.
+
 #### Counter Persistence
 
 How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.
@@ -399,4 +421,3 @@ Upon session end, both sides **must securely erase/zeroize the private keys for 
 
 > [!CAUTION]
 > Implementations must ensure that the private keys for ephemeral addresses are not swapped to disk, written to logs, or otherwise persisted in any form. On embedded platforms, this requires explicitly zeroing the key material in RAM before releasing it. Failure to securely erase these keys eliminates the PFS property entirely.
-

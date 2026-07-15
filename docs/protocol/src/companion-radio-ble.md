@@ -169,11 +169,15 @@ A host is **attached** once it has enabled notifications on Frame Out
 connection meeting the security requirements in (#ble-security).
 Connection alone does not attach.
 
-On attach, the NCP **MUST** silently reset its protocol session to
-post-reset defaults, exactly as specified for host attach on serial
-transports: no unsolicited reset notification is emitted, so the host
-never races a stray notice during its own reset handshake. The NCP
-**MUST NOT** emit any frame before attach.
+On attach, the NCP **MUST** silently reset its protocol **session
+state** — transaction correlation, reassembly, and session-scoped
+properties — and **MUST NOT** modify any other state: device and host
+provisioning, the RF configuration, and the PHY enable state are
+unaffected, and the radio keeps operating through the attach (see
+[Attach, Detach, and
+Synchronization](companion-radio-full.md#attach-sync)). No unsolicited
+notification is emitted on attach; the host learns the NCP's current
+state by fetching it. The NCP **MUST NOT** emit any frame before attach.
 
 A host **detaches** by disabling notifications or by disconnecting.
 Partially reassembled frames are discarded on detach.
