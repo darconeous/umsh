@@ -120,10 +120,32 @@ pub enum Effect {
     /// then complete with [`Session::respond_save`]. Success must not
     /// be reported before the write has committed.
     SaveSnapshot { tid: u8 },
-    /// `CMD_CLEAR`: erase the stored snapshot (and, once it exists, all
-    /// other persisted provisioning), then complete with
-    /// [`Session::respond_clear`]. Live state is unaffected.
+    /// `CMD_CLEAR`: erase the stored snapshot and all other persisted
+    /// provisioning — including the independently persisted device
+    /// identity — then complete with [`Session::respond_clear`]. Live
+    /// state, BLE bonds, and the pairing PIN are unaffected.
     ClearSaved { tid: u8 },
+    /// A `PROP_DEV_PRIVATE_KEY` write is provisioning the device
+    /// identity. Read the staged request with
+    /// [`Session::identity_request`], build the keypair (drawing the
+    /// secret from a cryptographically secure RNG when the request is
+    /// [`IdentitySource::Generate`]), persist it durably, and complete
+    /// with [`Session::respond_identity`]. Success must not be
+    /// reported before the identity is durably stored (spec
+    /// §PROP_DEV_PRIVATE_KEY).
+    ProvisionIdentity { tid: u8 },
+}
+
+/// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
+/// [`Effect::ProvisionIdentity`]).
+#[derive(Clone, Copy)]
+pub enum IdentitySource {
+    /// Install this Ed25519 private key.
+    Install([u8; PRIVATE_KEY_LEN]),
+    /// Generate a fresh private key on-device; it must come from a
+    /// cryptographically secure random number generator and never
+    /// leave the device.
+    Generate,
 }
 
 struct PendingTx {
@@ -196,6 +218,12 @@ struct DeviceDomain {
     duty: DutyTracker,
     name: [u8; MAX_DEVICE_NAME_LEN],
     name_len: usize,
+    /// `PROP_DEV_CHANNEL_KEYS`: the device identity's own channels.
+    /// Independent of the host domain — they survive host replacement
+    /// and never create implicit host receive filters.
+    channel_keys: ChannelKeyTable,
+    /// `PROP_DEV_PEERS`: peer public keys the device node recognizes.
+    peers: DevPeerTable,
 }
 
 impl DeviceDomain {
@@ -211,6 +239,8 @@ impl DeviceDomain {
             duty: DutyTracker::new(),
             name,
             name_len,
+            channel_keys: ChannelKeyTable::default(),
+            peers: DevPeerTable::default(),
         }
     }
 }
@@ -634,6 +664,68 @@ impl PeerKeyTable {
     }
 }
 
+/// Ed25519 private keys are 32 octets, like public keys.
+pub const PRIVATE_KEY_LEN: usize = 32;
+
+/// Maximum number of `PROP_DEV_PEERS` entries.
+pub const MAX_DEV_PEERS: usize = 8;
+
+/// `PROP_DEV_PEERS`: an unordered set of peer public keys. No key
+/// material — the NCP holds the device identity's private key and
+/// performs its own key agreement — so the digest form and remove
+/// selector are both the item itself.
+#[derive(Clone, Copy, Default)]
+struct DevPeerTable {
+    entries: [[u8; items::PUBLIC_KEY_LEN]; MAX_DEV_PEERS],
+    len: usize,
+}
+
+impl DevPeerTable {
+    fn iter(&self) -> impl Iterator<Item = &[u8; items::PUBLIC_KEY_LEN]> {
+        self.entries[..self.len].iter()
+    }
+
+    /// Add a peer; duplicates fail with `STATUS_ALREADY`, a full table
+    /// with `STATUS_NOMEM`.
+    fn insert(&mut self, public_key: [u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
+        if self.iter().any(|existing| *existing == public_key) {
+            return Err(Status::ALREADY);
+        }
+        if self.len == MAX_DEV_PEERS {
+            return Err(Status::NOMEM);
+        }
+        self.entries[self.len] = public_key;
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Remove by public key (the full item is the selector); a missing
+    /// item fails with `STATUS_ITEM_NOT_FOUND`.
+    fn remove(&mut self, public_key: &[u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
+        let Some(index) = self.iter().position(|existing| existing == public_key) else {
+            return Err(Status::ITEM_NOT_FOUND);
+        };
+        self.len -= 1;
+        self.entries[index] = self.entries[self.len];
+        Ok(())
+    }
+
+    /// Parse a whole-table `CMD_PROP_SET` value (fixed 32-octet items)
+    /// into a complete replacement table; duplicate items collapse.
+    fn parse_table(value: &[u8]) -> Result<Self, Status> {
+        let mut table = Self::default();
+        for item in
+            items::fixed_items::<{ items::PUBLIC_KEY_LEN }>(value).map_err(|_| Status::INVALID_ARGUMENT)?
+        {
+            match table.insert(*item) {
+                Ok(()) | Err(Status::ALREADY) => {}
+                Err(status) => return Err(status),
+            }
+        }
+        Ok(table)
+    }
+}
+
 /// State belonging to the configured tethered host identity (spec
 /// §State Classes, host domain): host key, key tables, filters,
 /// auto-ACK policy, and the inbound queue. The `CAP_HOST_AUTO_ACK`
@@ -719,11 +811,12 @@ impl HostDomain {
 /// Largest encoded snapshot the session produces (see
 /// [`Session::encode_snapshot`]); sized for every table at capacity
 /// with headroom for future fields.
-pub const SNAPSHOT_MAX: usize = 1024;
+pub const SNAPSHOT_MAX: usize = 1536;
 
 /// Snapshot wire-format version; a decoder rejects other versions and
-/// the NCP then boots as if nothing were saved.
-const SNAPSHOT_VERSION: u8 = 1;
+/// the NCP then boots as if nothing were saved. Version 2 added the
+/// device identity's channel keys and peer list.
+const SNAPSHOT_VERSION: u8 = 2;
 
 /// The saved-state subset of the device and host domains (spec §Saved
 /// State): everything `CMD_SAVE` persists and `CMD_RESTORE`/`CMD_RST`
@@ -735,6 +828,8 @@ struct SavedState {
     duty_limit: u16,
     name: [u8; MAX_DEVICE_NAME_LEN],
     name_len: usize,
+    dev_channel_keys: ChannelKeyTable,
+    dev_peers: DevPeerTable,
     host_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     auto_ack: bool,
     filters: FilterTable,
@@ -755,6 +850,8 @@ impl SavedState {
             duty_limit: device.duty_limit,
             name: device.name,
             name_len: device.name_len,
+            dev_channel_keys: device.channel_keys,
+            dev_peers: device.peers,
             host_key: host.key,
             auto_ack: host.auto_ack,
             filters: host.filters,
@@ -810,6 +907,14 @@ impl SavedState {
             let mut item = [0u8; items::PeerKeyEntry::WIRE_LEN];
             entry.encode(&mut item).ok()?;
             writer.bytes(&item)?;
+        }
+        writer.byte(self.dev_channel_keys.len as u8)?;
+        for entry in self.dev_channel_keys.iter() {
+            writer.bytes(&entry.key)?;
+        }
+        writer.byte(self.dev_peers.len as u8)?;
+        for public_key in self.dev_peers.iter() {
+            writer.bytes(public_key)?;
         }
         Some(writer.at)
     }
@@ -896,6 +1001,28 @@ impl SavedState {
         for slot in peers.iter_mut().take(peer_len) {
             *slot = Some(items::PeerKeyEntry::decode(reader.slice(items::PeerKeyEntry::WIRE_LEN)?).ok()?);
         }
+        let dev_channel_count = usize::from(reader.byte()?);
+        if dev_channel_count > MAX_CHANNEL_KEYS {
+            return None;
+        }
+        let mut dev_channel_keys = ChannelKeyTable::default();
+        for _ in 0..dev_channel_count {
+            let key: [u8; items::CHANNEL_KEY_LEN] = reader.array()?;
+            dev_channel_keys
+                .insert(ChannelKeyEntry {
+                    key,
+                    id: engine.derive_channel_id(&ChannelKey(key)).0,
+                })
+                .ok()?;
+        }
+        let dev_peer_count = usize::from(reader.byte()?);
+        if dev_peer_count > MAX_DEV_PEERS {
+            return None;
+        }
+        let mut dev_peers = DevPeerTable::default();
+        for _ in 0..dev_peer_count {
+            dev_peers.insert(reader.array()?).ok()?;
+        }
         if reader.at != bytes.len() {
             return None;
         }
@@ -904,6 +1031,8 @@ impl SavedState {
             duty_limit,
             name,
             name_len,
+            dev_channel_keys,
+            dev_peers,
             host_key,
             auto_ack,
             filters,
@@ -975,11 +1104,22 @@ struct SessionState {
     /// frames queued when `CMD_QUEUE_DRAIN` arrived; an attach or
     /// detach abandons the drain, leaving undelivered frames queued.
     drain: Option<DrainState>,
+    /// A device-identity provisioning awaiting its durable write
+    /// ([`Effect::ProvisionIdentity`]). A detach mid-flight abandons
+    /// the transaction; flash remains the source of truth either way
+    /// (see [`Session::respond_identity`]).
+    pending_identity: Option<PendingIdentity>,
 }
 
 struct PendingHostKey {
     tid: u8,
     key: Option<[u8; items::PUBLIC_KEY_LEN]>,
+}
+
+struct PendingIdentity {
+    tid: u8,
+    /// The private key to install, or `None` to generate one on-device.
+    secret: Option<[u8; PRIVATE_KEY_LEN]>,
 }
 
 struct DrainState {
@@ -1009,6 +1149,15 @@ pub struct Session<A: AesProvider, S: Sha256Provider> {
     /// the firmware keeps the flash journal in sync through the
     /// save/clear/wipe effects.
     saved: Option<SavedState>,
+    /// `PROP_DEV_KEY`: the live device identity public key.
+    dev_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
+    /// RAM mirror of the *independently persisted* identity — the
+    /// value `CMD_RST` reverts to. Identical to `dev_key` except
+    /// between a `CMD_CLEAR` (which erases only the durable copy; live
+    /// state is unaffected) and the reset that completes the factory
+    /// wipe. Never part of the snapshot: `CMD_RESTORE` cannot revert
+    /// the identity.
+    dev_key_persisted: Option<[u8; items::PUBLIC_KEY_LEN]>,
     last_status: Status,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
@@ -1030,6 +1179,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             attached: false,
             link_secure: false,
             saved: None,
+            dev_key: None,
+            dev_key_persisted: None,
             last_status: boot_status,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
@@ -1078,6 +1229,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// saved).
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
         self.device = DeviceDomain::post_reset(&self.config);
+        // The device identity's post-reset value is the persisted one:
+        // normally unchanged, gone after CMD_CLEAR (completing a
+        // factory reset).
+        self.dev_key = self.dev_key_persisted;
         self.host.reset(None);
         if self.saved.is_some() {
             self.apply_saved_device();
@@ -1098,6 +1253,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         self.device.duty_limit = saved.duty_limit;
         self.device.name = saved.name;
         self.device.name_len = saved.name_len;
+        self.device.channel_keys = saved.dev_channel_keys;
+        self.device.peers = saved.dev_peers;
     }
 
     /// Apply the saved host-domain configuration to the live domain.
@@ -1624,7 +1781,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         // PROP_PHY_RSSI is an instantaneous radio reading the session cannot
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
-        if key == prop::BLE_PAIRING_PIN {
+        //
+        // The write-only properties must not disclose their values —
+        // for the device private key, not even whether one is
+        // configured (spec §PROP_DEV_PRIVATE_KEY).
+        if key == prop::BLE_PAIRING_PIN || key == prop::DEV_PRIVATE_KEY {
             self.complete(tid, Status::UNIMPLEMENTED, emit);
             return None;
         }
@@ -1752,15 +1913,70 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     }
 
     /// Complete the durable erase requested via [`Effect::ClearSaved`],
-    /// quoting the same `tid`. Live state is unaffected either way.
+    /// quoting the same `tid`. Live state is unaffected either way: the
+    /// live device identity in particular remains in effect until the
+    /// `CMD_RST` that completes a factory reset.
     pub fn respond_clear(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
         match result {
             Ok(()) => {
                 self.saved = None;
+                self.dev_key_persisted = None;
                 self.complete(tid, Status::OK, emit);
             }
             Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
+    }
+
+    /// The staged `PROP_DEV_PRIVATE_KEY` provisioning awaiting
+    /// [`Effect::ProvisionIdentity`] execution.
+    pub fn identity_request(&self) -> Option<IdentitySource> {
+        self.session
+            .pending_identity
+            .as_ref()
+            .map(|pending| match pending.secret {
+                Some(secret) => IdentitySource::Install(secret),
+                None => IdentitySource::Generate,
+            })
+    }
+
+    /// Complete the device-identity provisioning requested via
+    /// [`Effect::ProvisionIdentity`], quoting the same `tid`. `result`
+    /// carries the new identity's *public* key once the keypair is
+    /// durably stored — success is announced as `CMD_PROP_IS` for
+    /// `PROP_DEV_KEY` and the private key is never emitted (spec
+    /// §PROP_DEV_PRIVATE_KEY). On `Ok` the new identity is adopted even
+    /// if the transaction was abandoned by a detach: the durable write
+    /// already happened, and flash is the source of truth.
+    pub fn respond_identity(
+        &mut self,
+        tid: u8,
+        result: Result<[u8; items::PUBLIC_KEY_LEN], ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let matched = self
+            .session
+            .pending_identity
+            .take_if(|pending| pending.tid == tid)
+            .is_some();
+        match result {
+            Ok(public_key) => {
+                self.dev_key = Some(public_key);
+                self.dev_key_persisted = Some(public_key);
+                if matched {
+                    self.send_prop_is(tid, prop::DEV_KEY, &public_key, emit);
+                }
+            }
+            Err(()) if matched => self.complete(tid, Status::FAILURE, emit),
+            Err(()) => {}
+        }
+    }
+
+    /// Install the independently persisted device identity's public
+    /// key at boot, before any host command: the post-reset value of
+    /// `PROP_DEV_KEY` is the persisted identity, snapshot or not.
+    pub fn set_boot_identity(&mut self, public_key: [u8; items::PUBLIC_KEY_LEN]) {
+        self.dev_key = Some(public_key);
+        self.dev_key_persisted = Some(public_key);
     }
 
     /// Complete a deferred host replacement requested via
@@ -1832,6 +2048,30 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 }
             };
             return Some(Effect::SetPairingPin { tid, pin });
+        }
+        if key == prop::DEV_PRIVATE_KEY {
+            // Both forms — installing a key and commanding on-device
+            // generation — are key provisioning and require the
+            // transport's security binding (spec §Provisioning
+            // Security).
+            if let Err(status) = self.require_secure_link() {
+                self.complete(tid, status, emit);
+                return None;
+            }
+            let secret = match value.len() {
+                0 => None,
+                PRIVATE_KEY_LEN => Some(value.try_into().expect("length checked")),
+                _ => {
+                    self.complete(tid, Status::INVALID_ARGUMENT, emit);
+                    return None;
+                }
+            };
+            if self.session.pending_identity.is_some() {
+                self.complete(tid, Status::BUSY, emit);
+                return None;
+            }
+            self.session.pending_identity = Some(PendingIdentity { tid, secret });
+            return Some(Effect::ProvisionIdentity { tid });
         }
         if key == prop::HOST_KEY {
             let new_key = match value.len() {
@@ -1992,10 +2232,31 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 self.host.peer_keys = table;
                 Ok(false)
             }
+            prop::DEV_CHANNEL_KEYS => {
+                self.require_secure_link()?;
+                let mut table = ChannelKeyTable::default();
+                for key in items::fixed_items::<{ items::CHANNEL_KEY_LEN }>(value)
+                    .map_err(|_| Status::INVALID_ARGUMENT)?
+                {
+                    match table.insert(self.channel_entry(key)) {
+                        Ok(()) | Err(Status::ALREADY) => {}
+                        Err(status) => return Err(status),
+                    }
+                }
+                self.device.channel_keys = table;
+                Ok(false)
+            }
+            // Peer public keys carry no secret material, so no
+            // secure-link gate — like PROP_HOST_KEY itself.
+            prop::DEV_PEERS => {
+                self.device.peers = DevPeerTable::parse_table(value)?;
+                Ok(false)
+            }
             // This NCP's queue size is fixed; adjustment is optional in
             // the spec and unimplemented here.
             prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
-            // Known read-only properties.
+            // Known read-only properties. PROP_DEV_KEY changes only
+            // through PROP_DEV_PRIVATE_KEY provisioning.
             prop::LAST_STATUS
             | prop::PROTOCOL_VERSION
             | prop::NCP_VERSION
@@ -2004,6 +2265,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             | prop::PHY_RSSI
             | prop::PHY_MTU
             | prop::PHY_DUTY_NOW
+            | prop::DEV_KEY
             | prop::HOST_RX_QUEUE_COUNT
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
@@ -2052,6 +2314,30 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            prop::DEV_CHANNEL_KEYS => {
+                let result = self.require_secure_link().and_then(|()| {
+                    let key: &[u8; items::CHANNEL_KEY_LEN] =
+                        item.try_into().map_err(|_| Status::INVALID_ARGUMENT)?;
+                    let entry = self.channel_entry(key);
+                    self.device.channel_keys.insert(entry).map(|()| entry.id)
+                });
+                match result {
+                    Ok(id) => self.send_prop_inserted(tid, key, &id, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::DEV_PEERS => {
+                let result = item
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.device.peers.insert(*public_key)
+                    });
+                match result {
+                    Ok(()) => self.send_prop_inserted(tid, key, item, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
@@ -2096,6 +2382,30 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     .map_err(|_| Status::INVALID_ARGUMENT)
                     .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
                         self.host.peer_keys.remove(public_key)
+                    });
+                match result {
+                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::DEV_CHANNEL_KEYS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|key: &[u8; items::CHANNEL_KEY_LEN]| {
+                        self.device.channel_keys.remove(key)
+                    });
+                match result {
+                    Ok(id) => self.send_prop_removed(tid, key, &id, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::DEV_PEERS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.device.peers.remove(public_key)
                     });
                 match result {
                     Ok(()) => self.send_prop_removed(tid, key, selector, emit),
@@ -2208,6 +2518,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 | prop::PHY_MTU
                 | prop::PHY_LORA_SW
                 | prop::DEV_NAME
+                | prop::DEV_KEY
+                | prop::DEV_PRIVATE_KEY
+                | prop::DEV_CHANNEL_KEYS
+                | prop::DEV_PEERS
                 | prop::PHY_DUTY_NOW
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
@@ -2252,6 +2566,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     cap::HOST_KEYS,
                     cap::HOST_AUTO_ACK,
                     cap::SAVE,
+                    cap::DEV_IDENTITY,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -2279,6 +2594,24 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             prop::PHY_MTU => put(out, &self.config.mtu.to_le_bytes()),
             prop::PHY_LORA_SW => put(out, &self.config.sync_word.to_le_bytes()),
             prop::DEV_NAME => put(out, &self.device.name[..self.device.name_len]),
+            prop::DEV_KEY => match &self.dev_key {
+                Some(key) => put(out, key),
+                None => 0,
+            },
+            prop::DEV_CHANNEL_KEYS => {
+                let mut len = 0;
+                for entry in self.device.channel_keys.iter() {
+                    len += put(&mut out[len..], &entry.id);
+                }
+                len
+            }
+            prop::DEV_PEERS => {
+                let mut len = 0;
+                for public_key in self.device.peers.iter() {
+                    len += put(&mut out[len..], public_key);
+                }
+                len
+            }
             prop::PHY_DUTY_NOW => put(out, &self.device.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.device.duty_limit.to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
@@ -2627,7 +2960,8 @@ mod tests {
                 cap::HOST_RX_QUEUE,
                 cap::HOST_KEYS,
                 cap::HOST_AUTO_ACK,
-                cap::SAVE
+                cap::SAVE,
+                cap::DEV_IDENTITY
             ]
         );
     }
@@ -3029,9 +3363,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found. DEV_CHANNEL_KEYS exists in
-        // the full spec but this session does not implement it yet.
-        for unknown in [prop::DEV_CHANNEL_KEYS, 1_234] {
+        // An unknown property is not found; 69 is in the reserved
+        // device-behavior range the spec has not assigned.
+        for unknown in [69, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -4715,6 +5049,294 @@ mod tests {
         receive_detached(&mut session, &frame, 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 2);
+    }
+
+    // ─── CAP_DEV_IDENTITY gate ───────────────────────────────────────
+
+    /// Derive the public key a firmware would persist for this secret.
+    fn public_of(secret: &[u8; 32]) -> [u8; 32] {
+        use umsh_crypto::NodeIdentity;
+        umsh_crypto::software::SoftwareIdentity::from_secret_bytes(secret)
+            .public_key()
+            .0
+    }
+
+    /// Set `PROP_DEV_PRIVATE_KEY` and execute the provisioning effect
+    /// the way firmware would: derive the keypair, "persist" it, and
+    /// respond with the public key. Returns that public key.
+    fn provision_identity(session: &mut TestSession, tid: u8, secret: &[u8; 32]) -> [u8; 32] {
+        let mut buf = [0u8; 64];
+        let len = frame::prop_set(&mut buf, tid, prop::DEV_PRIVATE_KEY, secret).unwrap();
+        let (emitted, effect) = dispatch(session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response before the identity is stored");
+        assert_eq!(effect, Some(Effect::ProvisionIdentity { tid }));
+        let Some(IdentitySource::Install(staged)) = session.identity_request() else {
+            panic!("staged request must carry the installed secret");
+        };
+        assert_eq!(staged, *secret);
+        let public_key = public_of(&staged);
+        let mut emitted = Vec::new();
+        session.respond_identity(tid, Ok(public_key), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        let (response_tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(response_tid, tid);
+        assert_eq!(key, prop::DEV_KEY, "success is announced as the public key");
+        assert_eq!(value, public_key);
+        public_key
+    }
+
+    #[test]
+    fn device_identity_provisioning_lifecycle() {
+        let mut session = test_session();
+        // Unconfigured: PROP_DEV_KEY is empty, and the write-only
+        // private key discloses nothing — not even whether one exists.
+        assert!(get(&mut session, prop::DEV_KEY).is_empty());
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 4, prop::DEV_PRIVATE_KEY).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 4, Status::UNIMPLEMENTED);
+
+        // PROP_DEV_KEY is read-only.
+        let (emitted, _) = set(&mut session, prop::DEV_KEY, &[0x55; 32]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        // Wrong-size private keys are invalid.
+        let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[0x11; 31]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        let public_key = provision_identity(&mut session, 7, &[0x11; 32]);
+        assert_eq!(get(&mut session, prop::DEV_KEY), public_key);
+
+        // The identity survives CMD_RST: its post-reset value is the
+        // persisted one.
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(get(&mut session, prop::DEV_KEY), public_key);
+
+        // Replacing the identity is permitted; peer list and channel
+        // keys survive the replacement (they are not derived from it).
+        insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        let replaced = provision_identity(&mut session, 3, &[0x22; 32]);
+        assert_ne!(replaced, public_key);
+        assert_eq!(get(&mut session, prop::DEV_KEY), replaced);
+        assert_eq!(get(&mut session, prop::DEV_PEERS), [0xD0; 32]);
+    }
+
+    #[test]
+    fn identity_generation_stages_and_concurrent_writes_are_busy() {
+        let mut session = test_session();
+        // An empty value commands on-device generation.
+        let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[]);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 2 }));
+        assert!(matches!(session.identity_request(), Some(IdentitySource::Generate)));
+
+        // A second write while the durable store is in flight is BUSY.
+        let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[0x33; 32]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::BUSY);
+
+        // The firmware generates the secret itself and reports the
+        // resulting public key.
+        let generated = public_of(&[0x5A; 32]);
+        let mut emitted = Vec::new();
+        session.respond_identity(2, Ok(generated), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::DEV_KEY);
+        assert_eq!(value, generated);
+        assert!(session.identity_request().is_none());
+    }
+
+    #[test]
+    fn identity_provisioning_failure_leaves_the_identity_unchanged() {
+        let mut session = test_session();
+        let original = provision_identity(&mut session, 7, &[0x11; 32]);
+
+        let (_, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[0x22; 32]);
+        assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 2 }));
+        let mut emitted = Vec::new();
+        session.respond_identity(2, Err(()), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], 2, Status::FAILURE);
+        assert_eq!(get(&mut session, prop::DEV_KEY), original);
+        assert!(session.identity_request().is_none());
+    }
+
+    #[test]
+    fn identity_and_dev_channel_writes_require_a_secure_link() {
+        let mut session = test_session();
+        session.attach(false);
+
+        // Installing and generating both count as key provisioning.
+        for value in [&[0x11u8; 32][..], &[][..]] {
+            let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, value);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::INVALID_STATE);
+        }
+        let (emitted, _) = insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &[0x42; 32]);
+        expect_status(&emitted[0], 5, Status::INVALID_STATE);
+        let (emitted, _) = set(&mut session, prop::DEV_CHANNEL_KEYS, &[0x42; 32]);
+        expect_status(&emitted[0], 2, Status::INVALID_STATE);
+
+        // Peer public keys carry no secret material: no gate, like
+        // PROP_HOST_KEY itself.
+        let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(key, prop::DEV_PEERS);
+        assert_eq!(digest, [0xD0; 32]);
+    }
+
+    #[test]
+    fn dev_channel_keys_and_peers_lifecycle() {
+        let mut session = test_session();
+        let dev_channel = [0x66u8; 32];
+        let expected_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
+
+        // Channel keys report the derived identifier as their digest;
+        // the key itself is never read back.
+        let (emitted, _) = insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(digest, expected_id);
+        assert_eq!(get(&mut session, prop::DEV_CHANNEL_KEYS), expected_id);
+        let (emitted, _) = insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+
+        // Peers: digest form is the item itself; duplicates collapse
+        // on whole-table set and fail an insert.
+        let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(digest, [0xD0; 32]);
+        let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+        let mut two = Vec::new();
+        two.extend_from_slice(&[0xD1; 32]);
+        two.extend_from_slice(&[0xD1; 32]);
+        let (emitted, _) = set(&mut session, prop::DEV_PEERS, &two);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::DEV_PEERS);
+        assert_eq!(value, [0xD1; 32], "duplicate items collapse");
+
+        // Remove by full item; a missing item is ITEM_NOT_FOUND.
+        let (emitted, _) = remove_item(&mut session, prop::DEV_PEERS, &[0xD1; 32]);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(digest, [0xD1; 32]);
+        let (emitted, _) = remove_item(&mut session, prop::DEV_PEERS, &[0xD1; 32]);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+        let (emitted, _) = remove_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(digest, expected_id);
+
+        // Capacity bounds.
+        for seed in 0..MAX_DEV_PEERS as u8 {
+            insert_item(&mut session, prop::DEV_PEERS, &[seed; 32]);
+        }
+        let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xFF; 32]);
+        expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    #[test]
+    fn dev_channel_keys_do_not_create_host_receive_filters() {
+        let mut session = test_session();
+        enable(&mut session);
+        // Host filtering is configured (host key present), and the
+        // device identity participates in its own channel.
+        install_host_key(&mut session, &HOST_PUB);
+        let dev_channel = [0x66u8; 32];
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        let dev_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
+
+        // Traffic on the device channel reaches the host only through
+        // the host's own filtering — it is not queued.
+        session.detach();
+        receive_detached(&mut session, &multicast_on(dev_id), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 0);
+
+        // The same frame with a matching *host* channel key queues.
+        install_channel_key(&mut session, &dev_channel);
+        session.detach();
+        receive_detached(&mut session, &multicast_on(dev_id), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
+    fn snapshot_carries_device_tables_but_never_the_identity() {
+        let mut session = test_session();
+        let dev_channel = [0x66u8; 32];
+        let dev_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        let public_key = provision_identity(&mut session, 7, &[0x11; 32]);
+        save(&mut session);
+
+        // Divergence reverts on CMD_RST (post-reset values come from
+        // the snapshot).
+        remove_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(get(&mut session, prop::DEV_PEERS), [0xD0; 32]);
+
+        // A boot from the snapshot restores the tables — but not the
+        // identity, which is persisted (and installed) independently.
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::DEV_CHANNEL_KEYS), dev_id);
+        assert_eq!(get(&mut booted, prop::DEV_PEERS), [0xD0; 32]);
+        assert!(get(&mut booted, prop::DEV_KEY).is_empty());
+        booted.set_boot_identity(public_key);
+        assert_eq!(get(&mut booted, prop::DEV_KEY), public_key);
+
+        // Host replacement never touches the device domain.
+        install_host_key(&mut booted, &[0xBB; 32]);
+        assert_eq!(get(&mut booted, prop::DEV_CHANNEL_KEYS), dev_id);
+        assert_eq!(get(&mut booted, prop::DEV_PEERS), [0xD0; 32]);
+        assert_eq!(get(&mut booted, prop::DEV_KEY), public_key);
+    }
+
+    #[test]
+    fn restore_never_reverts_the_identity_and_clear_plus_reset_erases_it() {
+        let mut session = test_session();
+        let first = provision_identity(&mut session, 7, &[0x11; 32]);
+        save(&mut session);
+
+        // CMD_RESTORE reverts configuration but the identity — outside
+        // the snapshot — keeps its newest value.
+        let second = provision_identity(&mut session, 3, &[0x22; 32]);
+        assert_ne!(second, first);
+        let _ = restore(&mut session);
+        assert_eq!(get(&mut session, prop::DEV_KEY), second);
+
+        // CMD_CLEAR erases the durable identity but not the live one;
+        // the CMD_RST completing the factory reset loses it.
+        let mut buf = [0u8; 4];
+        let len = frame::clear(&mut buf, 4).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 4 }));
+        session.respond_clear(4, Ok(()), &mut |_: &[u8]| {});
+        assert_eq!(get(&mut session, prop::DEV_KEY), second);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert!(get(&mut session, prop::DEV_KEY).is_empty());
+    }
+
+    #[test]
+    fn tid_zero_identity_provisioning_is_silent_but_applies() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let len = frame::prop_set(&mut buf, 0, prop::DEV_PRIVATE_KEY, &[0x11; 32]).unwrap();
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 0 }));
+        let public_key = public_of(&[0x11; 32]);
+        session.respond_identity(0, Ok(public_key), &mut |_: &[u8]| {
+            panic!("tid-0 provisioning must be silent")
+        });
+        assert_eq!(get(&mut session, prop::DEV_KEY), public_key);
     }
 
     /// Dispatch a frame built with TID zero and assert total silence.
