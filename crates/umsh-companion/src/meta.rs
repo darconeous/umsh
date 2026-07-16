@@ -16,6 +16,13 @@ pub const TX_FLAG_NOCCA: u8 = 1 << 0;
 /// `TX_FLAGS` bit: send even if it would exceed the duty-cycle limit.
 pub const TX_FLAG_NODUTY: u8 = 1 << 1;
 
+/// `RX_FLAGS` bit: the frame was held in the inbound queue and is being
+/// delivered by `CMD_QUEUE_DRAIN`.
+pub const RX_FLAG_BUFFERED: u8 = 1 << 0;
+/// `RX_FLAGS` bit: the NCP already transmitted a MAC ack for this frame
+/// on the host's behalf; the host must not ack it again.
+pub const RX_FLAG_ACKED: u8 = 1 << 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetaError {
     /// The metadata was present but shorter than its wire format.
@@ -121,6 +128,50 @@ impl RxMeta {
     }
 }
 
+/// `Recv` metadata extended with the full protocol's trailing
+/// buffered-frame fields (`RX_FLAGS`, `RX_AGE`).
+///
+/// Live deliveries may omit the trailing fields entirely (they decode
+/// as zero), keeping the encoding byte-compatible with the minimal
+/// protocol. Truncation is legal only at field boundaries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferedRxMeta {
+    pub rx: RxMeta,
+    /// Combination of the `RX_FLAG_*` bits.
+    pub flags: u8,
+    /// Seconds between reception and delivery; zero for live delivery.
+    pub age_s: u32,
+}
+
+impl BufferedRxMeta {
+    pub const WIRE_LEN: usize = RxMeta::WIRE_LEN + 5;
+
+    pub fn encode(self, out: &mut [u8]) -> Result<usize, MetaError> {
+        if out.len() < Self::WIRE_LEN {
+            return Err(MetaError::BufferTooSmall);
+        }
+        self.rx.encode(out)?;
+        out[RxMeta::WIRE_LEN] = self.flags;
+        out[RxMeta::WIRE_LEN + 1..Self::WIRE_LEN].copy_from_slice(&self.age_s.to_le_bytes());
+        Ok(Self::WIRE_LEN)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self, MetaError> {
+        let rx = RxMeta::decode(input)?;
+        let trailer = input.get(RxMeta::WIRE_LEN..).unwrap_or(&[]);
+        let (flags, age_s) = match trailer {
+            [] => (0, 0),
+            [flags] => (*flags, 0),
+            [flags, age @ ..] if age.len() >= 4 => (
+                *flags,
+                u32::from_le_bytes(age[..4].try_into().expect("length checked")),
+            ),
+            _ => return Err(MetaError::Truncated),
+        };
+        Ok(Self { rx, flags, age_s })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +218,51 @@ mod tests {
         assert_eq!(RxMeta::decode(&buf).unwrap(), RxMeta::default());
         assert_eq!(RxMeta::decode(&[]).unwrap(), RxMeta::default());
         assert_eq!(RxMeta::decode(&[91, 0, 0]), Err(MetaError::Truncated));
+    }
+
+    #[test]
+    fn buffered_round_trip_and_boundary_truncation() {
+        let meta = BufferedRxMeta {
+            rx: RxMeta {
+                rssi_dbm: Some(-101),
+                lqi: NonZeroU8::new(17),
+                snr_cb: Some(-22),
+            },
+            flags: RX_FLAG_BUFFERED | RX_FLAG_ACKED,
+            age_s: 3_601,
+        };
+        let mut buf = [0u8; BufferedRxMeta::WIRE_LEN];
+        assert_eq!(meta.encode(&mut buf).unwrap(), BufferedRxMeta::WIRE_LEN);
+        assert_eq!(BufferedRxMeta::decode(&buf).unwrap(), meta);
+
+        // Truncation at each legal field boundary: absent fields are zero.
+        assert_eq!(BufferedRxMeta::decode(&[]).unwrap(), BufferedRxMeta::default());
+        let base_only = BufferedRxMeta::decode(&buf[..RxMeta::WIRE_LEN]).unwrap();
+        assert_eq!(base_only.rx, meta.rx);
+        assert_eq!((base_only.flags, base_only.age_s), (0, 0));
+        let with_flags = BufferedRxMeta::decode(&buf[..RxMeta::WIRE_LEN + 1]).unwrap();
+        assert_eq!(with_flags.flags, meta.flags);
+        assert_eq!(with_flags.age_s, 0);
+
+        // Truncation mid-RX_AGE is malformed.
+        for len in RxMeta::WIRE_LEN + 2..BufferedRxMeta::WIRE_LEN {
+            assert_eq!(BufferedRxMeta::decode(&buf[..len]), Err(MetaError::Truncated));
+        }
+    }
+
+    #[test]
+    fn buffered_decode_matches_minimal_live_encoding() {
+        // A live minimal-protocol RxMeta decodes as a BufferedRxMeta with
+        // zero flags and age: the encodings stay byte-compatible.
+        let rx = RxMeta {
+            rssi_dbm: Some(-91),
+            lqi: None,
+            snr_cb: Some(55),
+        };
+        let mut buf = [0u8; RxMeta::WIRE_LEN];
+        rx.encode(&mut buf).unwrap();
+        let buffered = BufferedRxMeta::decode(&buf).unwrap();
+        assert_eq!(buffered, BufferedRxMeta { rx, flags: 0, age_s: 0 });
     }
 
     #[test]

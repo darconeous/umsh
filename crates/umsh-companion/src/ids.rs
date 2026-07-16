@@ -1,5 +1,5 @@
 //! Property, stream, and capability identifiers, plus protocol
-//! constants, from the minimal companion-radio spec.
+//! constants, from the minimal and full companion-radio specs.
 
 /// Protocol version advertised in `PROP_PROTOCOL_VERSION`.
 pub const PROTOCOL_MAJOR_VERSION: u8 = 6;
@@ -39,8 +39,37 @@ pub mod prop {
     pub const PHY_MTU: u32 = 42;
     /// LoRa sync word, SX126x-style 16-bit (`PROP_PHY_LORA_SW`).
     pub const PHY_LORA_SW: u32 = 43;
+    /// Deliver all received frames, bypassing host receive filtering;
+    /// the only session-scoped property (`PROP_MAC_PROMISCUOUS`).
+    pub const MAC_PROMISCUOUS: u32 = 48;
+    /// Whether a saved snapshot exists (`PROP_SAVED`).
+    pub const SAVED: u32 = 49;
+    /// Device identity public key (`PROP_DEV_KEY`).
+    pub const DEV_KEY: u32 = 64;
+    /// Device identity private key, write-only (`PROP_DEV_PRIVATE_KEY`).
+    pub const DEV_PRIVATE_KEY: u32 = 65;
+    /// Device identity channel keys (`PROP_DEV_CHANNEL_KEYS`).
+    pub const DEV_CHANNEL_KEYS: u32 = 66;
+    /// Device identity peer list (`PROP_DEV_PEERS`).
+    pub const DEV_PEERS: u32 = 67;
     /// Human-readable device name (`PROP_DEV_NAME`).
     pub const DEV_NAME: u32 = 68;
+    /// Tethered host identity public key (`PROP_HOST_KEY`).
+    pub const HOST_KEY: u32 = 96;
+    /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
+    pub const HOST_CHANNEL_KEYS: u32 = 97;
+    /// Host pairwise peer keys (`PROP_HOST_PEER_KEYS`).
+    pub const HOST_PEER_KEYS: u32 = 98;
+    /// Host receive filter table (`PROP_HOST_RX_FILTERS`).
+    pub const HOST_RX_FILTERS: u32 = 99;
+    /// Acknowledgement-delegation enable (`PROP_HOST_AUTO_ACK`).
+    pub const HOST_AUTO_ACK: u32 = 100;
+    /// Frames currently queued (`PROP_HOST_RX_QUEUE_COUNT`).
+    pub const HOST_RX_QUEUE_COUNT: u32 = 101;
+    /// Inbound queue capacity in frames (`PROP_HOST_RX_QUEUE_CAPACITY`).
+    pub const HOST_RX_QUEUE_CAPACITY: u32 = 102;
+    /// Cumulative frames dropped from the queue (`PROP_HOST_RX_QUEUE_DROPPED`).
+    pub const HOST_RX_QUEUE_DROPPED: u32 = 103;
     /// Transmit duty usage over the past hour (`PROP_PHY_DUTY_NOW`).
     pub const PHY_DUTY_NOW: u32 = 4820;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
@@ -63,6 +92,18 @@ pub mod cap {
     pub const PHY_DUTY_LIMIT: u32 = 16;
     /// `CAP_PHY_LORA`
     pub const PHY_LORA: u32 = 515;
+    /// `CAP_HOST_FILTER`
+    pub const HOST_FILTER: u32 = 32;
+    /// `CAP_HOST_RX_QUEUE` (requires `CAP_HOST_FILTER`)
+    pub const HOST_RX_QUEUE: u32 = 33;
+    /// `CAP_HOST_KEYS` (requires `CAP_HOST_FILTER`)
+    pub const HOST_KEYS: u32 = 34;
+    /// `CAP_HOST_AUTO_ACK` (requires `CAP_HOST_KEYS` and `CAP_HOST_RX_QUEUE`)
+    pub const HOST_AUTO_ACK: u32 = 35;
+    /// `CAP_SAVE`
+    pub const SAVE: u32 = 36;
+    /// `CAP_DEV_IDENTITY`
+    pub const DEV_IDENTITY: u32 = 37;
     /// `CAP_DEV_NAME`
     pub const DEV_NAME: u32 = 38;
 }

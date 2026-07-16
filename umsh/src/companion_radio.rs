@@ -38,6 +38,9 @@ const READ_CHUNK: usize = 256;
 const RX_QUEUE_DEPTH: usize = 8;
 /// Stale command responses retained before the oldest is dropped.
 const RESPONSE_QUEUE_DEPTH: usize = 8;
+/// Unsolicited property notifications retained before the oldest is
+/// dropped.
+const PROP_EVENT_DEPTH: usize = 16;
 /// Delay between transmit retries while CCA reports a busy channel.
 const CCA_RETRY_DELAY: Duration = Duration::from_millis(10);
 
@@ -133,11 +136,27 @@ impl CompanionRadioConfig {
 struct RxPacket {
     data: Vec<u8>,
     meta: RxMeta,
+    /// Raw trailing metadata bytes, preserving the full protocol's
+    /// buffered-frame extension for callers that decode it.
+    raw_meta: Vec<u8>,
 }
 
-/// A `CMD_PROP_IS` received with a non-zero TID (a command response).
+/// Which NCP-to-host property command carried a payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResponseKind {
+    /// `CMD_PROP_IS`
+    Is,
+    /// `CMD_PROP_INSERTED`
+    Inserted,
+    /// `CMD_PROP_REMOVED`
+    Removed,
+}
+
+/// A property notification received with a non-zero TID (a command
+/// response).
 struct Response {
     tid: u8,
+    kind: ResponseKind,
     key: u32,
     value: Vec<u8>,
 }
@@ -146,6 +165,36 @@ struct Response {
 enum PropResponsePolicy {
     Value,
     StatusOnly,
+}
+
+/// An unsolicited property notification (TID zero) retained for the
+/// caller: NCP state can change for reasons the host did not initiate,
+/// and publication of the new authoritative value is how the protocol
+/// reports that. Multi-value payloads are in digest form and never
+/// contain key material.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PropEvent {
+    /// `CMD_PROP_IS`: the property now has this complete value.
+    Is { key: u32, value: Vec<u8> },
+    /// `CMD_PROP_INSERTED`: an item was added to a multi-value property.
+    Inserted { key: u32, digest: Vec<u8> },
+    /// `CMD_PROP_REMOVED`: an item was removed from a multi-value
+    /// property.
+    Removed { key: u32, digest: Vec<u8> },
+}
+
+/// How the NCP reported a successful `CMD_RESTORE`. Both forms leave
+/// the NCP in the same configuration; they differ only in reporting and
+/// session-state handling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreCompletion {
+    /// Update form: values reverted in place (each change published as
+    /// an unsolicited update; see [`CompanionRadio::pop_prop_event`]).
+    Updated,
+    /// Reset form (`STATUS_RESET_RESTORED`): the NCP also reset its
+    /// protocol session state. Cached property views are invalid;
+    /// saved properties hold their saved values.
+    Reset,
 }
 
 /// A cancel-safe, frame-oriented companion transport.
@@ -588,6 +637,7 @@ pub struct CompanionRadio<L> {
     config: CompanionRadioConfig,
     rx_queue: VecDeque<RxPacket>,
     responses: VecDeque<Response>,
+    prop_events: VecDeque<PropEvent>,
     /// Unsolicited reset notification not yet surfaced to the caller.
     seen_reset: Option<Status>,
     max_frame_size: usize,
@@ -610,6 +660,7 @@ where
             config,
             rx_queue: VecDeque::new(),
             responses: VecDeque::new(),
+            prop_events: VecDeque::new(),
             seen_reset: None,
             max_frame_size: 0,
             t_frame_ms: 0,
@@ -746,6 +797,165 @@ where
             .await
     }
 
+    /// Insert one item into a multi-value property via
+    /// `CMD_PROP_INSERT`, returning the inserted item's digest form
+    /// from the correlated `CMD_PROP_INSERTED`.
+    ///
+    /// `item` is in the property's item form with no length prefix.
+    /// A duplicate fails with `STATUS_ALREADY` unless the property
+    /// defines replacement semantics (`PROP_HOST_PEER_KEYS`).
+    pub async fn insert_prop_item(
+        &mut self,
+        key: u32,
+        item: &[u8],
+    ) -> Result<Vec<u8>, CompanionRadioError> {
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; item.len() + 8];
+        let len = frame::prop_insert(&mut buf, tid, key, item)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_table_transaction(tid, key, ResponseKind::Inserted)
+            .await
+    }
+
+    /// Remove one item from a multi-value property via
+    /// `CMD_PROP_REMOVE`, returning the removed item's digest form from
+    /// the correlated `CMD_PROP_REMOVED`.
+    ///
+    /// `selector` is the property's documented remove selector. A
+    /// missing item fails with `STATUS_ITEM_NOT_FOUND`.
+    pub async fn remove_prop_item(
+        &mut self,
+        key: u32,
+        selector: &[u8],
+    ) -> Result<Vec<u8>, CompanionRadioError> {
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; selector.len() + 8];
+        let len = frame::prop_remove(&mut buf, tid, key, selector)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_table_transaction(tid, key, ResponseKind::Removed)
+            .await
+    }
+
+    /// Send a payload-less command completed by a correlated
+    /// `PROP_LAST_STATUS`.
+    async fn status_only_command(
+        &mut self,
+        encode: fn(&mut [u8], u8) -> Result<usize, frame::WriteError>,
+    ) -> Result<(), CompanionRadioError> {
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 4];
+        let len = encode(&mut buf, tid).map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
+            .await
+            .map(|_| ())
+    }
+
+    /// Drain the NCP's inbound queue (`CMD_QUEUE_DRAIN`).
+    ///
+    /// Buffered frames are delivered as ordinary `CMD_STR_RECV` and land
+    /// in the receive queue for [`Radio::poll_receive`]; this future
+    /// resolves on the correlated completion status.
+    pub async fn queue_drain(&mut self) -> Result<(), CompanionRadioError> {
+        self.queue_drain_with(|_data, _meta| {}).await
+    }
+
+    /// As [`Self::queue_drain`], invoking `on_frame` with each frame
+    /// (data, trailing metadata bytes) delivered before completion —
+    /// buffered and interleaved live frames alike. Frames are also
+    /// queued for [`Radio::poll_receive`] as usual.
+    pub async fn queue_drain_with(
+        &mut self,
+        mut on_frame: impl FnMut(&[u8], &[u8]),
+    ) -> Result<(), CompanionRadioError> {
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, tid)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+
+        let deadline = Instant::now() + self.config.response_timeout;
+        let mut delivered = self.rx_queue.len();
+        loop {
+            while let Some(response) = self.responses.pop_front() {
+                if response.tid != tid {
+                    continue;
+                }
+                if response.kind == ResponseKind::Is && response.key == prop::LAST_STATUS {
+                    let status = decode_status(&response.value);
+                    return if status == Status::OK {
+                        Ok(())
+                    } else {
+                        Err(CompanionRadioError::Status(status))
+                    };
+                }
+                return Err(CompanionRadioError::Protocol("unexpected drain response"));
+            }
+            if let Some(status) = self.seen_reset.take() {
+                return Err(CompanionRadioError::UnexpectedReset(status));
+            }
+            self.read_more(deadline).await?;
+            while delivered < self.rx_queue.len() {
+                let packet = &self.rx_queue[delivered];
+                on_frame(&packet.data, &packet.raw_meta);
+                delivered += 1;
+            }
+            // Overflow of the bounded receive queue shifts indices; the
+            // callback view is best-effort in that case.
+            delivered = delivered.min(self.rx_queue.len());
+        }
+    }
+
+    /// Save the NCP's device and host domains to non-volatile storage
+    /// (`CMD_SAVE`; requires `CAP_SAVE`).
+    pub async fn save(&mut self) -> Result<(), CompanionRadioError> {
+        self.status_only_command(frame::save).await
+    }
+
+    /// Erase the NCP's saved snapshot and other persisted provisioning
+    /// (`CMD_CLEAR`; base protocol, BLE bonds and pairing PIN exempt).
+    pub async fn clear(&mut self) -> Result<(), CompanionRadioError> {
+        self.status_only_command(frame::clear).await
+    }
+
+    /// Revert the NCP to its saved snapshot (`CMD_RESTORE`; requires
+    /// `CAP_SAVE`), accepting both spec-permitted completion forms.
+    pub async fn restore(&mut self) -> Result<RestoreCompletion, CompanionRadioError> {
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 4];
+        let len = frame::restore(&mut buf, tid)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.link.send_frame(&buf[..len]).await?;
+
+        let deadline = Instant::now() + self.config.response_timeout;
+        loop {
+            while let Some(response) = self.responses.pop_front() {
+                if response.tid != tid {
+                    continue;
+                }
+                if response.kind == ResponseKind::Is && response.key == prop::LAST_STATUS {
+                    let status = decode_status(&response.value);
+                    return if status == Status::OK {
+                        Ok(RestoreCompletion::Updated)
+                    } else {
+                        Err(CompanionRadioError::Status(status))
+                    };
+                }
+                return Err(CompanionRadioError::Protocol("unexpected restore response"));
+            }
+            match self.seen_reset.take() {
+                Some(status) if status == Status::RESET_RESTORED => {
+                    return Ok(RestoreCompletion::Reset);
+                }
+                Some(status) => return Err(CompanionRadioError::UnexpectedReset(status)),
+                None => {}
+            }
+            self.read_more(deadline).await?;
+        }
+    }
+
     /// Set or clear the NCP's persisted, write-only BLE pairing PIN.
     ///
     /// This property is the protocol's sole status-only property write: the
@@ -782,11 +992,16 @@ where
         policy: PropResponsePolicy,
     ) -> Result<Vec<u8>, CompanionRadioError> {
         let deadline = Instant::now() + self.config.response_timeout;
-        let (response_key, value) = self.wait_response(tid, deadline).await?;
-        match (policy, response_key) {
-            (PropResponsePolicy::Value, response_key) if response_key == key => Ok(value),
+        let response = self.wait_response(tid, deadline).await?;
+        if response.kind != ResponseKind::Is {
+            return Err(CompanionRadioError::Protocol(
+                "table notification answering a property command",
+            ));
+        }
+        match (policy, response.key) {
+            (PropResponsePolicy::Value, response_key) if response_key == key => Ok(response.value),
             (PropResponsePolicy::StatusOnly, prop::LAST_STATUS) => {
-                let status = decode_status(&value);
+                let status = decode_status(&response.value);
                 if status == Status::OK {
                     Ok(Vec::new())
                 } else {
@@ -794,10 +1009,39 @@ where
                 }
             }
             (PropResponsePolicy::Value, prop::LAST_STATUS) => {
-                let status = decode_status(&value);
+                let status = decode_status(&response.value);
                 if status == Status::OK {
                     Err(CompanionRadioError::Protocol(
                         "unexpected status-only property response",
+                    ))
+                } else {
+                    Err(CompanionRadioError::Status(status))
+                }
+            }
+            _ => Err(CompanionRadioError::Protocol(
+                "response for unexpected property",
+            )),
+        }
+    }
+
+    /// Complete a `CMD_PROP_INSERT`/`CMD_PROP_REMOVE` transaction:
+    /// success is the matching item notification carrying the digest,
+    /// failure a correlated `PROP_LAST_STATUS`.
+    async fn finish_table_transaction(
+        &mut self,
+        tid: u8,
+        key: u32,
+        expected: ResponseKind,
+    ) -> Result<Vec<u8>, CompanionRadioError> {
+        let deadline = Instant::now() + self.config.response_timeout;
+        let response = self.wait_response(tid, deadline).await?;
+        match (response.kind, response.key) {
+            (kind, response_key) if kind == expected && response_key == key => Ok(response.value),
+            (ResponseKind::Is, prop::LAST_STATUS) => {
+                let status = decode_status(&response.value);
+                if status == Status::OK {
+                    Err(CompanionRadioError::Protocol(
+                        "status-only success for a table mutation",
                     ))
                 } else {
                     Err(CompanionRadioError::Status(status))
@@ -837,35 +1081,70 @@ where
                 self.rx_queue.push_back(RxPacket {
                     data: payload.data.to_vec(),
                     meta,
+                    raw_meta: payload.metadata.to_vec(),
                 });
             }
-            Some(Cmd::PropIs) => {
-                let Ok(payload) = PropPayload::parse(frame.payload) else {
-                    return;
-                };
-                let tid = frame.header.tid();
-                if tid == TID_UNSOLICITED {
-                    if payload.key == prop::LAST_STATUS {
-                        let status = decode_status(payload.value);
-                        if status.is_reset() {
-                            self.seen_reset = Some(status);
-                        }
-                    }
-                    // Other unsolicited property updates are not
-                    // used by this client yet.
-                } else {
-                    if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
-                        self.responses.pop_front();
-                    }
-                    self.responses.push_back(Response {
-                        tid,
-                        key: payload.key,
-                        value: payload.value.to_vec(),
-                    });
-                }
+            Some(Cmd::PropIs) => self.ingest_prop_notification(ResponseKind::Is, &frame),
+            Some(Cmd::PropInserted) => {
+                self.ingest_prop_notification(ResponseKind::Inserted, &frame)
             }
+            Some(Cmd::PropRemoved) => self.ingest_prop_notification(ResponseKind::Removed, &frame),
             _ => {}
         }
+    }
+
+    fn ingest_prop_notification(&mut self, kind: ResponseKind, frame: &Frame<'_>) {
+        let Ok(payload) = PropPayload::parse(frame.payload) else {
+            return;
+        };
+        let tid = frame.header.tid();
+        if tid != TID_UNSOLICITED {
+            if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
+                self.responses.pop_front();
+            }
+            self.responses.push_back(Response {
+                tid,
+                kind,
+                key: payload.key,
+                value: payload.value.to_vec(),
+            });
+            return;
+        }
+        // Unsolicited `PROP_LAST_STATUS` is a reset notice or an
+        // operation status, not a property update to retain.
+        if kind == ResponseKind::Is && payload.key == prop::LAST_STATUS {
+            let status = decode_status(payload.value);
+            if status.is_reset() {
+                self.seen_reset = Some(status);
+            }
+            return;
+        }
+        let event = match kind {
+            ResponseKind::Is => PropEvent::Is {
+                key: payload.key,
+                value: payload.value.to_vec(),
+            },
+            ResponseKind::Inserted => PropEvent::Inserted {
+                key: payload.key,
+                digest: payload.value.to_vec(),
+            },
+            ResponseKind::Removed => PropEvent::Removed {
+                key: payload.key,
+                digest: payload.value.to_vec(),
+            },
+        };
+        if self.prop_events.len() >= PROP_EVENT_DEPTH {
+            self.prop_events.pop_front();
+        }
+        self.prop_events.push_back(event);
+    }
+
+    /// Take the oldest retained unsolicited property notification.
+    ///
+    /// Events accumulate while other calls read from the link (bounded
+    /// at [`PROP_EVENT_DEPTH`], oldest dropped first).
+    pub fn pop_prop_event(&mut self) -> Option<PropEvent> {
+        self.prop_events.pop_front()
     }
 
     /// Read from the stream until the response for `tid` arrives.
@@ -875,7 +1154,7 @@ where
         &mut self,
         tid: u8,
         deadline: Instant,
-    ) -> Result<(u32, Vec<u8>), CompanionRadioError> {
+    ) -> Result<Response, CompanionRadioError> {
         loop {
             // Drain responses before honoring a reset notice: if both
             // arrived in one read, the response was sent first and the
@@ -883,7 +1162,7 @@ where
             // next receive poll.
             while let Some(response) = self.responses.pop_front() {
                 if response.tid == tid {
-                    return Ok((response.key, response.value));
+                    return Ok(response);
                 }
                 // A stale response from an earlier timed-out
                 // transaction; drop it.
@@ -903,7 +1182,7 @@ where
             }
             // Accept a reset notice even if the NCP attached a TID.
             while let Some(response) = self.responses.pop_front() {
-                if response.key == prop::LAST_STATUS {
+                if response.kind == ResponseKind::Is && response.key == prop::LAST_STATUS {
                     let status = decode_status(&response.value);
                     if status.is_reset() {
                         return Ok(status);
@@ -1048,16 +1327,16 @@ where
             let deadline = Instant::now()
                 + self.config.response_timeout
                 + Duration::from_millis(u64::from(self.t_frame_ms) * 2);
-            let (key, value) = self
+            let response = self
                 .wait_response(tid, deadline)
                 .await
                 .map_err(TxError::Io)?;
-            if key != prop::LAST_STATUS {
+            if response.kind != ResponseKind::Is || response.key != prop::LAST_STATUS {
                 return Err(TxError::Io(CompanionRadioError::Protocol(
                     "unexpected transmit response",
                 )));
             }
-            match decode_status(&value) {
+            match decode_status(&response.value) {
                 Status::OK => return Ok(()),
                 Status::CCA_FAILURE => match cca_deadline {
                     Some(deadline) if Instant::now() < deadline => {
@@ -1112,19 +1391,24 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use tokio::io::{AsyncReadExt, DuplexStream};
+    use umsh_companion::meta::{BufferedRxMeta, RX_FLAG_BUFFERED};
 
     /// Payload that makes the fake NCP report a CCA failure.
     const CCA_FAIL: &[u8] = b"cca-fail";
     /// Payload that makes the fake NCP report success and then
     /// announce a spurious watchdog reset.
     const RESET_AFTER: &[u8] = b"reset-after";
+    /// Property that switches the fake NCP's `CMD_RESTORE` completion
+    /// to the reset form.
+    const RESTORE_RESET_FORM_KEY: u32 = 59_999;
 
     /// Minimal in-process NCP: answers the initialization handshake,
-    /// stores property sets, and echoes transmitted frames back as
-    /// received frames.
+    /// stores property sets and multi-value tables, and echoes
+    /// transmitted frames back as received frames.
     async fn fake_ncp(mut io: DuplexStream) {
         let mut decoder = hdlc::Decoder::<WIRE_BUF>::new();
         let mut props: HashMap<u32, Vec<u8>> = HashMap::new();
+        let mut tables: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
         let mut chunk = [0u8; READ_CHUNK];
         loop {
             let read = match io.read(&mut chunk).await {
@@ -1208,7 +1492,113 @@ mod tests {
                         let len = frame::last_status(&mut buf, tid, Status::OK).unwrap();
                         replies.push(buf[..len].to_vec());
                     }
-                    Cmd::PropIs | Cmd::StrRecv => panic!("host sent an NCP-only command"),
+                    Cmd::PropInsert => {
+                        let payload = PropPayload::parse(frame.payload).unwrap();
+                        // PROP_HOST_PEER_KEYS: secret-bearing 64-byte item,
+                        // 32-byte public-key digest, insert-replaces on a
+                        // matching public key. Other tables: item == digest,
+                        // duplicates fail with STATUS_ALREADY.
+                        let replaces = payload.key == prop::HOST_PEER_KEYS;
+                        let stored = payload.value.to_vec();
+                        let digest_len = if replaces {
+                            assert_eq!(stored.len(), 64);
+                            32
+                        } else {
+                            stored.len()
+                        };
+                        let table = tables.entry(payload.key).or_default();
+                        let existing = table
+                            .iter_mut()
+                            .find(|item| item[..digest_len.min(item.len())] == stored[..digest_len]);
+                        let len = match existing {
+                            Some(_) if !replaces => {
+                                frame::last_status(&mut buf, tid, Status::ALREADY).unwrap()
+                            }
+                            Some(existing) => {
+                                *existing = stored.clone();
+                                frame::prop_inserted(&mut buf, tid, payload.key, &stored[..digest_len])
+                                    .unwrap()
+                            }
+                            None => {
+                                table.push(stored.clone());
+                                frame::prop_inserted(&mut buf, tid, payload.key, &stored[..digest_len])
+                                    .unwrap()
+                            }
+                        };
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::PropRemove => {
+                        let payload = PropPayload::parse(frame.payload).unwrap();
+                        let table = tables.entry(payload.key).or_default();
+                        let position = table
+                            .iter()
+                            .position(|item| item[..payload.value.len().min(item.len())] == *payload.value);
+                        let len = match position {
+                            Some(index) => {
+                                let removed = table.remove(index);
+                                let digest = &removed[..payload.value.len().min(removed.len())];
+                                frame::prop_removed(&mut buf, tid, payload.key, digest).unwrap()
+                            }
+                            None => {
+                                frame::last_status(&mut buf, tid, Status::ITEM_NOT_FOUND).unwrap()
+                            }
+                        };
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::QueueDrain => {
+                        // Two buffered frames, oldest first, then completion.
+                        for (index, age_s) in [5u32, 3].into_iter().enumerate() {
+                            let mut meta = [0u8; BufferedRxMeta::WIRE_LEN];
+                            BufferedRxMeta {
+                                rx: RxMeta {
+                                    rssi_dbm: Some(-80),
+                                    lqi: None,
+                                    snr_cb: Some(10),
+                                },
+                                flags: RX_FLAG_BUFFERED,
+                                age_s,
+                            }
+                            .encode(&mut meta)
+                            .unwrap();
+                            let data = [0xB0u8 + index as u8];
+                            let len =
+                                frame::str_recv(&mut buf, stream::PHY_RAW, &data, &meta).unwrap();
+                            replies.push(buf[..len].to_vec());
+                        }
+                        let len = frame::last_status(&mut buf, tid, Status::OK).unwrap();
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::Save | Cmd::Clear => {
+                        let len = frame::last_status(&mut buf, tid, Status::OK).unwrap();
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::Restore => {
+                        if props.get(&RESTORE_RESET_FORM_KEY).is_some_and(|value| value == &[1]) {
+                            let len = frame::last_status(
+                                &mut buf,
+                                TID_UNSOLICITED,
+                                Status::RESET_RESTORED,
+                            )
+                            .unwrap();
+                            replies.push(buf[..len].to_vec());
+                        } else {
+                            // Update form: publish the reverted value, then
+                            // the correlated completion.
+                            let len = frame::prop_is(
+                                &mut buf,
+                                TID_UNSOLICITED,
+                                prop::PHY_FREQ,
+                                &905_000u32.to_le_bytes(),
+                            )
+                            .unwrap();
+                            replies.push(buf[..len].to_vec());
+                            let len = frame::last_status(&mut buf, tid, Status::OK).unwrap();
+                            replies.push(buf[..len].to_vec());
+                        }
+                    }
+                    Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved => {
+                        panic!("host sent an NCP-only command")
+                    }
                 }
             }
             for reply in replies {
@@ -1425,6 +1815,148 @@ mod tests {
             Err(CompanionRadioError::UnexpectedReset(status))
                 if status == Status::RESET_WATCHDOG
         ));
+    }
+
+    #[tokio::test]
+    async fn table_insert_replace_remove_with_secret_free_digests() {
+        let mut radio = attached_radio().await;
+        let mut item = vec![0x11u8; 64];
+        item[32..].fill(0x22);
+        let digest = radio
+            .insert_prop_item(prop::HOST_PEER_KEYS, &item)
+            .await
+            .unwrap();
+        // The digest form is the public key alone — no key material.
+        assert_eq!(digest, vec![0x11; 32]);
+
+        // Same public key, new pairwise keys: replacement, not ALREADY.
+        let mut replacement = item.clone();
+        replacement[32..].fill(0x33);
+        let digest = radio
+            .insert_prop_item(prop::HOST_PEER_KEYS, &replacement)
+            .await
+            .unwrap();
+        assert_eq!(digest, vec![0x11; 32]);
+
+        let removed = radio
+            .remove_prop_item(prop::HOST_PEER_KEYS, &[0x11; 32])
+            .await
+            .unwrap();
+        assert_eq!(removed, vec![0x11; 32]);
+        let error = radio
+            .remove_prop_item(prop::HOST_PEER_KEYS, &[0x11; 32])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CompanionRadioError::Status(status) if status == Status::ITEM_NOT_FOUND)
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_insert_reports_already() {
+        let mut radio = attached_radio().await;
+        let filter = [2u8, 0]; // FILTER_PKT_TYPE broadcast
+        radio
+            .insert_prop_item(prop::HOST_RX_FILTERS, &filter)
+            .await
+            .unwrap();
+        let error = radio
+            .insert_prop_item(prop::HOST_RX_FILTERS, &filter)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CompanionRadioError::Status(status) if status == Status::ALREADY));
+    }
+
+    #[tokio::test]
+    async fn queue_drain_delivers_buffered_frames_then_completes() {
+        let mut radio = attached_radio().await;
+        let mut drained = Vec::new();
+        radio
+            .queue_drain_with(|data, meta| {
+                drained.push((data.to_vec(), BufferedRxMeta::decode(meta).unwrap()));
+            })
+            .await
+            .unwrap();
+        assert_eq!(drained.len(), 2);
+        assert!(drained.iter().all(|(_, meta)| meta.flags & RX_FLAG_BUFFERED != 0));
+        assert_eq!((drained[0].1.age_s, drained[1].1.age_s), (5, 3));
+
+        // The frames also surface through the ordinary receive path,
+        // oldest first.
+        let mut buf = [0u8; 16];
+        for expected in [0xB0u8, 0xB1] {
+            let info = core::future::poll_fn(|cx| radio.poll_receive(cx, &mut buf))
+                .await
+                .unwrap();
+            assert_eq!(&buf[..info.len], &[expected]);
+        }
+    }
+
+    #[tokio::test]
+    async fn save_and_clear_complete_on_status() {
+        let mut radio = attached_radio().await;
+        radio.save().await.unwrap();
+        radio.clear().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restore_update_form_reports_updated_and_retains_events() {
+        let mut radio = attached_radio().await;
+        assert_eq!(radio.restore().await.unwrap(), RestoreCompletion::Updated);
+        assert_eq!(
+            radio.pop_prop_event(),
+            Some(PropEvent::Is {
+                key: prop::PHY_FREQ,
+                value: 905_000u32.to_le_bytes().to_vec(),
+            })
+        );
+        assert_eq!(radio.pop_prop_event(), None);
+    }
+
+    #[tokio::test]
+    async fn restore_reset_form_is_success_not_unexpected_reset() {
+        let mut radio = attached_radio().await;
+        radio.set_prop(RESTORE_RESET_FORM_KEY, &[1]).await.unwrap();
+        assert_eq!(radio.restore().await.unwrap(), RestoreCompletion::Reset);
+
+        // The consumed RESET_RESTORED must not resurface as an
+        // unexpected reset on the next operation.
+        radio.transmit(&[0x55], TxOptions::default()).await.unwrap();
+        let mut buf = [0u8; 16];
+        let info = core::future::poll_fn(|cx| radio.poll_receive(cx, &mut buf))
+            .await
+            .unwrap();
+        assert_eq!(&buf[..info.len], &[0x55]);
+    }
+
+    #[tokio::test]
+    async fn unsolicited_table_notifications_are_retained_events() {
+        let mut radio = attached_radio().await;
+        let mut buf = [0u8; 48];
+        let len =
+            frame::prop_inserted(&mut buf, TID_UNSOLICITED, prop::HOST_RX_FILTERS, &[2, 0])
+                .unwrap();
+        radio.ingest_frame(&buf[..len]);
+        let len =
+            frame::prop_removed(&mut buf, TID_UNSOLICITED, prop::HOST_CHANNEL_KEYS, &[0x12, 0x34])
+                .unwrap();
+        radio.ingest_frame(&buf[..len]);
+
+        assert_eq!(
+            radio.pop_prop_event(),
+            Some(PropEvent::Inserted {
+                key: prop::HOST_RX_FILTERS,
+                digest: vec![2, 0],
+            })
+        );
+        assert_eq!(
+            radio.pop_prop_event(),
+            Some(PropEvent::Removed {
+                key: prop::HOST_CHANNEL_KEYS,
+                digest: vec![0x12, 0x34],
+            })
+        );
+        assert_eq!(radio.pop_prop_event(), None);
     }
 
     #[test]
