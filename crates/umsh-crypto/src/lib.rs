@@ -32,6 +32,8 @@ use umsh_core::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod replay;
+
 /// AES block-cipher instance used by the protocol engine.
 pub trait AesCipher {
     /// Encrypt one 16-byte block in place.
@@ -407,9 +409,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         let mic_len = header.mic_range.end - header.mic_range.start;
         mic[..mic_len].copy_from_slice(&buf[header.mic_range.clone()]);
         if sec_info.scf.encrypted() {
-            let sec_info_range =
-                header.body_range.start - sec_info.wire_len()..header.body_range.start;
-            let iv = self.build_ctr_iv(&mic[..mic_len], &buf[sec_info_range]);
+            let iv = self.build_ctr_iv(&mic[..mic_len], &buf[sec_info_bytes_range(header)?]);
             self.aes_ctr(&keys.k_enc, &iv, &mut buf[header.body_range.clone()]);
         }
 
@@ -443,10 +443,10 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             SourceAddrRef::Encrypted { offset, len } => {
                 let addr_start = offset.checked_sub(3).ok_or(CryptoError::InvalidPacket)?;
                 let addr_end = addr_start + 3 + len;
-                let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
-                let sec_info_range =
-                    header.body_range.start - sec_info.wire_len()..header.body_range.start;
-                let iv = self.build_ctr_iv(&buf[header.mic_range.clone()], &buf[sec_info_range]);
+                let iv = self.build_ctr_iv(
+                    &buf[header.mic_range.clone()],
+                    &buf[sec_info_bytes_range(header)?],
+                );
                 self.aes_ctr(&channel_keys.k_enc, &iv, &mut buf[addr_start..addr_end]);
                 let dst = umsh_core::NodeHint([
                     buf[addr_start],
@@ -522,6 +522,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Construct the CTR IV from MIC bytes and SECINFO bytes.
+    ///
+    /// With a 16-byte MIC the IV is the MIC alone; shorter MICs are
+    /// padded from the SECINFO bytes, so the IV construction of a
+    /// received packet must locate SECINFO exactly (see
+    /// [`sec_info_bytes_range`]).
     pub fn build_ctr_iv(&self, mic: &[u8], sec_info_bytes: &[u8]) -> [u8; 16] {
         let mut iv = [0u8; 16];
         let mut written = 0usize;
@@ -570,6 +575,20 @@ fn dbl(block: &[u8; 16]) -> [u8; 16] {
         out[15] ^= 0x87;
     }
     out
+}
+
+/// The on-wire SECINFO byte range of a parsed secure packet. In every
+/// secure layout (unicast, multicast, blind unicast) SECINFO
+/// immediately precedes the options block — not the body, which the
+/// options end marker or a blind address block may separate from it.
+fn sec_info_bytes_range(header: &PacketHeader) -> Result<Range<usize>, CryptoError> {
+    let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
+    header
+        .options_range
+        .start
+        .checked_sub(sec_info.wire_len())
+        .map(|start| start..header.options_range.start)
+        .ok_or(CryptoError::InvalidPacket)
 }
 
 fn increment_counter(counter: &mut [u8; 16]) {
@@ -953,6 +972,74 @@ mod tests {
         let mut wire = packet.as_bytes().to_vec();
         let range = engine.open_packet(&mut wire, &header, &keys).unwrap();
         assert_eq!(&wire[range], b"hello");
+    }
+
+    /// Regression: with a MIC shorter than 16 bytes the CTR IV includes
+    /// SECINFO bytes, and SECINFO precedes the options block — not the
+    /// body, which the options end marker separates from it. The IV of
+    /// a received packet must be built from the true SECINFO position
+    /// or decryption diverges from sealing.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn short_mic_encrypted_unicast_round_trip() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = engine.derive_pairwise_keys(&SharedSecret([9u8; 32]));
+        let mut buf = [0u8; 128];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC3, 0xD4, 0x25]))
+            .source_hint(NodeHint([0xA1, 0xA1, 0xA1]))
+            .frame_counter(7)
+            .encrypted()
+            .mic_size(MicSize::Mic8)
+            .payload(b"short mic")
+            .build()
+            .unwrap();
+        engine.seal_packet(&mut packet, &keys).unwrap();
+        let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+        let mut wire = packet.as_bytes().to_vec();
+        let range = engine.open_packet(&mut wire, &header, &keys).unwrap();
+        assert_eq!(&wire[range], b"short mic");
+    }
+
+    /// Regression companion to the above for blind unicast, where the
+    /// concealed address block also sits between SECINFO and the body:
+    /// address decryption and payload opening must both locate SECINFO
+    /// correctly with a short MIC.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn short_mic_blind_unicast_round_trip() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let channel_key = ChannelKey([0x5A; 32]);
+        let channel_keys = engine.derive_channel_keys(&channel_key);
+        let pairwise = engine.derive_pairwise_keys(&SharedSecret([9u8; 32]));
+        let blind_keys = engine.derive_blind_keys(&pairwise, &channel_keys);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        let src = NodeHint([0xA1, 0xA1, 0xA1]);
+
+        let mut buf = [0u8; 128];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .blind_unicast(channel_keys.channel_id, dst)
+            .source_hint(src)
+            .frame_counter(7)
+            .ack_requested()
+            .encrypted()
+            .mic_size(MicSize::Mic8)
+            .payload(b"blind")
+            .build()
+            .unwrap();
+        engine
+            .seal_blind_packet(&mut packet, &blind_keys, &channel_keys)
+            .unwrap();
+
+        let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+        let mut wire = packet.as_bytes().to_vec();
+        let (decrypted_dst, decrypted_src) = engine
+            .decrypt_blind_addr(&mut wire, &header, &channel_keys)
+            .unwrap();
+        assert_eq!(decrypted_dst, dst);
+        assert_eq!(decrypted_src, SourceAddrRef::Hint(src));
+        let range = engine.open_packet(&mut wire, &header, &blind_keys).unwrap();
+        assert_eq!(&wire[range], b"blind");
     }
 
     /// Verify compute_ack_tag produces a deterministic 8-byte value and that
