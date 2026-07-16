@@ -918,25 +918,67 @@ Gate: 4 integration tests + the existing 12 companion_radio unit
 tests, full workspace sweep green, firmware unaffected (host-only
 increment; T-Echo release build re-verified).
 
+### Increment 9, first pass — T-1000E over USB complete (2026-07-16)
+
+The single-board, USB-tethered portion of the hardware validation ran
+green end to end on the T-1000E, driven by the new
+`umsh/examples/companion_hw_validate.rs` (one phase per invocation so
+the board can be power-cycled between phases; every frame printed
+through the host trace hook). Reboots were induced by DFU reflash of
+the same image — which additionally proves both journals survive a DFU
+cycle. Results:
+
+* **Phase A** — `attach_existing` + `sync` on a fresh image: all ten
+  capabilities advertised (8, 16, 38, 515, 32–37); on-device identity
+  generated (spec-recommended empty `PROP_DEV_PRIVATE_KEY` write, real
+  TRNG-seeded ChaCha20 path) and stable across repeated ensure calls;
+  host domain provisioned (host key, one filter, channel key `9b68`,
+  one peer, auto-ack); PHY configured/enabled; `CMD_SAVE` committed.
+* **Phase B** (after reboot) — reset detected from the retained
+  status; ownership `Ours`; boot restore re-enabled the PHY at the
+  saved 906 875 kHz with auto-ack armed; the device identity survived;
+  the reattach reconcile was a verified no-op (no key material crossed
+  the link again); empty-queue drain completed.
+* **Phases C+D** — `CMD_CLEAR` erased the snapshot and durable
+  identity while every live value stayed in effect; after the next
+  reboot the board was factory-fresh (unclaimed, nothing saved,
+  `PROP_DEV_KEY` empty — the identity tombstone held across the power
+  cycle — PHY disabled, default frequency). Re-provisioning generated
+  a **different** identity, confirming fresh entropy per generation.
+  The board is left provisioned and saved for autonomous use.
+* **Measurements** — attach handshake ≈ 2–310 ms (the high end is
+  first-open after enumeration); command RTT over USB-CDC: min 434 µs
+  / median 459 µs / max 534 µs (50 × `PROP_LAST_STATUS` get); queue
+  capacity 16; flash 481.3 KiB (T-1000E) / 499.4 KiB (T-Echo) of the
+  760 KiB app window; static RAM 84.8 / 87.3 KiB.
+* Post-DFU `RESET_WATCHDOG` as the boot cause is the documented
+  RESETREAS noise, and usefully exercised the reset-detection path.
+  The temporary freeze diagnostics ("d6" version string) were still in
+  the validated image.
+
 ### What the next agent should do first
 
-Start increment 9: full-protocol hardware completion on both boards —
-provision a host identity, filters, channels, peer keys, auto-ACK, PHY
-configuration, and saved state; detach; receive relevant and reject
-unrelated traffic; transmit delegated ACKs; power-cycle with no host;
-reconnect with `attach_existing` + `sync` + drain (the increment-8
-workflow and its in-process lifecycle test are the script); exercise
-duplicate coalescing/re-ACK, overflow, storage failure, host
-replacement, and BLE/USB displacement; record capability lists,
-flash/RAM sizes, attach/RTT measurements, queue capacity, and soak
-results in this document. Needs the attached T-1000E (and the T-Echo).
+Finish increment 9 — the remaining hardware items need the **T-Echo
+attached as the second radio** (it was not connected for the first
+pass): detached reception of relevant vs. unrelated live RF traffic,
+delegated MAC acks on the air, duplicate coalescing/re-ack, queue
+overflow, and the drain of real buffered traffic (the in-process
+lifecycle test in `umsh/tests/companion_full_protocol.rs` is the
+script; `companion_hw_validate` phases a/b bracket the detached
+window — the T-1000E is already left provisioned and saved for
+exactly this). Then repeat the storage-layout phases (a–d) on the
+T-Echo, exercise host replacement and BLE/USB displacement on
+hardware, the `ble-store-fault-inject` storage-failure image, the BLE
+attach path for the same workflow (`attach_existing` over
+`BleFrameLink`), and a soak run.
+
 Hardware notes: flash via the Makefile targets, serial DFU uses the
-1200-baud DTR touch (the first nrfutil attempt may race enumeration;
-retry works), never shell-redirect USB serial ports, and re-save the
-snapshot after flashing — the increment-7 `SNAPSHOT_VERSION` bump
-voids any version-1 snapshot on the board. The temporary freeze
-diagnostics in the firmware must be stripped or gated before any
-release-quality image (keep the POWER-INTEN disarm fix).
+1200-baud DTR touch (`diag/reflash_t1000e.py` automates touch + retry;
+the first nrfutil attempt reliably races enumeration and the retry
+works), never shell-redirect USB serial ports, and re-save the
+snapshot after flashing a firmware whose snapshot version moved. The
+temporary freeze diagnostics in the firmware must be stripped or gated
+before any release-quality image (keep the POWER-INTEN disarm fix).
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 
