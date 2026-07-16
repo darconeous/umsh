@@ -9,3 +9,9 @@ description = "NCP-side session engine for the minimal UMSH companion-radio prot
 [dependencies]
 umsh-companion = { path = "../umsh-companion" }
 umsh-core = { path = "../umsh-core", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false }
+
+[dev-dependencies]
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = [
+	"software-crypto",
+] }

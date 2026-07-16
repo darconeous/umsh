@@ -602,19 +602,65 @@ read-only/fixed-capacity property behavior. Host-side
 `queue_drain_with`, firmware host tests, and both release images remain
 green.
 
+### Increment 5, first half: CAP_HOST_KEYS — complete (2026-07-15)
+
+Increment 5 was split at its natural capability boundary: `CAP_HOST_KEYS`
+requires only `CAP_HOST_FILTER`, so advertising it without
+`CAP_HOST_AUTO_ACK` is spec-clean. The dependency-boundary decision:
+`Session` is now generic over `umsh-crypto`'s `AesProvider`/
+`Sha256Provider` and owns a `CryptoEngine` (constructed by the firmware
+with the software providers — no hardware providers exist in the BSPs,
+and the linker strips the unused dalek identity code). This is the same
+engine the MAC uses, so channel-identifier derivation matches the core
+spec by construction, and the AUTO_ACK half gets `open_packet`/
+`compute_ack_tag`/`decrypt_blind_addr` for free.
+
+* `PROP_HOST_CHANNEL_KEYS` (8 entries; digest = derived channel id,
+  remove selector = the 32-byte key) and `PROP_HOST_PEER_KEYS` (8
+  entries; digest and selector = the peer public key; inserting a
+  matching public key replaces the stored key material — never
+  `STATUS_ALREADY`). Whole-table sets validate into a candidate table
+  before committing; channel duplicates collapse, repeated peer public
+  keys replace in order. Secrets are never read back — GETs and
+  INSERTED/REMOVED notices carry digest forms only, and a test asserts
+  the pairwise key material appears in no emitted frame.
+* Transport-security gate per spec §Provisioning Security:
+  `attach(link_secure: bool)` makes the context explicit (no
+  BLE-specific globals). Key-bearing `CMD_PROP_SET`/`CMD_PROP_INSERT`
+  fail `STATUS_INVALID_STATE` while `link_secure` is false. The shared
+  firmware passes `true` for both transports: USB-CDC by physical
+  possession, BLE because the companion GATT service already refuses
+  access outside an encrypted LESC-bonded link. A bare-UART port would
+  pass `false`.
+* Each provisioned channel key's derived identifier is an implicit
+  receive filter (live and detached queueing), and provisioned channel
+  keys alone make filtering "configured" for the compatibility rule.
+* Host replacement and `CMD_RST` clear both tables as part of the host
+  domain. Property GET buffers grew to `PROP_BUF` (peer digest table is
+  256 bytes).
+
+65 session tests pass; firmware host tests and both release images
+remain green.
+
 ### What the next agent should do first
 
-Start increment 5 (`CAP_HOST_KEYS` and `CAP_HOST_AUTO_ACK`): host
-channel-key and peer-key tables with validate-before-mutate and
-digest-only reporting, the secure-transport gate for key writes (the
-session dispatch API needs explicit transport-security context), and
-detached acknowledgement delegation reusing the core UMSH packet crypto,
-MAC-ACK construction, and replay window (see increment 5 above for the
-full rules). This is the first increment that pulls real cryptography
-into the NCP session path — plan the dependency boundary deliberately
-(umsh-crypto/umsh-mac reuse vs. a minimal extraction) before writing
-code. Queue coalescing for authenticated duplicates hooks into
-`RxQueue::push`'s call site in `on_radio_rx`.
+Finish increment 5: `CAP_HOST_AUTO_ACK` — detached acknowledgement
+delegation and authenticated duplicate handling (see increment 5 above
+for the full rules). The crypto engine is already inside `Session`.
+Needed: per-provisioned-peer replay baselines (host-domain state, not
+saved), UNAR/BUAR authentication via `engine.open_packet` (pairwise keys
+from `PROP_HOST_PEER_KEYS`; blind unicast needs the channel key to
+decrypt the address block and the combined blind payload keys),
+MAC-ACK construction (`PacketBuilder::mac_ack` + `compute_ack_tag`)
+through the ordinary serialized radio path and duty limiter,
+`PROP_HOST_AUTO_ACK`, queue coalescing for authenticated duplicates and
+Route Retry forms (hooks into the `RxQueue::push` call site in
+`on_radio_rx`), the eight-counter re-ACK window without baseline
+movement, and buffered `RX_FLAG_ACKED` reporting. `on_radio_rx` will
+need to return an effect (ACK transmission) — today it returns nothing.
+Gate on the normative packet vectors listed in the increment-5
+acceptance criteria. Do not advertise `CAP_HOST_AUTO_ACK` until the
+whole gate passes.
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 

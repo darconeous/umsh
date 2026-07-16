@@ -1293,6 +1293,7 @@ dependencies = [
  "umsh-bsp-t1000e",
  "umsh-companion",
  "umsh-companion-ncp",
+ "umsh-crypto",
  "umsh-hal",
  "umsh-radio-loraphy",
  "umsh-ux-tracker",
@@ -1324,6 +1325,7 @@ dependencies = [
  "umsh-bsp-techo",
  "umsh-companion",
  "umsh-companion-ncp",
+ "umsh-crypto",
  "umsh-hal",
  "umsh-radio-loraphy",
  "umsh-ux-tracker",
@@ -3022,6 +3024,7 @@ version = "0.1.0"
 dependencies = [
  "umsh-companion",
  "umsh-core",
+ "umsh-crypto",
 ]
 
 [[package]]

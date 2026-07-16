@@ -29,6 +29,7 @@ umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = fa
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
