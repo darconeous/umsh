@@ -1005,7 +1005,22 @@ clients before hardware validation.
 Increment-9 items still open: host replacement and BLE/USB
 displacement exercised deliberately on hardware, the
 `ble-store-fault-inject` storage-failure image, and a fresh soak run
-(the previous soak was invalidated by today's reflashing). Flashing
+(the previous soak was invalidated by today's reflashing).
+
+Follow-up (2026-07-16): MAC-owner hosts (desktop_chat, cli_companion)
+currently enable `PROP_MAC_PROMISCUOUS` per session so a provisioned
+NCP's host-domain filters cannot eat their live traffic. That is the
+accepted short-term shim; the battery-correct long-term form is a
+provisioned live-filter plan — `PROP_HOST_KEY` = own identity
+(implicit destination-hint filter: unicast + MAC acks) plus channel
+coverage per subscribed channel (provisioned channel keys or explicit
+non-secret `ChannelId` filters) and `PktType(Broadcast)` if discovery
+is wanted. Blind unicast needs nothing extra: BUNI/BUAR are
+channel-addressed, so the channel filter matches them on the wire
+(peer keys are for authentication/ack delegation, not filter
+matching). Design it once in the `umsh::companion_radio` workflow API
+rather than per tool. (`umsh-capture` legitimately stays
+promiscuous.) Flashing
 notes: `diag/reflash_t1000e.py` automates the T-1000E serial-DFU
 touch+retry; the T-Echo path is 1200-baud touch → wait for TECHOBOOT →
 copy the UF2 **under a fresh filename with `cp`** (overwriting the
