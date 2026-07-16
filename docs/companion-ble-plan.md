@@ -861,19 +861,82 @@ no-implicit-filter proof, TID-0 silence) and 30 firmware host tests
 (identity payload codec, journal page layout inside the NV region).
 Both boards and the no-ble variant build with zero warnings.
 
+### Increment 8 — complete (2026-07-16)
+
+The host-facing provisioning/synchronization workflow and the
+adapter-free integration harness. Host side (`umsh::companion_radio`):
+
+* `CompanionRadio::attach_existing` — the full-protocol attach: only
+  the identity handshake runs (retained `PROP_LAST_STATUS`, protocol
+  version check, NCP version, MTU); no `CMD_RST`, no reconfiguration,
+  no PHY enable. The existing resetting constructor remains the
+  minimal-protocol path and is documented as unsuitable for an
+  autonomously operating NCP.
+* `sync(expected_host_key)` — the spec's post-attach procedure:
+  retained status with reset-since-last-contact detection, decoded
+  `PROP_CAPS`, an ownership verdict (`Ours`/`Unclaimed`/
+  `OtherHost(key)`/`Unsupported`), and capability-gated state — PHY
+  enable/frequency, device name, `PROP_SAVED`, queue count/dropped,
+  and the digest forms of filters, channel identifiers, peer public
+  keys, auto-ack, and the device key — into one `NcpSync`.
+* `provision(&HostProvisioning)` — digest-based reconciliation of the
+  host domain. A differing host key replaces the domain first (spec
+  §Host Replacement); filters replace whole-table when the sets
+  differ; channel keys insert individually unless the NCP holds an
+  identifier the host has no key for (unremovable individually — the
+  selector is the key — so the table is replaced atomically); peers
+  reconcile by public-key membership so pairwise secrets the NCP
+  already holds never cross the link again; auto-ack lands last. The
+  `ProvisionReport` says exactly what changed; a reattach reconcile of
+  matching state is a verified no-op. Saving stays explicit.
+* `ensure_device_identity()` — returns the device key, commanding
+  spec-recommended on-device generation when none is configured (the
+  success response is `PROP_IS` for `PROP_DEV_KEY`).
+* `set_frame_trace` + `describe_frame` — a per-frame trace hook in
+  both directions producing one-line summaries (command, TID, property
+  mnemonic, decoded status; values summarized by length so traces can
+  never leak key material), for placing a hardware failure at the host
+  API, framing, session, storage, or radio boundary.
+
+Integration harness (`umsh/tests/companion_full_protocol.rs`): a
+`FrameLink` implementation driving the **real**
+`umsh_companion_ncp::Session` — no fake NCP — with RAM stand-ins for
+the snapshot/identity journals, the radio, entropy, and the clock, and
+a per-command log of both directions. The flagship test runs the
+increment-9 hardware script in-process: provision + identity
+generation + PHY config → save → detach → power cycle (fresh session
+boots from the simulated journals via `restore_at_boot` +
+`set_boot_identity`) → autonomous detached RX with a transmitted
+delegated MAC ack → reattach → sync (reset detected, ownership Ours,
+queue count 1) → no-op reconcile → drain with `RX_FLAG_ACKED`
+verified. Companion tests cover other-host detection and takeover
+whose durable wipe survives a power cycle, channel insert-vs-replace
+reconciliation, and the insecure-link refusal surfacing
+`STATUS_INVALID_STATE`.
+
+Gate: 4 integration tests + the existing 12 companion_radio unit
+tests, full workspace sweep green, firmware unaffected (host-only
+increment; T-Echo release build re-verified).
+
 ### What the next agent should do first
 
-Start increment 8: the host-facing provisioning/synchronization
-workflow in `umsh::companion_radio` (post-attach sync per spec
-§Attach, Detach, and Synchronization; digest-form verification;
-key provisioning including the device identity) plus adapter-free
-integration tests that drive a simulated NCP session end-to-end with
-per-command capture/logging. Increment 9 (hardware completion on both
-boards: save → power-cycle → autonomous detached operation → reconnect
-→ ownership verification → drain) follows and needs the attached
-T-1000E. Note for hardware work: flash via the Makefile targets, the
-first serial-DFU attempt may race (retry works), and never shell-
-redirect USB serial ports.
+Start increment 9: full-protocol hardware completion on both boards —
+provision a host identity, filters, channels, peer keys, auto-ACK, PHY
+configuration, and saved state; detach; receive relevant and reject
+unrelated traffic; transmit delegated ACKs; power-cycle with no host;
+reconnect with `attach_existing` + `sync` + drain (the increment-8
+workflow and its in-process lifecycle test are the script); exercise
+duplicate coalescing/re-ACK, overflow, storage failure, host
+replacement, and BLE/USB displacement; record capability lists,
+flash/RAM sizes, attach/RTT measurements, queue capacity, and soak
+results in this document. Needs the attached T-1000E (and the T-Echo).
+Hardware notes: flash via the Makefile targets, serial DFU uses the
+1200-baud DTR touch (the first nrfutil attempt may race enumeration;
+retry works), never shell-redirect USB serial ports, and re-save the
+snapshot after flashing — the increment-7 `SNAPSHOT_VERSION` bump
+voids any version-1 snapshot on the board. The temporary freeze
+diagnostics in the firmware must be stripped or gated before any
+release-quality image (keep the POWER-INTEN disarm fix).
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 
