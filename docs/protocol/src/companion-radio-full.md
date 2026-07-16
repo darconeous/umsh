@@ -356,42 +356,41 @@ property's digest form.
 ### CMD 11: (Host -> NCP) `CMD_QUEUE_DRAIN` {#cmd-queue-drain}
 
 ~~~
-  0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |      CMD      | STREAM_KEY (PUI, 1-3 bytes) ...
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_QUEUE_DRAIN|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~
 Figure: Structure of `CMD_QUEUE_DRAIN`
 
 Deliver queued inbound frames. Commands the NCP to deliver every frame
-currently held in the inbound queue associated with the given stream (for
-this protocol, `STR_PHY_RAW`), oldest first, as ordinary `CMD_STR_RECV`
-commands carrying the buffered-frame metadata described in
-(#buffered-metadata).
+currently held in the inbound queue (see (#inbound-queueing)), oldest
+first, as ordinary `CMD_STR_RECV` commands on `STR_PHY_RAW` carrying the
+buffered-frame metadata described in (#buffered-metadata). The command
+payload SHOULD be empty and MUST be ignored.
 
 Queued frames are **only** delivered in response to this command; attaching
 to the NCP does not by itself cause queued frames to be delivered (see
 (#inbound-queueing)). This lets the host finish synchronizing its session
 and signal that it is actually ready to process backlogged traffic.
 
-The command's completion boundary is captured when the command is
-received: the frame at the tail of the queue at that moment is the last
-frame the command covers. If the command was sent with a non-zero TID, the
-NCP reports completion by emitting `CMD_PROP_IS` for `PROP_LAST_STATUS`
-with `STATUS_OK` and the matching TID immediately after delivering that
-frame; frames arriving after the command was received **MUST NOT** delay
-the response. Draining an empty queue succeeds immediately.
+The drain covers exactly the frames held in the queue when the command is
+received. Because accepted frames are always delivered live while a host
+is attached, the queue cannot grow while a drain is in progress: the drain
+always covers a fixed set of frames and always terminates. If the command
+was sent with a non-zero TID, the NCP reports completion by emitting
+`CMD_PROP_IS` for `PROP_LAST_STATUS` with `STATUS_OK` and the matching TID
+immediately after delivering the last covered frame. Draining an empty
+queue succeeds immediately.
 
-Frames that arrive while a drain is in progress are appended to the queue
-(they are not interleaved as live deliveries mid-drain) and continue to be
-delivered, with buffered metadata, after the response; live delivery
-resumes once the queue is empty.
+Frames that arrive while a drain is in progress are not part of it: they
+are delivered live, and MAY therefore interleave with the buffered
+deliveries. `RX_FLAG_BUFFERED` distinguishes the two, and UMSH does not
+guarantee in-order delivery in any case (see (#inbound-queueing)).
 
-If the stream key does not identify a stream with an inbound queue, the
-command fails with `STATUS_PROP_NOT_FOUND`. If the NCP does not implement
-queueing (`CAP_HOST_RX_QUEUE` not advertised), the command fails with
-`STATUS_UNIMPLEMENTED`.
+If the NCP does not implement queueing (`CAP_HOST_RX_QUEUE` not
+advertised), the command fails with `STATUS_UNIMPLEMENTED`.
 
 If an error occurs, the value of the emitted `PROP_LAST_STATUS` will be set
 accordingly to the status code for the error.
@@ -844,8 +843,11 @@ private key.
 
 As an exception to the usual `CMD_PROP_INSERT` duplicate rule, inserting an
 entry whose `PEER_PUBLIC_KEY` matches an existing entry replaces that
-entry. The digest form is the peer public key alone: `K_ENC` and `K_MIC`
-are never read back.
+entry. Replacement updates only the stored key material: the peer's replay
+baseline (see (#ack-delegation)) and any frames already queued from that
+peer are unaffected, since both are keyed by the peer's identity rather
+than by the key values. The digest form is the peer public key alone:
+`K_ENC` and `K_MIC` are never read back.
 
 Provisioned peer keys let the NCP authenticate inbound unicast and blind
 unicast from those specific peers and acknowledge it on the host's behalf
@@ -996,11 +998,13 @@ When the host is **attached**, accepted frames are delivered live over
 the queue: frames queued while the host was away remain queued until the
 host issues `CMD_QUEUE_DRAIN` (see (#cmd-queue-drain)). Frames received
 after attach are therefore delivered live even while older frames remain
-queued. A host that wants to process the backlog first drains before
-processing live traffic; `RX_AGE` in the buffered-frame metadata gives
-coarse (one-second) relative timing but is not sufficient to reconstruct
-a strict total order — and UMSH itself does not guarantee in-order
-delivery in any case.
+queued, and live deliveries MAY interleave with buffered deliveries during
+a drain (`RX_FLAG_BUFFERED` distinguishes them). A host that wants to
+process the backlog first drains promptly after attaching and MAY defer
+its processing of interleaved live deliveries; `RX_AGE` in the
+buffered-frame metadata gives coarse (one-second) relative timing but is
+not sufficient to reconstruct a strict total order — and UMSH itself does
+not guarantee in-order delivery in any case.
 
 The queue is **circular**: when a new frame is accepted and the queue is
 full, the oldest queued frame is discarded and the new frame is appended.
