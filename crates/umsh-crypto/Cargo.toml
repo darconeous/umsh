@@ -20,6 +20,7 @@ software-crypto = [
 ]
 
 [dependencies]
+heapless.workspace = true
 aes = { workspace = true, optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }

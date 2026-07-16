@@ -3041,6 +3041,7 @@ dependencies = [
  "aes",
  "curve25519-dalek",
  "ed25519-dalek",
+ "heapless 0.8.0",
  "rand_core 0.6.4",
  "sha2",
  "umsh-core",

@@ -180,11 +180,8 @@
 
 use embedded_hal_async::delay::DelayNs;
 
-// Retain the highest accepted counter plus all eight counters in the bounded
-// duplicate-acknowledgement window.
-pub(crate) const RECENT_MIC_CAPACITY: usize = 9;
-pub(crate) const REPLAY_BACKTRACK_SLOTS: u32 = 8;
-pub(crate) const REPLAY_STALE_MS: u64 = 5 * 60 * 1000;
+#[cfg(test)]
+pub(crate) use umsh_crypto::replay::{RECENT_MIC_CAPACITY, REPLAY_STALE_MS};
 pub(crate) const MAX_SOURCE_ROUTE_HOPS: usize = 15;
 pub(crate) const MAX_RESEND_FRAME_LEN: usize = 256;
 pub(crate) const DEFAULT_DUP_CACHE_SIZE: usize = 64;
