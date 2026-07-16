@@ -7,7 +7,8 @@ use umsh_companion::ids::{self, cap, prop, stream};
 use umsh_companion::items::{self, Filter, ItemError};
 use umsh_companion::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
 use umsh_companion::pui;
-use umsh_core::PacketHeader;
+use umsh_core::{ChannelKey, PacketHeader};
+use umsh_crypto::{AesProvider, CryptoEngine, Sha256Provider};
 
 use crate::duty::DutyTracker;
 
@@ -19,6 +20,10 @@ pub const MAX_DEVICE_NAME_LEN: usize = 64;
 
 /// Room for a `CMD_STR_RECV` frame around a full-MTU payload.
 const SCRATCH: usize = MAX_MTU + 24;
+
+/// Largest encoded property value the session produces (bounded by
+/// `PROP_HOST_PEER_KEYS`' digest form: one public key per entry).
+const PROP_BUF: usize = MAX_PEER_KEYS * items::PUBLIC_KEY_LEN + 16;
 
 /// LoRa bandwidths accepted for `PROP_PHY_LORA_BW`, in Hz.
 const SUPPORTED_BW_HZ: [u32; 10] = [
@@ -349,9 +354,115 @@ impl RxQueue {
     }
 }
 
+/// Maximum number of `PROP_HOST_CHANNEL_KEYS` entries.
+pub const MAX_CHANNEL_KEYS: usize = 8;
+/// Maximum number of `PROP_HOST_PEER_KEYS` entries.
+pub const MAX_PEER_KEYS: usize = 8;
+
+/// One provisioned host channel key with its derived channel
+/// identifier (the digest form, and an implicit receive filter).
+#[derive(Clone, Copy)]
+struct ChannelKeyEntry {
+    key: [u8; items::CHANNEL_KEY_LEN],
+    id: [u8; items::CHANNEL_ID_LEN],
+}
+
+/// `PROP_HOST_CHANNEL_KEYS`: an unordered set of channel keys. The
+/// remove selector is the key; the digest form is the derived channel
+/// identifier.
+#[derive(Default)]
+struct ChannelKeyTable {
+    entries: [Option<ChannelKeyEntry>; MAX_CHANNEL_KEYS],
+    len: usize,
+}
+
+impl ChannelKeyTable {
+    fn iter(&self) -> impl Iterator<Item = &ChannelKeyEntry> {
+        self.entries[..self.len].iter().map(|entry| {
+            entry.as_ref().expect("entries below len are populated")
+        })
+    }
+
+    fn insert(&mut self, entry: ChannelKeyEntry) -> Result<(), Status> {
+        if self.iter().any(|existing| existing.key == entry.key) {
+            return Err(Status::ALREADY);
+        }
+        if self.len == MAX_CHANNEL_KEYS {
+            return Err(Status::NOMEM);
+        }
+        self.entries[self.len] = Some(entry);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Remove by channel key, returning the removed entry's derived
+    /// identifier (the digest form).
+    fn remove(&mut self, key: &[u8; items::CHANNEL_KEY_LEN]) -> Result<[u8; 2], Status> {
+        let Some(index) = self.iter().position(|existing| existing.key == *key) else {
+            return Err(Status::ITEM_NOT_FOUND);
+        };
+        let id = self.entries[index].expect("populated").id;
+        self.len -= 1;
+        self.entries[index] = self.entries[self.len];
+        self.entries[self.len] = None;
+        Ok(id)
+    }
+}
+
+/// `PROP_HOST_PEER_KEYS`: pairwise key material for provisioned peers.
+/// Keyed by peer public key (the digest form and remove selector);
+/// inserting a matching public key replaces the stored key material.
+#[derive(Default)]
+struct PeerKeyTable {
+    entries: [Option<items::PeerKeyEntry>; MAX_PEER_KEYS],
+    len: usize,
+}
+
+impl PeerKeyTable {
+    fn iter(&self) -> impl Iterator<Item = &items::PeerKeyEntry> {
+        self.entries[..self.len].iter().map(|entry| {
+            entry.as_ref().expect("entries below len are populated")
+        })
+    }
+
+    /// Insert or replace (by public key). Replacement updates only the
+    /// stored key material per the spec: nothing else is keyed by the
+    /// key values.
+    fn insert(&mut self, entry: items::PeerKeyEntry) -> Result<(), Status> {
+        if let Some(existing) = self.entries[..self.len]
+            .iter_mut()
+            .flatten()
+            .find(|existing| existing.public_key == entry.public_key)
+        {
+            *existing = entry;
+            return Ok(());
+        }
+        if self.len == MAX_PEER_KEYS {
+            return Err(Status::NOMEM);
+        }
+        self.entries[self.len] = Some(entry);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Remove by peer public key.
+    fn remove(&mut self, public_key: &[u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
+        let Some(index) = self
+            .iter()
+            .position(|existing| existing.public_key == *public_key)
+        else {
+            return Err(Status::ITEM_NOT_FOUND);
+        };
+        self.len -= 1;
+        self.entries[index] = self.entries[self.len];
+        self.entries[self.len] = None;
+        Ok(())
+    }
+}
+
 /// State belonging to the configured tethered host identity (spec
 /// §State Classes, host domain): host key, key tables, filters,
-/// auto-ACK policy, and the inbound queue. The `CAP_HOST_KEYS`
+/// auto-ACK policy, and the inbound queue. The `CAP_HOST_AUTO_ACK`
 /// increment extends it; host replacement resets it as one unit.
 #[derive(Default)]
 struct HostDomain {
@@ -359,6 +470,10 @@ struct HostDomain {
     key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     /// `PROP_HOST_RX_FILTERS`.
     filters: FilterTable,
+    /// `PROP_HOST_CHANNEL_KEYS`.
+    channel_keys: ChannelKeyTable,
+    /// `PROP_HOST_PEER_KEYS`.
+    peer_keys: PeerKeyTable,
     /// The inbound queue, populated while the host is detached.
     queue: RxQueue,
 }
@@ -371,6 +486,8 @@ impl HostDomain {
     fn reset(&mut self, key: Option<[u8; items::PUBLIC_KEY_LEN]>) {
         self.key = key;
         self.filters = FilterTable::default();
+        self.channel_keys = ChannelKeyTable::default();
+        self.peer_keys = PeerKeyTable::default();
         self.queue.clear();
     }
 
@@ -378,7 +495,7 @@ impl HostDomain {
     /// host channel keys, and an empty explicit table, filtering is
     /// unconfigured and every received frame is accepted.
     fn filtering_configured(&self) -> bool {
-        self.key.is_some() || !self.filters.is_empty()
+        self.key.is_some() || !self.filters.is_empty() || self.channel_keys.len != 0
     }
 
     /// Whether receive filtering accepts this frame: any explicit
@@ -402,6 +519,16 @@ impl HostDomain {
             return true;
         }
         let channel = header.channel.map(|channel| channel.0);
+        // Each provisioned host channel key's derived identifier is an
+        // implicit channel filter.
+        if channel.is_some()
+            && self
+                .channel_keys
+                .iter()
+                .any(|entry| channel == Some(entry.id))
+        {
+            return true;
+        }
         let pkt_type = header.fcf.packet_type() as u8;
         self.filters.iter().any(|filter| match filter {
             Filter::DestHint(hint) => dst == Some(*hint),
@@ -440,8 +567,12 @@ struct DrainState {
     remaining: usize,
 }
 
-pub struct Session {
+pub struct Session<A: AesProvider, S: Sha256Provider> {
     config: SessionConfig,
+    /// Protocol crypto (channel-identifier derivation now; packet
+    /// authentication and delegated acknowledgement with
+    /// `CAP_HOST_AUTO_ACK`).
+    engine: CryptoEngine<A, S>,
     device: DeviceDomain,
     host: HostDomain,
     session: SessionState,
@@ -449,24 +580,30 @@ pub struct Session {
     /// delivered live when true and queued when false. Starts detached;
     /// the transport binding reports attach/detach edges.
     attached: bool,
+    /// Whether the attached transport meets its security binding for
+    /// key provisioning (spec §Provisioning Security): physical
+    /// possession for serial, an encrypted bonded LESC link for BLE.
+    link_secure: bool,
     last_status: Status,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
     scratch: [u8; SCRATCH],
 }
 
-impl Session {
+impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// `boot_status` is the retained hardware reset cause, reported by
     /// the first `PROP_LAST_STATUS` get of the first session.
-    pub fn new(config: SessionConfig, boot_status: Status) -> Self {
+    pub fn new(config: SessionConfig, boot_status: Status, engine: CryptoEngine<A, S>) -> Self {
         debug_assert!(usize::from(config.mtu) <= MAX_MTU);
         debug_assert!(valid_device_name(config.default_device_name.as_bytes()));
         Self {
             config,
+            engine,
             device: DeviceDomain::post_reset(&config),
             host: HostDomain::default(),
             session: SessionState::default(),
             attached: false,
+            link_secure: false,
             last_status: boot_status,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
@@ -524,9 +661,15 @@ impl Session {
     /// queue — are untouched, and nothing is emitted; the attach itself
     /// produces no notification. Accepted frames are delivered live
     /// from here on; queued frames wait for `CMD_QUEUE_DRAIN`.
-    pub fn attach(&mut self) {
+    ///
+    /// `link_secure` states whether this transport meets its security
+    /// binding for key provisioning (spec §Provisioning Security):
+    /// physical possession for serial transports, an encrypted bonded
+    /// LESC link for BLE. Key-bearing writes are refused while false.
+    pub fn attach(&mut self, link_secure: bool) {
         self.session = SessionState::default();
         self.attached = true;
+        self.link_secure = link_secure;
     }
 
     /// The host detached. Session state is discarded; the device and
@@ -536,6 +679,7 @@ impl Session {
     pub fn detach(&mut self) {
         self.session = SessionState::default();
         self.attached = false;
+        self.link_secure = false;
     }
 
     /// Handle one decoded companion-link frame from the host.
@@ -722,7 +866,7 @@ impl Session {
             self.fail(tid, Status::INVALID_STATE, emit);
             return None;
         }
-        let mut value = [0u8; 96];
+        let mut value = [0u8; PROP_BUF];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
             PropValue::Unimplemented => self.fail(tid, Status::UNIMPLEMENTED, emit),
@@ -901,7 +1045,7 @@ impl Session {
             }
         };
         // Echo the authoritative value back from session state.
-        let mut encoded = [0u8; 96];
+        let mut encoded = [0u8; PROP_BUF];
         if let PropValue::Encoded(len) = self.encode_prop(key, now_ms, &mut encoded) {
             self.send_prop_is(tid, key, &encoded[..len], emit);
         }
@@ -980,6 +1124,37 @@ impl Session {
                 self.host.filters = FilterTable::parse_table(value)?;
                 Ok(false)
             }
+            // Key-bearing writes require the transport's security
+            // binding (spec §Provisioning Security).
+            prop::HOST_CHANNEL_KEYS => {
+                self.require_secure_link()?;
+                let mut table = ChannelKeyTable::default();
+                for key in items::fixed_items::<{ items::CHANNEL_KEY_LEN }>(value)
+                    .map_err(|_| Status::INVALID_ARGUMENT)?
+                {
+                    // Duplicate keys in a set value collapse.
+                    match table.insert(self.channel_entry(key)) {
+                        Ok(()) | Err(Status::ALREADY) => {}
+                        Err(status) => return Err(status),
+                    }
+                }
+                self.host.channel_keys = table;
+                Ok(false)
+            }
+            prop::HOST_PEER_KEYS => {
+                self.require_secure_link()?;
+                let mut table = PeerKeyTable::default();
+                for item in items::fixed_items::<{ items::PeerKeyEntry::WIRE_LEN }>(value)
+                    .map_err(|_| Status::INVALID_ARGUMENT)?
+                {
+                    let entry = items::PeerKeyEntry::decode(item)
+                        .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    // A repeated public key replaces the earlier entry.
+                    table.insert(entry)?;
+                }
+                self.host.peer_keys = table;
+                Ok(false)
+            }
             // This NCP's queue size is fixed; adjustment is optional in
             // the spec and unimplemented here.
             prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
@@ -1012,6 +1187,33 @@ impl Session {
                     Err(status) => self.fail(tid, status, emit),
                 }
             }
+            // Key-bearing inserts require the transport's security
+            // binding. The emitted digest never contains key material.
+            prop::HOST_CHANNEL_KEYS => {
+                let result = self.require_secure_link().and_then(|()| {
+                    let key: &[u8; items::CHANNEL_KEY_LEN] =
+                        item.try_into().map_err(|_| Status::INVALID_ARGUMENT)?;
+                    let entry = self.channel_entry(key);
+                    self.host.channel_keys.insert(entry).map(|()| entry.id)
+                });
+                match result {
+                    Ok(id) => self.send_prop_inserted(tid, key, &id, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
+            prop::HOST_PEER_KEYS => {
+                let result = self.require_secure_link().and_then(|()| {
+                    let entry = items::PeerKeyEntry::decode(item)
+                        .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    // A matching public key replaces the stored key
+                    // material (never STATUS_ALREADY).
+                    self.host.peer_keys.insert(entry).map(|()| entry.public_key)
+                });
+                match result {
+                    Ok(public_key) => self.send_prop_inserted(tid, key, &public_key, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
             _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
@@ -1034,8 +1236,55 @@ impl Session {
                     Err(status) => self.fail(tid, status, emit),
                 }
             }
+            // The channel-key remove selector is the key itself; the
+            // digest reported back is the derived channel identifier.
+            prop::HOST_CHANNEL_KEYS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|key: &[u8; items::CHANNEL_KEY_LEN]| {
+                        self.host.channel_keys.remove(key)
+                    });
+                match result {
+                    Ok(id) => self.send_prop_removed(tid, key, &id, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
+            // The peer remove selector is the peer public key (already
+            // the digest form).
+            prop::HOST_PEER_KEYS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.host.peer_keys.remove(public_key)
+                    });
+                match result {
+                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
             _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
             _ => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+        }
+    }
+
+    /// Derive a channel key's identifier (its digest form and implicit
+    /// receive filter).
+    fn channel_entry(&self, key: &[u8; items::CHANNEL_KEY_LEN]) -> ChannelKeyEntry {
+        ChannelKeyEntry {
+            key: *key,
+            id: self.engine.derive_channel_id(&ChannelKey(*key)).0,
+        }
+    }
+
+    /// Refuse key-bearing writes over a transport that does not meet
+    /// its security binding (spec §Provisioning Security).
+    fn require_secure_link(&self) -> Result<(), Status> {
+        if self.link_secure {
+            Ok(())
+        } else {
+            Err(Status::INVALID_STATE)
         }
     }
 
@@ -1125,13 +1374,15 @@ impl Session {
                 | prop::MAC_PROMISCUOUS
                 | prop::HOST_KEY
                 | prop::HOST_RX_FILTERS
+                | prop::HOST_CHANNEL_KEYS
+                | prop::HOST_PEER_KEYS
                 | prop::HOST_RX_QUEUE_COUNT
                 | prop::HOST_RX_QUEUE_CAPACITY
                 | prop::HOST_RX_QUEUE_DROPPED
         )
     }
 
-    fn encode_prop(&mut self, key: u32, now_ms: u64, out: &mut [u8; 96]) -> PropValue {
+    fn encode_prop(&mut self, key: u32, now_ms: u64, out: &mut [u8; PROP_BUF]) -> PropValue {
         let len = match key {
             prop::LAST_STATUS => pui::encode(self.last_status.0, out).unwrap_or(0),
             prop::PROTOCOL_VERSION => {
@@ -1156,6 +1407,7 @@ impl Session {
                     cap::PHY_LORA,
                     cap::HOST_FILTER,
                     cap::HOST_RX_QUEUE,
+                    cap::HOST_KEYS,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -1193,6 +1445,23 @@ impl Session {
                 Some(key) => put(out, key),
                 None => 0,
             },
+            // Key tables report digest forms only: derived channel
+            // identifiers and peer public keys. Key material is never
+            // read back (spec §Provisioning Security).
+            prop::HOST_CHANNEL_KEYS => {
+                let mut len = 0;
+                for entry in self.host.channel_keys.iter() {
+                    len += put(&mut out[len..], &entry.id);
+                }
+                len
+            }
+            prop::HOST_PEER_KEYS => {
+                let mut len = 0;
+                for entry in self.host.peer_keys.iter() {
+                    len += put(&mut out[len..], &entry.public_key);
+                }
+                len
+            }
             prop::HOST_RX_QUEUE_COUNT => put(out, &(self.host.queue.len as u16).to_le_bytes()),
             prop::HOST_RX_QUEUE_CAPACITY => {
                 put(out, &(RX_QUEUE_CAPACITY as u16).to_le_bytes())
@@ -1219,7 +1488,7 @@ impl Session {
 
     /// Emit `CMD_PROP_IS` for `key` with `value`.
     fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 112];
+        let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_is(&mut buf, tid, key, value) {
             emit(&buf[..len]);
         }
@@ -1227,7 +1496,7 @@ impl Session {
 
     /// Emit `CMD_PROP_INSERTED` for `key` with the item's digest form.
     fn send_prop_inserted(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 112];
+        let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_inserted(&mut buf, tid, key, digest) {
             emit(&buf[..len]);
         }
@@ -1235,7 +1504,7 @@ impl Session {
 
     /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form.
     fn send_prop_removed(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 112];
+        let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_removed(&mut buf, tid, key, digest) {
             emit(&buf[..len]);
         }
@@ -1309,18 +1578,26 @@ fn valid_device_name(value: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 
-    /// A session with a host attached (the normal state for command
-    /// dispatch and live-delivery tests). Queueing tests detach it.
-    fn test_session() -> Session {
+    type TestSession = Session<SoftwareAes, SoftwareSha256>;
+
+    fn test_engine() -> CryptoEngine<SoftwareAes, SoftwareSha256> {
+        CryptoEngine::new(SoftwareAes, SoftwareSha256)
+    }
+
+    /// A session with a host attached over a secure transport (the
+    /// normal state for command dispatch and live-delivery tests).
+    /// Queueing tests detach it; gate tests re-attach insecurely.
+    fn test_session() -> TestSession {
         let mut session = test_session_with_boot_status(Status::RESET_POWER_ON);
-        session.attach();
+        session.attach(true);
         session
     }
 
-    fn test_session_with_boot_status(boot_status: Status) -> Session {
-        let mut session = Session::new(test_config(), boot_status);
-        session.attach();
+    fn test_session_with_boot_status(boot_status: Status) -> TestSession {
+        let mut session = Session::new(test_config(), boot_status, test_engine());
+        session.attach(true);
         session
     }
 
@@ -1348,7 +1625,7 @@ mod tests {
 
     /// Drive `handle_frame` and collect emitted frames.
     fn dispatch(
-        session: &mut Session,
+        session: &mut TestSession,
         request: &[u8],
         now_ms: u64,
     ) -> (Vec<Vec<u8>>, Option<Effect>) {
@@ -1374,7 +1651,7 @@ mod tests {
         assert_eq!(pui::decode(&value).unwrap().0, status.0);
     }
 
-    fn get(session: &mut Session, key: u32) -> Vec<u8> {
+    fn get(session: &mut TestSession, key: u32) -> Vec<u8> {
         let mut buf = [0u8; 16];
         let len = frame::prop_get(&mut buf, 1, key).unwrap();
         let (emitted, effect) = dispatch(session, &buf[..len], 0);
@@ -1384,14 +1661,14 @@ mod tests {
         value
     }
 
-    fn set(session: &mut Session, key: u32, value: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
-        let mut buf = [0u8; 80];
+    fn set(session: &mut TestSession, key: u32, value: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+        let mut buf = [0u8; 640];
         let len = frame::prop_set(&mut buf, 2, key, value).unwrap();
         dispatch(session, &buf[..len], 0)
     }
 
     fn send_packet(
-        session: &mut Session,
+        session: &mut TestSession,
         tid: u8,
         data: &[u8],
         meta: &[u8],
@@ -1402,7 +1679,7 @@ mod tests {
         dispatch(session, &buf[..len], now_ms)
     }
 
-    fn enable(session: &mut Session) {
+    fn enable(session: &mut TestSession) {
         let (_, effect) = set(session, prop::PHY_ENABLED, &[1]);
         assert!(matches!(effect, Some(Effect::ApplyRadio(settings)) if settings.enabled));
     }
@@ -1476,7 +1753,8 @@ mod tests {
                 cap::DEV_NAME,
                 cap::PHY_LORA,
                 cap::HOST_FILTER,
-                cap::HOST_RX_QUEUE
+                cap::HOST_RX_QUEUE,
+                cap::HOST_KEYS
             ]
         );
     }
@@ -1492,7 +1770,7 @@ mod tests {
         assert_eq!(effect, Some(Effect::DeviceNameChanged));
         assert_eq!(session.device_name(), configured);
 
-        session.attach();
+        session.attach(true);
         assert_eq!(get(&mut session, prop::DEV_NAME), configured.as_bytes());
 
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
@@ -1520,7 +1798,7 @@ mod tests {
 
         // Attach must not reconfigure or disable the PHY, must not
         // touch the duty limit or accounting, and must emit nothing.
-        session.attach();
+        session.attach(true);
         assert_eq!(session.settings(), settings_before);
         assert_eq!(get(&mut session, prop::PHY_ENABLED), [1]);
         assert_eq!(get(&mut session, prop::PHY_FREQ), 906_875u32.to_le_bytes());
@@ -1531,7 +1809,7 @@ mod tests {
     #[test]
     fn attach_retains_boot_status_for_first_query() {
         let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
-        session.attach();
+        session.attach(true);
         let raw = get(&mut session, prop::LAST_STATUS);
         assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
     }
@@ -1541,13 +1819,13 @@ mod tests {
         let mut session = test_session();
         set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
         assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [1]);
-        session.attach();
+        session.attach(true);
         assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
 
         // Detach discards session state the same way.
         set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
         session.detach();
-        session.attach();
+        session.attach(true);
         assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
 
         // BOOL validation.
@@ -1565,7 +1843,7 @@ mod tests {
 
         // The requesting session is gone; its TID correlation must not
         // leak into the successor.
-        session.attach();
+        session.attach(true);
         assert!(!session.has_pending_tx());
         let mut emitted = Vec::new();
         session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
@@ -1852,7 +2130,7 @@ mod tests {
         // Nothing is queued either: the PHY is disabled.
         session.detach();
         session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |_: &[u8]| {});
-        session.attach();
+        session.attach(true);
         assert_eq!(
             get(&mut session, prop::HOST_RX_QUEUE_COUNT),
             0u16.to_le_bytes()
@@ -1878,9 +2156,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found. HOST_CHANNEL_KEYS exists in
+        // An unknown property is not found. DEV_CHANNEL_KEYS exists in
         // the full spec but this session does not implement it yet.
-        for unknown in [prop::HOST_CHANNEL_KEYS, 1_234] {
+        for unknown in [prop::DEV_CHANNEL_KEYS, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -1999,11 +2277,11 @@ mod tests {
     }
 
     /// Feed a radio frame in and report whether it was delivered.
-    fn delivered(session: &mut Session, frame: &[u8]) -> bool {
+    fn delivered(session: &mut TestSession, frame: &[u8]) -> bool {
         delivered_at(session, frame, 0)
     }
 
-    fn delivered_at(session: &mut Session, frame: &[u8], now_ms: u64) -> bool {
+    fn delivered_at(session: &mut TestSession, frame: &[u8], now_ms: u64) -> bool {
         let mut emitted = Vec::new();
         session.on_radio_rx(frame, -80, 40, None, now_ms, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
@@ -2011,20 +2289,20 @@ mod tests {
         !emitted.is_empty()
     }
 
-    fn insert_item(session: &mut Session, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+    fn insert_item(session: &mut TestSession, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
         let mut buf = [0u8; 96];
         let len = frame::prop_insert(&mut buf, 5, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
     }
 
-    fn remove_item(session: &mut Session, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+    fn remove_item(session: &mut TestSession, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
         let mut buf = [0u8; 96];
         let len = frame::prop_remove(&mut buf, 6, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
     }
 
     /// Install a host key, completing the deferred durable wipe.
-    fn install_host_key(session: &mut Session, key: &[u8; 32]) {
+    fn install_host_key(session: &mut TestSession, key: &[u8; 32]) {
         let (emitted, effect) = set(session, prop::HOST_KEY, key);
         assert!(emitted.is_empty(), "no response before the wipe completes");
         assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
@@ -2152,7 +2430,7 @@ mod tests {
 
         // Attach discards the pending transaction: a late wipe
         // completion must not install the key into the new session.
-        session.attach();
+        session.attach(true);
         let mut emitted = Vec::new();
         session.respond_host_wipe(2, Ok(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         assert!(emitted.is_empty());
@@ -2334,7 +2612,7 @@ mod tests {
         assert!(delivered(&mut session, &[0x00, 0x01, 0x02]));
 
         // Attach reverts promiscuous mode; filtering applies again.
-        session.attach();
+        session.attach(true);
         assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
     }
 
@@ -2348,7 +2626,7 @@ mod tests {
             prop::HOST_RX_FILTERS,
             &[items::FILTER_PKT_TYPE, 0],
         );
-        session.attach();
+        session.attach(true);
         assert_eq!(get(&mut session, prop::HOST_KEY), [0xC4; 32]);
         assert!(delivered(&mut session, &broadcast_frame()));
         assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
@@ -2368,18 +2646,18 @@ mod tests {
 
     /// Feed a frame while detached at `now_ms` (asserting it is not
     /// delivered live).
-    fn receive_detached(session: &mut Session, frame: &[u8], now_ms: u64) {
+    fn receive_detached(session: &mut TestSession, frame: &[u8], now_ms: u64) {
         assert!(!delivered_at(session, frame, now_ms));
     }
 
-    fn queue_count(session: &mut Session) -> u16 {
+    fn queue_count(session: &mut TestSession) -> u16 {
         let raw = get(session, prop::HOST_RX_QUEUE_COUNT);
         u16::from_le_bytes([raw[0], raw[1]])
     }
 
     /// Issue CMD_QUEUE_DRAIN and run it to completion, returning the
     /// drained (frame, metadata) pairs. Asserts correct completion.
-    fn drain(session: &mut Session, now_ms: u64) -> Vec<(Vec<u8>, BufferedRxMeta)> {
+    fn drain(session: &mut TestSession, now_ms: u64) -> Vec<(Vec<u8>, BufferedRxMeta)> {
         let mut buf = [0u8; 4];
         let len = frame::queue_drain(&mut buf, 7).unwrap();
         let (emitted, effect) = dispatch(session, &buf[..len], now_ms);
@@ -2421,7 +2699,7 @@ mod tests {
 
         // Attach does not flush the queue; live delivery resumes while
         // the backlog waits for an explicit drain.
-        session.attach();
+        session.attach(true);
         assert_eq!(queue_count(&mut session), 2);
         assert!(delivered(&mut session, &unicast_to([7, 7, 7])));
         assert_eq!(queue_count(&mut session), 2);
@@ -2453,7 +2731,7 @@ mod tests {
         for index in 0..(RX_QUEUE_CAPACITY + 3) as u8 {
             receive_detached(&mut session, &unicast_to([index, 0, 0]), 0);
         }
-        session.attach();
+        session.attach(true);
         assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
         assert_eq!(
             get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
@@ -2480,7 +2758,7 @@ mod tests {
         receive_detached(&mut session, &unicast_to([0x11, 0x22, 0x33]), 0);
         receive_detached(&mut session, &unicast_to([4, 5, 6]), 0); // rejected
         receive_detached(&mut session, &[0xFF, 0xFE], 0); // unparseable
-        session.attach();
+        session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
     }
 
@@ -2494,7 +2772,7 @@ mod tests {
         let frame = unicast_to([1, 2, 3]);
         receive_detached(&mut session, &frame, 0);
         receive_detached(&mut session, &frame, 0);
-        session.attach();
+        session.attach(true);
         assert_eq!(queue_count(&mut session), 2);
     }
 
@@ -2505,7 +2783,7 @@ mod tests {
         session.detach();
         receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
         receive_detached(&mut session, &unicast_to([2, 0, 0]), 0);
-        session.attach();
+        session.attach(true);
 
         let mut buf = [0u8; 4];
         let len = frame::queue_drain(&mut buf, 7).unwrap();
@@ -2543,7 +2821,7 @@ mod tests {
         enable(&mut session);
         session.detach();
         receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
-        session.attach();
+        session.attach(true);
 
         let mut buf = [0u8; 4];
         let len = frame::queue_drain(&mut buf, 7).unwrap();
@@ -2564,7 +2842,7 @@ mod tests {
         for _ in 0..(RX_QUEUE_CAPACITY + 1) {
             receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
         }
-        session.attach();
+        session.attach(true);
         assert_ne!(queue_count(&mut session), 0);
 
         // Host replacement discards the queue and its counters as part
@@ -2581,10 +2859,220 @@ mod tests {
         enable(&mut session);
         session.detach();
         receive_detached(&mut session, &unicast_to([0xAA, 0xAA, 0xAA]), 0);
-        session.attach();
+        session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert_eq!(queue_count(&mut session), 0);
+    }
+
+    // ─── CAP_HOST_KEYS gate ──────────────────────────────────────────
+
+    /// Insert a channel key, returning its derived identifier digest.
+    fn install_channel_key(session: &mut TestSession, key: &[u8; 32]) -> [u8; 2] {
+        let (emitted, effect) = insert_item(session, prop::HOST_CHANNEL_KEYS, key);
+        assert!(effect.is_none());
+        let (prop_key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(prop_key, prop::HOST_CHANNEL_KEYS);
+        digest.try_into().expect("channel digest is 2 bytes")
+    }
+
+    fn peer_entry(seed: u8) -> [u8; 64] {
+        let mut item = [0u8; 64];
+        item[..32].fill(seed);
+        item[32..48].fill(0xE0 | (seed & 0x0F));
+        item[48..].fill(0x50 | (seed & 0x0F));
+        item
+    }
+
+    #[test]
+    fn channel_key_lifecycle_and_digest_is_derived_id() {
+        let mut session = test_session();
+        let key = [0x42; 32];
+        let expected_id = test_engine().derive_channel_id(&ChannelKey(key)).0;
+
+        let digest = install_channel_key(&mut session, &key);
+        assert_eq!(digest, expected_id);
+        assert_eq!(get(&mut session, prop::HOST_CHANNEL_KEYS), expected_id);
+
+        // Duplicate channel key fails with ALREADY.
+        let (emitted, _) = insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+
+        // Remove selector is the key; the digest reported is the id.
+        let (emitted, _) = remove_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(digest, expected_id);
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+
+        let (emitted, _) = remove_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+
+        // Wrong-size items are invalid.
+        for bad in [&[0u8; 31][..], &[0u8; 33][..], &[][..]] {
+            let (emitted, _) = insert_item(&mut session, prop::HOST_CHANNEL_KEYS, bad);
+            expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+        }
+    }
+
+    #[test]
+    fn channel_key_capacity_is_bounded() {
+        let mut session = test_session();
+        for seed in 0..MAX_CHANNEL_KEYS as u8 {
+            install_channel_key(&mut session, &[seed; 32]);
+        }
+        let (emitted, _) =
+            insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &[0xFF; 32]);
+        expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    #[test]
+    fn peer_key_lifecycle_replacement_and_secret_free_digests() {
+        let mut session = test_session();
+        let entry = peer_entry(0xA1);
+
+        let (emitted, _) = insert_item(&mut session, prop::HOST_PEER_KEYS, &entry);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(digest, entry[..32]);
+        // No emitted frame may carry the pairwise key material.
+        for frame in &emitted {
+            assert!(!frame.windows(16).any(|window| window == &entry[32..48]));
+            assert!(!frame.windows(16).any(|window| window == &entry[48..]));
+        }
+
+        // GET reports public keys only.
+        assert_eq!(get(&mut session, prop::HOST_PEER_KEYS), entry[..32]);
+
+        // Inserting the same public key with new key material replaces
+        // the entry (never ALREADY) and does not grow the table.
+        let mut replacement = entry;
+        replacement[32..].fill(0x77);
+        let (emitted, _) = insert_item(&mut session, prop::HOST_PEER_KEYS, &replacement);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(digest, entry[..32]);
+        assert_eq!(get(&mut session, prop::HOST_PEER_KEYS), entry[..32]);
+
+        // Remove selector is the public key.
+        let (emitted, _) = remove_item(&mut session, prop::HOST_PEER_KEYS, &entry[..32]);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(digest, entry[..32]);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+
+        let (emitted, _) = remove_item(&mut session, prop::HOST_PEER_KEYS, &entry[..32]);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+
+        // Malformed entries are invalid.
+        let (emitted, _) = insert_item(&mut session, prop::HOST_PEER_KEYS, &entry[..63]);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn key_table_whole_set_is_atomic_and_collapses_duplicates() {
+        let mut session = test_session();
+
+        // Channels: duplicates collapse; a short trailing item fails
+        // the whole set, leaving the table unchanged.
+        let key_a = [0xA0; 32];
+        let key_b = [0xB0; 32];
+        let mut table = Vec::new();
+        table.extend_from_slice(&key_a);
+        table.extend_from_slice(&key_b);
+        table.extend_from_slice(&key_a);
+        let (emitted, _) = set(&mut session, prop::HOST_CHANNEL_KEYS, &table);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_CHANNEL_KEYS);
+        assert_eq!(value.len(), 4, "two unique channels, 2-byte ids");
+
+        let (emitted, _) = set(&mut session, prop::HOST_CHANNEL_KEYS, &table[..40]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(get(&mut session, prop::HOST_CHANNEL_KEYS).len(), 4);
+
+        // Peers: a repeated public key replaces the earlier entry.
+        let mut peers = Vec::new();
+        peers.extend_from_slice(&peer_entry(0x01));
+        let mut updated = peer_entry(0x01);
+        updated[32..].fill(0x99);
+        peers.extend_from_slice(&updated);
+        let (emitted, _) = set(&mut session, prop::HOST_PEER_KEYS, &peers);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(value, peer_entry(0x01)[..32], "one entry, digest form");
+
+        // Empty set clears; oversized set fails atomically.
+        let (emitted, _) = set(&mut session, prop::HOST_PEER_KEYS, &[]);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert!(value.is_empty());
+        let mut oversized = Vec::new();
+        for seed in 0..(MAX_PEER_KEYS + 1) as u8 {
+            oversized.extend_from_slice(&peer_entry(seed));
+        }
+        let (emitted, _) = set(&mut session, prop::HOST_PEER_KEYS, &oversized);
+        expect_status(&emitted[0], 2, Status::NOMEM);
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+    }
+
+    #[test]
+    fn insecure_transport_refuses_key_writes() {
+        let mut session = test_session();
+        session.attach(false); // e.g. a bare UART with no possession story
+
+        for (key, item) in [
+            (prop::HOST_CHANNEL_KEYS, &[0x42u8; 32][..]),
+            (prop::HOST_PEER_KEYS, &peer_entry(0x01)[..]),
+        ] {
+            let (emitted, effect) = set(&mut session, key, item);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::INVALID_STATE);
+            let (emitted, _) = insert_item(&mut session, key, item);
+            expect_status(&emitted[0], 5, Status::INVALID_STATE);
+            assert!(get(&mut session, key).is_empty(), "table must stay empty");
+        }
+
+        // Non-key properties are unaffected by the gate.
+        let (emitted, _) = set(&mut session, prop::PHY_DUTY_LIMIT, &100u16.to_le_bytes());
+        let (_, key, _) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::PHY_DUTY_LIMIT);
+
+        // Re-attaching over a secure transport unlocks provisioning.
+        session.attach(true);
+        install_channel_key(&mut session, &[0x42; 32]);
+    }
+
+    #[test]
+    fn provisioned_channel_id_is_an_implicit_filter() {
+        let mut session = test_session();
+        enable(&mut session);
+        // Only a channel key is provisioned: filtering becomes
+        // configured (compatibility rule) and the derived id matches
+        // multicast and blind unicast on that channel.
+        let id = install_channel_key(&mut session, &[0x42; 32]);
+        assert!(delivered(&mut session, &multicast_on(id)));
+        assert!(delivered(&mut session, &blind_unicast_on(id)));
+        let other = [id[0] ^ 0xFF, id[1]];
+        assert!(!delivered(&mut session, &multicast_on(other)));
+        assert!(!delivered(&mut session, &broadcast_frame()));
+        assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
+
+        // Detached queueing honors the same implicit filter.
+        session.detach();
+        receive_detached(&mut session, &multicast_on(id), 0);
+        receive_detached(&mut session, &multicast_on(other), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
+    fn host_replacement_clears_key_tables() {
+        let mut session = test_session();
+        install_channel_key(&mut session, &[0x42; 32]);
+        insert_item(&mut session, prop::HOST_PEER_KEYS, &peer_entry(0x01));
+
+        install_host_key(&mut session, &[0xAA; 32]);
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+
+        // CMD_RST clears them too.
+        install_channel_key(&mut session, &[0x42; 32]);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
     }
 
     #[test]

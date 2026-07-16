@@ -156,8 +156,15 @@ mod firmware {
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{
-        Effect, MAX_DEVICE_NAME_LEN, RadioSettings, Session, SessionConfig, TxPower,
+        Effect, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, TxPower,
     };
+    use umsh_crypto::CryptoEngine;
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+
+    /// The NCP session instantiated with this firmware's crypto
+    /// providers (software AES/SHA; the linker strips the unused
+    /// identity code).
+    type Session = umsh_companion_ncp::Session<SoftwareAes, SoftwareSha256>;
     use umsh_radio_loraphy::{
         MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
         coding_rate_from_denom, spreading_factor_from_u8,
@@ -1851,7 +1858,11 @@ mod firmware {
     async fn ncp_task(boot_reason: Status) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
-        let mut session = Session::new(session_config(), boot_reason);
+        let mut session = Session::new(
+            session_config(),
+            boot_reason,
+            CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        );
         let mut emitter = Emitter::new();
         let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
 
@@ -1882,7 +1893,11 @@ mod firmware {
                         let _ = arbitration.advertising_allowed();
                         set_advertising_allowed(true);
                     }
-                    session.attach();
+                    // Both transports meet their provisioning-security
+                    // binding here: USB-CDC by physical possession, BLE
+                    // because the companion GATT service refuses any
+                    // access outside an encrypted LESC-bonded link.
+                    session.attach(true);
                 }
                 Either3::First(InEvent::Detached(transport)) => {
                     // Only the active transport's detach ends the
