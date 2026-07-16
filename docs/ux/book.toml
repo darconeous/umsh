@@ -1,0 +1,10 @@
+[book]
+title = "UMSH User Interface Guidelines"
+authors = ["UMSH Contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/docs/ux/"
+default-theme = "light"
+preferred-dark-theme = "ayu"
