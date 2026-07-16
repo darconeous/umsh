@@ -115,6 +115,15 @@ pub enum Effect {
     /// most one frame, so a bounded emitter never overflows and the
     /// transport can apply backpressure).
     DrainQueue,
+    /// `CMD_SAVE`: durably store the bytes produced by
+    /// [`Session::encode_snapshot`], replacing any previous snapshot,
+    /// then complete with [`Session::respond_save`]. Success must not
+    /// be reported before the write has committed.
+    SaveSnapshot { tid: u8 },
+    /// `CMD_CLEAR`: erase the stored snapshot (and, once it exists, all
+    /// other persisted provisioning), then complete with
+    /// [`Session::respond_clear`]. Live state is unaffected.
+    ClearSaved { tid: u8 },
 }
 
 struct PendingTx {
@@ -404,7 +413,7 @@ struct ChannelKeyEntry {
 /// `PROP_HOST_CHANNEL_KEYS`: an unordered set of channel keys. The
 /// remove selector is the key; the digest form is the derived channel
 /// identifier.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct ChannelKeyTable {
     entries: [Option<ChannelKeyEntry>; MAX_CHANNEL_KEYS],
     len: usize,
@@ -503,6 +512,14 @@ impl PeerKeyTable {
         self.len -= 1;
         self.entries[index] = self.entries[self.len].take();
         Ok(())
+    }
+
+    /// The replay window currently tracked for `public_key`, if that
+    /// peer is provisioned.
+    fn window_for(&self, public_key: &[u8; items::PUBLIC_KEY_LEN]) -> Option<&ReplayWindow> {
+        self.iter()
+            .find(|slot| slot.entry.public_key == *public_key)
+            .map(|slot| &slot.window)
     }
 
     /// Resolve a received source address to a provisioned peer index:
@@ -610,6 +627,248 @@ impl HostDomain {
     }
 }
 
+/// Largest encoded snapshot the session produces (see
+/// [`Session::encode_snapshot`]); sized for every table at capacity
+/// with headroom for future fields.
+pub const SNAPSHOT_MAX: usize = 1024;
+
+/// Snapshot wire-format version; a decoder rejects other versions and
+/// the NCP then boots as if nothing were saved.
+const SNAPSHOT_VERSION: u8 = 1;
+
+/// The saved-state subset of the device and host domains (spec §Saved
+/// State): everything `CMD_SAVE` persists and `CMD_RESTORE`/`CMD_RST`
+/// revert to. Deliberately excludes queue contents, per-peer replay
+/// baselines, and the independently persisted device identity.
+#[derive(Clone)]
+struct SavedState {
+    settings: RadioSettings,
+    duty_limit: u16,
+    name: [u8; MAX_DEVICE_NAME_LEN],
+    name_len: usize,
+    host_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
+    auto_ack: bool,
+    filters: FilterTable,
+    channel_keys: ChannelKeyTable,
+    peers: [Option<items::PeerKeyEntry>; MAX_PEER_KEYS],
+    peer_len: usize,
+}
+
+impl SavedState {
+    /// Capture the saveable subset of the live domains.
+    fn capture(device: &DeviceDomain, host: &HostDomain) -> Self {
+        let mut peers = [None; MAX_PEER_KEYS];
+        for (slot, entry) in peers.iter_mut().zip(host.peer_keys.iter()) {
+            *slot = Some(entry.entry);
+        }
+        Self {
+            settings: device.settings,
+            duty_limit: device.duty_limit,
+            name: device.name,
+            name_len: device.name_len,
+            host_key: host.key,
+            auto_ack: host.auto_ack,
+            filters: host.filters,
+            channel_keys: host.channel_keys,
+            peers,
+            peer_len: host.peer_keys.len,
+        }
+    }
+
+    /// Reset the host-domain portion to defaults (the durable side of
+    /// spec §Host Replacement).
+    fn wipe_host(&mut self) {
+        self.host_key = None;
+        self.auto_ack = false;
+        self.filters = FilterTable::default();
+        self.channel_keys = ChannelKeyTable::default();
+        self.peers = [None; MAX_PEER_KEYS];
+        self.peer_len = 0;
+    }
+
+    fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        let mut writer = Writer { out, at: 0 };
+        writer.byte(SNAPSHOT_VERSION)?;
+        writer.byte(self.settings.enabled as u8)?;
+        writer.bytes(&self.settings.freq_khz.to_le_bytes())?;
+        writer.bytes(&self.settings.bw_hz.to_le_bytes())?;
+        writer.byte(self.settings.sf)?;
+        writer.byte(self.settings.cr_denom)?;
+        writer.byte(self.settings.tx_power_dbm as u8)?;
+        writer.bytes(&self.duty_limit.to_le_bytes())?;
+        writer.byte(self.name_len as u8)?;
+        writer.bytes(&self.name[..self.name_len])?;
+        match &self.host_key {
+            Some(key) => {
+                writer.byte(1)?;
+                writer.bytes(key)?;
+            }
+            None => writer.byte(0)?,
+        }
+        writer.byte(self.auto_ack as u8)?;
+        writer.byte(self.filters.len as u8)?;
+        for filter in self.filters.iter() {
+            let mut item = [0u8; Filter::MAX_WIRE_LEN];
+            let len = filter.encode(&mut item).ok()?;
+            writer.bytes(&item[..len])?;
+        }
+        writer.byte(self.channel_keys.len as u8)?;
+        for entry in self.channel_keys.iter() {
+            writer.bytes(&entry.key)?;
+        }
+        writer.byte(self.peer_len as u8)?;
+        for entry in self.peers[..self.peer_len].iter().flatten() {
+            let mut item = [0u8; items::PeerKeyEntry::WIRE_LEN];
+            entry.encode(&mut item).ok()?;
+            writer.bytes(&item)?;
+        }
+        Some(writer.at)
+    }
+
+    /// Decode a stored snapshot. Channel identifiers are re-derived
+    /// rather than trusted from storage. Any structural problem —
+    /// unknown version, truncation, out-of-range counts or values —
+    /// rejects the whole snapshot.
+    fn decode<A: AesProvider, S: Sha256Provider>(
+        engine: &CryptoEngine<A, S>,
+        bytes: &[u8],
+    ) -> Option<Self> {
+        let mut reader = Reader { bytes, at: 0 };
+        if reader.byte()? != SNAPSHOT_VERSION {
+            return None;
+        }
+        let settings = RadioSettings {
+            enabled: match reader.byte()? {
+                0 => false,
+                1 => true,
+                _ => return None,
+            },
+            freq_khz: u32::from_le_bytes(reader.array()?),
+            bw_hz: u32::from_le_bytes(reader.array()?),
+            sf: reader.byte()?,
+            cr_denom: reader.byte()?,
+            tx_power_dbm: reader.byte()? as i8,
+        };
+        let duty_limit = u16::from_le_bytes(reader.array()?);
+        let name_len = usize::from(reader.byte()?);
+        if !(1..=MAX_DEVICE_NAME_LEN).contains(&name_len) {
+            return None;
+        }
+        let mut name = [0u8; MAX_DEVICE_NAME_LEN];
+        name[..name_len].copy_from_slice(reader.slice(name_len)?);
+        if !valid_device_name(&name[..name_len]) {
+            return None;
+        }
+        let host_key = match reader.byte()? {
+            0 => None,
+            1 => Some(reader.array()?),
+            _ => return None,
+        };
+        let auto_ack = match reader.byte()? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let filter_count = usize::from(reader.byte()?);
+        if filter_count > MAX_RX_FILTERS {
+            return None;
+        }
+        let mut filters = FilterTable::default();
+        for _ in 0..filter_count {
+            // Filter items self-describe their length via the type byte.
+            let item_len = match reader.peek()? {
+                items::FILTER_DEST_HINT => 4,
+                items::FILTER_CHANNEL_ID => 3,
+                items::FILTER_PKT_TYPE => 2,
+                _ => return None,
+            };
+            let filter = Filter::decode(reader.slice(item_len)?).ok()?;
+            filters.insert(filter).ok()?;
+        }
+        let channel_count = usize::from(reader.byte()?);
+        if channel_count > MAX_CHANNEL_KEYS {
+            return None;
+        }
+        let mut channel_keys = ChannelKeyTable::default();
+        for _ in 0..channel_count {
+            let key: [u8; items::CHANNEL_KEY_LEN] = reader.array()?;
+            channel_keys
+                .insert(ChannelKeyEntry {
+                    key,
+                    id: engine.derive_channel_id(&ChannelKey(key)).0,
+                })
+                .ok()?;
+        }
+        let peer_len = usize::from(reader.byte()?);
+        if peer_len > MAX_PEER_KEYS {
+            return None;
+        }
+        let mut peers = [None; MAX_PEER_KEYS];
+        for slot in peers.iter_mut().take(peer_len) {
+            *slot = Some(items::PeerKeyEntry::decode(reader.slice(items::PeerKeyEntry::WIRE_LEN)?).ok()?);
+        }
+        if reader.at != bytes.len() {
+            return None;
+        }
+        Some(Self {
+            settings,
+            duty_limit,
+            name,
+            name_len,
+            host_key,
+            auto_ack,
+            filters,
+            channel_keys,
+            peers,
+            peer_len,
+        })
+    }
+}
+
+struct Writer<'a> {
+    out: &'a mut [u8],
+    at: usize,
+}
+
+impl Writer<'_> {
+    fn byte(&mut self, value: u8) -> Option<()> {
+        self.bytes(&[value])
+    }
+
+    fn bytes(&mut self, value: &[u8]) -> Option<()> {
+        let end = self.at.checked_add(value.len())?;
+        self.out.get_mut(self.at..end)?.copy_from_slice(value);
+        self.at = end;
+        Some(())
+    }
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl Reader<'_> {
+    fn byte(&mut self) -> Option<u8> {
+        self.slice(1).map(|slice| slice[0])
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn slice(&mut self, len: usize) -> Option<&[u8]> {
+        let end = self.at.checked_add(len)?;
+        let slice = self.bytes.get(self.at..end)?;
+        self.at = end;
+        Some(slice)
+    }
+
+    fn array<const N: usize>(&mut self) -> Option<[u8; N]> {
+        self.slice(N)?.try_into().ok()
+    }
+}
+
 /// State that exists only while a host is attached (spec §State
 /// Classes): transaction correlation and session-scoped properties.
 /// Reset on every attach without touching the radio.
@@ -656,6 +915,11 @@ pub struct Session<A: AesProvider, S: Sha256Provider> {
     /// key provisioning (spec §Provisioning Security): physical
     /// possession for serial, an encrypted bonded LESC link for BLE.
     link_secure: bool,
+    /// RAM mirror of the durably saved snapshot (`None` when nothing
+    /// is saved). Post-reset values and `CMD_RESTORE` come from here;
+    /// the firmware keeps the flash journal in sync through the
+    /// save/clear/wipe effects.
+    saved: Option<SavedState>,
     last_status: Status,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
@@ -676,6 +940,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             session: SessionState::default(),
             attached: false,
             link_secure: false,
+            saved: None,
             last_status: boot_status,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
@@ -714,17 +979,61 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
 
     /// Reset all protocol state to post-reset values, announce the
     /// reset with the given reason, and return the radio effect
-    /// restoring the post-reset (disabled) radio configuration.
+    /// applying the post-reset radio configuration.
     ///
-    /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). Once a
-    /// saved snapshot exists (`CAP_SAVE`), the post-reset values come
-    /// from it instead of the documented defaults.
+    /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). With a
+    /// saved snapshot the post-reset value of every saved property is
+    /// its saved value — including the PHY enable state; the documented
+    /// defaults apply only when nothing is saved. Queue contents and
+    /// replay baselines are discarded either way (they are never
+    /// saved).
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
         self.device = DeviceDomain::post_reset(&self.config);
         self.host.reset(None);
+        if self.saved.is_some() {
+            self.apply_saved_device();
+            self.apply_saved_host(false);
+        }
         self.session = SessionState::default();
         self.send_status(TID_UNSOLICITED, reason, emit);
         Effect::ApplyRadio(self.device.settings)
+    }
+
+    /// Apply the saved device-domain configuration to the live domain.
+    /// Duty accounting is dynamic state, not configuration: the caller
+    /// decides whether it survives (restore) or restarts (reset, via
+    /// `DeviceDomain::post_reset` beforehand).
+    fn apply_saved_device(&mut self) {
+        let saved = self.saved.as_ref().expect("caller checked saved");
+        self.device.settings = saved.settings;
+        self.device.duty_limit = saved.duty_limit;
+        self.device.name = saved.name;
+        self.device.name_len = saved.name_len;
+    }
+
+    /// Apply the saved host-domain configuration to the live domain.
+    /// With `preserve_windows`, peers present in both the live and
+    /// saved tables keep their replay baselines (restore under an
+    /// unchanged host key); otherwise every peer starts at first
+    /// contact.
+    fn apply_saved_host(&mut self, preserve_windows: bool) {
+        let saved = self.saved.as_ref().expect("caller checked saved");
+        let mut peer_keys = PeerKeyTable::default();
+        for entry in saved.peers[..saved.peer_len].iter().flatten() {
+            let _ = peer_keys.insert(*entry);
+        }
+        if preserve_windows {
+            for slot in peer_keys.entries[..peer_keys.len].iter_mut().flatten() {
+                if let Some(window) = self.host.peer_keys.window_for(&slot.entry.public_key) {
+                    slot.window = window.clone();
+                }
+            }
+        }
+        self.host.key = saved.host_key;
+        self.host.auto_ack = saved.auto_ack;
+        self.host.filters = saved.filters;
+        self.host.channel_keys = saved.channel_keys;
+        self.host.peer_keys = peer_keys;
     }
 
     /// A host attached. Resets session state only (spec §Attach): the
@@ -824,20 +1133,38 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 });
                 Some(Effect::DrainQueue)
             }
-            // Capability-gated full commands this session does not yet
-            // advertise (`CAP_SAVE`).
-            Some(Cmd::Save | Cmd::Restore) => {
-                self.fail(tid, Status::UNIMPLEMENTED, emit);
-                None
+            // Atomically persist the current device and host domains.
+            // The payload MUST be ignored; success is reported only
+            // after the durable write commits (respond_save).
+            Some(Cmd::Save) => Some(Effect::SaveSnapshot { tid }),
+            // Revert configuration to the saved snapshot, reported in
+            // the spec's reset form: session state resets and an
+            // unsolicited STATUS_RESET_RESTORED announces completion
+            // (the TID is ignored, as with CMD_RST). Queue contents and
+            // replay baselines survive unless the snapshot names a
+            // different host, in which case the host-replacement rule
+            // applies as part of the revert.
+            Some(Cmd::Restore) => {
+                if self.saved.is_none() {
+                    self.fail(tid, Status::INVALID_STATE, emit);
+                    return None;
+                }
+                let same_host =
+                    self.saved.as_ref().expect("checked above").host_key == self.host.key;
+                if !same_host {
+                    self.host.reset(None);
+                }
+                self.apply_saved_device();
+                self.apply_saved_host(same_host);
+                self.session = SessionState::default();
+                self.send_status(TID_UNSOLICITED, Status::RESET_RESTORED, emit);
+                Some(Effect::ApplyRadio(self.device.settings))
             }
-            // Base-protocol command, available regardless of
-            // capabilities. Nothing this session persists is subject to
-            // CMD_CLEAR (BLE bonds and the pairing PIN are exempt by
-            // spec), so it succeeds trivially.
-            Some(Cmd::Clear) => {
-                self.send_status(tid, Status::OK, emit);
-                None
-            }
+            // Erase all persisted provisioning. Live state, BLE bonds,
+            // and the pairing PIN are unaffected; a subsequent CMD_RST
+            // completes a factory reset. Base-protocol: succeeds even
+            // with nothing saved (the erase is idempotent).
+            Some(Cmd::Clear) => Some(Effect::ClearSaved { tid }),
             // NCP-to-host commands arriving from the host.
             Some(Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved) => {
                 self.fail(tid, Status::INVALID_COMMAND, emit);
@@ -1212,6 +1539,64 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         true
     }
 
+    /// Encode the current device and host domains as a snapshot for
+    /// [`Effect::SaveSnapshot`]. `out` must hold [`SNAPSHOT_MAX`]
+    /// bytes.
+    pub fn encode_snapshot(&self, out: &mut [u8]) -> Option<usize> {
+        SavedState::capture(&self.device, &self.host).encode(out)
+    }
+
+    /// Encode the stored snapshot with its host-domain portion wiped,
+    /// for the durable side of [`Effect::WipeHostDomain`]. Returns
+    /// `None` when nothing is saved (the wipe is then trivially
+    /// satisfied and no flash write is needed).
+    pub fn encode_wiped_snapshot(&self, out: &mut [u8]) -> Option<usize> {
+        let mut saved = self.saved.clone()?;
+        saved.wipe_host();
+        saved.encode(out)
+    }
+
+    /// Restore a stored snapshot at boot, before any host command is
+    /// processed. On success the saved configuration is applied — the
+    /// returned effect re-enables the PHY if it was enabled when saved,
+    /// and detached operation (filtering, queueing, delegation) begins
+    /// immediately. A snapshot that fails to decode is ignored: the NCP
+    /// boots as if nothing were saved.
+    pub fn restore_at_boot(&mut self, bytes: &[u8]) -> Option<Effect> {
+        let saved = SavedState::decode(&self.engine, bytes)?;
+        self.saved = Some(saved);
+        self.apply_saved_device();
+        self.apply_saved_host(false);
+        Some(Effect::ApplyRadio(self.device.settings))
+    }
+
+    /// Complete the durable write requested via
+    /// [`Effect::SaveSnapshot`], quoting the same `tid`. On `Ok` the
+    /// captured state becomes the post-reset baseline; on `Err` the
+    /// previous snapshot (if any) must have been left intact by the
+    /// caller and remains in effect.
+    pub fn respond_save(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
+        match result {
+            Ok(()) => {
+                self.saved = Some(SavedState::capture(&self.device, &self.host));
+                self.send_status(tid, Status::OK, emit);
+            }
+            Err(()) => self.fail(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Complete the durable erase requested via [`Effect::ClearSaved`],
+    /// quoting the same `tid`. Live state is unaffected either way.
+    pub fn respond_clear(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
+        match result {
+            Ok(()) => {
+                self.saved = None;
+                self.send_status(tid, Status::OK, emit);
+            }
+            Err(()) => self.fail(tid, Status::FAILURE, emit),
+        }
+    }
+
     /// Complete a deferred host replacement requested via
     /// [`Effect::WipeHostDomain`], quoting the same `tid`. On `Ok` the
     /// live host domain resets as one unit and the new key takes
@@ -1229,6 +1614,12 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         match result {
             Ok(()) => {
                 self.host.reset(pending.key);
+                // Mirror the durable wipe the caller just performed: a
+                // power cycle must not resurrect the previous host's
+                // provisioning from the snapshot.
+                if let Some(saved) = &mut self.saved {
+                    saved.wipe_host();
+                }
                 let value = pending.key.as_ref().map_or(&[][..], |key| &key[..]);
                 self.send_prop_is(tid, prop::HOST_KEY, value, emit);
             }
@@ -1448,7 +1839,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             | prop::PHY_MTU
             | prop::PHY_DUTY_NOW
             | prop::HOST_RX_QUEUE_COUNT
-            | prop::HOST_RX_QUEUE_DROPPED => Err(Status::INVALID_ARGUMENT),
+            | prop::HOST_RX_QUEUE_DROPPED
+            | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -1653,6 +2045,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
                 | prop::MAC_PROMISCUOUS
+                | prop::SAVED
                 | prop::HOST_KEY
                 | prop::HOST_RX_FILTERS
                 | prop::HOST_CHANNEL_KEYS
@@ -1691,6 +2084,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     cap::HOST_RX_QUEUE,
                     cap::HOST_KEYS,
                     cap::HOST_AUTO_ACK,
+                    cap::SAVE,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -1722,6 +2116,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             prop::PHY_DUTY_LIMIT => put(out, &self.device.duty_limit.to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
                 out[0] = self.session.promiscuous as u8;
+                1
+            }
+            prop::SAVED => {
+                out[0] = self.saved.is_some() as u8;
                 1
             }
             prop::HOST_KEY => match &self.host.key {
@@ -2042,7 +2440,8 @@ mod tests {
                 cap::HOST_FILTER,
                 cap::HOST_RX_QUEUE,
                 cap::HOST_KEYS,
-                cap::HOST_AUTO_ACK
+                cap::HOST_AUTO_ACK,
+                cap::SAVE
             ]
         );
     }
@@ -2458,27 +2857,28 @@ mod tests {
     }
 
     #[test]
-    fn ungated_full_commands_unimplemented_and_clear_succeeds() {
+    fn clear_defers_and_leaves_live_state_alone() {
         let mut session = test_session();
         let mut buf = [0u8; 8];
-        for encode in [
-            frame::save as fn(&mut [u8], u8) -> Result<usize, frame::WriteError>,
-            frame::restore,
-        ] {
-            let len = encode(&mut buf, 3).unwrap();
-            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
-            assert!(effect.is_none());
-            expect_status(&emitted[0], 3, Status::UNIMPLEMENTED);
-        }
-
-        // CMD_CLEAR is base-protocol and succeeds trivially; it must
+        // CMD_CLEAR is base-protocol: it defers to the durable erase
+        // even with nothing saved (the erase is idempotent) and must
         // not disturb live state (the device name survives).
         set(&mut session, prop::DEV_NAME, b"kept name");
         let len = frame::clear(&mut buf, 4).unwrap();
         let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
-        assert!(effect.is_none());
+        assert!(emitted.is_empty(), "no response before the erase commits");
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 4 }));
+        let mut emitted = Vec::new();
+        session.respond_clear(4, Ok(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         expect_status(&emitted[0], 4, Status::OK);
         assert_eq!(session.device_name(), "kept name");
+
+        // A failed erase reports FAILURE.
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 4 }));
+        let mut emitted = Vec::new();
+        session.respond_clear(4, Err(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        expect_status(&emitted[0], 4, Status::FAILURE);
     }
 
     #[test]
@@ -3689,6 +4089,253 @@ mod tests {
         assert!(rx_effect(&mut session, &sealed_unar(5, &new_keys, false), 10).is_none());
         let effect = rx_effect(&mut session, &sealed_unar(6, &new_keys, false), 20);
         expect_ack_transmit(&mut session, effect, None);
+    }
+
+    // ─── CAP_SAVE gate ───────────────────────────────────────────────
+
+    /// Issue CMD_SAVE and complete the durable write successfully.
+    fn save(session: &mut TestSession) {
+        let mut buf = [0u8; 4];
+        let len = frame::save(&mut buf, 3).unwrap();
+        let (emitted, effect) = dispatch(session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response before the write commits");
+        assert_eq!(effect, Some(Effect::SaveSnapshot { tid: 3 }));
+        let mut emitted = Vec::new();
+        session.respond_save(3, Ok(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        expect_status(&emitted[0], 3, Status::OK);
+    }
+
+    /// Issue CMD_RESTORE, expecting the reset completion form.
+    fn restore(session: &mut TestSession) -> Option<Effect> {
+        let mut buf = [0u8; 4];
+        let len = frame::restore(&mut buf, 5).unwrap();
+        let (emitted, effect) = dispatch(session, &buf[..len], 0);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::RESET_RESTORED);
+        effect
+    }
+
+    /// A provisioned session worth saving: PHY enabled on a custom
+    /// frequency, custom name, host key, one filter, channel key, peer.
+    fn provisioned_session() -> TestSession {
+        let mut session = test_session();
+        set(&mut session, prop::PHY_FREQ, &906_875u32.to_le_bytes());
+        enable(&mut session);
+        set(&mut session, prop::DEV_NAME, b"saved name");
+        install_host_key(&mut session, &HOST_PUB);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
+        install_channel_key(&mut session, &[0x42; 32]);
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&PEER_PUB, &test_pairwise()),
+        );
+        set(&mut session, prop::HOST_AUTO_ACK, &[1]);
+        session
+    }
+
+    #[test]
+    fn save_sets_prop_saved_and_failure_rolls_back() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::SAVED), [0]);
+
+        // A failed durable write leaves nothing saved.
+        let mut buf = [0u8; 4];
+        let len = frame::save(&mut buf, 3).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::SaveSnapshot { tid: 3 }));
+        let mut emitted = Vec::new();
+        session.respond_save(3, Err(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        expect_status(&emitted[0], 3, Status::FAILURE);
+        assert_eq!(get(&mut session, prop::SAVED), [0]);
+
+        save(&mut session);
+        assert_eq!(get(&mut session, prop::SAVED), [1]);
+
+        // PROP_SAVED is read-only.
+        let (emitted, _) = set(&mut session, prop::SAVED, &[0]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn restore_without_snapshot_is_invalid_state() {
+        let mut session = test_session();
+        let mut buf = [0u8; 4];
+        let len = frame::restore(&mut buf, 5).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 5, Status::INVALID_STATE);
+    }
+
+    #[test]
+    fn snapshot_round_trips_through_the_wire_encoding() {
+        let mut session = provisioned_session();
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        // A fresh session boots from those bytes into the saved
+        // configuration, with the PHY re-enabled, before any host
+        // command.
+        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let effect = booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 906_875));
+        assert_eq!(booted.device_name(), "saved name");
+        // Detached operation begins immediately: the saved filters and
+        // channel keys govern queueing, and auto-ack is armed.
+        let id = test_engine().derive_channel_id(&ChannelKey([0x42; 32])).0;
+        booted.on_radio_rx(&multicast_on(id), -80, 40, None, 0, &mut |_: &[u8]| {
+            panic!("detached boot must not emit")
+        });
+        let effect = rx_effect(&mut booted, &sealed_unar(9, &test_pairwise(), false), 0);
+        expect_ack_transmit(&mut booted, effect, None);
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::SAVED), [1]);
+        assert_eq!(queue_count(&mut booted), 2);
+        assert_eq!(get(&mut booted, prop::HOST_KEY), HOST_PUB);
+        assert_eq!(get(&mut booted, prop::HOST_AUTO_ACK), [1]);
+
+        // Malformed and version-mismatched snapshots are ignored.
+        let mut fresh = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        assert!(fresh.restore_at_boot(&bytes[..len - 1]).is_none());
+        let mut wrong_version = bytes;
+        wrong_version[0] = SNAPSHOT_VERSION + 1;
+        assert!(fresh.restore_at_boot(&wrong_version[..len]).is_none());
+        fresh.attach(true);
+        assert_eq!(get(&mut fresh, prop::SAVED), [0]);
+    }
+
+    #[test]
+    fn reset_post_reset_values_come_from_the_snapshot() {
+        let mut session = provisioned_session();
+        save(&mut session);
+
+        // Diverge from the saved configuration, then CMD_RST.
+        set(&mut session, prop::PHY_FREQ, &915_000u32.to_le_bytes());
+        set(&mut session, prop::DEV_NAME, b"diverged");
+        let mut emitted = Vec::new();
+        let effect = session.reset(Status::RESET_SOFTWARE, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        // Post-reset values are the saved ones — including the PHY
+        // enable state, which comes back up.
+        assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 906_875));
+        assert_eq!(session.device_name(), "saved name");
+        assert_eq!(get(&mut session, prop::HOST_KEY), HOST_PUB);
+
+        // Factory defaults need CMD_CLEAR + CMD_RST.
+        let mut buf = [0u8; 4];
+        let len = frame::clear(&mut buf, 4).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 4 }));
+        session.respond_clear(4, Ok(()), &mut |_: &[u8]| {});
+        let effect = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert!(matches!(effect, Effect::ApplyRadio(s) if !s.enabled && s.freq_khz == 910_525));
+        assert_eq!(session.device_name(), "Test UMSH NCP");
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn restore_reverts_config_but_preserves_queue_and_baselines() {
+        let mut session = provisioned_session();
+        save(&mut session);
+
+        // Accumulate dynamic state: a queued frame and an advanced
+        // replay baseline (counter 5 acknowledged).
+        session.detach();
+        let first = sealed_unar(5, &test_pairwise(), false);
+        let effect = rx_effect(&mut session, &first, 0);
+        expect_ack_transmit(&mut session, effect, None);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+
+        // Diverge the configuration.
+        set(&mut session, prop::PHY_DUTY_LIMIT, &77u16.to_le_bytes());
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_DEST_HINT, 9, 9, 9],
+        );
+
+        // Restore (reset form): configuration reverts, the radio is
+        // re-applied, and the queue survives.
+        let effect = restore(&mut session);
+        assert!(matches!(effect, Some(Effect::ApplyRadio(s)) if s.enabled));
+        assert_eq!(
+            get(&mut session, prop::PHY_DUTY_LIMIT),
+            0xFFFFu16.to_le_bytes()
+        );
+        let filters = get(&mut session, prop::HOST_RX_FILTERS);
+        assert_eq!(filters, [2, items::FILTER_PKT_TYPE, 0], "saved table only");
+        assert_eq!(queue_count(&mut session), 1);
+
+        // The replay baseline survived too: replaying the pre-restore
+        // frame is still an identified duplicate (coalesced, re-acked),
+        // not a first-contact acceptance.
+        session.detach();
+        let effect = rx_effect(&mut session, &first, 10);
+        expect_ack_transmit(&mut session, effect, None);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
+    fn restore_applies_host_replacement_when_saved_key_differs() {
+        let mut session = provisioned_session();
+        save(&mut session);
+
+        // A different host takes over after the save (durable wipe of
+        // the saved host domain) and queues detached traffic.
+        install_host_key(&mut session, &[0xBB; 32]);
+        assert_eq!(get(&mut session, prop::SAVED), [1]);
+        session.detach();
+        assert!(!delivered_at(&mut session, &unicast_to([0xBB, 0xBB, 0xBB]), 0));
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+
+        // Restore reverts to the wiped snapshot: the host key differs,
+        // so the replacement rule discards the new host's queue and
+        // provisioning as part of the revert.
+        let effect = restore(&mut session);
+        assert!(matches!(effect, Some(Effect::ApplyRadio(_))));
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+        assert_eq!(queue_count(&mut session), 0);
+        // Device domain still reverts from the snapshot.
+        assert_eq!(session.device_name(), "saved name");
+    }
+
+    #[test]
+    fn host_replacement_wipes_the_saved_host_domain() {
+        let mut session = provisioned_session();
+        save(&mut session);
+
+        // The wiped-snapshot encoding the firmware persists during the
+        // replacement carries the device domain with a defaulted host
+        // domain.
+        let mut wiped = [0u8; SNAPSHOT_MAX];
+        let wiped_len = session.encode_wiped_snapshot(&mut wiped).unwrap();
+        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&wiped[..wiped_len]).unwrap();
+        booted.attach(true);
+        assert_eq!(booted.device_name(), "saved name");
+        assert_eq!(get(&mut booted, prop::HOST_KEY), Vec::<u8>::new());
+        assert!(get(&mut booted, prop::HOST_CHANNEL_KEYS).is_empty());
+
+        // The RAM mirror is wiped when the replacement completes: a
+        // CMD_RST now restores the device domain but a factory host
+        // domain.
+        install_host_key(&mut session, &[0xBB; 32]);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(session.device_name(), "saved name");
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+        assert!(get(&mut session, prop::HOST_PEER_KEYS).is_empty());
+
+        // With nothing saved, the wiped encoding is absent (no flash
+        // write needed).
+        let mut fresh = test_session();
+        assert!(fresh.encode_wiped_snapshot(&mut wiped).is_none());
     }
 
     #[test]
