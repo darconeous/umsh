@@ -587,6 +587,24 @@ async fn run_dump<L: FrameLink>(
         "radio: {} kHz, BW {} Hz, SF{}, CR 4/{}, sync 0x{:04x}",
         rf.freq_khz, rf.bandwidth_hz, rf.spreading_factor, rf.coding_rate_denom, rf.sync_word,
     );
+    // A capture is a promiscuous listener. An NCP with a provisioned
+    // (or saved-and-restored) host domain filters receptions, so the
+    // factory deliver-everything rule cannot be relied on; bypass the
+    // filtering for this session (`PROP_MAC_PROMISCUOUS` is
+    // session-scoped and reverts on detach). An NCP that predates the
+    // property refuses the set — capture then sees only frames
+    // matching its receive filtering.
+    match radio
+        .set_prop(umsh::companion::ids::prop::MAC_PROMISCUOUS, &[1])
+        .await
+    {
+        Ok(_) => println!("promiscuous mode enabled"),
+        Err(umsh::companion_radio::CompanionRadioError::Status(status)) => eprintln!(
+            "warning: NCP refused promiscuous mode ({status:?}); \
+             capture is limited to the NCP's receive filtering"
+        ),
+        Err(error) => return Err(error.into()),
+    }
     println!("dumping packets (ctrl-c to exit) ...");
 
     let mut buf = [0u8; 256];
