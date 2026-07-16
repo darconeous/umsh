@@ -56,6 +56,10 @@ required-features = ["cli"]
 name = "companion_probe"
 required-features = ["tokio-support"]
 
+[[example]]
+name = "companion_hw_validate"
+required-features = ["serial-radio"]
+
 [[bin]]
 name = "umsh-capture"
 path = "src/bin/umsh_capture.rs"
