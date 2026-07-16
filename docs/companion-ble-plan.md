@@ -563,16 +563,58 @@ promiscuous live delivery, factory compatibility, replacement
 rollback/busy/abandonment, `CMD_RST` clearing the host domain, and filters
 surviving attach. Both firmware images build; firmware host tests pass.
 
+### Increment 4 — complete (2026-07-15)
+
+`CAP_HOST_RX_QUEUE` is implemented and advertised. The session now tracks
+attached-vs-detached (`attach()`/`detach()` set it; `Session::new` starts
+detached): while attached, accepted frames are delivered live exactly as
+before; while detached, accepted frames go into a fixed 16-entry circular
+`RxQueue` inside `HostDomain` (frame, RSSI/LQI/SNR, receive time, acked
+flag — always false until `CAP_HOST_AUTO_ACK`). Overflow evicts the
+oldest entry and counts it in `PROP_HOST_RX_QUEUE_DROPPED` (wrapping
+u32). Count and capacity are exposed as properties; the capacity is fixed
+(set fails `UNIMPLEMENTED`, the spec-sanctioned choice). Host-domain
+resets (`CMD_RST`, host replacement) discard the queue and its counters
+in place — `HostDomain::reset` deliberately avoids staging the multi-KB
+entry array on an embedded stack.
+
+`CMD_QUEUE_DRAIN` is effect-driven for transport backpressure: the
+firmware `Emitter` has only two staging slots, so the session returns
+`Effect::DrainQueue` and the firmware calls `drain_step` repeatedly,
+flushing between calls; each step emits exactly one `CMD_STR_RECV`
+(oldest first, `RX_FLAG_BUFFERED` plus one-second-granularity `RX_AGE`
+in `BufferedRxMeta`) and the final step emits the correlated `STATUS_OK`.
+The covered set is fixed at command time; live arrivals mid-drain are
+delivered immediately and interleave, per the amended spec. An empty
+queue succeeds immediately without an effect; a drain-while-draining is
+`BUSY` (unreachable through the serialized firmware loop, guarded
+anyway). No keys exist before `CAP_HOST_KEYS`, so no protocol-defined
+duplicate detection applies yet: identical unauthenticated frames occupy
+separate entries (spec-correct for this capability set), and the queue
+insert path is where increment 5's replay/MIC coalescing will hook in.
+
+Gate covered in host tests (58 in the session crate): detached receive →
+attach → count → drain with age/flag/metadata assertions, overflow
+eviction + dropped accounting, filtering applied to queueing, duplicate
+entries, live interleave with a fixed covered set, drain-tail
+completion, empty-drain success, reset/host-replacement discard, and
+read-only/fixed-capacity property behavior. Host-side
+`queue_drain_with`, firmware host tests, and both release images remain
+green.
+
 ### What the next agent should do first
 
-Start increment 4 (`CAP_HOST_RX_QUEUE`): the fixed-capacity circular RAM
-queue (frame + RX metadata + timestamp + acked flag), detached queueing of
-accepted traffic, the queue count/capacity/dropped properties, buffered
-`RX_FLAGS`/`RX_AGE` metadata, and `CMD_QUEUE_DRAIN` with the amended
-live-interleave model (see increment 4 above). The session does not yet
-track attached-vs-detached for delivery decisions — introducing that is
-part of this increment. Do not advertise `CAP_HOST_RX_QUEUE` until the
-whole gate passes. This work is independent of manual hardware access.
+Start increment 5 (`CAP_HOST_KEYS` and `CAP_HOST_AUTO_ACK`): host
+channel-key and peer-key tables with validate-before-mutate and
+digest-only reporting, the secure-transport gate for key writes (the
+session dispatch API needs explicit transport-security context), and
+detached acknowledgement delegation reusing the core UMSH packet crypto,
+MAC-ACK construction, and replay window (see increment 5 above for the
+full rules). This is the first increment that pulls real cryptography
+into the NCP session path — plan the dependency boundary deliberately
+(umsh-crypto/umsh-mac reuse vs. a minimal extraction) before writing
+code. Queue coalescing for authenticated duplicates hooks into
+`RxQueue::push`'s call site in `on_radio_rx`.
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 
