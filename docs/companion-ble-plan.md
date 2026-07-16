@@ -1020,7 +1020,20 @@ channel-addressed, so the channel filter matches them on the wire
 (peer keys are for authentication/ack delegation, not filter
 matching). Design it once in the `umsh::companion_radio` workflow API
 rather than per tool. (`umsh-capture` legitimately stays
-promiscuous.) Flashing
+promiscuous.)
+
+Gap (2026-07-16): there is no proper **companion-radio management
+tool**. The workflow API exists (`sync`/`provision`/
+`ensure_device_identity`/`save`/`clear`/`restore`/
+`set_ble_pairing_pin`), but the only command-line front-ends are the
+hardware-validation phases (fixed test-vector keys) and scattered
+example flags. A user-facing tool should cover: neutral inspection
+(the `info` modes graduate out of the validation example),
+provisioning with the operator's real keys (host identity, channel
+keys, peer entries from args or a file), device-identity management,
+save/restore/clear, pairing-PIN management, and factory reset — over
+both serial and BLE. Fill this before the companion radio can be
+operated by anyone who is not developing it. Flashing
 notes: `diag/reflash_t1000e.py` automates the T-1000E serial-DFU
 touch+retry; the T-Echo path is 1200-baud touch → wait for TECHOBOOT →
 copy the UF2 **under a fresh filename with `cp`** (overwriting the
