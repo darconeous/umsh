@@ -387,8 +387,24 @@ async fn run_companion_chat<L: FrameLink>(
     identity_path: PathBuf,
     skip_counter_load: bool,
     peer_key: PublicKey,
-    radio: CompanionRadio<L>,
+    mut radio: CompanionRadio<L>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // This host owns the MAC and does its own filtering, so a
+    // provisioned NCP's host-domain receive filters must not gate live
+    // delivery: enable the session-scoped promiscuous mode (reverts on
+    // detach, touches no provisioning). NCPs predating the property
+    // refuse the set; delivery then follows their filtering.
+    match radio
+        .set_prop(umsh::companion::ids::prop::MAC_PROMISCUOUS, &[1])
+        .await
+    {
+        Ok(_) => {}
+        Err(umsh::companion_radio::CompanionRadioError::Status(status)) => eprintln!(
+            "warning: NCP refused promiscuous mode ({status:?}); reception is limited \
+             to the NCP's provisioned receive filtering"
+        ),
+        Err(error) => return Err(error.into()),
+    }
     let local_identity = load_or_create_identity(&identity_path)?;
     let local_key = *local_identity.public_key();
     let counter_root = counter_store_root(&identity_path);

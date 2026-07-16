@@ -53,6 +53,10 @@ name = "cli_udp"
 required-features = ["cli"]
 
 [[example]]
+name = "cli_companion"
+required-features = ["cli"]
+
+[[example]]
 name = "companion_probe"
 required-features = ["tokio-support"]
 

@@ -456,6 +456,40 @@ async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Neutral inspection: attach without resetting and print everything
+/// `sync` can see — capabilities, ownership (against an optional
+/// expected key), PHY state, and the digest forms of all tables. Makes
+/// no assertions and changes nothing on the device.
+async fn info_serial(
+    port: &str,
+    expected: Option<[u8; 32]>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    let sync = radio.sync(expected.as_ref()).await?;
+    print_sync(&sync);
+    Ok(())
+}
+
+/// As [`info_serial`], over BLE.
+#[cfg(feature = "ble-radio")]
+async fn info_ble(
+    selector: &str,
+    expected: Option<[u8; 32]>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use umsh::companion_radio::{BleFrameLink, BleFrameLinkConfig};
+    let link = BleFrameLink::connect(Some(selector), BleFrameLinkConfig::default()).await?;
+    let mut radio = CompanionRadio::attach_existing(link, config()).await?;
+    println!(
+        "attached: ncp={} boot_status={:?}",
+        radio.ncp_version(),
+        radio.boot_status()
+    );
+    let sync = radio.sync(expected.as_ref()).await?;
+    print_sync(&sync);
+    Ok(())
+}
+
 /// Diagnostic: report the frequency before and after `CMD_RESTORE`,
 /// exposing what the boot-time snapshot mirror actually holds.
 async fn probe_restore(port: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -484,12 +518,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
+        Some("info") if (3..=4).contains(&args.len()) => {
+            let expected = args.get(3).map(|text| parse_key32(text)).transpose()?;
+            info_serial(&args[2], expected).await
+        }
+        #[cfg(feature = "ble-radio")]
+        Some("info-ble") if (3..=4).contains(&args.len()) => {
+            let expected = args.get(3).map(|text| parse_key32(text)).transpose()?;
+            info_ble(&args[2], expected).await
+        }
         Some("phase-e") if args.len() == 6 => {
             phase_e(&args[2], args[3].parse()?, args[4].parse()?, args[5].parse()?).await
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key-hex>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
             );
             std::process::exit(2);
         }
