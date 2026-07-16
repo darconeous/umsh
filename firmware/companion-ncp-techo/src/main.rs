@@ -31,11 +31,13 @@
 //   - shutdown_task:     tri-states peripheral pins, drops the rail,
 //                        enters System OFF
 //
-// CMD_RST is a protocol-level reset: session state returns to post-reset
-// defaults and the radio is re-applied (disabled), but the MCU and the
-// USB link stay up. Host attach also resets the session, silently — the
-// reset notice is only emitted in response to CMD_RST so the host never
-// sees an unsolicited reset it didn't ask for mid-handshake.
+// CMD_RST is a protocol-level reset: all protocol state returns to
+// post-reset values and the radio is re-applied (disabled), but the MCU
+// and the USB link stay up. Host attach resets only session state
+// (full-protocol semantics): the device domain — PHY configuration and
+// enable state, device name, duty accounting — is untouched, and
+// nothing is emitted; the reset notice is only sent for CMD_RST, so the
+// host never sees an unsolicited reset it didn't ask for mid-handshake.
 //
 // Safety primitives inherited from the BSP (see umsh-bsp-nrf52840):
 //   * Panic capture into reserved RAM (reported as STATUS_RESET_CRASH).
@@ -97,7 +99,7 @@ mod firmware {
     use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
-    use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
     use embassy_futures::select::{Either, Either3, select, select3};
@@ -223,27 +225,42 @@ mod firmware {
         frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
     }
 
-    fn ncp_version(bonds: u8) -> &'static str {
-        macro_rules! board_version {
-            ($name:literal) => {
-                match bonds {
-                    0 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=0"),
-                    1 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=1"),
-                    2 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=2"),
-                    3 => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=3"),
-                    _ => concat!($name, "/0.1; ", env!("GIT_SHORT_SHA"), "; ble-bonds=4"),
-                }
-            };
-        }
+    /// Compose the NCP version string once at boot. `crumb` is the
+    /// previous boot's last breadcrumb stage (temporary freeze
+    /// diagnostics; see `panic::breadcrumb_take`).
+    fn ncp_version(bonds: u8, crumb: u8) -> &'static str {
+        use core::fmt::Write as _;
         #[cfg(not(feature = "t1000e"))]
-        return board_version!("umsh-ncp-techo");
+        const BOARD: &str = "umsh-ncp-techo";
         #[cfg(feature = "t1000e")]
-        return board_version!("umsh-ncp-t1000e");
+        const BOARD: &str = "umsh-ncp-t1000e";
+        static VERSION: StaticCell<heapless09::String<96>> = StaticCell::new();
+        let version = VERSION.init(heapless09::String::new());
+        // Compact diagnostic form: PROP_NCP_VERSION is truncated to the
+        // session's 96-byte property buffer, so the SHA and bond count
+        // yield their space to the freeze capture for now. `d5` is the
+        // diagnostic build tag — bump it every diagnostic rebuild so the
+        // running image is provably the fresh one.
+        let _ = write!(
+            version,
+            "{BOARD} d6 c={crumb} b={} rr={:#x} rc={} pc={:#010x} lr={:#010x} ps={:#010x}",
+            PREV_BOOT_BEATS.load(Ordering::Acquire),
+            BOOT_RESETREAS.load(Ordering::Acquire),
+            PREV_RING_COUNT.load(Ordering::Acquire),
+            PREV_WDT_PC.load(Ordering::Acquire),
+            PREV_WDT_LR.load(Ordering::Acquire),
+            PREV_WDT_PSR.load(Ordering::Acquire),
+        );
+        let _ = bonds;
+        version.as_str()
     }
 
     fn session_config() -> SessionConfig {
         SessionConfig {
-            ncp_version: ncp_version(BLE_BONDS_AT_BOOT.load(Ordering::Acquire)),
+            ncp_version: ncp_version(
+                BLE_BONDS_AT_BOOT.load(Ordering::Acquire),
+                PREV_BOOT_CRUMB.load(Ordering::Acquire),
+            ),
             default_device_name: DEFAULT_DEVICE_NAME,
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
@@ -580,6 +597,25 @@ mod firmware {
     /// Published session epoch, checked by each transport at framing edges.
     static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
 
+    /// Previous boot's last breadcrumb stage (temporary freeze
+    /// diagnostics; surfaced in the version string as `crumb=N`).
+    static PREV_BOOT_CRUMB: AtomicU8 = AtomicU8::new(0);
+    /// Previous boot's heartbeat-iteration count (~50 ms each;
+    /// surfaced as `beats=N`).
+    static PREV_BOOT_BEATS: AtomicU16 = AtomicU16::new(0);
+    /// Raw `RESETREAS` bits captured at this boot (surfaced as `rr=0x…`
+    /// so a simultaneous LOCKUP+DOG cannot hide behind the DOG-first
+    /// reset-reason mapping).
+    static BOOT_RESETREAS: AtomicU32 = AtomicU32::new(0);
+    /// Previous boot's watchdog-timeout capture (stacked PC/LR/xPSR of
+    /// the code executing ~61 µs before the watchdog reset).
+    static PREV_WDT_PC: AtomicU32 = AtomicU32::new(0);
+    static PREV_WDT_LR: AtomicU32 = AtomicU32::new(0);
+    static PREV_WDT_PSR: AtomicU32 = AtomicU32::new(0);
+    /// Previous boot's PC-ring sample count (proves the 1 kHz sampler
+    /// ran; surfaced as `rc=N`).
+    static PREV_RING_COUNT: AtomicU16 = AtomicU16::new(0);
+
     /// RAM-only until BLE persistence lands. `u32::MAX` means unset.
     static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
     static BLE_BONDS_AT_BOOT: AtomicU8 = AtomicU8::new(0);
@@ -855,9 +891,12 @@ mod firmware {
                 RADIO_CH.tx.send(TxRequest { data, power_dbm }).await;
             }
             Some(Effect::DeviceNameChanged) => publish_device_name(session).await,
-            // SampleRssi needs `&mut Session` + the emitter, so it is handled
-            // inline in ncp_task rather than here.
-            Some(Effect::SampleRssi { .. }) | Some(Effect::SetPairingPin { .. }) | None => {}
+            // Deferred effects needing `&mut Session` + the emitter are
+            // handled inline in ncp_task rather than here.
+            Some(Effect::SampleRssi { .. })
+            | Some(Effect::SetPairingPin { .. })
+            | Some(Effect::WipeHostDomain { .. })
+            | None => {}
         }
     }
 
@@ -1569,6 +1608,7 @@ mod firmware {
                 ADV_POLICY_CHANGED.wait().await;
                 continue;
             }
+            super::panic::breadcrumb_mark(12);
             match select3(
                 advertise(peripheral, server),
                 ADV_POLICY_CHANGED.wait(),
@@ -1594,6 +1634,7 @@ mod firmware {
     }
 
     async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
+        super::panic::breadcrumb_mark(10);
         let mut resources: HostResources<
             _,
             DefaultPacketPool,
@@ -1692,6 +1733,7 @@ mod firmware {
             }
         };
 
+        super::panic::breadcrumb_mark(11);
         join(
             ble_runner(runner),
             join(
@@ -1721,7 +1763,22 @@ mod firmware {
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
-    async fn output_task(mut tx: NcpSender) {
+    async fn output_task(mut tx: NcpSender, wdt_report: Option<&'static str>) {
+        // TEMPORARY freeze diagnostics: emit the previous boot's watchdog
+        // capture as ASCII to the first USB reader. HDLC hosts
+        // resynchronize past it; humans read it with a serial terminal.
+        // Wait for DTR — the OS CDC driver drains the IN endpoint even
+        // with no process attached, so writing before a real opener
+        // exists would discard the report into the void.
+        if let Some(report) = wdt_report {
+            while !tx.dtr() {
+                Timer::after_millis(50).await;
+            }
+            Timer::after_millis(300).await;
+            for chunk in report.as_bytes().chunks(64) {
+                let _ = tx.write_packet(chunk).await;
+            }
+        }
         loop {
             #[cfg(feature = "ble-debug")]
             let outbound = match select(OUT_USB_CH.receive(), DEBUG_CH.receive()).await {
@@ -1791,7 +1848,9 @@ mod firmware {
     /// executes the resulting radio effects.
     #[embassy_executor::task]
     async fn ncp_task(boot_reason: Status) {
-        let mut session = Session::new(session_config());
+        // The retained hardware reset cause answers the first
+        // PROP_LAST_STATUS query; attach itself never modifies it.
+        let mut session = Session::new(session_config(), boot_reason);
         let mut emitter = Emitter::new();
         let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
 
@@ -1808,10 +1867,11 @@ mod firmware {
 
             match select3(INPUT_CH.receive(), RADIO_CH.rx.receive(), tx_done).await {
                 Either3::First(InEvent::Attached(transport)) => {
-                    // Fresh protocol state for the new host session.
-                    // Silent: the reset notice is only sent for CMD_RST,
-                    // so the host never races a stray notice during its
-                    // own reset handshake.
+                    // Fresh session state for the new host session; the
+                    // device domain (PHY configuration and enable state,
+                    // device name, duty accounting) is deliberately
+                    // untouched and nothing is emitted (full-protocol
+                    // attach semantics).
                     arbitration.attach(transport);
                     SESSION_GEN.store(arbitration.generation(), Ordering::Release);
                     #[cfg(not(feature = "ble-debug"))]
@@ -1821,12 +1881,15 @@ mod firmware {
                         let _ = arbitration.advertising_allowed();
                         set_advertising_allowed(true);
                     }
-                    let effect = session.attach(boot_reason, &mut |_frame: &[u8]| {});
-                    apply_effect(&session, Some(effect)).await;
+                    session.attach();
                 }
                 Either3::First(InEvent::Detached(transport)) => {
+                    // Only the active transport's detach ends the
+                    // session; a displaced transport's stale detach
+                    // must not clear the successor's session state.
                     if arbitration.detach(transport) {
                         set_advertising_allowed(true);
+                        session.detach();
                     }
                 }
                 Either3::First(InEvent::Frame(transport, frame_bytes)) => {
@@ -1845,6 +1908,16 @@ mod firmware {
                                 NCP_CTL.request_rssi();
                                 let sample = NCP_CTL.wait_rssi().await;
                                 session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination()).await;
+                            }
+                            Some(Effect::WipeHostDomain { tid }) => {
+                                // No saved host-domain state exists until
+                                // CAP_SAVE lands, so the durable wipe
+                                // required by host replacement succeeds
+                                // trivially.
+                                session.respond_host_wipe(tid, Ok(()), &mut |frame: &[u8]| {
                                     emitter.push(frame)
                                 });
                                 emitter.flush(arbitration.destination()).await;
@@ -2294,6 +2367,24 @@ mod firmware {
 
     #[embassy_executor::main]
     async fn main(spawner: Spawner) {
+        // Temporary freeze diagnostics: recover the previous boot's last
+        // breadcrumb stage, then mark progress through boot. Stage map:
+        //  1 main entered            8 USB built, core tasks spawned
+        //  2 embassy init done       9 chirp signaled / pre-join
+        //  3 WDT armed              10 ble_app entered
+        //  4 radio ready            11 trouble stack + GATT server built
+        //  5 MPSL ready             12 advertising loop reached
+        //  6 bond store ready       13 usb.run() first polled
+        //  7 SDC built
+        let (previous_crumb, previous_beats) = super::panic::breadcrumb_take();
+        PREV_BOOT_CRUMB.store(previous_crumb, Ordering::Release);
+        PREV_BOOT_BEATS.store(previous_beats, Ordering::Release);
+        let wdt_capture = super::panic::wdt_capture_take();
+        let mut pc_ring = [0u32; super::panic::PC_RING_ENTRIES];
+        let pc_ring_count = super::panic::pc_ring_take(&mut pc_ring);
+        PREV_RING_COUNT.store(pc_ring_count as u16, Ordering::Release);
+        super::panic::breadcrumb_mark(1);
+
         #[cfg(feature = "t1000e")]
         {
             use core::mem::MaybeUninit;
@@ -2311,11 +2402,86 @@ mod firmware {
             drive_pin_low(Port::P0, 25); // buzzer PWM input
             drive_pin_low(Port::P1, 5); // buzzer driver enable
         }
+        super::panic::breadcrumb_mark(2);
         // RESETREAS survives reset. Capture and clear it before starting the
         // watchdog so a later host query can distinguish a watchdog reboot
         // from a cold start or an external reset.
         let hardware_reset_reasons = pac::POWER.resetreas().read();
         pac::POWER.resetreas().write(|reasons| reasons.0 = u32::MAX);
+        BOOT_RESETREAS.store(hardware_reset_reasons.0, Ordering::Release);
+
+        // Disarm POWER USB interrupt state inherited across the DFU
+        // handoff. The bootloader's USB stack enables the POWER
+        // USBDETECTED/USBREMOVED/USBPWRRDY interrupts, and POWER lives
+        // in the always-on domain, so the enables survive the DFU
+        // activation reset. MPSL later owns the shared CLOCK_POWER
+        // vector but services only CLOCK events, so with VBUS present a
+        // pending USB power event re-enters the handler forever,
+        // starving thread mode until the watchdog fires — the post-DFU
+        // first-boot freeze. This firmware never uses these interrupts
+        // (USB runs on SoftwareVbusDetect precisely because MPSL owns
+        // POWER), so clear the enables and any pending events before
+        // MPSL takes the vector.
+        pac::POWER.intenclr().write(|w| {
+            w.set_usbdetected(true);
+            w.set_usbremoved(true);
+            w.set_usbpwrrdy(true);
+        });
+        pac::POWER.events_usbdetected().write_value(0);
+        pac::POWER.events_usbremoved().write_value(0);
+        pac::POWER.events_usbpwrrdy().write_value(0);
+
+        // TEMPORARY freeze diagnostics: format the previous boot's
+        // watchdog capture and PC-sample ring for the ASCII dump on the
+        // first USB connect.
+        let wdt_report: Option<&'static str> = (wdt_capture.is_some()
+            || (pc_ring_count > 0 && hardware_reset_reasons.dog()))
+        .then(|| {
+            use core::fmt::Write as _;
+            static REPORT: StaticCell<heapless09::String<2048>> = StaticCell::new();
+            let report = REPORT.init(heapless09::String::new());
+            let _ = write!(report, "\r\n=== WDT CAPTURE (previous boot) ===\r\n");
+            if let Some(capture) = wdt_capture {
+                PREV_WDT_PC.store(capture.pc, Ordering::Release);
+                PREV_WDT_LR.store(capture.lr, Ordering::Release);
+                PREV_WDT_PSR.store(capture.xpsr, Ordering::Release);
+                let _ = write!(
+                    report,
+                    "pc={:#010x} lr={:#010x} psr={:#010x} exc={:#010x} sp={:#010x}\r\n",
+                    capture.pc, capture.lr, capture.xpsr, capture.exc_return, capture.sp,
+                );
+                let _ = write!(
+                    report,
+                    "CLOCK hfstat={:#x} lfstat={:#x} inten={:#x} evhf={} evlf={} evdone={} evctto={} lfsrc={:#x}\r\n",
+                    capture.clock[0],
+                    capture.clock[1],
+                    capture.clock[2],
+                    capture.clock[3],
+                    capture.clock[4],
+                    capture.clock[5],
+                    capture.clock[6],
+                    capture.clock[7],
+                );
+                let _ = write!(report, "stack above frame:\r\n");
+                for row in capture.stack.chunks(4) {
+                    for word in row {
+                        let _ = write!(report, "{word:#010x} ");
+                    }
+                    let _ = write!(report, "\r\n");
+                }
+            } else {
+                let _ = write!(report, "no exception-frame capture (WDT IRQ shielded)\r\n");
+            }
+            let _ = write!(report, "pc ring ({pc_ring_count} samples, oldest first):\r\n");
+            for row in pc_ring[..pc_ring_count].chunks(4) {
+                for word in row {
+                    let _ = write!(report, "{word:#010x} ");
+                }
+                let _ = write!(report, "\r\n");
+            }
+            let _ = write!(report, "=== END WDT CAPTURE ===\r\n");
+            report.as_str()
+        });
         #[cfg(feature = "ble-debug")]
         {
             set_security_trace_handler(Some(trouble_security_trace));
@@ -2356,8 +2522,44 @@ mod firmware {
         // WDT: 8 s timeout, petted by the heartbeat task every ~2 s.
         let mut wdt_config = WdtConfig::default();
         wdt_config.timeout_ticks = 32768 * 8;
-        let (_wdt, [wdt_handle]) =
+        let (mut wdt, [wdt_handle]) =
             Watchdog::try_new::<_, 1>(p.WDT, wdt_config).unwrap_or_else(|_| panic!("wdt"));
+        // Freeze diagnostics: the TIMEOUT interrupt fires ~61 µs before
+        // the watchdog reset; its handler (panic.rs `WDT`) records the
+        // interrupted context's stacked PC/LR/xPSR into retained RAM.
+        // Highest priority so it can preempt a storming lower-priority
+        // handler; it runs only in the doomed final microseconds.
+        wdt.enable_interrupt();
+        unsafe {
+            let mut peripherals = cortex_m::Peripherals::steal();
+            peripherals
+                .NVIC
+                .set_priority(embassy_nrf::pac::Interrupt::WDT, 0);
+            cortex_m::peripheral::NVIC::unmask(embassy_nrf::pac::Interrupt::WDT);
+        }
+        // Freeze diagnostics: 1 kHz PC sampler on TIMER2 (free on both
+        // boards; MPSL owns TIMER0 only). Priority 1 — above the
+        // thread-mode executor and MPSL's low-priority signal
+        // processing, below MPSL's radio-critical priority 0.
+        {
+            let timer = pac::TIMER2;
+            timer.mode().write(|w| w.set_mode(pac::timer::vals::Mode::Timer));
+            timer
+                .bitmode()
+                .write(|w| w.set_bitmode(pac::timer::vals::Bitmode::_32bit));
+            timer.prescaler().write(|w| w.set_prescaler(4)); // 16 MHz / 2^4 = 1 MHz
+            timer.cc(0).write_value(1_000); // 1 kHz sampling
+            timer.shorts().write(|w| w.set_compare_clear(0, true));
+            timer.intenset().write(|w| w.set_compare(0, true));
+            timer.tasks_start().write_value(1);
+            unsafe {
+                let mut peripherals = cortex_m::Peripherals::steal();
+                peripherals
+                    .NVIC
+                    .set_priority(embassy_nrf::pac::Interrupt::TIMER2, 1 << 5);
+                cortex_m::peripheral::NVIC::unmask(embassy_nrf::pac::Interrupt::TIMER2);
+            }
+        }
         #[cfg(not(feature = "t1000e"))]
         let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         #[cfg(feature = "t1000e")]
@@ -2367,6 +2569,7 @@ mod firmware {
         // join caused first-boot persistence to consume the entire watchdog
         // window and reset once before the device became usable.
         spawner.spawn(heartbeat(led, wdt_handle).unwrap());
+        super::panic::breadcrumb_mark(3);
 
         // A message in the panic slot means the last reset was a crash;
         // report that as the reset reason. The slot is cleared either way.
@@ -2465,9 +2668,21 @@ mod firmware {
             spawner.spawn(radio_task(lora).unwrap());
         }
 
+        super::panic::breadcrumb_mark(4);
+
         // ── MPSL + Nordic SoftDevice Controller ────────────────────────────
         // MPSL owns CLOCK/POWER, RADIO, RTC0, TIMER0, TEMP, and the listed
         // PPI channels. embassy-time remains on RTC1; LoRa remains on SPIM1.
+        //
+        // The `no-ble` diagnostic build skips this entire section (and the
+        // SDC/Trouble construction below); the firmware is then a USB-only
+        // NCP with the identical clock configuration.
+        #[cfg(not(feature = "no-ble"))]
+        let mut rng = rng::Rng::new(p.RNG, Irqs);
+        #[cfg(not(feature = "no-ble"))]
+        let mut sdc_memory = sdc::Mem::<8192>::new();
+        #[cfg(not(feature = "no-ble"))]
+        let (controller, ble_store) = {
         let mpsl_peripherals =
             mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
         let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -2489,6 +2704,7 @@ mod firmware {
             .unwrap_or_else(|_| panic!("mpsl init")),
         );
         spawner.spawn(mpsl_task(mpsl).unwrap());
+        super::panic::breadcrumb_mark(5);
         let mut ble_store = BleStore::mount(nrf_mpsl::Flash::take(mpsl, p.NVMC));
 
         // Deliberate recovery image for hardware testing. This runs before the
@@ -2524,7 +2740,6 @@ mod firmware {
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
             p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
         );
-        let mut rng = rng::Rng::new(p.RNG, Irqs);
         if ble_store.snapshot().local_irk.is_none() {
             let mut local_irk = [0u8; 16];
             rng.fill_bytes(&mut local_irk).await;
@@ -2543,9 +2758,12 @@ mod firmware {
                 "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
             ));
         }
-        let mut sdc_memory = sdc::Mem::<8192>::new();
+        super::panic::breadcrumb_mark(6);
         let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
             .unwrap_or_else(|_| panic!("sdc init"));
+        super::panic::breadcrumb_mark(7);
+        (controller, ble_store)
+        };
 
         // ── USB stack ────────────────────────────────────────────────────────
         // HardwareVbusDetect cannot share POWER with MPSL. This tethered NCP
@@ -2591,9 +2809,10 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
-        spawner.spawn(output_task(tx).unwrap());
+        spawner.spawn(output_task(tx, wdt_report).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
         spawner.spawn(ncp_task(boot_reason).unwrap());
+        super::panic::breadcrumb_mark(8);
 
         // The touch button only controls the e-paper backlight. Menu input is
         // exclusively the side button below.
@@ -2649,7 +2868,18 @@ mod firmware {
             spawner.spawn(t1000e_shutdown_task().unwrap());
         }
 
-        join(ble_app(controller, ble_store), usb.run()).await;
+        super::panic::breadcrumb_mark(9);
+        #[cfg(not(feature = "no-ble"))]
+        join(ble_app(controller, ble_store), async {
+            super::panic::breadcrumb_mark(13);
+            usb.run().await
+        })
+        .await;
+        #[cfg(feature = "no-ble")]
+        {
+            super::panic::breadcrumb_mark(13);
+            usb.run().await;
+        }
     }
 
     // ─── Heartbeat + WDT pet ─────────────────────────────────────────────────
@@ -2659,6 +2889,7 @@ mod firmware {
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
         loop {
             wdt.pet();
+            super::panic::breadcrumb_beat();
             let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
             if ble_mode != 0 {
                 let phase = Instant::now().as_millis() % 2_000;
