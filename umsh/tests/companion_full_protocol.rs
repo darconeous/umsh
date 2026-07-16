@@ -515,6 +515,39 @@ async fn channel_reconciliation_inserts_or_replaces() {
     assert_eq!(sync.host_channel_ids.map(|ids| ids.len()), Some(2));
 }
 
+/// A full 16-frame NCP queue drains losslessly through the drain
+/// callback even though it is larger than the host driver's bounded
+/// receive buffer — the exact failure the T-1000E hardware pass
+/// caught: the callback used to miss every frame the bounded buffer
+/// evicted mid-drain.
+#[tokio::test]
+async fn full_queue_drains_losslessly_through_the_callback() {
+    let sim = SimNcp::new();
+    let mut radio = attached_host(&sim).await;
+    radio.provision(&desired_provisioning()).await.unwrap();
+    configure_and_enable_phy(&mut radio).await;
+    drop(radio);
+    detach(&sim);
+
+    // 19 distinct frames into a 16-slot queue: 3 evictions.
+    for counter in 1..=19u32 {
+        inject_radio_rx(&sim, &sealed_unicast(counter));
+    }
+
+    let mut radio = attached_host(&sim).await;
+    let sync = radio.sync(Some(&HOST_KEY)).await.unwrap();
+    assert_eq!(sync.queue_count, Some(16));
+    assert_eq!(sync.queue_dropped, Some(3));
+    let mut drained = Vec::new();
+    radio
+        .queue_drain_with(|data, _meta| drained.push(data.to_vec()))
+        .await
+        .unwrap();
+    assert_eq!(drained.len(), 16, "every queued frame reaches the callback");
+    assert_eq!(drained[0], sealed_unicast(4), "oldest surviving frame first");
+    assert_eq!(drained[15], sealed_unicast(19));
+}
+
 /// Over a transport that does not meet its provisioning-security
 /// binding the NCP refuses key material, and the host surfaces the
 /// status; non-secret provisioning still works.

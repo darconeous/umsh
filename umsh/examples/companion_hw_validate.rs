@@ -26,6 +26,11 @@ use umsh::companion_radio::{
 };
 use umsh::companion::ids::{cap, prop};
 use umsh::companion::items::{Filter, PeerKeyEntry};
+use umsh::companion::meta::{BufferedRxMeta, RX_FLAG_ACKED};
+use umsh::core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
+use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh::crypto::{CryptoEngine, PairwiseKeys};
+use umsh::hal::{CadPolicy, Radio, TxOptions};
 
 /// This host's identity for the validation run (a fixed test vector,
 /// like the integration tests').
@@ -238,6 +243,241 @@ async fn phase_d(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn pairwise() -> PairwiseKeys {
+    PairwiseKeys {
+        k_enc: [0xE0; 16],
+        k_mic: [0x50; 16],
+    }
+}
+
+/// A sealed unicast frame from the provisioned peer to the host, as
+/// the T-1000E expects it over the air.
+fn sealed_unicast(counter: u32, ack: bool, keys: &PairwiseKeys, dst: [u8; 3]) -> Vec<u8> {
+    let mut buf = [0u8; 96];
+    let mut builder = PacketBuilder::new(&mut buf)
+        .unicast(NodeHint(dst))
+        .source_hint(NodeHint([PEER_PUB[0], PEER_PUB[1], PEER_PUB[2]]))
+        .frame_counter(counter);
+    if ack {
+        builder = builder.ack_requested();
+    }
+    let mut packet = builder
+        .mic_size(MicSize::Mic8)
+        .payload(&[3, 1, 2])
+        .build()
+        .unwrap();
+    CryptoEngine::new(SoftwareAes, SoftwareSha256)
+        .seal_packet(&mut packet, keys)
+        .unwrap();
+    packet.as_bytes().to_vec()
+}
+
+/// Receive one radio frame within `timeout`.
+async fn recv_frame<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    timeout: Duration,
+) -> Option<(Vec<u8>, i16)> {
+    let mut buf = [0u8; 512];
+    let result = tokio::time::timeout(
+        timeout,
+        core::future::poll_fn(|cx| Radio::poll_receive(radio, cx, &mut buf)),
+    )
+    .await;
+    match result {
+        Ok(Ok(info)) => Some((buf[..info.len].to_vec(), info.rssi)),
+        _ => None,
+    }
+}
+
+/// Wait for a MAC acknowledgement on the air, skipping unrelated
+/// receptions.
+async fn expect_air_ack<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    what: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+        let Some((frame, rssi)) = recv_frame(radio, remaining).await else {
+            break;
+        };
+        let Ok(header) = PacketHeader::parse(&frame) else {
+            continue;
+        };
+        if header.fcf.packet_type() == PacketType::MacAck {
+            println!("  ack on air ({} bytes, rssi {rssi} dBm)", frame.len());
+            return expect(true, what);
+        }
+    }
+    expect(false, what)
+}
+
+async fn transmit<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    data: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    Radio::transmit(radio, data, TxOptions { cad: CadPolicy::Skip })
+        .await
+        .map_err(|error| format!("transmit failed: {error:?}").into())
+}
+
+/// Drive the T-Echo as the RF peer while the T-1000E sits detached:
+/// delegated ack on the air, duplicate re-ack, unrelated-traffic
+/// rejection, then queue overflow with one late acknowledged frame.
+/// Follow with `phase-e <t1000e-port> 16 3 1 <base>`.
+async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio_serial::SerialPortBuilderExt;
+    let stream = tokio_serial::new(port, 115_200).open_native_async()?;
+    // The peer radio is disposable: the resetting attach configures its
+    // PHY to the same parameters the T-1000E saved.
+    let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
+    println!("peer ncp={} base counter={base}", radio.ncp_version());
+
+    // 1. A relevant, acknowledgement-requesting frame: the detached
+    //    T-1000E must queue it and ack on the host's behalf.
+    let relevant = sealed_unicast(base, true, &pairwise(), [0xC4, 0xC4, 0xC4]);
+    transmit(&mut radio, &relevant).await?;
+    expect_air_ack(&mut radio, "delegated ack transmitted on the air").await?;
+
+    // 2. The exact retransmission coalesces and is re-acked.
+    transmit(&mut radio, &relevant).await?;
+    expect_air_ack(&mut radio, "duplicate re-acked, not re-queued").await?;
+
+    // 3. Unrelated traffic (wrong destination, unknown keys) draws no
+    //    ack — and, per the final queue arithmetic, is never queued.
+    let unrelated = sealed_unicast(
+        base,
+        true,
+        &PairwiseKeys { k_enc: [0x11; 16], k_mic: [0x22; 16] },
+        [0x99, 0x99, 0x99],
+    );
+    transmit(&mut radio, &unrelated).await?;
+    let stray = recv_frame(&mut radio, Duration::from_secs(2)).await;
+    expect(stray.is_none(), "unrelated traffic not acknowledged")?;
+
+    // 4. Overflow: 18 more frames (counters base+1..=base+18). With
+    //    the earlier frame that is 19 accepted into a 16-slot queue —
+    //    three evictions. Only the last frame requests (and earns) an
+    //    ack, so exactly one drained frame carries RX_FLAG_ACKED.
+    for offset in 1..=18u32 {
+        let ack = offset == 18;
+        let frame = sealed_unicast(base + offset, ack, &pairwise(), [0xC4, 0xC4, 0xC4]);
+        transmit(&mut radio, &frame).await?;
+        if ack {
+            expect_air_ack(&mut radio, "late acknowledged frame acked on the air").await?;
+        }
+    }
+    println!("RF PEER OK — run phase-e against the T-1000E: expected count=16 dropped=3 acked=1");
+    Ok(())
+}
+
+/// Reattach the T-1000E after the RF pass and verify what autonomous
+/// operation left behind.
+async fn phase_e(
+    port: &str,
+    expected_count: u16,
+    expected_dropped: u32,
+    expected_acked: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    let sync = radio.sync(Some(&HOST_KEY)).await?;
+    print_sync(&sync);
+    expect(sync.ownership == HostOwnership::Ours, "ownership intact")?;
+    expect(
+        sync.queue_count == Some(expected_count),
+        &format!("queue holds {expected_count} frames (got {:?})", sync.queue_count),
+    )?;
+    expect(
+        sync.queue_dropped == Some(expected_dropped),
+        &format!("{expected_dropped} evictions counted (got {:?})", sync.queue_dropped),
+    )?;
+
+    let mut drained: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    radio
+        .queue_drain_with(|data, meta| drained.push((data.to_vec(), meta.to_vec())))
+        .await?;
+    let mut acked = 0usize;
+    for (data, meta) in &drained {
+        let meta = BufferedRxMeta::decode(meta)
+            .map_err(|_| "drained frame without buffered metadata")?;
+        let header = PacketHeader::parse(data).map_err(|error| format!("{error:?}"))?;
+        println!(
+            "  drained {:?} {} bytes flags={:#04x} age={}s rssi={:?}",
+            header.fcf.packet_type(),
+            data.len(),
+            meta.flags,
+            meta.age_s,
+            meta.rx.rssi_dbm,
+        );
+        if meta.flags & RX_FLAG_ACKED != 0 {
+            acked += 1;
+        }
+    }
+    expect(drained.len() == usize::from(expected_count), "drain delivered every queued frame")?;
+    expect(
+        acked == expected_acked,
+        &format!("exactly {expected_acked} drained frame(s) marked acknowledged (got {acked})"),
+    )?;
+    let sync = radio.sync(Some(&HOST_KEY)).await?;
+    expect(sync.queue_count == Some(0), "queue empty after drain")?;
+    println!("PHASE E OK");
+    Ok(())
+}
+
+/// The full-protocol attach over BLE: connect to the bonded companion
+/// service, attach without resetting, and synchronize — the same
+/// workflow the USB phases prove, over the other transport binding.
+#[cfg(feature = "ble-radio")]
+async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use umsh::companion_radio::{BleFrameLink, BleFrameLinkConfig};
+    let link = BleFrameLink::connect(Some(selector), BleFrameLinkConfig::default()).await?;
+    let started = Instant::now();
+    let mut radio = CompanionRadio::attach_existing(link, config()).await?;
+    println!(
+        "BLE attached in {:?}: ncp={} boot_status={:?}",
+        started.elapsed(),
+        radio.ncp_version(),
+        radio.boot_status()
+    );
+    let sync = radio.sync(Some(&HOST_KEY)).await?;
+    print_sync(&sync);
+    expect(sync.ownership == HostOwnership::Ours, "ownership verified over BLE")?;
+    expect(sync.saved == Some(true), "saved provisioning visible over BLE")?;
+    expect(sync.dev_key.is_some(), "device identity visible over BLE")?;
+
+    let mut samples = Vec::new();
+    for _ in 0..20 {
+        let started = Instant::now();
+        radio.get_prop(prop::LAST_STATUS).await?;
+        samples.push(started.elapsed());
+    }
+    samples.sort();
+    println!(
+        "BLE command RTT over 20 samples: min={:?} median={:?} max={:?}",
+        samples[0],
+        samples[samples.len() / 2],
+        samples[samples.len() - 1]
+    );
+    println!("BLE SYNC OK");
+    Ok(())
+}
+
+/// Diagnostic: report the frequency before and after `CMD_RESTORE`,
+/// exposing what the boot-time snapshot mirror actually holds.
+async fn probe_restore(port: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    let before = radio.get_prop(prop::PHY_FREQ).await?;
+    let completion = radio.restore().await?;
+    let after = radio.get_prop(prop::PHY_FREQ).await?;
+    println!(
+        "freq before={:?} restore={completion:?} after={:?}",
+        u32::from_le_bytes(before.as_slice().try_into()?),
+        u32::from_le_bytes(after.as_slice().try_into()?),
+    );
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -246,9 +486,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("phase-b") if args.len() == 4 => phase_b(&args[2], parse_hex32(&args[3])?).await,
         Some("phase-c") if args.len() == 3 => phase_c(&args[2]).await,
         Some("phase-d") if args.len() == 3 => phase_d(&args[2]).await,
+        Some("rf-peer") if args.len() == 4 => rf_peer(&args[2], args[3].parse()?).await,
+        Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
+        #[cfg(feature = "ble-radio")]
+        Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
+        Some("phase-e") if args.len() == 6 => {
+            phase_e(&args[2], args[3].parse()?, args[4].parse()?, args[5].parse()?).await
+        }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key-hex>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key-hex>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>"
             );
             std::process::exit(2);
         }

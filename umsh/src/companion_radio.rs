@@ -1095,8 +1095,11 @@ where
 
     /// As [`Self::queue_drain`], invoking `on_frame` with each frame
     /// (data, trailing metadata bytes) delivered before completion —
-    /// buffered and interleaved live frames alike. Frames are also
-    /// queued for [`Radio::poll_receive`] as usual.
+    /// buffered and interleaved live frames alike. The callback sees
+    /// **every** such frame: an NCP queue larger than this driver's
+    /// bounded receive buffer drains losslessly through it. Frames are
+    /// additionally queued for [`Radio::poll_receive`], where the
+    /// bounded buffer's oldest-dropped policy still applies.
     pub async fn queue_drain_with(
         &mut self,
         mut on_frame: impl FnMut(&[u8], &[u8]),
@@ -1108,7 +1111,6 @@ where
         self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
-        let mut delivered = self.rx_queue.len();
         loop {
             while let Some(response) = self.responses.pop_front() {
                 if response.tid != tid {
@@ -1127,15 +1129,13 @@ where
             if let Some(status) = self.seen_reset.take() {
                 return Err(CompanionRadioError::UnexpectedReset(status));
             }
-            self.read_more(deadline).await?;
-            while delivered < self.rx_queue.len() {
-                let packet = &self.rx_queue[delivered];
+            // Deliver at ingest time: each read that queued a stream
+            // frame reports it immediately, so the callback cannot
+            // miss frames the bounded receive buffer evicts mid-drain.
+            if self.read_more(deadline).await? {
+                let packet = self.rx_queue.back().expect("read_more reported a queued frame");
                 on_frame(&packet.data, &packet.raw_meta);
-                delivered += 1;
             }
-            // Overflow of the bounded receive queue shifts indices; the
-            // callback view is best-effort in that case.
-            delivered = delivered.min(self.rx_queue.len());
         }
     }
 
@@ -1577,22 +1577,23 @@ where
     }
 
     /// Sort a complete companion frame into the receive queue, response queue,
-    /// or the
-    /// reset flag. Malformed frames are dropped.
-    fn ingest_frame(&mut self, frame_bytes: &[u8]) {
+    /// or the reset flag; returns whether a stream frame was queued
+    /// (the back of `rx_queue` is then the new packet). Malformed
+    /// frames are dropped.
+    fn ingest_frame(&mut self, frame_bytes: &[u8]) -> bool {
         if let Some(trace) = &mut self.trace {
             trace(TraceDirection::NcpToHost, &describe_frame(frame_bytes));
         }
         let Ok(frame) = Frame::parse(frame_bytes) else {
-            return;
+            return false;
         };
         match frame.command() {
             Some(Cmd::StrRecv) => {
                 let Ok(payload) = StreamPayload::parse(frame.payload) else {
-                    return;
+                    return false;
                 };
                 if payload.stream != stream::PHY_RAW {
-                    return;
+                    return false;
                 }
                 let meta = RxMeta::decode(payload.metadata).unwrap_or_default();
                 if self.rx_queue.len() >= RX_QUEUE_DEPTH {
@@ -1603,6 +1604,7 @@ where
                     meta,
                     raw_meta: payload.metadata.to_vec(),
                 });
+                return true;
             }
             Some(Cmd::PropIs) => self.ingest_prop_notification(ResponseKind::Is, &frame),
             Some(Cmd::PropInserted) => {
@@ -1611,6 +1613,7 @@ where
             Some(Cmd::PropRemoved) => self.ingest_prop_notification(ResponseKind::Removed, &frame),
             _ => {}
         }
+        false
     }
 
     fn ingest_prop_notification(&mut self, kind: ResponseKind, frame: &Frame<'_>) {
@@ -1713,7 +1716,9 @@ where
         }
     }
 
-    async fn read_more(&mut self, deadline: Instant) -> Result<(), CompanionRadioError> {
+    /// Read and ingest one frame before `deadline`; returns whether it
+    /// was a stream frame that is now the back of `rx_queue`.
+    async fn read_more(&mut self, deadline: Instant) -> Result<bool, CompanionRadioError> {
         let now = Instant::now();
         if now >= deadline {
             return Err(CompanionRadioError::Timeout);
@@ -1723,8 +1728,7 @@ where
             Ok(Err(error)) => return Err(error),
             Ok(Ok(frame)) => frame,
         };
-        self.ingest_frame(&frame);
-        Ok(())
+        Ok(self.ingest_frame(&frame))
     }
 
     fn pop_rx(&mut self, buf: &mut [u8]) -> Option<RxInfo> {
@@ -1882,7 +1886,9 @@ where
             }
 
             match self.link.poll_recv_frame(cx) {
-                core::task::Poll::Ready(Ok(frame)) => self.ingest_frame(&frame),
+                core::task::Poll::Ready(Ok(frame)) => {
+                    self.ingest_frame(&frame);
+                }
                 core::task::Poll::Ready(Err(error)) => return core::task::Poll::Ready(Err(error)),
                 core::task::Poll::Pending => return core::task::Poll::Pending,
             }

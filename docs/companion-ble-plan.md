@@ -956,29 +956,64 @@ cycle. Results:
   The temporary freeze diagnostics ("d6" version string) were still in
   the validated image.
 
-### What the next agent should do first
+### Increment 9, second pass — RF, T-Echo, and BLE attach (2026-07-16)
 
-Finish increment 9 — the remaining hardware items need the **T-Echo
-attached as the second radio** (it was not connected for the first
-pass): detached reception of relevant vs. unrelated live RF traffic,
-delegated MAC acks on the air, duplicate coalescing/re-ack, queue
-overflow, and the drain of real buffered traffic (the in-process
-lifecycle test in `umsh/tests/companion_full_protocol.rs` is the
-script; `companion_hw_validate` phases a/b bracket the detached
-window — the T-1000E is already left provisioned and saved for
-exactly this). Then repeat the storage-layout phases (a–d) on the
-T-Echo, exercise host replacement and BLE/USB displacement on
-hardware, the `ble-store-fault-inject` storage-failure image, the BLE
-attach path for the same workflow (`attach_existing` over
-`BleFrameLink`), and a soak run.
+With the T-Echo connected as the second radio, the RF portion ran
+green (`companion_hw_validate rf-peer` drives the T-Echo as the
+transmitting peer while the T-1000E operates detached; `phase-e`
+verifies the drain):
 
-Hardware notes: flash via the Makefile targets, serial DFU uses the
-1200-baud DTR touch (`diag/reflash_t1000e.py` automates touch + retry;
-the first nrfutil attempt reliably races enumeration and the retry
-works), never shell-redirect USB serial ports, and re-save the
-snapshot after flashing a firmware whose snapshot version moved. The
-temporary freeze diagnostics in the firmware must be stripped or gated
-before any release-quality image (keep the POWER-INTEN disarm fix).
+* **Delegated acknowledgement on the air** — a sealed,
+  ack-requesting unicast from the provisioned peer was queued by the
+  detached T-1000E and answered with a MAC ack observed on the T-Echo
+  (12 bytes, −20 dBm across the desk).
+* **Duplicate coalescing** — the exact retransmission was re-acked on
+  the air and occupied no second queue entry.
+* **Unrelated traffic** — a sealed ack-requesting unicast to a foreign
+  destination drew no ack and (by the final queue arithmetic) was
+  never queued.
+* **Overflow** — 19 accepted frames into the 16-slot queue: eviction
+  counted exactly (the dropped counter is cumulative across drains —
+  the first expectation mistake was mine, not the board's), and the
+  drain delivered all 16 oldest-first with correct ages; exactly the
+  one late ack-requesting frame carried `RX_FLAG_ACKED`.
+* **A real host-side bug found and fixed**: `queue_drain_with`'s
+  callback used to lose every frame the driver's 8-deep receive
+  buffer evicted mid-drain (an NCP queue of 16 delivered only 8).
+  The callback is now fed at ingest time — lossless regardless of the
+  bounded buffer — with an in-process regression test that fails on
+  the old code (`full_queue_drains_losslessly_through_the_callback`).
+
+The T-Echo then passed storage phases a–d itself (identity generation,
+provision/save, boot restore, clear-to-factory across reboots), and
+the **BLE full-protocol attach** worked end to end:
+`attach_existing` over `BleFrameLink` on the bonded LESC link attached
+in 242 ms without resetting, `sync` saw the exact provisioned state,
+and command RTT over BLE was 59/60/90 ms min/median/max (connection-
+interval bound; USB was ~443 µs median on the same board).
+
+One diagnosis worth remembering: the T-Echo's boot restore initially
+appeared to lose the saved frequency after every reboot. The journal
+and decode were fine — a leftover `umsh-capture --ble` soak process
+from earlier in the day was auto-reconnecting over BLE after each
+reboot, and its minimal-protocol attach (`CMD_RST` + configure +
+enable, at the default profile) legally reconfigured the radio. Two
+hosts, both obeyed. This is exactly the hazard `attach_existing`
+exists to avoid, demonstrated in the wild; kill stray minimal-protocol
+clients before hardware validation.
+
+Increment-9 items still open: host replacement and BLE/USB
+displacement exercised deliberately on hardware, the
+`ble-store-fault-inject` storage-failure image, and a fresh soak run
+(the previous soak was invalidated by today's reflashing). Flashing
+notes: `diag/reflash_t1000e.py` automates the T-1000E serial-DFU
+touch+retry; the T-Echo path is 1200-baud touch → wait for TECHOBOOT →
+copy the UF2 **under a fresh filename with `cp`** (overwriting the
+existing name, and python `shutil` under the sandbox, both fail with
+EPERM; the "Device not configured" error mid-copy is the bootloader
+detaching after the last block and means success). The temporary
+freeze diagnostics must still be stripped or gated before any
+release-quality image (keep the POWER-INTEN disarm fix).
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 
