@@ -802,21 +802,78 @@ all fixed:
 flag clearing, eviction-safe handles, flood-return acks including the
 re-ack path, multicast coalescing, and the TID-zero matrix).
 
+### Increment 7 — complete (2026-07-16)
+
+`CAP_DEV_IDENTITY` is implemented and advertised. Session side:
+
+* `PROP_DEV_KEY` (read-only; empty when unconfigured) and write-only
+  `PROP_DEV_PRIVATE_KEY`: a 32-octet set installs a private key, an
+  empty set commands on-device generation; both forms are key
+  provisioning behind the secure-link gate, and a `CMD_PROP_GET` of
+  the private key is `STATUS_UNIMPLEMENTED` without disclosing whether
+  one exists. The write stages `Effect::ProvisionIdentity`; the
+  firmware reads the request via `identity_request()`
+  (`IdentitySource::Install`/`Generate`), performs the key math and
+  the durable write, and completes with `respond_identity`, which
+  announces success as `CMD_PROP_IS` for **`PROP_DEV_KEY`** carrying
+  the public key — never the private key — only after the identity is
+  durably stored. Concurrent writes are `STATUS_BUSY`; a reported
+  failure leaves the previous identity in effect.
+* The identity lives outside the snapshot: the session tracks the live
+  key and a persisted mirror. `CMD_RST` reverts to the mirror (so the
+  identity survives resets), `CMD_RESTORE` never touches it,
+  `CMD_CLEAR` erases only the mirror (live state is unaffected, per
+  spec) and the `CMD_RST` completing a factory reset then loses it.
+  Replacing the identity keeps the device peer list and channel keys.
+* `PROP_DEV_CHANNEL_KEYS` (device domain, secure-link gated, digest =
+  derived channel identifier) and `PROP_DEV_PEERS` (public keys only,
+  ungated like `PROP_HOST_KEY`, digest = item) with insert/remove/
+  whole-table-set semantics matching the host tables. Both are in the
+  snapshot (post-reset: empty or restored) and survive host
+  replacement. Device channel keys deliberately create no implicit
+  host receive filters — verified by a detached-queueing test.
+  `SNAPSHOT_VERSION` bumped to 2, `SNAPSHOT_MAX` to 1536 (any
+  version-1 snapshot on flashed hardware is ignored at boot; re-save
+  after flashing).
+
+Firmware side: the identity journal reuses the `proto_store` record
+machinery in its own two pages (0x000E_8000..0x000E_A000) — a separate
+journal rather than a shared clear-epoch because snapshot saves must
+never rotate the identity record away; each journal clears atomically
+with its own committed tombstone. The payload is the private key plus
+the derived public key; boot mounts it and calls `set_boot_identity`
+before the first host command. `CMD_CLEAR` now tombstones both
+journals (snapshot first; an interruption between them reports failure
+and the host's retry completes the erase). Generation entropy: the RNG
+peripheral belongs to the SoftDevice Controller for the stack's
+lifetime, so boot seeds a ChaCha20 CSPRNG (`rand_chacha`, already in
+the tree via trouble-host) from the hardware TRNG before `build_sdc`,
+honoring the no-non-crypto-RNG rule; `SoftwareIdentity` does the
+Ed25519 math. The `no-ble` image fails identity persistence closed and
+now builds warning-free (a scoped `cfg_attr` allow covers the
+deliberately uncalled BLE support source in that diagnostic image
+only).
+
+Gate: 97 session tests (provisioning lifecycle incl. replacement,
+generation staging, busy/failure/insecure-link paths, RST/RESTORE/
+CLEAR interactions, dev-table lifecycles and snapshot round-trip,
+no-implicit-filter proof, TID-0 silence) and 30 firmware host tests
+(identity payload codec, journal page layout inside the NV region).
+Both boards and the no-ble variant build with zero warnings.
+
 ### What the next agent should do first
 
-Start increment 7 (`CAP_DEV_IDENTITY`): on-device identity generation
-and private-key installation (`PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`),
-device channel keys and device peers, with the identity persisted
-immediately and independently of snapshots — `CMD_RESTORE` can never
-resurrect an older identity, and `CMD_CLEAR` (which already erases the
-proto journal) must also erase it. Private and symmetric keys are
-write-only behind the existing secure-transport gate. Identity
-generation needs the hardware TRNG (`Nrf52840Rng`) — mind the
-[[no-non-crypto-rng]] rule — and `SoftwareIdentity::generate` from
-umsh-crypto's software module for the key math. Do not expand into
-repeater/autonomous application behavior; the spec deliberately defers
-that. Increment 8 (provisioning workflow + adapter-free integration
-tests) follows.
+Start increment 8: the host-facing provisioning/synchronization
+workflow in `umsh::companion_radio` (post-attach sync per spec
+§Attach, Detach, and Synchronization; digest-form verification;
+key provisioning including the device identity) plus adapter-free
+integration tests that drive a simulated NCP session end-to-end with
+per-command capture/logging. Increment 9 (hardware completion on both
+boards: save → power-cycle → autonomous detached operation → reconnect
+→ ownership verification → drain) follows and needs the attached
+T-1000E. Note for hardware work: flash via the Makefile targets, the
+first serial-DFU attempt may race (retry works), and never shell-
+redirect USB serial ports.
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 

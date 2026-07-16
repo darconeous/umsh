@@ -52,3 +52,7 @@ defmt = "0.3"
 nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
 nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
 trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+# Device-identity generation: ChaCha20 CSPRNG seeded from the hardware
+# TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
+rand_core = { workspace = true }
+rand_chacha = { version = "0.3", default-features = false }

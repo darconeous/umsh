@@ -19,6 +19,37 @@ pub const PAGE_SIZE: u32 = ble_store::PAGE_SIZE;
 pub const PAGE0: u32 = ble_store::PAGE1 + PAGE_SIZE;
 pub const PAGE1: u32 = PAGE0 + PAGE_SIZE;
 
+/// Flash pages owned by the device-identity journal: the next two
+/// pages. The identity is persisted the moment it is installed or
+/// generated, independently of snapshots (spec §PROP_DEV_PRIVATE_KEY),
+/// so it gets a journal of its own: snapshot saves can never rotate
+/// the identity record away, and each journal clears atomically with
+/// one committed tombstone.
+pub const IDENTITY_PAGE0: u32 = PAGE1 + PAGE_SIZE;
+
+/// A device-identity record payload: the Ed25519 private key followed
+/// by its public key (stored so boot does not repeat the derivation).
+pub const IDENTITY_PAYLOAD_LEN: usize = 64;
+
+pub fn encode_identity(secret: &[u8; 32], public: &[u8; 32]) -> [u8; IDENTITY_PAYLOAD_LEN] {
+    let mut payload = [0u8; IDENTITY_PAYLOAD_LEN];
+    payload[..32].copy_from_slice(secret);
+    payload[32..].copy_from_slice(public);
+    payload
+}
+
+/// Split a persisted identity payload into (secret, public); anything
+/// but the exact expected length is treated as no identity.
+pub fn decode_identity(payload: &[u8]) -> Option<([u8; 32], [u8; 32])> {
+    if payload.len() != IDENTITY_PAYLOAD_LEN {
+        return None;
+    }
+    Some((
+        payload[..32].try_into().expect("length checked"),
+        payload[32..].try_into().expect("length checked"),
+    ))
+}
+
 /// Two records per page; the snapshot payload is bounded by
 /// `umsh_companion_ncp::SNAPSHOT_MAX` (1024) with headroom.
 pub const SLOT_SIZE: usize = 2048;
@@ -356,6 +387,18 @@ mod tests {
         block_on(write_record(&mut flash, PAGE0, &record(1, 0xAA, 40))).unwrap();
         block_on(write_record(&mut flash, PAGE1, &record(2, 0xBB, 40))).unwrap();
         flash
+    }
+
+    #[test]
+    fn identity_payload_round_trips_and_pages_stay_in_the_nv_region() {
+        let payload = encode_identity(&[0x11; 32], &[0x22; 32]);
+        assert_eq!(decode_identity(&payload), Some(([0x11; 32], [0x22; 32])));
+        assert_eq!(decode_identity(&payload[..63]), None);
+        assert_eq!(decode_identity(&[]), None);
+        // The identity journal sits after the snapshot journal, still
+        // inside the reserved NV region (0x000E_4000..0x000F_4000).
+        assert_eq!(IDENTITY_PAGE0, 0x000E_8000);
+        assert!(IDENTITY_PAGE0 + 2 * PAGE_SIZE <= 0x000F_4000);
     }
 
     /// Generation comparison survives wraparound: a record numbered 0

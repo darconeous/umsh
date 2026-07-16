@@ -47,6 +47,11 @@
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
+// The no-ble diagnostic image compiles the full BLE support source
+// (pairing policy, bond store, GATT plumbing) with the call sites
+// cfg'd out. Silence the resulting dead-code noise for that image
+// only, so production builds keep full warning strength.
+#![cfg_attr(feature = "no-ble", allow(dead_code, unused_imports))]
 
 #[cfg(not(target_os = "none"))]
 fn main() {
@@ -158,15 +163,20 @@ mod firmware {
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{
-        Effect, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, TxPower,
+        Effect, IdentitySource, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, TxPower,
     };
-    use umsh_crypto::CryptoEngine;
-    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
+    use umsh_crypto::{CryptoEngine, NodeIdentity as _};
 
     /// The NCP session instantiated with this firmware's crypto
-    /// providers (software AES/SHA; the linker strips the unused
-    /// identity code).
+    /// providers (software AES/SHA; Ed25519 comes in only through the
+    /// device-identity provisioning path).
     type Session = umsh_companion_ncp::Session<SoftwareAes, SoftwareSha256>;
+
+    /// Deterministic CSPRNG for device-identity generation, seeded from
+    /// the hardware TRNG at boot: the RNG peripheral itself is owned by
+    /// the SoftDevice Controller for the lifetime of the BLE stack.
+    type IdentityRng = rand_chacha::ChaCha20Rng;
     use umsh_radio_loraphy::{
         MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
         coding_rate_from_denom, spreading_factor_from_u8,
@@ -564,23 +574,26 @@ mod firmware {
     /// The stored protocol snapshot payload as read at boot.
     type BootSnapshot = heapless::Vec<u8, { proto_store::MAX_PAYLOAD }>;
 
-    /// Runtime handle for the full-protocol snapshot journal
-    /// (`proto_store`). Executes the session's SaveSnapshot/ClearSaved/
-    /// WipeHostDomain durable effects; the session's RAM mirror is only
-    /// updated through the respond_* completions after these return.
+    /// Runtime handle for one full-protocol record journal
+    /// (`proto_store`): the snapshot journal or the device-identity
+    /// journal, selected by its first page. Executes the session's
+    /// durable effects; the session's RAM mirrors are only updated
+    /// through the respond_* completions after these return.
     #[cfg(not(feature = "no-ble"))]
     struct ProtoStore {
         flash: &'static SharedFlash,
+        /// First page of this journal's two-page rotation.
+        page0: u32,
         generation: u32,
         slot: Option<u32>,
     }
 
     #[cfg(not(feature = "no-ble"))]
     impl ProtoStore {
-        async fn mount(shared: &'static SharedFlash) -> (Self, Option<BootSnapshot>) {
+        async fn mount(shared: &'static SharedFlash, page0: u32) -> (Self, Option<BootSnapshot>) {
             let mut flash = shared.lock().await;
             let mut latest: Option<(u32, proto_store::Stored)> = None;
-            for page in [proto_store::PAGE0, proto_store::PAGE1] {
+            for page in [page0, page0 + proto_store::PAGE_SIZE] {
                 let mut address = page;
                 while address < page + proto_store::PAGE_SIZE {
                     let mut bytes = [0u8; proto_store::SLOT_SIZE];
@@ -604,7 +617,7 @@ mod firmware {
                 None => (None, 0, None),
             };
             debug_log(format_args!(
-                "proto-store mount slot={:?} generation={} payload={}",
+                "proto-store mount page0=0x{page0:06x} slot={:?} generation={} payload={}",
                 slot,
                 generation,
                 payload.as_ref().map_or(0, |payload| payload.len()),
@@ -612,6 +625,7 @@ mod firmware {
             (
                 Self {
                     flash: shared,
+                    page0,
                     generation,
                     slot,
                 },
@@ -643,7 +657,7 @@ mod firmware {
             let target = journal_write_target(
                 &mut flash,
                 self.slot,
-                proto_store::PAGE0,
+                self.page0,
                 proto_store::SLOT_SIZE,
             )
             .await?;
@@ -1073,6 +1087,7 @@ mod firmware {
             | Some(Effect::DrainQueue)
             | Some(Effect::SaveSnapshot { .. })
             | Some(Effect::ClearSaved { .. })
+            | Some(Effect::ProvisionIdentity { .. })
             | None => {}
         }
     }
@@ -2028,6 +2043,9 @@ mod firmware {
         boot_reason: Status,
         mut proto_store: ProtoStore,
         boot_snapshot: Option<BootSnapshot>,
+        mut identity_store: ProtoStore,
+        boot_identity: Option<[u8; 32]>,
+        mut identity_rng: IdentityRng,
     ) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -2038,6 +2056,12 @@ mod firmware {
         );
         let mut emitter = Emitter::new();
         let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
+
+        // The device identity is persisted independently of snapshots;
+        // its post-reset value is whatever the identity journal holds.
+        if let Some(public_key) = boot_identity {
+            session.set_boot_identity(public_key);
+        }
 
         // Restore a stored snapshot before processing any host command:
         // the saved configuration is applied, the PHY re-enabled if it
@@ -2157,8 +2181,55 @@ mod firmware {
                                 emitter.flush(arbitration.destination()).await;
                             }
                             Some(Effect::ClearSaved { tid }) => {
-                                let result = proto_store.clear().await;
+                                // CMD_CLEAR covers all persisted
+                                // provisioning: the snapshot and the
+                                // independently persisted device
+                                // identity. Each journal's tombstone is
+                                // individually atomic; an interruption
+                                // between them reports failure and the
+                                // host's retry completes the erase.
+                                let result = match proto_store.clear().await {
+                                    Ok(()) => identity_store.clear().await,
+                                    Err(()) => Err(()),
+                                };
                                 session.respond_clear(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination()).await;
+                            }
+                            Some(Effect::ProvisionIdentity { tid }) => {
+                                // Build the keypair (drawing a fresh
+                                // secret from the TRNG-seeded CSPRNG for
+                                // on-device generation), persist it, and
+                                // only then report the public key.
+                                let result = match session.identity_request() {
+                                    Some(source) => {
+                                        let secret = match source {
+                                            IdentitySource::Install(secret) => secret,
+                                            IdentitySource::Generate => {
+                                                let mut secret = [0u8; 32];
+                                                rand_core::RngCore::fill_bytes(
+                                                    &mut identity_rng,
+                                                    &mut secret,
+                                                );
+                                                secret
+                                            }
+                                        };
+                                        let identity =
+                                            SoftwareIdentity::from_secret_bytes(&secret);
+                                        let public_key = identity.public_key().0;
+                                        let payload = proto_store::encode_identity(
+                                            &secret,
+                                            &public_key,
+                                        );
+                                        identity_store
+                                            .persist(&payload)
+                                            .await
+                                            .map(|()| public_key)
+                                    }
+                                    None => Err(()),
+                                };
+                                session.respond_identity(tid, result, &mut |frame: &[u8]| {
                                     emitter.push(frame)
                                 });
                                 emitter.flush(arbitration.destination()).await;
@@ -2927,7 +2998,7 @@ mod firmware {
         #[cfg(not(feature = "no-ble"))]
         let mut sdc_memory = sdc::Mem::<8192>::new();
         #[cfg(not(feature = "no-ble"))]
-        let (controller, ble_store, proto_store, boot_snapshot) = {
+        let (controller, ble_store, proto_store, boot_snapshot, identity_store, boot_identity, identity_rng) = {
         let mpsl_peripherals =
             mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
         let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -2953,10 +3024,17 @@ mod firmware {
         static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
         let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
         let mut ble_store = BleStore::mount(flash).await;
-        // Mount the protocol snapshot journal before the NCP session
-        // starts: a stored snapshot must be restored and the PHY
-        // re-applied before the first host command.
-        let (proto_store, boot_snapshot) = ProtoStore::mount(flash).await;
+        // Mount the protocol journals before the NCP session starts: a
+        // stored snapshot must be restored (and the PHY re-applied) and
+        // the persisted device identity installed before the first host
+        // command.
+        let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
+        let (identity_store, identity_payload) =
+            ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
+        let boot_identity = identity_payload
+            .as_deref()
+            .and_then(proto_store::decode_identity)
+            .map(|(_secret, public)| public);
 
         // Deliberate recovery image for hardware testing. This runs before the
         // Trouble host is constructed, so there is no live bond table to keep
@@ -3009,14 +3087,40 @@ mod firmware {
                 "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
             ));
         }
+        // Seed the identity-generation CSPRNG from the TRNG while the
+        // peripheral is still ours: build_sdc below hands the RNG to
+        // the SoftDevice Controller for its lifetime.
+        let mut identity_seed = [0u8; 32];
+        rng.fill_bytes(&mut identity_seed).await;
+        let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
         super::panic::breadcrumb_mark(6);
         let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
             .unwrap_or_else(|_| panic!("sdc init"));
         super::panic::breadcrumb_mark(7);
-        (controller, ble_store, proto_store, boot_snapshot)
+        (controller, ble_store, proto_store, boot_snapshot, identity_store, boot_identity, identity_rng)
         };
         #[cfg(feature = "no-ble")]
-        let (proto_store, boot_snapshot): (ProtoStore, Option<BootSnapshot>) = (ProtoStore, None);
+        let (proto_store, boot_snapshot, identity_store, boot_identity, identity_rng): (
+            ProtoStore,
+            Option<BootSnapshot>,
+            ProtoStore,
+            Option<[u8; 32]>,
+            IdentityRng,
+        ) = {
+            // No MPSL flash driver, so identity provisioning fails
+            // closed; the TRNG peripheral is free in this image and
+            // seeds the (unused) generator directly.
+            let mut rng = rng::Rng::new(p.RNG, Irqs);
+            let mut identity_seed = [0u8; 32];
+            rng.fill_bytes(&mut identity_seed).await;
+            (
+                ProtoStore,
+                None,
+                ProtoStore,
+                None,
+                <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed),
+            )
+        };
 
         // ── USB stack ────────────────────────────────────────────────────────
         // HardwareVbusDetect cannot share POWER with MPSL. This tethered NCP
@@ -3064,7 +3168,17 @@ mod firmware {
 
         spawner.spawn(output_task(tx, wdt_report).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
-        spawner.spawn(ncp_task(boot_reason, proto_store, boot_snapshot).unwrap());
+        spawner.spawn(
+            ncp_task(
+                boot_reason,
+                proto_store,
+                boot_snapshot,
+                identity_store,
+                boot_identity,
+                identity_rng,
+            )
+            .unwrap(),
+        );
         super::panic::breadcrumb_mark(8);
 
         // The touch button only controls the e-paper backlight. Menu input is
