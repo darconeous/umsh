@@ -579,7 +579,7 @@ mod firmware {
     impl ProtoStore {
         async fn mount(shared: &'static SharedFlash) -> (Self, Option<BootSnapshot>) {
             let mut flash = shared.lock().await;
-            let mut latest: Option<(u32, proto_store::Record)> = None;
+            let mut latest: Option<(u32, proto_store::Stored)> = None;
             for page in [proto_store::PAGE0, proto_store::PAGE1] {
                 let mut address = page;
                 while address < page + proto_store::PAGE_SIZE {
@@ -591,8 +591,16 @@ mod firmware {
                 }
             }
             drop(flash);
+            // A tombstone is authoritative "nothing saved": older
+            // snapshot records still physically present are void.
             let (slot, generation, payload) = match latest {
-                Some((slot, record)) => (Some(slot), record.generation, Some(record.payload)),
+                Some((slot, stored)) => {
+                    let payload = match stored.record {
+                        proto_store::Record::Snapshot(payload) => Some(payload),
+                        proto_store::Record::Cleared => None,
+                    };
+                    (Some(slot), stored.generation, payload)
+                }
                 None => (None, 0, None),
             };
             debug_log(format_args!(
@@ -612,11 +620,25 @@ mod firmware {
         }
 
         async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-            let mut record = proto_store::Record {
+            let mut buffered = heapless::Vec::new();
+            buffered.extend_from_slice(payload).map_err(|_| ())?;
+            self.write(proto_store::Record::Snapshot(buffered)).await
+        }
+
+        /// The clear transaction is one committed tombstone record: if
+        /// its write fails or is interrupted, the previous snapshot
+        /// remains authoritative and CMD_CLEAR reports failure. Pages
+        /// are never erased as part of a clear — stale records are
+        /// reclaimed by the ordinary rotation.
+        async fn clear(&mut self) -> Result<(), ()> {
+            self.write(proto_store::Record::Cleared).await
+        }
+
+        async fn write(&mut self, record: proto_store::Record) -> Result<(), ()> {
+            let stored = proto_store::Stored {
                 generation: self.generation.wrapping_add(1),
-                payload: heapless::Vec::new(),
+                record,
             };
-            record.payload.extend_from_slice(payload).map_err(|_| ())?;
             let mut flash = self.flash.lock().await;
             let target = journal_write_target(
                 &mut flash,
@@ -625,14 +647,14 @@ mod firmware {
                 proto_store::SLOT_SIZE,
             )
             .await?;
-            match proto_store::write_record(&mut *flash, target, &record).await {
+            match proto_store::write_record(&mut *flash, target, &stored).await {
                 Ok(()) => {
                     debug_log(format_args!(
-                        "proto-store commit generation={} slot=0x{target:06x} len={}",
-                        record.generation,
-                        record.payload.len(),
+                        "proto-store commit generation={} slot=0x{target:06x} cleared={}",
+                        stored.generation,
+                        matches!(stored.record, proto_store::Record::Cleared),
                     ));
-                    self.generation = record.generation;
+                    self.generation = stored.generation;
                     self.slot = Some(target);
                     Ok(())
                 }
@@ -643,19 +665,6 @@ mod firmware {
                     Err(())
                 }
             }
-        }
-
-        async fn clear(&mut self) -> Result<(), ()> {
-            let mut flash = self.flash.lock().await;
-            for page in [proto_store::PAGE0, proto_store::PAGE1] {
-                if proto_store::erase_page(&mut *flash, page).await.is_err() {
-                    debug_log(format_args!("proto-store clear=FAILED page=0x{page:06x}"));
-                    return Err(());
-                }
-            }
-            debug_log(format_args!("proto-store clear=ok"));
-            self.slot = None;
-            Ok(())
         }
     }
 
