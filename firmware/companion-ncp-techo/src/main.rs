@@ -1969,7 +1969,9 @@ mod firmware {
                     }
                 }
                 Either3::Second(RxFrame { data, info }) => {
-                    session.on_radio_rx(
+                    // While detached this may stage a delegated MAC
+                    // acknowledgement (Effect::StartTransmit).
+                    let effect = session.on_radio_rx(
                         &data,
                         info.rssi,
                         info.snr.as_centibels(),
@@ -1978,6 +1980,7 @@ mod firmware {
                         &mut |frame: &[u8]| emitter.push(frame),
                     );
                     emitter.flush(arbitration.destination()).await;
+                    apply_effect(&session, effect).await;
                 }
                 Either3::Third(result) => {
                     let now_ms = Instant::now().as_millis();

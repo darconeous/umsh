@@ -7,8 +7,11 @@ use umsh_companion::ids::{self, cap, prop, stream};
 use umsh_companion::items::{self, Filter, ItemError};
 use umsh_companion::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
 use umsh_companion::pui;
-use umsh_core::{ChannelKey, PacketHeader};
-use umsh_crypto::{AesProvider, CryptoEngine, Sha256Provider};
+use umsh_core::{
+    ChannelKey, NodeHint, PacketBuilder, PacketHeader, PacketType, SourceAddrRef,
+};
+use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
+use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 
 use crate::duty::DutyTracker;
 
@@ -118,6 +121,36 @@ struct PendingTx {
     tid: u8,
     airtime_ms: u32,
     power: TxPower,
+    /// True for NCP-initiated transmissions (delegated MAC acks):
+    /// completion must not disturb `PROP_LAST_STATUS`, which may still
+    /// hold a reset code the next host needs to see.
+    autonomous: bool,
+}
+
+/// A delegated MAC acknowledgement ready to transmit.
+struct AckPlan {
+    /// The acknowledged frame's source hint — the ack's destination.
+    dst: [u8; 3],
+    tag: [u8; 8],
+}
+
+/// Outcome of evaluating a detached received frame against the
+/// provisioned peer keys (spec §Inbound Queueing, §Acknowledgement
+/// Delegation).
+enum SecureRx {
+    /// Not authenticated as unicast-class traffic from a provisioned
+    /// peer (no keys, ambiguous source, bad MIC, or a suspected replay
+    /// outside the window): queue it unacknowledged — hints only
+    /// over-accept and the host MAC remains authoritative.
+    Plain,
+    /// Authenticated and new; the replay baseline has been advanced.
+    /// `ack` is present when the frame requests acknowledgement.
+    New { ack: Option<AckPlan> },
+    /// Authenticated duplicate of a previously accepted frame: it is
+    /// coalesced with the existing entry rather than queued again.
+    /// `ack` is present when the idempotent re-acknowledgement window
+    /// permits retransmitting its ack.
+    Duplicate { ack: Option<AckPlan> },
 }
 
 /// Outcome of dispatching a property key for encoding.
@@ -324,6 +357,7 @@ impl RxQueue {
         snr_cb: i16,
         lqi: Option<core::num::NonZeroU8>,
         rx_time_ms: u64,
+        acked: bool,
     ) {
         debug_assert!(data.len() <= MAX_MTU);
         if self.len == RX_QUEUE_CAPACITY {
@@ -339,7 +373,7 @@ impl RxQueue {
         entry.snr_cb = snr_cb;
         entry.lqi = lqi;
         entry.rx_time_ms = rx_time_ms;
-        entry.acked = false;
+        entry.acked = acked;
         self.len += 1;
     }
 
@@ -409,54 +443,88 @@ impl ChannelKeyTable {
     }
 }
 
+/// One provisioned peer: the host-derived pairwise key material plus
+/// this peer's replay window. The window is keyed by the peer's
+/// identity — replacing the key material leaves it untouched (spec
+/// §PROP_HOST_PEER_KEYS), and it is never saved (spec §Saved State).
+struct PeerSlot {
+    entry: items::PeerKeyEntry,
+    window: ReplayWindow,
+}
+
 /// `PROP_HOST_PEER_KEYS`: pairwise key material for provisioned peers.
 /// Keyed by peer public key (the digest form and remove selector);
 /// inserting a matching public key replaces the stored key material.
 #[derive(Default)]
 struct PeerKeyTable {
-    entries: [Option<items::PeerKeyEntry>; MAX_PEER_KEYS],
+    entries: [Option<PeerSlot>; MAX_PEER_KEYS],
     len: usize,
 }
 
 impl PeerKeyTable {
-    fn iter(&self) -> impl Iterator<Item = &items::PeerKeyEntry> {
-        self.entries[..self.len].iter().map(|entry| {
-            entry.as_ref().expect("entries below len are populated")
+    fn iter(&self) -> impl Iterator<Item = &PeerSlot> {
+        self.entries[..self.len].iter().map(|slot| {
+            slot.as_ref().expect("entries below len are populated")
         })
     }
 
     /// Insert or replace (by public key). Replacement updates only the
-    /// stored key material per the spec: nothing else is keyed by the
-    /// key values.
+    /// stored key material per the spec: the peer's replay window and
+    /// anything else keyed by its identity are unaffected.
     fn insert(&mut self, entry: items::PeerKeyEntry) -> Result<(), Status> {
         if let Some(existing) = self.entries[..self.len]
             .iter_mut()
             .flatten()
-            .find(|existing| existing.public_key == entry.public_key)
+            .find(|existing| existing.entry.public_key == entry.public_key)
         {
-            *existing = entry;
+            existing.entry = entry;
             return Ok(());
         }
         if self.len == MAX_PEER_KEYS {
             return Err(Status::NOMEM);
         }
-        self.entries[self.len] = Some(entry);
+        self.entries[self.len] = Some(PeerSlot {
+            entry,
+            window: ReplayWindow::new(),
+        });
         self.len += 1;
         Ok(())
     }
 
-    /// Remove by peer public key.
+    /// Remove by peer public key. The peer's replay window goes with
+    /// it; re-provisioning starts over at first contact.
     fn remove(&mut self, public_key: &[u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
         let Some(index) = self
             .iter()
-            .position(|existing| existing.public_key == *public_key)
+            .position(|existing| existing.entry.public_key == *public_key)
         else {
             return Err(Status::ITEM_NOT_FOUND);
         };
         self.len -= 1;
-        self.entries[index] = self.entries[self.len];
-        self.entries[self.len] = None;
+        self.entries[index] = self.entries[self.len].take();
         Ok(())
+    }
+
+    /// Resolve a received source address to a provisioned peer index:
+    /// by full public key when present, otherwise by **unique** 3-byte
+    /// prefix match (spec §Acknowledgement Delegation; an ambiguous
+    /// hint does not resolve).
+    fn resolve_source(&self, source: &SourceAddrRef, frame: &[u8]) -> Option<usize> {
+        match source {
+            SourceAddrRef::FullKeyAt { offset } => {
+                let key = frame.get(*offset..*offset + items::PUBLIC_KEY_LEN)?;
+                self.iter().position(|slot| slot.entry.public_key == *key)
+            }
+            SourceAddrRef::Hint(hint) => {
+                let mut matches = self
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, slot)| slot.entry.public_key[..3] == hint.0);
+                let (index, _) = matches.next()?;
+                matches.next().is_none().then_some(index)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -474,6 +542,9 @@ struct HostDomain {
     channel_keys: ChannelKeyTable,
     /// `PROP_HOST_PEER_KEYS`.
     peer_keys: PeerKeyTable,
+    /// `PROP_HOST_AUTO_ACK`: acknowledge qualifying frames on the
+    /// host's behalf while detached.
+    auto_ack: bool,
     /// The inbound queue, populated while the host is detached.
     queue: RxQueue,
 }
@@ -488,6 +559,7 @@ impl HostDomain {
         self.filters = FilterTable::default();
         self.channel_keys = ChannelKeyTable::default();
         self.peer_keys = PeerKeyTable::default();
+        self.auto_ack = false;
         self.queue.clear();
     }
 
@@ -781,8 +853,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// Report a frame received on air at `now_ms`. While a host is
     /// attached, accepted frames are emitted live as `CMD_STR_RECV`
     /// (promiscuous mode bypasses filtering for live delivery only);
-    /// while detached, accepted frames are placed in the inbound queue
-    /// instead. Ignored while the PHY is disabled.
+    /// while detached, accepted frames are placed in the inbound queue,
+    /// authenticated duplicates coalesce, and a qualifying frame may
+    /// produce a delegated-acknowledgement transmit effect. Ignored
+    /// while the PHY is disabled or the frame exceeds the MTU (an
+    /// unstorable frame is never acknowledged).
     pub fn on_radio_rx(
         &mut self,
         data: &[u8],
@@ -791,21 +866,39 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         lqi: Option<core::num::NonZeroU8>,
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
-    ) {
+    ) -> Option<Effect> {
         if !self.device.settings.enabled || data.len() > usize::from(self.config.mtu) {
-            return;
+            return None;
         }
         if !self.attached {
-            // Detached operation: no protocol-defined duplicate
-            // detection applies until keys exist (`CAP_HOST_KEYS`), so
-            // every accepted frame occupies its own entry.
-            if self.host.accepts_frame(data) {
-                self.host.queue.push(data, rssi_dbm, snr_cb, lqi, now_ms);
+            if !self.host.accepts_frame(data) {
+                return None;
             }
-            return;
+            return match self.evaluate_detached_rx(data, now_ms) {
+                SecureRx::Duplicate { ack } => {
+                    // Coalesced with the existing queue entry.
+                    ack.and_then(|plan| self.stage_ack(plan, now_ms))
+                }
+                verdict => {
+                    let ack = match verdict {
+                        SecureRx::New { ack } => ack,
+                        _ => None,
+                    };
+                    // Placement cannot fail (circular eviction), so the
+                    // acknowledged flag can be decided up front; a
+                    // frame the ack gates refuse stays queued unacked
+                    // and the sender's retransmission hits the re-ack
+                    // window later.
+                    let effect = ack.and_then(|plan| self.stage_ack(plan, now_ms));
+                    self.host
+                        .queue
+                        .push(data, rssi_dbm, snr_cb, lqi, now_ms, effect.is_some());
+                    effect
+                }
+            };
         }
         if !self.session.promiscuous && !self.host.accepts_frame(data) {
-            return;
+            return None;
         }
         let mut rx_meta = [0u8; RxMeta::WIRE_LEN];
         let meta_len = RxMeta {
@@ -823,6 +916,186 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         ) {
             emit(&self.scratch[..len]);
         }
+        None
+    }
+
+    /// Authenticate a detached received frame against the provisioned
+    /// host keys and update the source peer's replay window. Crypto
+    /// runs on a scratch copy: the queue always holds the original wire
+    /// bytes, exactly as the host would have received them live.
+    fn evaluate_detached_rx(&mut self, data: &[u8], now_ms: u64) -> SecureRx {
+        let Ok(header) = PacketHeader::parse(data) else {
+            return SecureRx::Plain;
+        };
+        let Some(host_key) = &self.host.key else {
+            return SecureRx::Plain;
+        };
+        let host_hint = NodeHint([host_key[0], host_key[1], host_key[2]]);
+        let packet_type = header.fcf.packet_type();
+        let wants_ack = packet_type.ack_requested();
+
+        let scratch = &mut self.scratch[..data.len()];
+        scratch.copy_from_slice(data);
+
+        // Establish the frame's keys, destination, and source peer.
+        let (keys, peer_index) = match packet_type {
+            PacketType::Unicast | PacketType::UnicastAckReq => {
+                if header.dst != Some(host_hint) {
+                    return SecureRx::Plain;
+                }
+                let Some(index) = self.host.peer_keys.resolve_source(&header.source, data)
+                else {
+                    return SecureRx::Plain;
+                };
+                let entry = &self.host.peer_keys.entries[index]
+                    .as_ref()
+                    .expect("resolved index is populated")
+                    .entry;
+                (
+                    PairwiseKeys {
+                        k_enc: entry.k_enc,
+                        k_mic: entry.k_mic,
+                    },
+                    index,
+                )
+            }
+            PacketType::BlindUnicast | PacketType::BlindUnicastAckReq => {
+                // BUAR/BUNI require the channel key both to reveal the
+                // concealed addressing and to form the combined blind
+                // payload keys.
+                let Some(channel) = header.channel else {
+                    return SecureRx::Plain;
+                };
+                let Some(channel_key) = self
+                    .host
+                    .channel_keys
+                    .iter()
+                    .find(|candidate| candidate.id == channel.0)
+                    .map(|candidate| candidate.key)
+                else {
+                    return SecureRx::Plain;
+                };
+                let channel_keys = self.engine.derive_channel_keys(&ChannelKey(channel_key));
+                let Ok((dst, source)) =
+                    self.engine
+                        .decrypt_blind_addr(scratch, &header, &channel_keys)
+                else {
+                    return SecureRx::Plain;
+                };
+                if dst != host_hint {
+                    return SecureRx::Plain;
+                }
+                // The decrypted address block lives in the scratch copy.
+                let Some(index) = self.host.peer_keys.resolve_source(&source, scratch) else {
+                    return SecureRx::Plain;
+                };
+                let entry = &self.host.peer_keys.entries[index]
+                    .as_ref()
+                    .expect("resolved index is populated")
+                    .entry;
+                let pairwise = PairwiseKeys {
+                    k_enc: entry.k_enc,
+                    k_mic: entry.k_mic,
+                };
+                (self.engine.derive_blind_keys(&pairwise, &channel_keys), index)
+            }
+            // Multicast and broadcast have no per-peer counter state at
+            // the NCP; MAC acks carry no counter at all.
+            _ => return SecureRx::Plain,
+        };
+
+        // Authenticate (and decrypt, in the scratch copy).
+        let Ok(body_range) = self.engine.open_packet(scratch, &header, &keys) else {
+            return SecureRx::Plain;
+        };
+        let Some(sec_info) = header.sec_info else {
+            return SecureRx::Plain;
+        };
+        let counter = sec_info.frame_counter;
+        let mic = &data[header.mic_range.clone()];
+
+        // The ack tag covers the plaintext body: recompute the full
+        // CMAC over the decrypted scratch copy (spec §Ack Tag
+        // Construction).
+        let plan = wants_ack.then(|| {
+            let mut cmac = self.engine.cmac_state(&keys.k_mic);
+            umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk));
+            cmac.update(&scratch[body_range.clone()]);
+            let full_mac = cmac.finalize();
+            let public_key = &self.host.peer_keys.entries[peer_index]
+                .as_ref()
+                .expect("resolved index is populated")
+                .entry
+                .public_key;
+            AckPlan {
+                dst: [public_key[0], public_key[1], public_key[2]],
+                tag: self.engine.compute_ack_tag(&full_mac, &keys.k_enc),
+            }
+        });
+
+        let window = &mut self.host.peer_keys.entries[peer_index]
+            .as_mut()
+            .expect("resolved index is populated")
+            .window;
+        match window.check(counter, mic, now_ms) {
+            ReplayVerdict::Accept => {
+                window.accept(counter, mic, now_ms);
+                SecureRx::New { ack: plan }
+            }
+            ReplayVerdict::Replay => {
+                // Same logical packet (Route Retry forms included: same
+                // MIC and counter): coalesce, and re-ack only within
+                // the idempotent duplicate-acknowledgement window.
+                let ack = window
+                    .is_acknowledgeable_duplicate(counter, mic, now_ms)
+                    .then_some(())
+                    .and(plan);
+                SecureRx::Duplicate { ack }
+            }
+            // A suspected replay outside the window is not identified
+            // as a previously accepted frame; it is queued unacked and
+            // never acknowledged (spec: MUST NOT ack farther behind).
+            ReplayVerdict::OutOfWindow | ReplayVerdict::Stale => SecureRx::Plain,
+        }
+    }
+
+    /// Transmit a delegated MAC acknowledgement through the ordinary
+    /// serialized radio path, subject to `PROP_HOST_AUTO_ACK`, the
+    /// single-transmit radio path, and the duty limiter. Returns the
+    /// transmit effect, or `None` when any gate refuses (the frame then
+    /// simply remains unacknowledged).
+    fn stage_ack(&mut self, plan: AckPlan, now_ms: u64) -> Option<Effect> {
+        if !self.host.auto_ack || self.session.pending.is_some() {
+            return None;
+        }
+        let mut buf = [0u8; 24];
+        let frame_len = PacketBuilder::new(&mut buf)
+            .mac_ack(NodeHint(plan.dst), plan.tag)
+            .build()
+            .ok()?
+            .len();
+        let airtime_ms = lora_airtime_ms(
+            self.device.settings.sf,
+            self.device.settings.bw_hz,
+            self.device.settings.cr_denom,
+            frame_len,
+        );
+        if self
+            .device
+            .duty
+            .would_exceed(now_ms, airtime_ms, self.device.duty_limit)
+        {
+            return None;
+        }
+        self.tx_buf[..frame_len].copy_from_slice(&buf[..frame_len]);
+        self.tx_len = frame_len;
+        self.session.pending = Some(PendingTx {
+            tid: TID_UNSOLICITED,
+            airtime_ms,
+            power: TxPower::Default,
+            autonomous: true,
+        });
+        Some(Effect::StartTransmit)
     }
 
     /// Report completion of the transmit started by
@@ -833,12 +1106,15 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         };
         if success {
             self.device.duty.record(now_ms, pending.airtime_ms);
-            if pending.tid != TID_UNSOLICITED {
+            if pending.autonomous {
+                // NCP-initiated: PROP_LAST_STATUS is left alone so a
+                // pending reset code still reaches the next host.
+            } else if pending.tid != TID_UNSOLICITED {
                 self.send_status(pending.tid, Status::OK, emit);
             } else {
                 self.last_status = Status::OK;
             }
-        } else {
+        } else if !pending.autonomous {
             self.fail(pending.tid, Status::FAILURE, emit);
         }
     }
@@ -1117,6 +1393,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 self.session.promiscuous = parse_bool(value)?;
                 Ok(false)
             }
+            prop::HOST_AUTO_ACK => {
+                self.host.auto_ack = parse_bool(value)?;
+                Ok(false)
+            }
             // Whole-table replacement: the complete value is validated
             // into a candidate table before anything changes, so no
             // observer sees a mixture of old and new contents.
@@ -1341,6 +1621,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 meta::TX_POWER_MAX => TxPower::Max,
                 dbm => TxPower::Dbm(dbm),
             },
+            autonomous: false,
         });
         Some(Effect::StartTransmit)
     }
@@ -1376,6 +1657,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 | prop::HOST_RX_FILTERS
                 | prop::HOST_CHANNEL_KEYS
                 | prop::HOST_PEER_KEYS
+                | prop::HOST_AUTO_ACK
                 | prop::HOST_RX_QUEUE_COUNT
                 | prop::HOST_RX_QUEUE_CAPACITY
                 | prop::HOST_RX_QUEUE_DROPPED
@@ -1408,6 +1690,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     cap::HOST_FILTER,
                     cap::HOST_RX_QUEUE,
                     cap::HOST_KEYS,
+                    cap::HOST_AUTO_ACK,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -1457,10 +1740,14 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             }
             prop::HOST_PEER_KEYS => {
                 let mut len = 0;
-                for entry in self.host.peer_keys.iter() {
-                    len += put(&mut out[len..], &entry.public_key);
+                for slot in self.host.peer_keys.iter() {
+                    len += put(&mut out[len..], &slot.entry.public_key);
                 }
                 len
+            }
+            prop::HOST_AUTO_ACK => {
+                out[0] = self.host.auto_ack as u8;
+                1
             }
             prop::HOST_RX_QUEUE_COUNT => put(out, &(self.host.queue.len as u16).to_le_bytes()),
             prop::HOST_RX_QUEUE_CAPACITY => {
@@ -1754,7 +2041,8 @@ mod tests {
                 cap::PHY_LORA,
                 cap::HOST_FILTER,
                 cap::HOST_RX_QUEUE,
-                cap::HOST_KEYS
+                cap::HOST_KEYS,
+                cap::HOST_AUTO_ACK
             ]
         );
     }
@@ -3073,6 +3361,334 @@ mod tests {
         install_channel_key(&mut session, &[0x42; 32]);
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
+    }
+
+    // ─── CAP_HOST_AUTO_ACK gate ──────────────────────────────────────
+
+    use umsh_core::{MicSize, PublicKey};
+
+    const HOST_PUB: [u8; 32] = [0xC4; 32];
+    const PEER_PUB: [u8; 32] = [0x0A; 32];
+
+    fn test_pairwise() -> PairwiseKeys {
+        PairwiseKeys {
+            k_enc: [0x5E; 16],
+            k_mic: [0x5F; 16],
+        }
+    }
+
+    fn peer_item(public_key: &[u8; 32], keys: &PairwiseKeys) -> [u8; 64] {
+        let mut item = [0u8; 64];
+        item[..32].copy_from_slice(public_key);
+        item[32..48].copy_from_slice(&keys.k_enc);
+        item[48..].copy_from_slice(&keys.k_mic);
+        item
+    }
+
+    /// Detached session provisioned for delegated acknowledgement:
+    /// host key, one peer, auto-ACK on, PHY enabled.
+    fn auto_ack_session() -> TestSession {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &HOST_PUB);
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&PEER_PUB, &test_pairwise()),
+        );
+        set(&mut session, prop::HOST_AUTO_ACK, &[1]);
+        session.detach();
+        session
+    }
+
+    /// A sealed UNAR from the test peer to the host (unencrypted body,
+    /// 8-byte MIC), authenticated with `keys`.
+    fn sealed_unar(counter: u32, keys: &PairwiseKeys, full_source: bool) -> Vec<u8> {
+        let mut buf = [0u8; 96];
+        let builder = PacketBuilder::new(&mut buf).unicast(NodeHint([0xC4, 0xC4, 0xC4]));
+        let builder = if full_source {
+            builder.source_full(&PublicKey(PEER_PUB))
+        } else {
+            builder.source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+        };
+        let mut packet = builder
+            .frame_counter(counter)
+            .ack_requested()
+            .mic_size(MicSize::Mic8)
+            .payload(&[3, 1, 2])
+            .build()
+            .unwrap();
+        test_engine().seal_packet(&mut packet, keys).unwrap();
+        packet.as_bytes().to_vec()
+    }
+
+    /// A sealed BUAR from the test peer to the host through `channel_key`.
+    fn sealed_buar(counter: u32, channel_key: &[u8; 32]) -> Vec<u8> {
+        let engine = test_engine();
+        let channel_keys = engine.derive_channel_keys(&ChannelKey(*channel_key));
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .blind_unicast(channel_keys.channel_id, NodeHint([0xC4, 0xC4, 0xC4]))
+            .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+            .frame_counter(counter)
+            .ack_requested()
+            .encrypted()
+            .mic_size(MicSize::Mic8)
+            .payload(&[3, 9, 9])
+            .build()
+            .unwrap();
+        let blind = engine.derive_blind_keys(&test_pairwise(), &channel_keys);
+        engine
+            .seal_blind_packet(&mut packet, &blind, &channel_keys)
+            .unwrap();
+        packet.as_bytes().to_vec()
+    }
+
+    /// Feed a detached frame; detached processing must emit nothing.
+    fn rx_effect(session: &mut TestSession, frame: &[u8], now_ms: u64) -> Option<Effect> {
+        session.on_radio_rx(frame, -80, 40, None, now_ms, &mut |_: &[u8]| {
+            panic!("detached receive must not emit")
+        })
+    }
+
+    /// The expected ack tag for an unencrypted sealed frame.
+    fn expected_ack_tag(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
+        let engine = test_engine();
+        let header = PacketHeader::parse(frame).unwrap();
+        let mut cmac = engine.cmac_state(&keys.k_mic);
+        umsh_core::feed_aad(&header, frame, |chunk| cmac.update(chunk));
+        cmac.update(&frame[header.body_range.clone()]);
+        engine.compute_ack_tag(&cmac.finalize(), &keys.k_enc)
+    }
+
+    /// Assert the staged transmit is a MAC ack to the test peer, and
+    /// complete it.
+    fn expect_ack_transmit(session: &mut TestSession, effect: Option<Effect>, tag: Option<[u8; 8]>) {
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let header = PacketHeader::parse(session.tx_data()).unwrap();
+        assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+        assert_eq!(header.ack_dst, Some(NodeHint([0x0A, 0x0A, 0x0A])));
+        if let Some(tag) = tag {
+            assert_eq!(session.tx_data()[header.mic_range.clone()], tag);
+        }
+        session.on_tx_result(true, 0, &mut |_: &[u8]| panic!("autonomous ack must be silent"));
+    }
+
+    #[test]
+    fn unar_success_acks_queues_and_reports_acked() {
+        let mut session = auto_ack_session();
+        let frame = sealed_unar(100, &test_pairwise(), false);
+        let effect = rx_effect(&mut session, &frame, 1_000);
+        expect_ack_transmit(
+            &mut session,
+            effect,
+            Some(expected_ack_tag(&frame, &test_pairwise())),
+        );
+
+        // The autonomous ack leaves PROP_LAST_STATUS alone: the boot
+        // reason must still reach the next host.
+        session.attach(true);
+        assert_eq!(
+            pui::decode(&get(&mut session, prop::LAST_STATUS)).unwrap().0,
+            Status::RESET_POWER_ON.0
+        );
+        assert_eq!(queue_count(&mut session), 1);
+        let drained = drain(&mut session, 1_000);
+        assert_eq!(drained[0].0, frame, "the queue holds the original wire bytes");
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+    }
+
+    #[test]
+    fn buar_success_and_missing_channel_key() {
+        let channel_key = [0x42; 32];
+        let mut session = auto_ack_session();
+        // Without the channel key the frame does not even pass
+        // filtering (its destination hint is concealed).
+        let frame = sealed_buar(7, &channel_key);
+        assert!(rx_effect(&mut session, &frame, 0).is_none());
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 0);
+
+        // With the channel key provisioned it is accepted,
+        // authenticated with the combined blind keys, and acked.
+        install_channel_key(&mut session, &channel_key);
+        session.detach();
+        let effect = rx_effect(&mut session, &frame, 0);
+        expect_ack_transmit(&mut session, effect, None);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+    }
+
+    #[test]
+    fn unprovisioned_source_and_bad_mic_queue_unacked() {
+        let mut session = auto_ack_session();
+
+        // Sealed with keys the NCP does not hold: authentication fails,
+        // but filtering accepted it (host destination hint), so it is
+        // queued for the host — unacknowledged.
+        let wrong_keys = PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        };
+        assert!(rx_effect(&mut session, &sealed_unar(5, &wrong_keys, false), 0).is_none());
+
+        // A corrupted MIC likewise fails closed without an ack and
+        // without disturbing the peer's replay baseline.
+        let mut corrupted = sealed_unar(6, &test_pairwise(), false);
+        let last = corrupted.len() - 1;
+        corrupted[last] ^= 0xFF;
+        assert!(rx_effect(&mut session, &corrupted, 0).is_none());
+
+        // First-contact baseline is unset: an early counter still
+        // authenticates and establishes the baseline at face value.
+        let effect = rx_effect(&mut session, &sealed_unar(1, &test_pairwise(), false), 0);
+        expect_ack_transmit(&mut session, effect, None);
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 3);
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED);
+        assert_eq!(drained[1].1.flags, RX_FLAG_BUFFERED);
+        assert_eq!(drained[2].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+    }
+
+    #[test]
+    fn ambiguous_source_hint_is_never_acked_but_full_key_resolves() {
+        let mut session = auto_ack_session();
+        // A second provisioned peer shares the 3-byte prefix (key
+        // writes need the secure attached link).
+        let mut twin = PEER_PUB;
+        twin[31] ^= 0xFF;
+        session.attach(true);
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&twin, &test_pairwise()),
+        );
+        session.detach();
+
+        // Hint form: ambiguous, does not resolve, no ack.
+        assert!(rx_effect(&mut session, &sealed_unar(4, &test_pairwise(), false), 0).is_none());
+
+        // Full-key form (S flag): resolves and acks.
+        let effect = rx_effect(&mut session, &sealed_unar(4, &test_pairwise(), true), 0);
+        expect_ack_transmit(&mut session, effect, None);
+    }
+
+    #[test]
+    fn duplicates_coalesce_and_reack_only_within_window() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+
+        let first = sealed_unar(5, &keys, false);
+        let effect = rx_effect(&mut session, &first, 0);
+        expect_ack_transmit(&mut session, effect, Some(expected_ack_tag(&first, &keys)));
+
+        // Exact retransmission: coalesced (no new entry) and re-acked.
+        let effect = rx_effect(&mut session, &first, 10);
+        expect_ack_transmit(&mut session, effect, Some(expected_ack_tag(&first, &keys)));
+
+        // Advance the baseline well past the re-ack window.
+        for counter in 6..=14 {
+            let effect = rx_effect(&mut session, &sealed_unar(counter, &keys, false), 20);
+            expect_ack_transmit(&mut session, effect, None);
+        }
+        // counter 5 is now 9 behind: MUST NOT be acknowledged.
+        assert!(rx_effect(&mut session, &first, 30).is_none());
+
+        // The re-ack did not advance the baseline: the next counter is
+        // still accepted normally.
+        let effect = rx_effect(&mut session, &sealed_unar(15, &keys, false), 40);
+        expect_ack_transmit(&mut session, effect, None);
+
+        session.attach(true);
+        // 5, 6..=14, the out-of-window copy of 5, and 15: the exact
+        // duplicate of 5 consumed no slot.
+        assert_eq!(queue_count(&mut session), 12);
+    }
+
+    #[test]
+    fn attached_host_suppresses_delegation() {
+        let mut session = auto_ack_session();
+        session.attach(true);
+        let frame = sealed_unar(5, &test_pairwise(), false);
+        let mut emitted = Vec::new();
+        let effect = session.on_radio_rx(&frame, -80, 40, None, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        // Delivered live, never acknowledged on the host's behalf.
+        assert!(effect.is_none());
+        assert_eq!(emitted.len(), 1);
+    }
+
+    #[test]
+    fn auto_ack_disabled_and_duty_limit_leave_frames_unacked() {
+        let mut session = auto_ack_session();
+        session.attach(true);
+        set(&mut session, prop::HOST_AUTO_ACK, &[0]);
+        session.detach();
+        assert!(rx_effect(&mut session, &sealed_unar(5, &test_pairwise(), false), 0).is_none());
+
+        // Re-enable delegation but exhaust the duty budget: the ack is
+        // prohibited and the frame stays queued unacked.
+        session.attach(true);
+        set(&mut session, prop::HOST_AUTO_ACK, &[1]);
+        set(&mut session, prop::PHY_DUTY_LIMIT, &0u16.to_le_bytes());
+        session.detach();
+        assert!(rx_effect(&mut session, &sealed_unar(6, &test_pairwise(), false), 0).is_none());
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 2);
+        for (_, meta) in drain(&mut session, 0) {
+            assert_eq!(meta.flags, RX_FLAG_BUFFERED);
+        }
+    }
+
+    #[test]
+    fn auto_ack_property_round_trips_and_resets() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [0]);
+        set(&mut session, prop::HOST_AUTO_ACK, &[1]);
+        assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [1]);
+
+        // Survives attach; cleared by host replacement.
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [1]);
+        install_host_key(&mut session, &[0xBB; 32]);
+        assert_eq!(get(&mut session, prop::HOST_AUTO_ACK), [0]);
+
+        let (emitted, _) = set(&mut session, prop::HOST_AUTO_ACK, &[2]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn peer_key_replacement_preserves_replay_baseline() {
+        let mut session = auto_ack_session();
+        let old_keys = test_pairwise();
+        let effect = rx_effect(&mut session, &sealed_unar(5, &old_keys, false), 0);
+        expect_ack_transmit(&mut session, effect, None);
+
+        // Replace the peer's key material (secure link required).
+        session.attach(true);
+        let new_keys = PairwiseKeys {
+            k_enc: [0x77; 16],
+            k_mic: [0x78; 16],
+        };
+        insert_item(
+            &mut session,
+            prop::HOST_PEER_KEYS,
+            &peer_item(&PEER_PUB, &new_keys),
+        );
+        session.detach();
+
+        // The baseline survived the replacement: a fresh frame reusing
+        // counter 5 under the new keys is a suspected replay and is
+        // not acknowledged, while counter 6 proceeds normally.
+        assert!(rx_effect(&mut session, &sealed_unar(5, &new_keys, false), 10).is_none());
+        let effect = rx_effect(&mut session, &sealed_unar(6, &new_keys, false), 20);
+        expect_ack_transmit(&mut session, effect, None);
     }
 
     #[test]

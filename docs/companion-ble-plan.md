@@ -642,25 +642,76 @@ spec by construction, and the AUTO_ACK half gets `open_packet`/
 65 session tests pass; firmware host tests and both release images
 remain green.
 
+### Increment 5, second half: CAP_HOST_AUTO_ACK — complete (2026-07-15)
+
+Two structural changes landed alongside the feature:
+
+* **Replay detection moved to `umsh-crypto`** (`umsh_crypto::replay`):
+  `ReplayWindow`/`RecentMic`/`ReplayVerdict` are Security-chapter
+  concepts, and hosting them in the crypto crate lets the NCP share the
+  MAC's exact implementation without depending on `umsh-mac` (which
+  re-exports them unchanged). The NCP keeps its no-MAC layering.
+* **Latent `umsh-crypto` interop bug fixed**: `open_packet` and
+  `decrypt_blind_addr` reconstructed the received packet's SECINFO
+  bytes as "immediately before the body", but every secure layout puts
+  SECINFO before the *options block* — the options end marker and the
+  blind address block sit between it and the body. The CTR IV only
+  consumes SECINFO bytes when the MIC is shorter than 16 bytes
+  (`build_ctr_iv` takes 16), so all existing Mic16 traffic was
+  unaffected and the bug never surfaced; any Mic4/8/12 encrypted frame
+  with a payload would have failed to interop. Fixed by anchoring on
+  `options_range.start`; short-MIC unicast and blind round-trip
+  regression tests added.
+
+The auto-ACK implementation follows spec §Acknowledgement Delegation
+exactly: while detached, an accepted frame is evaluated on a scratch
+copy (the queue always holds original wire bytes) — UNAR authenticates
+with the provisioned pairwise keys; BUAR requires the channel key to
+decrypt the address block and forms the combined blind payload keys.
+The source must resolve by full public key (S flag) or **unique**
+3-byte prefix; ambiguous hints never ack. Each provisioned peer carries
+a `ReplayWindow` (never saved; key-material replacement leaves it
+untouched — proven by a test that reuses a counter across a key
+replacement). New frames are queued (acked flag set), the baseline
+advances, and a MAC ack (`PacketBuilder::mac_ack` + `compute_ack_tag`
+over the plaintext-body CMAC) is staged through the ordinary
+single-transmit radio path and duty limiter — a refused ack (auto-ack
+off, radio busy, duty exhausted) leaves the frame queued unacked and
+the sender's retransmission hits the re-ack window later. Identified
+duplicates (same counter + retained MIC, Route Retry forms included)
+coalesce without consuming a queue slot and MAY be re-acked only within
+the eight-counter window, without baseline movement; farther behind is
+never acknowledged. Suspected replays outside the window are queued
+unacked as ordinary traffic (the host MAC stays authoritative).
+Autonomous ack completions do not touch `PROP_LAST_STATUS`, so a boot
+reset code still reaches the next host. `PROP_HOST_AUTO_ACK` is
+host-domain (cleared by replacement/reset, survives attach).
+
+Gate: 75 session tests including sealed-packet vectors for UNAR/BUAR
+success (with exact ack-tag verification), wrong keys, corrupted MIC,
+first-contact baselines, ambiguous vs full-key source resolution,
+duplicates inside and outside the re-ack window, attached suppression,
+auto-ack-off and duty-refusal paths, `RX_FLAG_ACKED` in drained
+metadata, and unstorable-frame non-acknowledgement. The full workspace
+suite passes and both boards build. `CAP_HOST_AUTO_ACK` is advertised —
+the full-protocol capability set is now
+FILTER/RX_QUEUE/KEYS/AUTO_ACK.
+
 ### What the next agent should do first
 
-Finish increment 5: `CAP_HOST_AUTO_ACK` — detached acknowledgement
-delegation and authenticated duplicate handling (see increment 5 above
-for the full rules). The crypto engine is already inside `Session`.
-Needed: per-provisioned-peer replay baselines (host-domain state, not
-saved), UNAR/BUAR authentication via `engine.open_packet` (pairwise keys
-from `PROP_HOST_PEER_KEYS`; blind unicast needs the channel key to
-decrypt the address block and the combined blind payload keys),
-MAC-ACK construction (`PacketBuilder::mac_ack` + `compute_ack_tag`)
-through the ordinary serialized radio path and duty limiter,
-`PROP_HOST_AUTO_ACK`, queue coalescing for authenticated duplicates and
-Route Retry forms (hooks into the `RxQueue::push` call site in
-`on_radio_rx`), the eight-counter re-ACK window without baseline
-movement, and buffered `RX_FLAG_ACKED` reporting. `on_radio_rx` will
-need to return an effect (ACK transmission) — today it returns nothing.
-Gate on the normative packet vectors listed in the increment-5
-acceptance criteria. Do not advertise `CAP_HOST_AUTO_ACK` until the
-whole gate passes.
+Start increment 6 (`CAP_SAVE`): design the full-protocol snapshot
+journal separately from the BLE bond/PIN journal, allocate its flash
+region explicitly on both boards, and implement `CMD_SAVE`/
+`CMD_RESTORE`/`CMD_CLEAR`/`PROP_SAVED` plus boot restoration before the
+first host command (see increment 6 above for the exact snapshot
+contents and rollback rules). Reuse the existing sequential-storage
+mock-flash and byte-boundary power-cut testing approach from the BLE
+store. Note the session already has the deferred-effect pattern
+(`WipeHostDomain`) that host replacement's durable wipe will now
+actually need to exercise, and `CMD_RST`'s post-reset values must start
+coming from the snapshot when one exists. This increment is the first
+whose firmware side needs real flash plumbing; the session-side state
+machine and both reporting forms of `CMD_RESTORE` remain host-testable.
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 
