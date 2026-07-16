@@ -1,6 +1,7 @@
 .DS_Store
 /old
 /target
+/docs/ux/book
 /.umsh
 /.claude/settings.local.json
 *.identity
