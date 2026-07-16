@@ -755,6 +755,53 @@ baselines, restore-as-host-replacement, wiped-snapshot semantics) and
 the whole record write — every cut point mounts the complete old
 record. Both boards and the no-ble variant build.
 
+### Review fixes for increments 4–6 (2026-07-16)
+
+An external review of increments 4–6 surfaced five verified defects,
+all fixed:
+
+1. **`CMD_CLEAR` is now a committed tombstone**, not two page erases.
+   The journal gained a record kind (`Snapshot`/`Cleared`); the newest
+   valid record is authoritative, so a committed tombstone voids older
+   snapshot records without any erase, and an interrupted clear leaves
+   the previous snapshot fully in effect. Stale records are reclaimed
+   by ordinary rotation. Increment 7 note: the tombstone's generation
+   can serve as the clear epoch when the independently persisted device
+   identity must also honor `CMD_CLEAR`.
+2. **`RX_FLAG_ACKED` is earned, not assumed**: queue entries carry a
+   wrapping sequence handle; the pending autonomous transmission names
+   the entry it acknowledges and only a confirmed `on_tx_result(true)`
+   marks it. A failed TX leaves the entry unacked, the retransmission
+   hits the re-ack window, and a confirmed re-ack marks the original
+   entry (located by authenticated identity). Handles are immune to
+   rotation/eviction/reset — a stale handle marks nothing.
+3. **Delegated acks carry flood return routing**: a frame that arrived
+   by flood gets an ack whose remaining hops seed from the frame's
+   accumulated count (clamped 1–15), mirroring the MAC's cached
+   flood-route acks; FHOPS is dynamic (outside the AAD) so a duplicate
+   re-ack routes from the retransmission it answers. Region-code
+   scoping is deliberately omitted for now — an unscoped return flood
+   is correct, just broader.
+4. **Authenticated multicast coalesces queue-locally**: with the
+   channel key held, a multicast frame authenticates and its logical
+   identity (frame counter + verified MIC) is matched against the
+   entries currently queued — exact retransmissions and Route Retry
+   forms coalesce with no per-channel/per-sender replay registry, no
+   ack, and no retained state once the entry drains or evicts.
+   Unauthenticated multicast still occupies separate entries per spec.
+5. **TID-zero commands are properly fire-and-forget**: one `complete()`
+   helper now gates every command completion (status responses, value
+   echoes, INSERTED/REMOVED) — TID 0 mutates state and records
+   `PROP_LAST_STATUS` silently; a TID-0 drain delivers the buffered
+   frames but no completion. The deliberate unsolicited notifications
+   (`CMD_RST` reset notice, `STATUS_RESET_RESTORED`, live/buffered
+   `CMD_STR_RECV`) are unchanged.
+
+88 session tests and 29 firmware tests cover the regressions
+(tombstone interruption at every distinct byte boundary, failed-ack
+flag clearing, eviction-safe handles, flood-return acks including the
+re-ack path, multicast coalescing, and the TID-zero matrix).
+
 ### What the next agent should do first
 
 Start increment 7 (`CAP_DEV_IDENTITY`): on-device identity generation
