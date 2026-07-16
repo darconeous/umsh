@@ -8,6 +8,10 @@ repository.workspace = true
 
 [features]
 t1000e = []
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP) while
+# keeping the BLE clock configuration, to isolate the post-DFU
+# first-boot watchdog freeze. Not a production configuration.
+no-ble = []
 # Hardware-diagnostic mode: keep BLE active while CDC is open and mirror
 # security/GATT lifecycle events as ASCII on the USB serial endpoint.
 ble-debug = ["trouble-host/security-debug"]

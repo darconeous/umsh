@@ -9,6 +9,10 @@ repository.workspace = true
 [features]
 default = ["t1000e"]
 t1000e = []
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP) while
+# keeping the BLE clock configuration, to isolate the post-DFU
+# first-boot watchdog freeze. Not a production configuration.
+no-ble = []
 ble-debug = ["trouble-host/security-debug"]
 ble-store-fault-inject = ["ble-debug"]
 ble-wipe-on-boot = ["ble-debug"]
