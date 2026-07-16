@@ -43,6 +43,11 @@ uuid = { version = "1", optional = true }
 socket2 = { version = "0.6", optional = true }
 umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-stdio"] }
 
+[dev-dependencies]
+# The adapter-free full-protocol integration tests drive the real NCP
+# session engine behind a FrameLink (umsh/tests/companion_full_protocol.rs).
+umsh-companion-ncp = { path = "../crates/umsh-companion-ncp" }
+
 [[example]]
 name = "cli_udp"
 required-features = ["cli"]

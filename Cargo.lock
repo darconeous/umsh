@@ -2911,6 +2911,7 @@ dependencies = [
  "umsh-chat-room",
  "umsh-cli",
  "umsh-companion",
+ "umsh-companion-ncp",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",

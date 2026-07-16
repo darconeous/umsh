@@ -23,9 +23,13 @@ use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
 use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::hdlc;
-use umsh_companion::ids::{self, prop, stream};
+use umsh_companion::ids::{self, cap, prop, stream};
+use umsh_companion::items;
 use umsh_companion::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
 use umsh_companion::pui;
+use umsh_core::ChannelKey;
+use umsh_crypto::CryptoEngine;
+use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
 
 /// Capacity of the HDLC reassembly buffer (unescaped frame + FCS).
@@ -183,6 +187,26 @@ pub enum PropEvent {
     Removed { key: u32, digest: Vec<u8> },
 }
 
+/// Direction of a traced companion frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceDirection {
+    HostToNcp,
+    NcpToHost,
+}
+
+impl core::fmt::Display for TraceDirection {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(match self {
+            Self::HostToNcp => "host→ncp",
+            Self::NcpToHost => "ncp→host",
+        })
+    }
+}
+
+/// Sink for per-frame trace lines (see
+/// [`CompanionRadio::set_frame_trace`]).
+pub type FrameTrace = Box<dyn FnMut(TraceDirection, &str) + Send>;
+
 /// How the NCP reported a successful `CMD_RESTORE`. Both forms leave
 /// the NCP in the same configuration; they differ only in reporting and
 /// session-state handling.
@@ -195,6 +219,132 @@ pub enum RestoreCompletion {
     /// protocol session state. Cached property views are invalid;
     /// saved properties hold their saved values.
     Reset,
+}
+
+/// Verdict of comparing `PROP_HOST_KEY` against this host's identity
+/// (spec §Attach, Detach, and Synchronization, step 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostOwnership {
+    /// The NCP is configured for this host: queued traffic and
+    /// provisioning are ours to use and drain.
+    Ours,
+    /// No host identity is configured.
+    Unclaimed,
+    /// Another host has taken the radio over; the queue and
+    /// provisioning belong to that identity and must not be treated as
+    /// ours without deliberately replacing it (see
+    /// [`CompanionRadio::provision`]).
+    OtherHost([u8; 32]),
+    /// The NCP does not implement host filtering (minimal protocol
+    /// only).
+    Unsupported,
+}
+
+/// NCP state gathered by [`CompanionRadio::sync`]: the spec's
+/// post-attach synchronization procedure. Fields whose capability the
+/// NCP does not advertise are `None`; multi-value properties are the
+/// digest forms and never contain key material.
+#[derive(Clone, Debug)]
+pub struct NcpSync {
+    /// Retained `PROP_LAST_STATUS`.
+    pub last_status: Status,
+    /// `last_status` was a reset code: the NCP has reset since the
+    /// last host command, so state not restored from a saved snapshot
+    /// (notably queue contents) has been lost.
+    pub reset_since_last_contact: bool,
+    /// Advertised `PROP_CAPS`.
+    pub capabilities: Vec<u32>,
+    /// Whether the queued data and provisioning belong to this host.
+    pub ownership: HostOwnership,
+    /// The configured host identity, when one exists.
+    pub host_key: Option<[u8; 32]>,
+    /// `PROP_PHY_ENABLED` — with a restored snapshot the PHY may
+    /// already be up.
+    pub phy_enabled: bool,
+    /// `PROP_PHY_FREQ` in kHz.
+    pub freq_khz: u32,
+    /// `PROP_DEV_NAME`.
+    pub device_name: String,
+    /// `PROP_SAVED` (`CAP_SAVE`).
+    pub saved: Option<bool>,
+    /// `PROP_HOST_RX_QUEUE_COUNT` (`CAP_HOST_RX_QUEUE`).
+    pub queue_count: Option<u16>,
+    /// `PROP_HOST_RX_QUEUE_DROPPED` (`CAP_HOST_RX_QUEUE`).
+    pub queue_dropped: Option<u32>,
+    /// `PROP_HOST_RX_FILTERS` (`CAP_HOST_FILTER`).
+    pub filters: Option<Vec<items::Filter>>,
+    /// Derived channel identifiers of `PROP_HOST_CHANNEL_KEYS`
+    /// (`CAP_HOST_KEYS`).
+    pub host_channel_ids: Option<Vec<[u8; items::CHANNEL_ID_LEN]>>,
+    /// Provisioned peer public keys of `PROP_HOST_PEER_KEYS`
+    /// (`CAP_HOST_KEYS`).
+    pub host_peer_keys: Option<Vec<[u8; items::PUBLIC_KEY_LEN]>>,
+    /// `PROP_HOST_AUTO_ACK` (`CAP_HOST_AUTO_ACK`).
+    pub auto_ack: Option<bool>,
+    /// The device identity public key (`CAP_DEV_IDENTITY`), when one
+    /// is configured.
+    pub dev_key: Option<[u8; 32]>,
+}
+
+impl NcpSync {
+    /// Whether the NCP advertised this capability code.
+    pub fn has_capability(&self, capability: u32) -> bool {
+        self.capabilities.contains(&capability)
+    }
+}
+
+/// The host-domain state [`CompanionRadio::provision`] establishes on
+/// the NCP.
+#[derive(Clone, Debug)]
+pub struct HostProvisioning {
+    /// The host identity (`PROP_HOST_KEY`). Provisioning a key
+    /// different from the configured one replaces the host domain
+    /// (spec §Host Replacement).
+    pub host_key: [u8; 32],
+    /// Desired explicit receive filter set (`PROP_HOST_RX_FILTERS`).
+    pub filters: Vec<items::Filter>,
+    /// Desired channel keys (`PROP_HOST_CHANNEL_KEYS`).
+    pub channel_keys: Vec<[u8; items::CHANNEL_KEY_LEN]>,
+    /// Desired peer key entries (`PROP_HOST_PEER_KEYS`). Reconciled by
+    /// public-key membership: an entry whose public key the NCP
+    /// already reports is *not* re-sent, so rotated key material for
+    /// an existing peer must be re-inserted explicitly (insert
+    /// replaces).
+    pub peer_keys: Vec<items::PeerKeyEntry>,
+    /// Desired `PROP_HOST_AUTO_ACK`.
+    pub auto_ack: bool,
+}
+
+/// What [`CompanionRadio::provision`] actually changed. Everything not
+/// reported here already matched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProvisionReport {
+    /// `PROP_HOST_KEY` differed: the NCP wiped the previous host
+    /// domain and every table was provisioned from empty.
+    pub host_replaced: bool,
+    /// The filter table was replaced whole.
+    pub filters_replaced: bool,
+    /// The channel-key table was replaced whole (the NCP held an
+    /// identifier we have no key for, which cannot be removed
+    /// individually — the remove selector is the key itself).
+    pub channels_replaced: bool,
+    /// Channel keys inserted individually.
+    pub channels_inserted: usize,
+    /// Peer entries inserted.
+    pub peers_inserted: usize,
+    /// Peer entries removed.
+    pub peers_removed: usize,
+    /// `PROP_HOST_AUTO_ACK` was rewritten.
+    pub auto_ack_changed: bool,
+}
+
+impl ProvisionReport {
+    /// Whether provisioning changed anything at all (if not, an
+    /// explicit `CMD_SAVE` is only needed when live state had diverged
+    /// from the snapshot for other reasons).
+    pub fn changed(&self) -> bool {
+        *self != Self::default()
+    }
 }
 
 /// A cancel-safe, frame-oriented companion transport.
@@ -646,16 +796,16 @@ pub struct CompanionRadio<L> {
     /// Hardware reset cause retained by the NCP before our protocol reset.
     boot_status: Status,
     next_tid: u8,
+    /// Optional per-frame trace sink for both directions.
+    trace: Option<FrameTrace>,
 }
 
 impl<L> CompanionRadio<L>
 where
     L: FrameLink,
 {
-    /// Attach to an NCP: reset it, verify the protocol version, apply
-    /// the RF configuration, and enable the PHY.
-    pub async fn new(link: L, config: CompanionRadioConfig) -> Result<Self, CompanionRadioError> {
-        let mut radio = Self {
+    fn bare(link: L, config: CompanionRadioConfig) -> Self {
+        Self {
             link,
             config,
             rx_queue: VecDeque::new(),
@@ -667,9 +817,90 @@ where
             ncp_version: String::new(),
             boot_status: Status::RESET_UNKNOWN,
             next_tid: 1,
-        };
+            trace: None,
+        }
+    }
+
+    /// Attach to an NCP: reset it, verify the protocol version, apply
+    /// the RF configuration, and enable the PHY.
+    ///
+    /// This is the minimal-protocol attach: `CMD_RST` discards a
+    /// full-protocol NCP's session-independent state visibility (and
+    /// with a saved snapshot the post-reset values come from the
+    /// snapshot, not the documented defaults). A host cooperating with
+    /// an autonomously operating NCP should use
+    /// [`Self::attach_existing`] instead.
+    pub async fn new(link: L, config: CompanionRadioConfig) -> Result<Self, CompanionRadioError> {
+        let mut radio = Self::bare(link, config);
         radio.initialize().await?;
         Ok(radio)
+    }
+
+    /// Attach to an already-operating NCP without resetting or
+    /// reconfiguring it.
+    ///
+    /// This is the full-protocol attach (spec §Attach, Detach, and
+    /// Synchronization): attach implies no known state, so the host
+    /// synchronizes by fetching. Only the identity handshake runs here
+    /// — retained `PROP_LAST_STATUS` (the reset cause, preserved for
+    /// [`Self::boot_status`] and [`Self::sync`]), the protocol version
+    /// check, `PROP_NCP_VERSION`, and `PROP_PHY_MTU`. The PHY keeps
+    /// whatever configuration and enable state it had; queued frames
+    /// and provisioning are untouched. Follow with [`Self::sync`] and
+    /// drain the queue when actually ready to process it.
+    pub async fn attach_existing(
+        link: L,
+        config: CompanionRadioConfig,
+    ) -> Result<Self, CompanionRadioError> {
+        let mut radio = Self::bare(link, config);
+        // Reading LAST_STATUS does not overwrite it, so sync() still
+        // sees a retained reset code after this handshake.
+        let boot_status = radio.get_prop(prop::LAST_STATUS).await?;
+        radio.boot_status = decode_status(&boot_status);
+
+        let version = radio.get_prop(prop::PROTOCOL_VERSION).await?;
+        if version.first().copied() != Some(ids::PROTOCOL_MAJOR_VERSION) {
+            return Err(CompanionRadioError::Protocol(
+                "protocol major version mismatch",
+            ));
+        }
+        let ncp_version = radio.get_prop(prop::NCP_VERSION).await?;
+        radio.ncp_version = String::from_utf8_lossy(&ncp_version)
+            .trim_end_matches('\0')
+            .to_owned();
+
+        let mtu = radio.get_prop(prop::PHY_MTU).await?;
+        let [mtu_lo, mtu_hi, ..] = mtu[..] else {
+            return Err(CompanionRadioError::Protocol("malformed PROP_PHY_MTU"));
+        };
+        radio.max_frame_size = usize::from(u16::from_le_bytes([mtu_lo, mtu_hi]));
+        if radio.max_frame_size == 0 {
+            return Err(CompanionRadioError::Protocol("NCP advertised zero MTU"));
+        }
+        radio.t_frame_ms = lora_airtime_ms(
+            radio.config.spreading_factor,
+            radio.config.bandwidth_hz,
+            radio.config.coding_rate_denom,
+            radio.max_frame_size,
+        )
+        .max(1);
+        Ok(radio)
+    }
+
+    /// Install (or clear) a per-frame trace sink. Every frame sent and
+    /// every frame received is reported as a one-line summary (see
+    /// [`describe_frame`]), so a failure can be placed at the host API,
+    /// framing, session, storage, or radio boundary.
+    pub fn set_frame_trace(&mut self, trace: Option<FrameTrace>) {
+        self.trace = trace;
+    }
+
+    /// Send one frame through the trace hook.
+    async fn send(&mut self, frame: &[u8]) -> Result<(), CompanionRadioError> {
+        if let Some(trace) = &mut self.trace {
+            trace(TraceDirection::HostToNcp, &describe_frame(frame));
+        }
+        self.link.send_frame(frame).await
     }
 
     /// The NCP's firmware version string (`PROP_NCP_VERSION`).
@@ -719,7 +950,7 @@ where
         let mut buf = [0u8; 2];
         let len = frame::reset(&mut buf, TID_UNSOLICITED)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         let deadline = Instant::now() + self.config.response_timeout;
         self.wait_reset(deadline).await?;
 
@@ -776,7 +1007,7 @@ where
         let mut buf = [0u8; 8];
         let len = frame::prop_get(&mut buf, tid, key)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
             .await
     }
@@ -792,7 +1023,7 @@ where
         let mut buf = vec![0u8; value.len() + 8];
         let len = frame::prop_set(&mut buf, tid, key, value)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
             .await
     }
@@ -813,7 +1044,7 @@ where
         let mut buf = vec![0u8; item.len() + 8];
         let len = frame::prop_insert(&mut buf, tid, key, item)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_table_transaction(tid, key, ResponseKind::Inserted)
             .await
     }
@@ -833,7 +1064,7 @@ where
         let mut buf = vec![0u8; selector.len() + 8];
         let len = frame::prop_remove(&mut buf, tid, key, selector)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_table_transaction(tid, key, ResponseKind::Removed)
             .await
     }
@@ -847,7 +1078,7 @@ where
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
         let len = encode(&mut buf, tid).map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
             .await
             .map(|_| ())
@@ -874,7 +1105,7 @@ where
         let mut buf = [0u8; 4];
         let len = frame::queue_drain(&mut buf, tid)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
         let mut delivered = self.rx_queue.len();
@@ -927,7 +1158,7 @@ where
         let mut buf = [0u8; 4];
         let len = frame::restore(&mut buf, tid)
             .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
         loop {
@@ -979,10 +1210,296 @@ where
             value.as_ref().map_or(&[], |value| &value[..]),
         )
         .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
-        self.link.send_frame(&buf[..len]).await?;
+        self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, prop::BLE_PAIRING_PIN, PropResponsePolicy::StatusOnly)
             .await
             .map(|_| ())
+    }
+
+    /// Fetch and decode `PROP_CAPS`.
+    pub async fn capabilities(&mut self) -> Result<Vec<u32>, CompanionRadioError> {
+        let raw = self.get_prop(prop::CAPS).await?;
+        let mut caps = Vec::new();
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..])
+                .map_err(|_| CompanionRadioError::Protocol("malformed PROP_CAPS"))?;
+            caps.push(value);
+            offset += used;
+        }
+        Ok(caps)
+    }
+
+    /// Run the spec's post-attach synchronization procedure: fetch the
+    /// retained `PROP_LAST_STATUS` (detecting a reset since the last
+    /// contact), the capability list, the configured host identity —
+    /// yielding an ownership verdict against `expected_host_key` — and
+    /// the state each advertised capability grants, all in digest form.
+    ///
+    /// The host must decide ownership before treating queued data as
+    /// its own: [`HostOwnership::OtherHost`] means the queue and
+    /// provisioning belong to another identity.
+    pub async fn sync(
+        &mut self,
+        expected_host_key: Option<&[u8; 32]>,
+    ) -> Result<NcpSync, CompanionRadioError> {
+        // Step 1: the retained status, before any other command can
+        // overwrite a reset code.
+        let last_status = decode_status(&self.get_prop(prop::LAST_STATUS).await?);
+        let capabilities = self.capabilities().await?;
+        let has = |capability: u32| capabilities.contains(&capability);
+
+        // Step 2: ownership.
+        let (host_key, ownership) = if has(cap::HOST_FILTER) {
+            let value = self.get_prop(prop::HOST_KEY).await?;
+            match <[u8; 32]>::try_from(value.as_slice()) {
+                Ok(key) => {
+                    let ownership = match expected_host_key {
+                        Some(expected) if *expected == key => HostOwnership::Ours,
+                        _ => HostOwnership::OtherHost(key),
+                    };
+                    (Some(key), ownership)
+                }
+                Err(_) if value.is_empty() => (None, HostOwnership::Unclaimed),
+                Err(_) => return Err(CompanionRadioError::Protocol("malformed PROP_HOST_KEY")),
+            }
+        } else {
+            (None, HostOwnership::Unsupported)
+        };
+
+        // Step 3: the device-domain and host-domain state we depend
+        // on, gated by the advertised capabilities.
+        let phy_enabled = self.get_prop(prop::PHY_ENABLED).await? == [1];
+        let freq = self.get_prop(prop::PHY_FREQ).await?;
+        let freq_khz = u32::from_le_bytes(
+            freq.as_slice()
+                .try_into()
+                .map_err(|_| CompanionRadioError::Protocol("malformed PROP_PHY_FREQ"))?,
+        );
+        let device_name = self.device_name().await?;
+        let saved = match has(cap::SAVE) {
+            true => Some(self.get_prop(prop::SAVED).await? == [1]),
+            false => None,
+        };
+        let (queue_count, queue_dropped) = if has(cap::HOST_RX_QUEUE) {
+            let count = self.get_prop(prop::HOST_RX_QUEUE_COUNT).await?;
+            let dropped = self.get_prop(prop::HOST_RX_QUEUE_DROPPED).await?;
+            (
+                Some(u16::from_le_bytes(count.as_slice().try_into().map_err(
+                    |_| CompanionRadioError::Protocol("malformed PROP_HOST_RX_QUEUE_COUNT"),
+                )?)),
+                Some(u32::from_le_bytes(dropped.as_slice().try_into().map_err(
+                    |_| CompanionRadioError::Protocol("malformed PROP_HOST_RX_QUEUE_DROPPED"),
+                )?)),
+            )
+        } else {
+            (None, None)
+        };
+        let filters = match has(cap::HOST_FILTER) {
+            true => Some(decode_filter_table(
+                &self.get_prop(prop::HOST_RX_FILTERS).await?,
+            )?),
+            false => None,
+        };
+        let (host_channel_ids, host_peer_keys) = if has(cap::HOST_KEYS) {
+            (
+                Some(decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
+                    &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
+                    "malformed PROP_HOST_CHANNEL_KEYS digest",
+                )?),
+                Some(decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(
+                    &self.get_prop(prop::HOST_PEER_KEYS).await?,
+                    "malformed PROP_HOST_PEER_KEYS digest",
+                )?),
+            )
+        } else {
+            (None, None)
+        };
+        let auto_ack = match has(cap::HOST_AUTO_ACK) {
+            true => Some(self.get_prop(prop::HOST_AUTO_ACK).await? == [1]),
+            false => None,
+        };
+        let dev_key = if has(cap::DEV_IDENTITY) {
+            let value = self.get_prop(prop::DEV_KEY).await?;
+            match <[u8; 32]>::try_from(value.as_slice()) {
+                Ok(key) => Some(key),
+                Err(_) if value.is_empty() => None,
+                Err(_) => return Err(CompanionRadioError::Protocol("malformed PROP_DEV_KEY")),
+            }
+        } else {
+            None
+        };
+
+        Ok(NcpSync {
+            reset_since_last_contact: last_status.is_reset(),
+            last_status,
+            capabilities,
+            ownership,
+            host_key,
+            phy_enabled,
+            freq_khz,
+            device_name,
+            saved,
+            queue_count,
+            queue_dropped,
+            filters,
+            host_channel_ids,
+            host_peer_keys,
+            auto_ack,
+            dev_key,
+        })
+    }
+
+    /// Establish `desired` as the NCP's host domain, reconciling
+    /// against the digest forms so secrets the NCP already holds are
+    /// never re-sent. A `host_key` differing from the configured one
+    /// replaces the whole host domain first (spec §Host Replacement).
+    ///
+    /// Each individual write is transactional on the NCP (spec
+    /// §Mutation Atomicity). Changes are live only: follow with
+    /// [`Self::save`] to persist the provisioned state for autonomous
+    /// operation.
+    pub async fn provision(
+        &mut self,
+        desired: &HostProvisioning,
+    ) -> Result<ProvisionReport, CompanionRadioError> {
+        let mut report = ProvisionReport::default();
+        let current_key = self.get_prop(prop::HOST_KEY).await?;
+        if current_key.as_slice() != desired.host_key.as_slice() {
+            self.set_prop(prop::HOST_KEY, &desired.host_key).await?;
+            report.host_replaced = true;
+        }
+
+        // Filters: item and digest forms are identical, so replace the
+        // whole table (atomically, no secrets involved) when the sets
+        // differ.
+        let current_filters = if report.host_replaced {
+            Vec::new()
+        } else {
+            decode_filter_table(&self.get_prop(prop::HOST_RX_FILTERS).await?)?
+        };
+        if !same_set(&current_filters, &desired.filters) {
+            let mut table = Vec::new();
+            for filter in &desired.filters {
+                let mut item = [0u8; items::Filter::MAX_WIRE_LEN];
+                let item_len = filter
+                    .encode(&mut item)
+                    .map_err(|_| CompanionRadioError::Protocol("filter encode"))?;
+                let mut prefixed = [0u8; items::Filter::MAX_WIRE_LEN + 2];
+                let prefixed_len = items::encode_prefixed_item(&item[..item_len], &mut prefixed)
+                    .map_err(|_| CompanionRadioError::Protocol("filter encode"))?;
+                table.extend_from_slice(&prefixed[..prefixed_len]);
+            }
+            self.set_prop(prop::HOST_RX_FILTERS, &table).await?;
+            report.filters_replaced = true;
+        }
+
+        // Channel keys are compared through their derived identifiers.
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let desired_ids: Vec<[u8; items::CHANNEL_ID_LEN]> = desired
+            .channel_keys
+            .iter()
+            .map(|key| engine.derive_channel_id(&ChannelKey(*key)).0)
+            .collect();
+        let current_ids = if report.host_replaced {
+            Vec::new()
+        } else {
+            decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
+                &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
+                "malformed PROP_HOST_CHANNEL_KEYS digest",
+            )?
+        };
+        if current_ids.iter().any(|id| !desired_ids.contains(id)) {
+            // The NCP holds a channel we have no key for; its remove
+            // selector is the key itself, so the only way to shed it
+            // is an atomic whole-table replacement.
+            let table: Vec<u8> = desired.channel_keys.concat();
+            self.set_prop(prop::HOST_CHANNEL_KEYS, &table).await?;
+            report.channels_replaced = true;
+        } else {
+            for (key, id) in desired.channel_keys.iter().zip(&desired_ids) {
+                if !current_ids.contains(id) {
+                    self.insert_prop_item(prop::HOST_CHANNEL_KEYS, key).await?;
+                    report.channels_inserted += 1;
+                }
+            }
+        }
+
+        // Peers reconcile by public-key membership; the pairwise key
+        // material of peers the NCP already reports never crosses the
+        // link again.
+        let current_peers = if report.host_replaced {
+            Vec::new()
+        } else {
+            decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(
+                &self.get_prop(prop::HOST_PEER_KEYS).await?,
+                "malformed PROP_HOST_PEER_KEYS digest",
+            )?
+        };
+        for entry in &desired.peer_keys {
+            if !current_peers.contains(&entry.public_key) {
+                let mut item = [0u8; items::PeerKeyEntry::WIRE_LEN];
+                entry
+                    .encode(&mut item)
+                    .map_err(|_| CompanionRadioError::Protocol("peer entry encode"))?;
+                self.insert_prop_item(prop::HOST_PEER_KEYS, &item).await?;
+                report.peers_inserted += 1;
+            }
+        }
+        for existing in &current_peers {
+            if !desired
+                .peer_keys
+                .iter()
+                .any(|entry| entry.public_key == *existing)
+            {
+                self.remove_prop_item(prop::HOST_PEER_KEYS, existing)
+                    .await?;
+                report.peers_removed += 1;
+            }
+        }
+
+        // Delegation policy last, once the keys it depends on exist.
+        let current_auto_ack = if report.host_replaced {
+            false
+        } else {
+            self.get_prop(prop::HOST_AUTO_ACK).await? == [1]
+        };
+        if current_auto_ack != desired.auto_ack {
+            self.set_prop(prop::HOST_AUTO_ACK, &[desired.auto_ack as u8])
+                .await?;
+            report.auto_ack_changed = true;
+        }
+        Ok(report)
+    }
+
+    /// The NCP's device identity public key, generating one on-device
+    /// if none is configured (`CAP_DEV_IDENTITY`; generation requires
+    /// the transport's provisioning-security binding).
+    ///
+    /// On-device generation is the spec-recommended form: the private
+    /// key never exists anywhere but the radio, and only the resulting
+    /// public key crosses the link.
+    pub async fn ensure_device_identity(&mut self) -> Result<[u8; 32], CompanionRadioError> {
+        let current = self.get_prop(prop::DEV_KEY).await?;
+        if let Ok(key) = <[u8; 32]>::try_from(current.as_slice()) {
+            return Ok(key);
+        }
+        if !current.is_empty() {
+            return Err(CompanionRadioError::Protocol("malformed PROP_DEV_KEY"));
+        }
+        // An empty PROP_DEV_PRIVATE_KEY write commands generation;
+        // success is announced as PROP_IS for PROP_DEV_KEY carrying
+        // the new public key.
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 8];
+        let len = frame::prop_set(&mut buf, tid, prop::DEV_PRIVATE_KEY, &[])
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        let value = self
+            .finish_prop_transaction(tid, prop::DEV_KEY, PropResponsePolicy::Value)
+            .await?;
+        <[u8; 32]>::try_from(value.as_slice())
+            .map_err(|_| CompanionRadioError::Protocol("malformed PROP_DEV_KEY"))
     }
 
     async fn finish_prop_transaction(
@@ -1063,6 +1580,9 @@ where
     /// or the
     /// reset flag. Malformed frames are dropped.
     fn ingest_frame(&mut self, frame_bytes: &[u8]) {
+        if let Some(trace) = &mut self.trace {
+            trace(TraceDirection::NcpToHost, &describe_frame(frame_bytes));
+        }
         let Ok(frame) = Frame::parse(frame_bytes) else {
             return;
         };
@@ -1317,8 +1837,7 @@ where
                 &meta_buf[..meta_len],
             )
             .map_err(|_| TxError::Io(CompanionRadioError::Protocol("frame encode")))?;
-            self.link
-                .send_frame(&frame_buf[..frame_len])
+            self.send(&frame_buf[..frame_len])
                 .await
                 .map_err(TxError::Io)?;
 
@@ -1383,6 +1902,131 @@ fn decode_status(value: &[u8]) -> Status {
     match pui::decode(value) {
         Ok((code, _)) => Status(code),
         Err(_) => Status::FAILURE,
+    }
+}
+
+/// Decode a `PROP_HOST_RX_FILTERS` digest table (PUI-length-prefixed
+/// filter items).
+fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, CompanionRadioError> {
+    let mut filters = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item =
+            item.map_err(|_| CompanionRadioError::Protocol("malformed PROP_HOST_RX_FILTERS"))?;
+        filters.push(
+            items::Filter::decode(item)
+                .map_err(|_| CompanionRadioError::Protocol("malformed PROP_HOST_RX_FILTERS"))?,
+        );
+    }
+    Ok(filters)
+}
+
+/// Decode a digest table of fixed-size items.
+fn decode_fixed_list<const N: usize>(
+    value: &[u8],
+    what: &'static str,
+) -> Result<Vec<[u8; N]>, CompanionRadioError> {
+    items::fixed_items::<N>(value)
+        .map(|iterator| iterator.copied().collect())
+        .map_err(|_| CompanionRadioError::Protocol(what))
+}
+
+/// Order-insensitive equality of two item sets (both are sets on the
+/// wire; tables are small).
+fn same_set<T: PartialEq>(left: &[T], right: &[T]) -> bool {
+    left.len() == right.len() && left.iter().all(|item| right.contains(item))
+}
+
+/// The spec mnemonic for a property identifier this module knows.
+fn prop_name(key: u32) -> Option<&'static str> {
+    Some(match key {
+        prop::LAST_STATUS => "PROP_LAST_STATUS",
+        prop::PROTOCOL_VERSION => "PROP_PROTOCOL_VERSION",
+        prop::NCP_VERSION => "PROP_NCP_VERSION",
+        prop::INTERFACE_TYPE => "PROP_INTERFACE_TYPE",
+        prop::CAPS => "PROP_CAPS",
+        prop::PHY_ENABLED => "PROP_PHY_ENABLED",
+        prop::PHY_FREQ => "PROP_PHY_FREQ",
+        prop::PHY_TX_POWER => "PROP_PHY_TX_POWER",
+        prop::PHY_RSSI => "PROP_PHY_RSSI",
+        prop::PHY_LORA_BW => "PROP_PHY_LORA_BW",
+        prop::PHY_LORA_SF => "PROP_PHY_LORA_SF",
+        prop::PHY_LORA_CR => "PROP_PHY_LORA_CR",
+        prop::PHY_MTU => "PROP_PHY_MTU",
+        prop::PHY_LORA_SW => "PROP_PHY_LORA_SW",
+        prop::MAC_PROMISCUOUS => "PROP_MAC_PROMISCUOUS",
+        prop::SAVED => "PROP_SAVED",
+        prop::DEV_KEY => "PROP_DEV_KEY",
+        prop::DEV_PRIVATE_KEY => "PROP_DEV_PRIVATE_KEY",
+        prop::DEV_CHANNEL_KEYS => "PROP_DEV_CHANNEL_KEYS",
+        prop::DEV_PEERS => "PROP_DEV_PEERS",
+        prop::DEV_NAME => "PROP_DEV_NAME",
+        prop::HOST_KEY => "PROP_HOST_KEY",
+        prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
+        prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
+        prop::HOST_RX_FILTERS => "PROP_HOST_RX_FILTERS",
+        prop::HOST_AUTO_ACK => "PROP_HOST_AUTO_ACK",
+        prop::HOST_RX_QUEUE_COUNT => "PROP_HOST_RX_QUEUE_COUNT",
+        prop::HOST_RX_QUEUE_CAPACITY => "PROP_HOST_RX_QUEUE_CAPACITY",
+        prop::HOST_RX_QUEUE_DROPPED => "PROP_HOST_RX_QUEUE_DROPPED",
+        prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
+        prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
+        prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
+        _ => return None,
+    })
+}
+
+/// Render one companion frame as a one-line human-readable summary:
+/// command, TID, property mnemonic, and the decoded status where the
+/// payload is a `PROP_LAST_STATUS` value. Values are summarized by
+/// length — never dumped — so traces cannot leak key material.
+pub fn describe_frame(bytes: &[u8]) -> String {
+    let Ok(frame) = Frame::parse(bytes) else {
+        return format!("malformed frame ({} bytes)", bytes.len());
+    };
+    let tid = frame.header.tid();
+    let Some(command) = frame.command() else {
+        return format!("unknown command tid={tid} ({} bytes)", bytes.len());
+    };
+    match command {
+        Cmd::Nop
+        | Cmd::Reset
+        | Cmd::QueueDrain
+        | Cmd::Save
+        | Cmd::Clear
+        | Cmd::Restore => format!("{command:?} tid={tid}"),
+        Cmd::PropGet
+        | Cmd::PropSet
+        | Cmd::PropIs
+        | Cmd::PropInsert
+        | Cmd::PropRemove
+        | Cmd::PropInserted
+        | Cmd::PropRemoved => {
+            let Ok(payload) = PropPayload::parse(frame.payload) else {
+                return format!("{command:?} tid={tid} (malformed payload)");
+            };
+            let key = prop_name(payload.key)
+                .map_or_else(|| format!("prop {}", payload.key), str::to_owned);
+            if payload.key == prop::LAST_STATUS && command == Cmd::PropIs {
+                format!(
+                    "{command:?} tid={tid} {key} = {:?}",
+                    decode_status(payload.value)
+                )
+            } else {
+                format!(
+                    "{command:?} tid={tid} {key} ({} value bytes)",
+                    payload.value.len()
+                )
+            }
+        }
+        Cmd::StrSend | Cmd::StrRecv => match StreamPayload::parse(frame.payload) {
+            Ok(payload) => format!(
+                "{command:?} tid={tid} stream={} ({} data bytes, {} meta bytes)",
+                payload.stream,
+                payload.data.len(),
+                payload.metadata.len()
+            ),
+            Err(_) => format!("{command:?} tid={tid} (malformed payload)"),
+        },
     }
 }
 
