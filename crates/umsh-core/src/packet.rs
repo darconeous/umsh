@@ -281,6 +281,14 @@ impl NodeHint {
     }
 }
 
+impl core::fmt::Display for NodeHint {
+    /// Renders up to four base58 characters of the matching address space,
+    /// star-truncated where the hint no longer pins down the encoding.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::base58::fmt_hint(f, &self.0, 4)
+    }
+}
+
 /// Two-byte router hint used in learned routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RouterHint(pub [u8; 2]);
@@ -289,6 +297,14 @@ impl RouterHint {
     /// Derive the router hint from the first two public-key bytes.
     pub fn from_public_key(key: &PublicKey) -> Self {
         Self([key.0[0], key.0[1]])
+    }
+}
+
+impl core::fmt::Display for RouterHint {
+    /// Renders up to three base58 characters of the matching address space,
+    /// star-truncated where the hint no longer pins down the encoding.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::base58::fmt_hint(f, &self.0, 3)
     }
 }
 
@@ -309,6 +325,62 @@ impl PublicKey {
     /// Return the router hint associated with this key.
     pub fn router_hint(&self) -> RouterHint {
         RouterHint::from_public_key(self)
+    }
+}
+
+impl core::fmt::Display for PublicKey {
+    /// Renders the canonical fixed-width base58 address (always 44 digits).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let encoded = crate::base58::encode(&self.0);
+        f.write_str(core::str::from_utf8(&encoded).map_err(|_| core::fmt::Error)?)
+    }
+}
+
+impl core::fmt::LowerHex for PublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::UpperHex for PublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02X}")?;
+        }
+        Ok(())
+    }
+}
+
+impl core::str::FromStr for PublicKey {
+    type Err = crate::AddressParseError;
+
+    /// Parses either address form: 44 base58 characters or 64 base16
+    /// characters (either case), distinguished by length.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        fn hex_value(digit: u8) -> Result<u8, crate::AddressParseError> {
+            match digit {
+                b'0'..=b'9' => Ok(digit - b'0'),
+                b'a'..=b'f' => Ok(digit - b'a' + 10),
+                b'A'..=b'F' => Ok(digit - b'A' + 10),
+                _ => Err(crate::AddressParseError::InvalidCharacter),
+            }
+        }
+
+        let bytes = s.as_bytes();
+        match bytes.len() {
+            crate::base58::ENCODED_LEN => crate::base58::decode(bytes).map(Self),
+            64 => {
+                let mut key = [0u8; 32];
+                for (slot, pair) in key.iter_mut().zip(bytes.chunks_exact(2)) {
+                    *slot = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
+                }
+                Ok(Self(key))
+            }
+            _ => Err(crate::AddressParseError::InvalidLength),
+        }
     }
 }
 
@@ -1068,5 +1140,95 @@ impl<'a> UnsealedPacket<'a> {
 
     pub fn aad_static_options(&self) -> Range<usize> {
         self.aad_static_options.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NodeHint, PublicKey, RouterHint};
+    use crate::AddressParseError;
+
+    // Reference address from the addressing chapter discussion; first byte 0x5e.
+    const EXAMPLE_B58: &str = "7NeD1xuPGwZgikCNUaPhmMB13miitwoAEYdzhkvQVu9o";
+
+    #[test]
+    fn public_key_display_matches_reference_vectors() {
+        assert_eq!(
+            PublicKey([0u8; 32]).to_string(),
+            "11111111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            PublicKey([0xFFu8; 32]).to_string(),
+            "JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG"
+        );
+    }
+
+    #[test]
+    fn public_key_parses_base58_and_base16() {
+        let key: PublicKey = EXAMPLE_B58.parse().unwrap();
+        assert_eq!(key.to_string(), EXAMPLE_B58);
+        assert_eq!(key.0[0], 0x5E);
+
+        let lower = format!("{key:x}");
+        let upper = format!("{key:X}");
+        assert_eq!(lower.len(), 64);
+        assert_eq!(lower.parse::<PublicKey>().unwrap(), key);
+        assert_eq!(upper.parse::<PublicKey>().unwrap(), key);
+    }
+
+    #[test]
+    fn public_key_parse_rejects_bad_input() {
+        assert_eq!(
+            "7NeD".parse::<PublicKey>(),
+            Err(AddressParseError::InvalidLength)
+        );
+        let bad_hex = "gg".repeat(32);
+        assert_eq!(
+            bad_hex.parse::<PublicKey>(),
+            Err(AddressParseError::InvalidCharacter)
+        );
+    }
+
+    #[test]
+    fn node_hint_display_matches_reference_vectors() {
+        // Unambiguous: all four characters are pinned down.
+        assert_eq!(NodeHint([0x00, 0x00, 0x00]).to_string(), "1111");
+        assert_eq!(NodeHint([0xFF, 0xFF, 0xFF]).to_string(), "JEKN");
+        assert_eq!(NodeHint([0xA1, 0xB2, 0x03]).to_string(), "BtC5");
+        assert_eq!(NodeHint([0x5E, 0xA1, 0xB2]).to_string(), "7NQL");
+        // Carry case: the third digit is ambiguous (encodings read 9vEz/9vF1).
+        assert_eq!(NodeHint([0x84, 0x81, 0x1B]).to_string(), "9v*");
+        assert_eq!(NodeHint([0xFF, 0xFF, 0x94]).to_string(), "JE*");
+    }
+
+    #[test]
+    fn router_hint_display_matches_reference_vectors() {
+        assert_eq!(RouterHint([0x00, 0x00]).to_string(), "111");
+        assert_eq!(RouterHint([0xA1, 0xB2]).to_string(), "BtC");
+        assert_eq!(RouterHint([0x5E, 0xA1]).to_string(), "7N*");
+        assert_eq!(RouterHint([0x84, 0x81]).to_string(), "9v*");
+        // Carry case: only the first digit is pinned down.
+        assert_eq!(RouterHint([0x00, 0x41]).to_string(), "1*");
+    }
+
+    #[test]
+    fn hint_renderings_prefix_full_address() {
+        // Deterministic sweep: every character before a `*` must match the
+        // full base58 rendering of a key that carries the hint.
+        for i in 0..=255u32 {
+            let mut key = [0u8; 32];
+            for (j, byte) in key.iter_mut().enumerate() {
+                *byte = (i.wrapping_mul(151).wrapping_add(j as u32 * 91)) as u8;
+            }
+            let key = PublicKey(key);
+            let full = key.to_string();
+            for rendered in [key.hint().to_string(), key.router_hint().to_string()] {
+                let verified = rendered.strip_suffix('*').unwrap_or(&rendered);
+                assert!(
+                    full.starts_with(verified),
+                    "hint {rendered} does not prefix {full}"
+                );
+            }
+        }
     }
 }

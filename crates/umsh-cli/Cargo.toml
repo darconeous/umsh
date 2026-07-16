@@ -26,7 +26,6 @@ umsh-node = { path = "../umsh-node", default-features = false }
 umsh-sync = { path = "../umsh-sync", default-features = false }
 umsh-text = { path = "../umsh-text", default-features = false }
 heapless.workspace = true
-bs58 = { workspace = true, features = ["alloc"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 tokio = { version = "1", optional = true, default-features = false, features = ["io-util", "io-std", "macros", "rt"] }
 embedded-io-async = { version = "0.6", optional = true }

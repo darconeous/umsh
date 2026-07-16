@@ -73,7 +73,6 @@ nrf-mpsl        = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe4
 [workspace.dependencies]
 aes = { version = "0.8", default-features = false }
 bitflags = { version = "2", default-features = false }
-bs58 = { version = "0.5.1", default-features = false }
 embedded-hal-async = { version = "1", default-features = false }
 curve25519-dalek = { version = "4", default-features = false }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }

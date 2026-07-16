@@ -27,7 +27,7 @@ use umsh::companion_radio::{
 use umsh::companion::ids::{cap, prop};
 use umsh::companion::items::{Filter, PeerKeyEntry};
 use umsh::companion::meta::{BufferedRxMeta, RX_FLAG_ACKED};
-use umsh::core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
+use umsh::core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType, PublicKey};
 use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, PairwiseKeys};
 use umsh::hal::{CadPolicy, Radio, TxOptions};
@@ -63,16 +63,10 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn parse_hex32(text: &str) -> Result<[u8; 32], String> {
-    if text.len() != 64 {
-        return Err("expected 64 hex digits".into());
-    }
-    let mut out = [0u8; 32];
-    for (index, slot) in out.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(out)
+fn parse_key32(text: &str) -> Result<[u8; 32], String> {
+    text.parse::<PublicKey>()
+        .map(|key| key.0)
+        .map_err(|error| format!("expected 44-char base58 or 64-char hex key: {error}"))
 }
 
 async fn open(
@@ -106,9 +100,9 @@ fn print_sync(sync: &NcpSync) {
     println!("  saved={:?} queue_count={:?} queue_dropped={:?}", sync.saved, sync.queue_count, sync.queue_dropped);
     println!("  filters={:?}", sync.filters);
     println!("  host_channel_ids={:?}", sync.host_channel_ids.as_ref().map(|ids| ids.iter().map(|id| hex(id)).collect::<Vec<_>>()));
-    println!("  host_peer_keys={:?}", sync.host_peer_keys.as_ref().map(|keys| keys.iter().map(|key| hex(&key[..4])).collect::<Vec<_>>()));
+    println!("  host_peer_keys={:?}", sync.host_peer_keys.as_ref().map(|keys| keys.iter().map(|key| PublicKey(*key).to_string()).collect::<Vec<_>>()));
     println!("  auto_ack={:?}", sync.auto_ack);
-    println!("  dev_key={:?}", sync.dev_key.map(|key| hex(&key)));
+    println!("  dev_key={:?}", sync.dev_key.map(|key| PublicKey(key).to_string()));
 }
 
 fn expect(condition: bool, what: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -165,7 +159,7 @@ async fn phase_a(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     expect(sync.saved == Some(true), "snapshot saved")?;
     expect(sync.phy_enabled, "PHY enabled")?;
     expect(sync.dev_key == Some(dev_key), "device key reported")?;
-    println!("DEV_KEY={}", hex(&dev_key));
+    println!("DEV_KEY={}", PublicKey(dev_key));
     println!("PHASE A OK — power-cycle (or DFU-reboot) the board, then run phase-b");
     Ok(())
 }
@@ -238,7 +232,7 @@ async fn phase_d(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     radio.provision(&desired_provisioning()).await?;
     configure_phy(&mut radio).await?;
     radio.save().await?;
-    println!("re-provisioned; DEV_KEY={}", hex(&dev_key));
+    println!("re-provisioned; DEV_KEY={}", PublicKey(dev_key));
     println!("PHASE D OK — full-protocol hardware validation complete on this board");
     Ok(())
 }
@@ -483,7 +477,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("phase-a") if args.len() == 3 => phase_a(&args[2]).await,
-        Some("phase-b") if args.len() == 4 => phase_b(&args[2], parse_hex32(&args[3])?).await,
+        Some("phase-b") if args.len() == 4 => phase_b(&args[2], parse_key32(&args[3])?).await,
         Some("phase-c") if args.len() == 3 => phase_c(&args[2]).await,
         Some("phase-d") if args.len() == 3 => phase_d(&args[2]).await,
         Some("rf-peer") if args.len() == 4 => rf_peer(&args[2], args[3].parse()?).await,

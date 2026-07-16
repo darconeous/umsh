@@ -137,17 +137,20 @@ fn parse_channel_params<'a>(uri: &'a UriRef) -> Result<ChannelParams<'a>, Error>
 }
 
 fn decode_base58_32(input: &str) -> Result<[u8; 32], Error> {
-    let mut out = [0u8; 32];
-    let len = bs58::decode(input)
-        .onto(&mut out)
-        .map_err(|_| Error::InvalidBase58)?;
-    if len != 32 {
-        return Err(Error::InvalidLength {
-            expected: 32,
-            actual: len,
-        });
-    }
-    Ok(out)
+    umsh_core::base58::decode(input.as_bytes()).map_err(|err| match err {
+        umsh_core::AddressParseError::InvalidLength => Error::InvalidLength {
+            expected: umsh_core::base58::ENCODED_LEN,
+            actual: input.len(),
+        },
+        _ => Error::InvalidBase58,
+    })
+}
+
+fn encode_base58_32(bytes: &[u8; 32]) -> String {
+    umsh_core::base58::encode(bytes)
+        .iter()
+        .map(|&digit| char::from(digit))
+        .collect()
 }
 
 /// Parse a base58-encoded public key.
@@ -160,23 +163,21 @@ pub fn parse_channel_key_base58(input: &str) -> Result<umsh_core::ChannelKey, Er
     Ok(umsh_core::ChannelKey(decode_base58_32(input)?))
 }
 
-/// Encode a public key as base58.
+/// Encode a public key as fixed-width base58.
 pub fn encode_public_key_base58(key: &umsh_core::PublicKey) -> String {
-    bs58::encode(key.0).into_string()
+    encode_base58_32(&key.0)
 }
 
-/// Encode a channel key as base58.
+/// Encode a channel key as fixed-width base58.
 pub fn encode_channel_key_base58(key: &umsh_core::ChannelKey) -> String {
-    bs58::encode(key.0).into_string()
+    encode_base58_32(&key.0)
 }
 
 pub fn format_node_uri(key: &umsh_core::PublicKey, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
     copy_into(buf, &mut pos, b"umsh:n:")?;
-    let written = bs58::encode(key.0)
-        .onto(&mut buf[pos..])
-        .map_err(|_| Error::BufferTooSmall)?;
-    Ok(pos + written)
+    copy_into(buf, &mut pos, &umsh_core::base58::encode(&key.0))?;
+    Ok(pos)
 }
 
 pub fn format_channel_name_uri(name: &str, buf: &mut [u8]) -> Result<usize, Error> {
@@ -189,10 +190,8 @@ pub fn format_channel_name_uri(name: &str, buf: &mut [u8]) -> Result<usize, Erro
 pub fn format_channel_key_uri(key: &umsh_core::ChannelKey, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
     copy_into(buf, &mut pos, b"umsh:ck:")?;
-    let written = bs58::encode(&key.0)
-        .onto(&mut buf[pos..])
-        .map_err(|_| Error::BufferTooSmall)?;
-    Ok(pos + written)
+    copy_into(buf, &mut pos, &umsh_core::base58::encode(&key.0))?;
+    Ok(pos)
 }
 
 pub fn format_channel_name_uri_with_params(

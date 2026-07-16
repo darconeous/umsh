@@ -2,9 +2,9 @@
 //!
 //! Accepts any of:
 //! - a registered alias (ASCII, up to 16 chars),
-//! - base58-encoded 32-byte pubkey,
-//! - base64-encoded 32-byte pubkey (standard or URL-safe alphabet),
-//! - hex-encoded 32-byte pubkey (64 hex chars, optional `0x` prefix).
+//! - the canonical fixed-width base58 address (exactly 44 chars),
+//! - hex-encoded 32-byte pubkey (64 hex chars, optional `0x` prefix),
+//! - base64-encoded 32-byte pubkey (standard or URL-safe alphabet).
 //!
 //! 3-byte hints are NOT accepted — they aren't unique and the CLI refuses
 //! to guess.
@@ -14,10 +14,8 @@ use umsh_core::PublicKey;
 /// Decode a `<peer-ref>` token into a `PublicKey`. Alias lookup is the
 /// caller's concern; this helper only handles the encoded forms.
 ///
-/// Tried in order: hex (only matches 64-char tokens), then base58, then
-/// base64. Each decoder rejects anything that doesn't produce exactly 32
-/// bytes, so a token that happens to be valid in two alphabets will be
-/// resolved by the first one whose length check passes.
+/// The canonical forms (44-char base58 and 64-char hex, distinguished by
+/// length) are tried first via [`PublicKey::from_str`], then base64.
 ///
 /// After successful decoding the bytes are validated as a well-formed
 /// Ed25519 compressed public-key point on the curve (when the
@@ -29,8 +27,10 @@ use umsh_core::PublicKey;
 /// of the supported encodings, or if the decoded bytes are not a valid
 /// Ed25519 point.
 pub fn try_parse_pubkey(token: &str) -> Option<PublicKey> {
-    let key = try_hex(token)
-        .or_else(|| try_b58(token))
+    let canonical = token.strip_prefix("0x").unwrap_or(token);
+    let key = canonical
+        .parse::<PublicKey>()
+        .ok()
         .or_else(|| try_b64(token))?;
     #[cfg(feature = "software-crypto")]
     {
@@ -39,37 +39,6 @@ pub fn try_parse_pubkey(token: &str) -> Option<PublicKey> {
         }
     }
     Some(key)
-}
-
-fn try_hex(token: &str) -> Option<PublicKey> {
-    let s = token.strip_prefix("0x").unwrap_or(token);
-    if s.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        let hi = hex_nib(s.as_bytes()[i * 2])?;
-        let lo = hex_nib(s.as_bytes()[i * 2 + 1])?;
-        out[i] = (hi << 4) | lo;
-    }
-    Some(PublicKey(out))
-}
-
-fn hex_nib(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn try_b58(token: &str) -> Option<PublicKey> {
-    let mut out = [0u8; 32];
-    match bs58::decode(token).onto(&mut out[..]) {
-        Ok(32) => Some(PublicKey(out)),
-        _ => None,
-    }
 }
 
 fn try_b64(token: &str) -> Option<PublicKey> {
@@ -130,19 +99,10 @@ mod tests {
             .0
     }
 
-    fn hex_encode(bytes: &[u8; 32]) -> std::string::String {
-        let mut s = std::string::String::with_capacity(64);
-        for b in bytes {
-            use core::fmt::Write;
-            let _ = write!(s, "{:02x}", b);
-        }
-        s
-    }
-
     #[test]
     fn decodes_hex() {
         let key = valid_key();
-        let hex = hex_encode(&key);
+        let hex = std::format!("{:x}", PublicKey(key));
         assert_eq!(try_parse_pubkey(&hex).unwrap().0, key);
         let prefixed = std::format!("0x{}", hex.to_uppercase());
         assert_eq!(try_parse_pubkey(&prefixed).unwrap().0, key);
@@ -151,7 +111,8 @@ mod tests {
     #[test]
     fn decodes_base58() {
         let key = valid_key();
-        let b58 = bs58::encode(key).into_string();
+        let b58 = PublicKey(key).to_string();
+        assert_eq!(b58.len(), 44);
         assert_eq!(try_parse_pubkey(&b58).unwrap().0, key);
     }
 
