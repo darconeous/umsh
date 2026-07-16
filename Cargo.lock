@@ -3021,6 +3021,7 @@ name = "umsh-companion-ncp"
 version = "0.1.0"
 dependencies = [
  "umsh-companion",
+ "umsh-core",
 ]
 
 [[package]]

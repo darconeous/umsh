@@ -4,8 +4,10 @@ use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
 use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::ids::{self, cap, prop, stream};
+use umsh_companion::items::{self, Filter, ItemError};
 use umsh_companion::meta::{self, RxMeta, TxMeta};
 use umsh_companion::pui;
+use umsh_core::PacketHeader;
 
 use crate::duty::DutyTracker;
 
@@ -92,6 +94,13 @@ pub enum Effect {
     /// The live human-readable device name changed. Transports that expose a
     /// name should refresh it without disrupting the active session.
     DeviceNameChanged,
+    /// A `PROP_HOST_KEY` write is replacing the host identity. Durably
+    /// wipe any saved host-domain state (spec §Host Replacement), then
+    /// complete the deferred transaction with
+    /// [`Session::respond_host_wipe`]. Until `CAP_SAVE` exists nothing
+    /// is persisted and the wipe trivially succeeds; the live host
+    /// domain is replaced only on `Ok`.
+    WipeHostDomain { tid: u8 },
 }
 
 struct PendingTx {
@@ -107,38 +116,224 @@ enum PropValue {
     Unknown,
 }
 
-pub struct Session {
-    config: SessionConfig,
+/// State belonging to the companion radio itself, independent of which
+/// host is attached (spec §State Classes, device domain). Survives
+/// attach and host replacement; `CMD_RST` restores its post-reset
+/// values.
+struct DeviceDomain {
     settings: RadioSettings,
     duty_limit: u16,
     duty: DutyTracker,
-    last_status: Status,
-    device_name: [u8; MAX_DEVICE_NAME_LEN],
-    device_name_len: usize,
+    name: [u8; MAX_DEVICE_NAME_LEN],
+    name_len: usize,
+}
+
+impl DeviceDomain {
+    fn post_reset(config: &SessionConfig) -> Self {
+        let mut settings = config.defaults;
+        settings.enabled = false;
+        let mut name = [0; MAX_DEVICE_NAME_LEN];
+        let name_len = config.default_device_name.len();
+        name[..name_len].copy_from_slice(config.default_device_name.as_bytes());
+        Self {
+            settings,
+            duty_limit: config.default_duty_limit,
+            duty: DutyTracker::new(),
+            name,
+            name_len,
+        }
+    }
+}
+
+/// Maximum number of explicit `PROP_HOST_RX_FILTERS` entries.
+pub const MAX_RX_FILTERS: usize = 16;
+
+/// The explicit receive filter table: an unordered set with fixed
+/// capacity. Whole-table replacement builds a candidate table first so
+/// a failed set never leaves a partial mixture (spec §Mutation
+/// Atomicity).
+#[derive(Clone, Copy)]
+struct FilterTable {
+    entries: [Filter; MAX_RX_FILTERS],
+    len: usize,
+}
+
+impl Default for FilterTable {
+    fn default() -> Self {
+        Self {
+            entries: [Filter::PktType(0); MAX_RX_FILTERS],
+            len: 0,
+        }
+    }
+}
+
+impl FilterTable {
+    fn iter(&self) -> impl Iterator<Item = &Filter> {
+        self.entries[..self.len].iter()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Add a filter; duplicates fail with `STATUS_ALREADY`, a full
+    /// table with `STATUS_NOMEM`.
+    fn insert(&mut self, filter: Filter) -> Result<(), Status> {
+        if self.iter().any(|existing| *existing == filter) {
+            return Err(Status::ALREADY);
+        }
+        if self.len == MAX_RX_FILTERS {
+            return Err(Status::NOMEM);
+        }
+        self.entries[self.len] = filter;
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Remove the filter matching `filter` (the selector is the full
+    /// item); a missing item fails with `STATUS_ITEM_NOT_FOUND`.
+    fn remove(&mut self, filter: Filter) -> Result<(), Status> {
+        let Some(index) = self.iter().position(|existing| *existing == filter) else {
+            return Err(Status::ITEM_NOT_FOUND);
+        };
+        self.len -= 1;
+        self.entries[index] = self.entries[self.len];
+        Ok(())
+    }
+
+    /// Parse a whole-table `CMD_PROP_SET` value (PUI-length-prefixed
+    /// filter entries) into a complete replacement table, validating
+    /// everything before the caller commits it. Duplicate items in the
+    /// value collapse, matching the property's set semantics.
+    fn parse_table(value: &[u8]) -> Result<Self, Status> {
+        let mut table = Self::default();
+        for item in items::prefixed_items(value) {
+            let filter = decode_filter(item.map_err(table_error)?)?;
+            match table.insert(filter) {
+                Ok(()) | Err(Status::ALREADY) => {}
+                Err(status) => return Err(status),
+            }
+        }
+        Ok(table)
+    }
+}
+
+/// Decode and validate one filter item. Unrecognized types, mismatched
+/// value lengths, and out-of-range packet types are invalid arguments
+/// per the `PROP_HOST_RX_FILTERS` spec.
+fn decode_filter(item: &[u8]) -> Result<Filter, Status> {
+    let filter = Filter::decode(item).map_err(|_| Status::INVALID_ARGUMENT)?;
+    if matches!(filter, Filter::PktType(pkt_type) if pkt_type > 7) {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(filter)
+}
+
+/// Map a table-structure decoding failure (bad or truncated item
+/// length prefix) to a status. Entry-level problems are invalid
+/// arguments; a value that cannot be split into items at all is
+/// malformed.
+fn table_error(error: ItemError) -> Status {
+    match error {
+        ItemError::BadPrefix | ItemError::Truncated => Status::PARSE_ERROR,
+        _ => Status::INVALID_ARGUMENT,
+    }
+}
+
+/// State belonging to the configured tethered host identity (spec
+/// §State Classes, host domain): host key, key tables, filters,
+/// auto-ACK policy, and the inbound queue. The
+/// `CAP_HOST_KEYS`/`CAP_HOST_RX_QUEUE` increments extend it; host
+/// replacement resets it as one unit.
+#[derive(Default)]
+struct HostDomain {
+    /// `PROP_HOST_KEY`; `None` means no host identity is configured.
+    key: Option<[u8; items::PUBLIC_KEY_LEN]>,
+    /// `PROP_HOST_RX_FILTERS`.
+    filters: FilterTable,
+}
+
+impl HostDomain {
+    /// Spec §Receive Filtering compatibility rule: with no host key, no
+    /// host channel keys, and an empty explicit table, filtering is
+    /// unconfigured and every received frame is accepted.
+    fn filtering_configured(&self) -> bool {
+        self.key.is_some() || !self.filters.is_empty()
+    }
+
+    /// Whether receive filtering accepts this frame: any explicit
+    /// filter or the implicit destination-hint filter for the host key
+    /// matches. Hints are prefilters — over-acceptance is fine, the
+    /// host verifies cryptographically. A frame that does not parse as
+    /// UMSH can match no filter.
+    fn accepts_frame(&self, data: &[u8]) -> bool {
+        if !self.filtering_configured() {
+            return true;
+        }
+        let Ok(header) = PacketHeader::parse(data) else {
+            return false;
+        };
+        // A MAC ack's DST field carries the destination's 3-byte
+        // public-key prefix just like a unicast destination hint.
+        let dst = header.dst.or(header.ack_dst).map(|hint| hint.0);
+        if let Some(key) = &self.key
+            && dst == Some([key[0], key[1], key[2]])
+        {
+            return true;
+        }
+        let channel = header.channel.map(|channel| channel.0);
+        let pkt_type = header.fcf.packet_type() as u8;
+        self.filters.iter().any(|filter| match filter {
+            Filter::DestHint(hint) => dst == Some(*hint),
+            Filter::ChannelId(id) => channel == Some(*id),
+            Filter::PktType(filtered) => pkt_type == *filtered,
+        })
+    }
+}
+
+/// State that exists only while a host is attached (spec §State
+/// Classes): transaction correlation and session-scoped properties.
+/// Reset on every attach without touching the radio.
+#[derive(Default)]
+struct SessionState {
+    /// `PROP_MAC_PROMISCUOUS` — the only session-scoped property.
+    promiscuous: bool,
     pending: Option<PendingTx>,
+    /// Host replacement awaiting its durable wipe
+    /// ([`Effect::WipeHostDomain`]). The new key is installed only when
+    /// the wipe completes; a detach mid-flight abandons the
+    /// transaction, leaving the old host domain in effect.
+    pending_host: Option<PendingHostKey>,
+}
+
+struct PendingHostKey {
+    tid: u8,
+    key: Option<[u8; items::PUBLIC_KEY_LEN]>,
+}
+
+pub struct Session {
+    config: SessionConfig,
+    device: DeviceDomain,
+    host: HostDomain,
+    session: SessionState,
+    last_status: Status,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
     scratch: [u8; SCRATCH],
 }
 
 impl Session {
-    pub fn new(config: SessionConfig) -> Self {
+    /// `boot_status` is the retained hardware reset cause, reported by
+    /// the first `PROP_LAST_STATUS` get of the first session.
+    pub fn new(config: SessionConfig, boot_status: Status) -> Self {
         debug_assert!(usize::from(config.mtu) <= MAX_MTU);
         debug_assert!(valid_device_name(config.default_device_name.as_bytes()));
-        let mut settings = config.defaults;
-        settings.enabled = false;
-        let mut device_name = [0; MAX_DEVICE_NAME_LEN];
-        let device_name_len = config.default_device_name.len();
-        device_name[..device_name_len].copy_from_slice(config.default_device_name.as_bytes());
         Self {
             config,
-            settings,
-            duty_limit: config.default_duty_limit,
-            duty: DutyTracker::new(),
-            last_status: Status::RESET_POWER_ON,
-            device_name,
-            device_name_len,
-            pending: None,
+            device: DeviceDomain::post_reset(&config),
+            host: HostDomain::default(),
+            session: SessionState::default(),
+            last_status: boot_status,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
             scratch: [0; SCRATCH],
@@ -147,12 +342,12 @@ impl Session {
 
     /// The active radio settings.
     pub fn settings(&self) -> RadioSettings {
-        self.settings
+        self.device.settings
     }
 
     /// Current UTF-8 `PROP_DEV_NAME` value.
     pub fn device_name(&self) -> &str {
-        core::str::from_utf8(&self.device_name[..self.device_name_len])
+        core::str::from_utf8(&self.device.name[..self.device.name_len])
             .expect("validated device name")
     }
 
@@ -163,7 +358,7 @@ impl Session {
 
     /// Power selection for the pending transmit.
     pub fn tx_power(&self) -> TxPower {
-        self.pending
+        self.session.pending
             .as_ref()
             .map(|pending| pending.power)
             .unwrap_or(TxPower::Default)
@@ -171,43 +366,37 @@ impl Session {
 
     /// Whether a transmit is awaiting [`Session::on_tx_result`].
     pub fn has_pending_tx(&self) -> bool {
-        self.pending.is_some()
+        self.session.pending.is_some()
     }
 
-    /// Reset all protocol state to post-reset defaults, announce the
+    /// Reset all protocol state to post-reset values, announce the
     /// reset with the given reason, and return the radio effect
-    /// restoring the default (disabled) radio configuration.
+    /// restoring the post-reset (disabled) radio configuration.
     ///
-    /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). Host attach uses
-    /// [`Self::attach`] so device-domain configuration survives attachment.
+    /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). Once a
+    /// saved snapshot exists (`CAP_SAVE`), the post-reset values come
+    /// from it instead of the documented defaults.
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
-        self.reset_inner(reason, true, emit)
-    }
-
-    /// Reset host-session state for a newly attached transport while
-    /// preserving device-domain configuration such as `PROP_DEV_NAME`.
-    pub fn attach(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
-        self.reset_inner(reason, false, emit)
-    }
-
-    fn reset_inner(
-        &mut self,
-        reason: Status,
-        reset_device_name: bool,
-        emit: &mut impl FnMut(&[u8]),
-    ) -> Effect {
-        self.settings = self.config.defaults;
-        self.settings.enabled = false;
-        if reset_device_name {
-            self.device_name_len = self.config.default_device_name.len();
-            self.device_name[..self.device_name_len]
-                .copy_from_slice(self.config.default_device_name.as_bytes());
-        }
-        self.duty_limit = self.config.default_duty_limit;
-        self.duty.reset();
-        self.pending = None;
+        self.device = DeviceDomain::post_reset(&self.config);
+        self.host = HostDomain::default();
+        self.session = SessionState::default();
         self.send_status(TID_UNSOLICITED, reason, emit);
-        Effect::ApplyRadio(self.settings)
+        Effect::ApplyRadio(self.device.settings)
+    }
+
+    /// A host attached. Resets session state only (spec §Attach): the
+    /// device and host domains — PHY configuration and enable state,
+    /// device name, duty accounting, provisioning — are untouched, and
+    /// nothing is emitted; the attach itself produces no notification.
+    pub fn attach(&mut self) {
+        self.session = SessionState::default();
+    }
+
+    /// The host detached. Session state is discarded; the device and
+    /// host domains keep operating (detached operation grows with the
+    /// queueing and delegated-acknowledgement increments).
+    pub fn detach(&mut self) {
+        self.session = SessionState::default();
     }
 
     /// Handle one decoded companion-link frame from the host.
@@ -248,25 +437,49 @@ impl Session {
                     None
                 }
             },
-            // NCP-to-host commands arriving from the host, or reserved
-            // insert/remove identifiers.
-            Some(Cmd::PropIs | Cmd::StrRecv) => {
+            Some(Cmd::PropInsert) => {
+                match PropPayload::parse(received.payload) {
+                    Ok(payload) => self.prop_insert(tid, payload.key, payload.value, emit),
+                    Err(_) => self.fail(tid, Status::PARSE_ERROR, emit),
+                }
+                None
+            }
+            Some(Cmd::PropRemove) => {
+                match PropPayload::parse(received.payload) {
+                    Ok(payload) => self.prop_remove(tid, payload.key, payload.value, emit),
+                    Err(_) => self.fail(tid, Status::PARSE_ERROR, emit),
+                }
+                None
+            }
+            // Capability-gated full commands this session does not yet
+            // advertise (`CAP_HOST_RX_QUEUE`, `CAP_SAVE`).
+            Some(Cmd::QueueDrain | Cmd::Save | Cmd::Restore) => {
+                self.fail(tid, Status::UNIMPLEMENTED, emit);
+                None
+            }
+            // Base-protocol command, available regardless of
+            // capabilities. Nothing this session persists is subject to
+            // CMD_CLEAR (BLE bonds and the pairing PIN are exempt by
+            // spec), so it succeeds trivially.
+            Some(Cmd::Clear) => {
+                self.send_status(tid, Status::OK, emit);
+                None
+            }
+            // NCP-to-host commands arriving from the host.
+            Some(Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved) => {
                 self.fail(tid, Status::INVALID_COMMAND, emit);
                 None
             }
             None => {
-                let status = match received.cmd {
-                    4 | 5 | 7 | 8 => Status::UNIMPLEMENTED,
-                    _ => Status::INVALID_COMMAND,
-                };
-                self.fail(tid, status, emit);
+                self.fail(tid, Status::INVALID_COMMAND, emit);
                 None
             }
         }
     }
 
     /// Report a frame received on air. Emits `CMD_STR_RECV` unless the
-    /// PHY is disabled.
+    /// PHY is disabled or receive filtering rejects the frame.
+    /// Promiscuous mode bypasses filtering for live delivery only.
     pub fn on_radio_rx(
         &mut self,
         data: &[u8],
@@ -275,7 +488,10 @@ impl Session {
         lqi: Option<core::num::NonZeroU8>,
         emit: &mut impl FnMut(&[u8]),
     ) {
-        if !self.settings.enabled || data.len() > usize::from(self.config.mtu) {
+        if !self.device.settings.enabled || data.len() > usize::from(self.config.mtu) {
+            return;
+        }
+        if !self.session.promiscuous && !self.host.accepts_frame(data) {
             return;
         }
         let mut rx_meta = [0u8; RxMeta::WIRE_LEN];
@@ -299,11 +515,11 @@ impl Session {
     /// Report completion of the transmit started by
     /// [`Effect::StartTransmit`].
     pub fn on_tx_result(&mut self, success: bool, now_ms: u64, emit: &mut impl FnMut(&[u8])) {
-        let Some(pending) = self.pending.take() else {
+        let Some(pending) = self.session.pending.take() else {
             return;
         };
         if success {
-            self.duty.record(now_ms, pending.airtime_ms);
+            self.device.duty.record(now_ms, pending.airtime_ms);
             if pending.tid != TID_UNSOLICITED {
                 self.send_status(pending.tid, Status::OK, emit);
             } else {
@@ -331,7 +547,7 @@ impl Session {
             return None;
         }
         if key == prop::PHY_RSSI {
-            if self.settings.enabled {
+            if self.device.settings.enabled {
                 return Some(Effect::SampleRssi { tid });
             }
             self.fail(tid, Status::INVALID_STATE, emit);
@@ -354,6 +570,33 @@ impl Session {
             Ok(dbm) => {
                 let clamped = dbm.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8;
                 self.send_prop_is(tid, prop::PHY_RSSI, &[clamped as u8], emit);
+            }
+            Err(()) => self.fail(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Complete a deferred host replacement requested via
+    /// [`Effect::WipeHostDomain`], quoting the same `tid`. On `Ok` the
+    /// live host domain resets as one unit and the new key takes
+    /// effect; on `Err` the old host domain remains fully in effect and
+    /// the new key is not installed (spec §Mutation Atomicity).
+    pub fn respond_host_wipe(
+        &mut self,
+        tid: u8,
+        result: Result<(), ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let Some(pending) = self.session.pending_host.take_if(|pending| pending.tid == tid) else {
+            return;
+        };
+        match result {
+            Ok(()) => {
+                self.host = HostDomain {
+                    key: pending.key,
+                    ..HostDomain::default()
+                };
+                let value = pending.key.as_ref().map_or(&[][..], |key| &key[..]);
+                self.send_prop_is(tid, prop::HOST_KEY, value, emit);
             }
             Err(()) => self.fail(tid, Status::FAILURE, emit),
         }
@@ -399,13 +642,40 @@ impl Session {
             };
             return Some(Effect::SetPairingPin { tid, pin });
         }
+        if key == prop::HOST_KEY {
+            let new_key = match value.len() {
+                0 => None,
+                items::PUBLIC_KEY_LEN => {
+                    let mut key = [0; items::PUBLIC_KEY_LEN];
+                    key.copy_from_slice(value);
+                    Some(key)
+                }
+                _ => {
+                    self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                    return None;
+                }
+            };
+            // Setting the current value is idempotent and has no side
+            // effects; a different value replaces the whole host domain
+            // behind a durable wipe (spec §Host Replacement).
+            if new_key == self.host.key {
+                self.send_prop_is(tid, key, value, emit);
+                return None;
+            }
+            if self.session.pending_host.is_some() {
+                self.fail(tid, Status::BUSY, emit);
+                return None;
+            }
+            self.session.pending_host = Some(PendingHostKey { tid, key: new_key });
+            return Some(Effect::WipeHostDomain { tid });
+        }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
                 self.fail(tid, Status::INVALID_ARGUMENT, emit);
                 return None;
             }
-            self.device_name[..value.len()].copy_from_slice(value);
-            self.device_name_len = value.len();
+            self.device.name[..value.len()].copy_from_slice(value);
+            self.device.name_len = value.len();
             self.send_prop_is(tid, key, value, emit);
             return Some(Effect::DeviceNameChanged);
         }
@@ -421,7 +691,7 @@ impl Session {
         if let PropValue::Encoded(len) = self.encode_prop(key, now_ms, &mut encoded) {
             self.send_prop_is(tid, key, &encoded[..len], emit);
         }
-        radio_affecting.then_some(Effect::ApplyRadio(self.settings))
+        radio_affecting.then_some(Effect::ApplyRadio(self.device.settings))
     }
 
     /// Validate and apply a property write. Returns whether the radio
@@ -429,7 +699,7 @@ impl Session {
     fn apply_prop_set(&mut self, key: u32, value: &[u8]) -> Result<bool, Status> {
         match key {
             prop::PHY_ENABLED => {
-                self.settings.enabled = parse_bool(value)?;
+                self.device.settings.enabled = parse_bool(value)?;
                 Ok(true)
             }
             prop::PHY_FREQ => {
@@ -437,7 +707,7 @@ impl Session {
                 if !(self.config.freq_khz_min..=self.config.freq_khz_max).contains(&freq_khz) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
-                self.settings.freq_khz = freq_khz;
+                self.device.settings.freq_khz = freq_khz;
                 Ok(true)
             }
             prop::PHY_TX_POWER => {
@@ -445,7 +715,7 @@ impl Session {
                 if !(self.config.min_tx_power_dbm..=self.config.max_tx_power_dbm).contains(&power) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
-                self.settings.tx_power_dbm = power;
+                self.device.settings.tx_power_dbm = power;
                 Ok(true)
             }
             prop::PHY_LORA_BW => {
@@ -453,7 +723,7 @@ impl Session {
                 if !SUPPORTED_BW_HZ.contains(&bw_hz) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
-                self.settings.bw_hz = bw_hz;
+                self.device.settings.bw_hz = bw_hz;
                 Ok(true)
             }
             prop::PHY_LORA_SF => {
@@ -461,7 +731,7 @@ impl Session {
                 if !(5..=12).contains(&sf) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
-                self.settings.sf = sf;
+                self.device.settings.sf = sf;
                 Ok(true)
             }
             prop::PHY_LORA_CR => {
@@ -469,7 +739,7 @@ impl Session {
                 if !(5..=8).contains(&cr) {
                     return Err(Status::INVALID_ARGUMENT);
                 }
-                self.settings.cr_denom = cr;
+                self.device.settings.cr_denom = cr;
                 Ok(true)
             }
             prop::PHY_LORA_SW => {
@@ -481,7 +751,19 @@ impl Session {
                 Ok(false)
             }
             prop::PHY_DUTY_LIMIT => {
-                self.duty_limit = parse_u16(value)?;
+                self.device.duty_limit = parse_u16(value)?;
+                Ok(false)
+            }
+            prop::MAC_PROMISCUOUS => {
+                // Session-scoped: reverts to false on every attach.
+                self.session.promiscuous = parse_bool(value)?;
+                Ok(false)
+            }
+            // Whole-table replacement: the complete value is validated
+            // into a candidate table before anything changes, so no
+            // observer sees a mixture of old and new contents.
+            prop::HOST_RX_FILTERS => {
+                self.host.filters = FilterTable::parse_table(value)?;
                 Ok(false)
             }
             // Known read-only properties.
@@ -497,6 +779,47 @@ impl Session {
         }
     }
 
+    /// `CMD_PROP_INSERT`: add one item (in item form, no length prefix)
+    /// to a multi-value property.
+    fn prop_insert(&mut self, tid: u8, key: u32, item: &[u8], emit: &mut impl FnMut(&[u8])) {
+        match key {
+            prop::HOST_RX_FILTERS => {
+                let filter = match decode_filter(item) {
+                    Ok(filter) => filter,
+                    Err(status) => return self.fail(tid, status, emit),
+                };
+                match self.host.filters.insert(filter) {
+                    Ok(()) => self.send_prop_inserted(tid, key, item, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
+            // A known property that is not a mutable multi-value
+            // property cannot be inserted into.
+            _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
+            _ => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+        }
+    }
+
+    /// `CMD_PROP_REMOVE`: remove the item matching the selector from a
+    /// multi-value property.
+    fn prop_remove(&mut self, tid: u8, key: u32, selector: &[u8], emit: &mut impl FnMut(&[u8])) {
+        match key {
+            prop::HOST_RX_FILTERS => {
+                // The remove selector is the full item.
+                let filter = match decode_filter(selector) {
+                    Ok(filter) => filter,
+                    Err(status) => return self.fail(tid, status, emit),
+                };
+                match self.host.filters.remove(filter) {
+                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.fail(tid, status, emit),
+                }
+            }
+            _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
+            _ => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+        }
+    }
+
     fn str_send(
         &mut self,
         tid: u8,
@@ -508,7 +831,7 @@ impl Session {
             self.fail(tid, Status::PROP_NOT_FOUND, emit);
             return None;
         }
-        if !self.settings.enabled {
+        if !self.device.settings.enabled {
             self.fail(tid, Status::INVALID_STATE, emit);
             return None;
         }
@@ -520,19 +843,19 @@ impl Session {
             self.fail(tid, Status::PARSE_ERROR, emit);
             return None;
         };
-        if self.pending.is_some() {
+        if self.session.pending.is_some() {
             self.fail(tid, Status::BUSY, emit);
             return None;
         }
 
         let airtime_ms = lora_airtime_ms(
-            self.settings.sf,
-            self.settings.bw_hz,
-            self.settings.cr_denom,
+            self.device.settings.sf,
+            self.device.settings.bw_hz,
+            self.device.settings.cr_denom,
             payload.data.len(),
         );
         if tx_meta.flags & meta::TX_FLAG_NODUTY == 0
-            && self.duty.would_exceed(now_ms, airtime_ms, self.duty_limit)
+            && self.device.duty.would_exceed(now_ms, airtime_ms, self.device.duty_limit)
         {
             self.fail(tid, Status::DUTY_LIMIT, emit);
             return None;
@@ -542,7 +865,7 @@ impl Session {
 
         self.tx_buf[..payload.data.len()].copy_from_slice(payload.data);
         self.tx_len = payload.data.len();
-        self.pending = Some(PendingTx {
+        self.session.pending = Some(PendingTx {
             tid,
             airtime_ms,
             power: match tx_meta.power {
@@ -555,6 +878,36 @@ impl Session {
     }
 
     // ─── Property encoding ───────────────────────────────────────────
+
+    /// Whether `key` names a property this session knows, including
+    /// write-only (`PROP_BLE_PAIRING_PIN`) and deferred-read
+    /// (`PROP_PHY_RSSI`) properties that `encode_prop` cannot produce.
+    fn known_prop(&self, key: u32) -> bool {
+        matches!(
+            key,
+            prop::LAST_STATUS
+                | prop::PROTOCOL_VERSION
+                | prop::NCP_VERSION
+                | prop::INTERFACE_TYPE
+                | prop::CAPS
+                | prop::PHY_ENABLED
+                | prop::PHY_FREQ
+                | prop::PHY_TX_POWER
+                | prop::PHY_RSSI
+                | prop::PHY_LORA_BW
+                | prop::PHY_LORA_SF
+                | prop::PHY_LORA_CR
+                | prop::PHY_MTU
+                | prop::PHY_LORA_SW
+                | prop::DEV_NAME
+                | prop::PHY_DUTY_NOW
+                | prop::PHY_DUTY_LIMIT
+                | prop::BLE_PAIRING_PIN
+                | prop::MAC_PROMISCUOUS
+                | prop::HOST_KEY
+                | prop::HOST_RX_FILTERS
+        )
+    }
 
     fn encode_prop(&mut self, key: u32, now_ms: u64, out: &mut [u8; 96]) -> PropValue {
         let len = match key {
@@ -579,35 +932,56 @@ impl Session {
                     cap::PHY_DUTY_LIMIT,
                     cap::DEV_NAME,
                     cap::PHY_LORA,
+                    cap::HOST_FILTER,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
                 len
             }
             prop::PHY_ENABLED => {
-                out[0] = self.settings.enabled as u8;
+                out[0] = self.device.settings.enabled as u8;
                 1
             }
-            prop::PHY_FREQ => put(out, &self.settings.freq_khz.to_le_bytes()),
+            prop::PHY_FREQ => put(out, &self.device.settings.freq_khz.to_le_bytes()),
             prop::PHY_TX_POWER => {
-                out[0] = self.settings.tx_power_dbm as u8;
+                out[0] = self.device.settings.tx_power_dbm as u8;
                 1
             }
             prop::PHY_RSSI => return PropValue::Unimplemented,
-            prop::PHY_LORA_BW => put(out, &self.settings.bw_hz.to_le_bytes()),
+            prop::PHY_LORA_BW => put(out, &self.device.settings.bw_hz.to_le_bytes()),
             prop::PHY_LORA_SF => {
-                out[0] = self.settings.sf;
+                out[0] = self.device.settings.sf;
                 1
             }
             prop::PHY_LORA_CR => {
-                out[0] = self.settings.cr_denom;
+                out[0] = self.device.settings.cr_denom;
                 1
             }
             prop::PHY_MTU => put(out, &self.config.mtu.to_le_bytes()),
             prop::PHY_LORA_SW => put(out, &self.config.sync_word.to_le_bytes()),
-            prop::DEV_NAME => put(out, &self.device_name[..self.device_name_len]),
-            prop::PHY_DUTY_NOW => put(out, &self.duty.usage(now_ms).to_le_bytes()),
-            prop::PHY_DUTY_LIMIT => put(out, &self.duty_limit.to_le_bytes()),
+            prop::DEV_NAME => put(out, &self.device.name[..self.device.name_len]),
+            prop::PHY_DUTY_NOW => put(out, &self.device.duty.usage(now_ms).to_le_bytes()),
+            prop::PHY_DUTY_LIMIT => put(out, &self.device.duty_limit.to_le_bytes()),
+            prop::MAC_PROMISCUOUS => {
+                out[0] = self.session.promiscuous as u8;
+                1
+            }
+            prop::HOST_KEY => match &self.host.key {
+                Some(key) => put(out, key),
+                None => 0,
+            },
+            prop::HOST_RX_FILTERS => {
+                // Digest form equals item form; items carry PUI length
+                // prefixes in whole-table values.
+                let mut len = 0;
+                for filter in self.host.filters.iter() {
+                    let mut item = [0u8; Filter::MAX_WIRE_LEN];
+                    let item_len = filter.encode(&mut item).expect("MAX_WIRE_LEN sized");
+                    len += items::encode_prefixed_item(&item[..item_len], &mut out[len..])
+                        .expect("out sized for a full filter table");
+                }
+                len
+            }
             _ => return PropValue::Unknown,
         };
         PropValue::Encoded(len)
@@ -619,6 +993,22 @@ impl Session {
     fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
         let mut buf = [0u8; 112];
         if let Ok(len) = frame::prop_is(&mut buf, tid, key, value) {
+            emit(&buf[..len]);
+        }
+    }
+
+    /// Emit `CMD_PROP_INSERTED` for `key` with the item's digest form.
+    fn send_prop_inserted(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+        let mut buf = [0u8; 112];
+        if let Ok(len) = frame::prop_inserted(&mut buf, tid, key, digest) {
+            emit(&buf[..len]);
+        }
+    }
+
+    /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form.
+    fn send_prop_removed(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+        let mut buf = [0u8; 112];
+        if let Ok(len) = frame::prop_removed(&mut buf, tid, key, digest) {
             emit(&buf[..len]);
         }
     }
@@ -693,7 +1083,15 @@ mod tests {
     use super::*;
 
     fn test_session() -> Session {
-        Session::new(SessionConfig {
+        test_session_with_boot_status(Status::RESET_POWER_ON)
+    }
+
+    fn test_session_with_boot_status(boot_status: Status) -> Session {
+        Session::new(test_config(), boot_status)
+    }
+
+    fn test_config() -> SessionConfig {
+        SessionConfig {
             ncp_version: "test-ncp/0.1",
             default_device_name: "Test UMSH NCP",
             mtu: 255,
@@ -711,7 +1109,7 @@ mod tests {
                 tx_power_dbm: 14,
             },
             default_duty_limit: 0xFFFF,
-        })
+        }
     }
 
     /// Drive `handle_frame` and collect emitted frames.
@@ -842,7 +1240,8 @@ mod tests {
                 cap::WRITABLE_RAW_STREAM,
                 cap::PHY_DUTY_LIMIT,
                 cap::DEV_NAME,
-                cap::PHY_LORA
+                cap::PHY_LORA,
+                cap::HOST_FILTER
             ]
         );
     }
@@ -858,11 +1257,105 @@ mod tests {
         assert_eq!(effect, Some(Effect::DeviceNameChanged));
         assert_eq!(session.device_name(), configured);
 
-        let _ = session.attach(Status::RESET_EXTERNAL, &mut |_| {});
+        session.attach();
         assert_eq!(get(&mut session, prop::DEV_NAME), configured.as_bytes());
 
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH NCP");
+    }
+
+    #[test]
+    fn attach_preserves_device_domain_and_emits_nothing() {
+        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
+
+        // Configure and enable the PHY, adjust the duty limit, and
+        // record duty usage.
+        set(&mut session, prop::PHY_FREQ, &906_875u32.to_le_bytes());
+        set(&mut session, prop::PHY_LORA_SF, &[9]);
+        set(&mut session, prop::PHY_DUTY_LIMIT, &100u16.to_le_bytes());
+        enable(&mut session);
+        let settings_before = session.settings();
+        assert!(settings_before.enabled);
+        let (_, effect) = send_packet(&mut session, 1, &[0xAB; 8], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let mut emitted = Vec::new();
+        session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        let duty_before = get(&mut session, prop::PHY_DUTY_NOW);
+        assert_ne!(duty_before, 0u16.to_le_bytes());
+
+        // Attach must not reconfigure or disable the PHY, must not
+        // touch the duty limit or accounting, and must emit nothing.
+        session.attach();
+        assert_eq!(session.settings(), settings_before);
+        assert_eq!(get(&mut session, prop::PHY_ENABLED), [1]);
+        assert_eq!(get(&mut session, prop::PHY_FREQ), 906_875u32.to_le_bytes());
+        assert_eq!(get(&mut session, prop::PHY_DUTY_LIMIT), 100u16.to_le_bytes());
+        assert_eq!(get(&mut session, prop::PHY_DUTY_NOW), duty_before);
+    }
+
+    #[test]
+    fn attach_retains_boot_status_for_first_query() {
+        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
+        session.attach();
+        let raw = get(&mut session, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
+    }
+
+    #[test]
+    fn attach_resets_promiscuous_mode() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [1]);
+        session.attach();
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+
+        // Detach discards session state the same way.
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        session.detach();
+        session.attach();
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
+
+        // BOOL validation.
+        let (emitted, _) = set(&mut session, prop::MAC_PROMISCUOUS, &[2]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn attach_clears_pending_transmit_correlation() {
+        let mut session = test_session();
+        enable(&mut session);
+        let (_, effect) = send_packet(&mut session, 3, &[0x01; 4], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        assert!(session.has_pending_tx());
+
+        // The requesting session is gone; its TID correlation must not
+        // leak into the successor.
+        session.attach();
+        assert!(!session.has_pending_tx());
+        let mut emitted = Vec::new();
+        session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert!(emitted.is_empty());
+
+        // The new session is free to transmit (no stale BUSY).
+        let (_, effect) = send_packet(&mut session, 4, &[0x02; 4], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+    }
+
+    #[test]
+    fn reset_restores_post_reset_values_and_announces() {
+        let mut session = test_session();
+        set(&mut session, prop::PHY_FREQ, &906_875u32.to_le_bytes());
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        enable(&mut session);
+
+        let mut emitted = Vec::new();
+        let effect = session.reset(Status::RESET_SOFTWARE, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::RESET_SOFTWARE);
+        assert!(matches!(effect, Effect::ApplyRadio(settings) if !settings.enabled));
+        assert_eq!(get(&mut session, prop::PHY_FREQ), 910_525u32.to_le_bytes());
+        assert_eq!(get(&mut session, prop::MAC_PROMISCUOUS), [0]);
     }
 
     #[test]
@@ -1124,16 +1617,70 @@ mod tests {
     }
 
     #[test]
-    fn reserved_commands_unimplemented() {
+    fn unknown_command_rejected() {
         let mut session = test_session();
-        for cmd in [4u8, 5, 7, 8] {
-            let (emitted, effect) = dispatch(&mut session, &[0x81, cmd], 0);
-            assert!(effect.is_none());
-            expect_status(&emitted[0], 1, Status::UNIMPLEMENTED);
-        }
-        // Unknown non-reserved command.
         let (emitted, _) = dispatch(&mut session, &[0x81, 42], 0);
         expect_status(&emitted[0], 1, Status::INVALID_COMMAND);
+    }
+
+    #[test]
+    fn insert_remove_reject_per_property_knowledge() {
+        let mut session = test_session();
+        let mut buf = [0u8; 80];
+
+        // A known single-value property is not insertable/removable.
+        for known in [prop::PHY_FREQ, prop::BLE_PAIRING_PIN, prop::CAPS] {
+            let len = frame::prop_insert(&mut buf, 1, known, &[0; 4]).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
+        }
+        // An unknown property is not found. HOST_CHANNEL_KEYS exists in
+        // the full spec but this session does not implement it yet.
+        for unknown in [prop::HOST_CHANNEL_KEYS, 1_234] {
+            let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+        }
+        // A payload without a decodable property key is malformed.
+        let (emitted, _) = dispatch(&mut session, &[0x81, Cmd::PropInsert as u8], 0);
+        expect_status(&emitted[0], 1, Status::PARSE_ERROR);
+    }
+
+    #[test]
+    fn ungated_full_commands_unimplemented_and_clear_succeeds() {
+        let mut session = test_session();
+        let mut buf = [0u8; 8];
+        for encode in [
+            frame::queue_drain as fn(&mut [u8], u8) -> Result<usize, frame::WriteError>,
+            frame::save,
+            frame::restore,
+        ] {
+            let len = encode(&mut buf, 3).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 3, Status::UNIMPLEMENTED);
+        }
+
+        // CMD_CLEAR is base-protocol and succeeds trivially; it must
+        // not disturb live state (the device name survives).
+        set(&mut session, prop::DEV_NAME, b"kept name");
+        let len = frame::clear(&mut buf, 4).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 4, Status::OK);
+        assert_eq!(session.device_name(), "kept name");
+    }
+
+    #[test]
+    fn ncp_only_notifications_rejected_from_host() {
+        let mut session = test_session();
+        for cmd in [Cmd::PropInserted, Cmd::PropRemoved, Cmd::PropIs, Cmd::StrRecv] {
+            let (emitted, effect) = dispatch(&mut session, &[0x81, cmd as u8], 0);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 1, Status::INVALID_COMMAND);
+        }
     }
 
     #[test]
@@ -1144,5 +1691,430 @@ mod tests {
             assert!(emitted.is_empty());
             assert!(effect.is_none());
         }
+    }
+
+    // ─── CAP_HOST_FILTER gate ────────────────────────────────────────
+
+    use umsh_core::{ChannelId, NodeHint, PacketBuilder};
+
+    fn unicast_to(dst: [u8; 3]) -> Vec<u8> {
+        let mut buf = [0u8; 64];
+        PacketBuilder::new(&mut buf)
+            .unicast(NodeHint(dst))
+            .source_hint(NodeHint([9, 9, 9]))
+            .frame_counter(1)
+            .payload(&[1, 2, 3])
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn multicast_on(channel: [u8; 2]) -> Vec<u8> {
+        let mut buf = [0u8; 64];
+        PacketBuilder::new(&mut buf)
+            .multicast(ChannelId(channel))
+            .source_hint(NodeHint([9, 9, 9]))
+            .frame_counter(1)
+            .payload(&[1, 2, 3])
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn blind_unicast_on(channel: [u8; 2]) -> Vec<u8> {
+        let mut buf = [0u8; 96];
+        PacketBuilder::new(&mut buf)
+            .blind_unicast(ChannelId(channel), NodeHint([7, 7, 7]))
+            .source_hint(NodeHint([9, 9, 9]))
+            .frame_counter(1)
+            .payload(&[1, 2, 3])
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn broadcast_frame() -> Vec<u8> {
+        let mut buf = [0u8; 64];
+        PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(NodeHint([9, 9, 9]))
+            .payload(&[1, 2, 3])
+            .build()
+            .unwrap()
+            .to_vec()
+    }
+
+    fn mac_ack_to(dst: [u8; 3]) -> Vec<u8> {
+        let mut buf = [0u8; 32];
+        PacketBuilder::new(&mut buf)
+            .mac_ack(NodeHint(dst), [0xA5; 8])
+            .build()
+            .unwrap()
+            .to_vec()
+    }
+
+    /// Feed a radio frame in and report whether it was delivered.
+    fn delivered(session: &mut Session, frame: &[u8]) -> bool {
+        let mut emitted = Vec::new();
+        session.on_radio_rx(frame, -80, 40, None, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        !emitted.is_empty()
+    }
+
+    fn insert_item(session: &mut Session, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+        let mut buf = [0u8; 96];
+        let len = frame::prop_insert(&mut buf, 5, key, item).unwrap();
+        dispatch(session, &buf[..len], 0)
+    }
+
+    fn remove_item(session: &mut Session, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+        let mut buf = [0u8; 96];
+        let len = frame::prop_remove(&mut buf, 6, key, item).unwrap();
+        dispatch(session, &buf[..len], 0)
+    }
+
+    /// Install a host key, completing the deferred durable wipe.
+    fn install_host_key(session: &mut Session, key: &[u8; 32]) {
+        let (emitted, effect) = set(session, prop::HOST_KEY, key);
+        assert!(emitted.is_empty(), "no response before the wipe completes");
+        assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
+        let mut emitted = Vec::new();
+        session.respond_host_wipe(2, Ok(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        let (_, response_key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(response_key, prop::HOST_KEY);
+        assert_eq!(value, key);
+    }
+
+    /// Parse an emitted frame as INSERTED/REMOVED and return (key, digest).
+    fn parse_table_notice(bytes: &[u8], expected: Cmd, tid: u8) -> (u32, Vec<u8>) {
+        let parsed = Frame::parse(bytes).unwrap();
+        assert_eq!(parsed.command(), Some(expected));
+        assert_eq!(parsed.header.tid(), tid);
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        (payload.key, payload.value.to_vec())
+    }
+
+    #[test]
+    fn factory_state_accepts_everything() {
+        let mut session = test_session();
+        enable(&mut session);
+        // No host key, no filters: minimal-protocol behavior, including
+        // frames that do not parse as UMSH at all.
+        assert!(delivered(&mut session, &unicast_to([1, 2, 3])));
+        assert!(delivered(&mut session, &broadcast_frame()));
+        assert!(delivered(&mut session, &[0x00, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn host_key_round_trip_and_implicit_dest_filter() {
+        let mut session = test_session();
+        enable(&mut session);
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+
+        let key = [0xC4; 32];
+        install_host_key(&mut session, &key);
+        assert_eq!(get(&mut session, prop::HOST_KEY), key);
+
+        // The implicit destination-hint filter: traffic to the host's
+        // 3-byte prefix (unicast and returning MAC acks) is accepted,
+        // everything else — including unparseable frames — is not.
+        assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
+        assert!(delivered(&mut session, &mac_ack_to([0xC4, 0xC4, 0xC4])));
+        assert!(!delivered(&mut session, &unicast_to([1, 2, 3])));
+        assert!(!delivered(&mut session, &broadcast_frame()));
+        assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn host_key_rejects_bad_lengths() {
+        let mut session = test_session();
+        for bad in [&[0u8; 31][..], &[0u8; 33][..], &[1u8][..]] {
+            let (emitted, effect) = set(&mut session, prop::HOST_KEY, bad);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+    }
+
+    #[test]
+    fn host_key_set_is_idempotent_for_current_value() {
+        let mut session = test_session();
+        // Empty -> empty: no replacement, immediate echo.
+        let (emitted, effect) = set(&mut session, prop::HOST_KEY, &[]);
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_KEY);
+        assert!(value.is_empty());
+
+        let host_key = [0xC4; 32];
+        install_host_key(&mut session, &host_key);
+        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+
+        // Same key again: no wipe, and the filter table survives.
+        let (emitted, effect) = set(&mut session, prop::HOST_KEY, &host_key);
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_KEY);
+        assert_eq!(value, host_key);
+        assert!(!get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+    }
+
+    #[test]
+    fn host_replacement_clears_host_domain_and_rolls_back_on_failure() {
+        let mut session = test_session();
+        install_host_key(&mut session, &[0xAA; 32]);
+        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+
+        // A failed durable wipe leaves the old host domain fully in
+        // effect and the new key not installed.
+        let (emitted, effect) = set(&mut session, prop::HOST_KEY, &[0xBB; 32]);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
+        let mut emitted = Vec::new();
+        session.respond_host_wipe(2, Err(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        expect_status(&emitted[0], 2, Status::FAILURE);
+        assert_eq!(get(&mut session, prop::HOST_KEY), [0xAA; 32]);
+        assert!(!get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+
+        // A successful replacement installs the new key and resets the
+        // host domain as one unit.
+        install_host_key(&mut session, &[0xBB; 32]);
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+
+        // Clearing the key (set to empty) is also a replacement.
+        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        let (_, effect) = set(&mut session, prop::HOST_KEY, &[]);
+        assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
+        session.respond_host_wipe(2, Ok(()), &mut |_: &[u8]| {});
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+    }
+
+    #[test]
+    fn host_replacement_is_busy_while_pending_and_abandoned_by_attach() {
+        let mut session = test_session();
+        let (_, effect) = set(&mut session, prop::HOST_KEY, &[0xAA; 32]);
+        assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
+
+        // A second replacement while one is in flight is BUSY.
+        let (emitted, effect) = set(&mut session, prop::HOST_KEY, &[0xBB; 32]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::BUSY);
+
+        // Attach discards the pending transaction: a late wipe
+        // completion must not install the key into the new session.
+        session.attach();
+        let mut emitted = Vec::new();
+        session.respond_host_wipe(2, Ok(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert!(emitted.is_empty());
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn cmd_rst_clears_host_domain() {
+        let mut session = test_session();
+        install_host_key(&mut session, &[0xAA; 32]);
+        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+    }
+
+    #[test]
+    fn filter_insert_remove_lifecycle() {
+        let mut session = test_session();
+        let item = [items::FILTER_DEST_HINT, 0x11, 0x22, 0x33];
+
+        let (emitted, effect) = insert_item(&mut session, prop::HOST_RX_FILTERS, &item);
+        assert!(effect.is_none());
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(key, prop::HOST_RX_FILTERS);
+        assert_eq!(digest, item);
+
+        // Duplicate insert fails with ALREADY.
+        let (emitted, _) = insert_item(&mut session, prop::HOST_RX_FILTERS, &item);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+
+        // GET returns the whole table with item length prefixes.
+        let table = get(&mut session, prop::HOST_RX_FILTERS);
+        assert_eq!(table, [&[4u8][..], &item[..]].concat());
+
+        let (emitted, _) = remove_item(&mut session, prop::HOST_RX_FILTERS, &item);
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(key, prop::HOST_RX_FILTERS);
+        assert_eq!(digest, item);
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+
+        // Removing a missing item fails with ITEM_NOT_FOUND.
+        let (emitted, _) = remove_item(&mut session, prop::HOST_RX_FILTERS, &item);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+    }
+
+    #[test]
+    fn filter_insert_rejects_invalid_entries() {
+        let mut session = test_session();
+        for bad in [
+            &[][..],                                  // empty item
+            &[3, 0][..],                              // unknown FILTER_TYPE
+            &[items::FILTER_DEST_HINT, 1, 2][..],     // wrong value length
+            &[items::FILTER_CHANNEL_ID, 1, 2, 3][..], // wrong value length
+            &[items::FILTER_PKT_TYPE, 8][..],         // packet type out of range
+        ] {
+            let (emitted, effect) = insert_item(&mut session, prop::HOST_RX_FILTERS, bad);
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+        }
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+    }
+
+    #[test]
+    fn filter_table_capacity_is_bounded() {
+        let mut session = test_session();
+        for index in 0..MAX_RX_FILTERS as u8 {
+            let (emitted, _) = insert_item(
+                &mut session,
+                prop::HOST_RX_FILTERS,
+                &[items::FILTER_DEST_HINT, index, 0, 0],
+            );
+            parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        }
+        let (emitted, _) = insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_DEST_HINT, 0xFF, 0, 0],
+        );
+        expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    #[test]
+    fn whole_table_set_is_atomic() {
+        let mut session = test_session();
+        let good_a = [items::FILTER_DEST_HINT, 1, 2, 3];
+        let good_b = [items::FILTER_PKT_TYPE, 0];
+
+        let mut table = Vec::new();
+        for item in [&good_a[..], &good_b[..]] {
+            table.push(item.len() as u8);
+            table.extend_from_slice(item);
+        }
+        let (emitted, effect) = set(&mut session, prop::HOST_RX_FILTERS, &table);
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::HOST_RX_FILTERS);
+        assert_eq!(value, table);
+
+        // A set containing any invalid item fails without applying
+        // anything: the previous table is fully retained.
+        let mut bad_table = table.clone();
+        bad_table.extend_from_slice(&[2, 3, 0]); // unknown FILTER_TYPE 3
+        let (emitted, _) = set(&mut session, prop::HOST_RX_FILTERS, &bad_table);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(get(&mut session, prop::HOST_RX_FILTERS), table);
+
+        // A value that cannot be split into items is malformed.
+        let (emitted, _) = set(&mut session, prop::HOST_RX_FILTERS, &[9, 1]);
+        expect_status(&emitted[0], 2, Status::PARSE_ERROR);
+        assert_eq!(get(&mut session, prop::HOST_RX_FILTERS), table);
+
+        // Duplicates in the value collapse (a set, not a list).
+        let mut doubled = table.clone();
+        doubled.extend_from_slice(&table);
+        let (emitted, _) = set(&mut session, prop::HOST_RX_FILTERS, &doubled);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(value, table);
+
+        // Setting an empty value clears the table.
+        let (emitted, _) = set(&mut session, prop::HOST_RX_FILTERS, &[]);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert!(value.is_empty());
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+    }
+
+    #[test]
+    fn explicit_filters_match_each_type() {
+        let mut session = test_session();
+        enable(&mut session);
+
+        // Destination-hint filter.
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_DEST_HINT, 0x11, 0x22, 0x33],
+        );
+        assert!(delivered(&mut session, &unicast_to([0x11, 0x22, 0x33])));
+        assert!(delivered(&mut session, &mac_ack_to([0x11, 0x22, 0x33])));
+        assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
+        assert!(!delivered(&mut session, &broadcast_frame()));
+
+        // Channel filter: matches multicast and blind unicast on the
+        // channel (a blind unicast's destination hint is concealed).
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_CHANNEL_ID, 0xAB, 0xCD],
+        );
+        assert!(delivered(&mut session, &multicast_on([0xAB, 0xCD])));
+        assert!(delivered(&mut session, &blind_unicast_on([0xAB, 0xCD])));
+        assert!(!delivered(&mut session, &multicast_on([0x00, 0x01])));
+
+        // Packet-type filter (broadcasts must be requested explicitly).
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
+        assert!(delivered(&mut session, &broadcast_frame()));
+        // Still rejects frames matching no filter.
+        assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
+        assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn promiscuous_bypasses_filtering_for_live_delivery() {
+        let mut session = test_session();
+        enable(&mut session);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_DEST_HINT, 0x11, 0x22, 0x33],
+        );
+        assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
+
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+        assert!(delivered(&mut session, &unicast_to([4, 5, 6])));
+        assert!(delivered(&mut session, &[0x00, 0x01, 0x02]));
+
+        // Attach reverts promiscuous mode; filtering applies again.
+        session.attach();
+        assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
+    }
+
+    #[test]
+    fn filters_survive_attach() {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &[0xC4; 32]);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
+        session.attach();
+        assert_eq!(get(&mut session, prop::HOST_KEY), [0xC4; 32]);
+        assert!(delivered(&mut session, &broadcast_frame()));
+        assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
+        assert!(!delivered(&mut session, &unicast_to([1, 2, 3])));
+    }
+
+    #[test]
+    fn host_key_insert_remove_is_invalid_argument() {
+        let mut session = test_session();
+        let (emitted, _) = insert_item(&mut session, prop::HOST_KEY, &[0; 32]);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+        let (emitted, _) = remove_item(&mut session, prop::HOST_KEY, &[0; 32]);
+        expect_status(&emitted[0], 6, Status::INVALID_ARGUMENT);
     }
 }

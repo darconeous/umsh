@@ -59,10 +59,7 @@ impl Header {
     }
 }
 
-/// Command identifiers defined by the minimal spec.
-///
-/// Identifiers 4, 5, 7, and 8 are reserved for property insert/remove
-/// operations and their notifications.
+/// Command identifiers defined by the minimal and full specs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Cmd {
@@ -74,12 +71,28 @@ pub enum Cmd {
     PropGet = 2,
     /// Set property value (host to NCP).
     PropSet = 3,
+    /// Insert an item into a multi-value property (host to NCP).
+    PropInsert = 4,
+    /// Remove an item from a multi-value property (host to NCP).
+    PropRemove = 5,
     /// Property value notification (NCP to host).
     PropIs = 6,
+    /// Item-inserted notification (NCP to host).
+    PropInserted = 7,
+    /// Item-removed notification (NCP to host).
+    PropRemoved = 8,
     /// Send data to a stream (host to NCP).
     StrSend = 9,
     /// Data received from a stream (NCP to host).
     StrRecv = 10,
+    /// Deliver queued inbound frames (host to NCP).
+    QueueDrain = 11,
+    /// Save state to non-volatile storage (host to NCP).
+    Save = 12,
+    /// Erase all saved state (host to NCP).
+    Clear = 13,
+    /// Restore state from the saved snapshot (host to NCP).
+    Restore = 14,
 }
 
 impl Cmd {
@@ -89,9 +102,17 @@ impl Cmd {
             1 => Some(Self::Reset),
             2 => Some(Self::PropGet),
             3 => Some(Self::PropSet),
+            4 => Some(Self::PropInsert),
+            5 => Some(Self::PropRemove),
             6 => Some(Self::PropIs),
+            7 => Some(Self::PropInserted),
+            8 => Some(Self::PropRemoved),
             9 => Some(Self::StrSend),
             10 => Some(Self::StrRecv),
+            11 => Some(Self::QueueDrain),
+            12 => Some(Self::Save),
+            13 => Some(Self::Clear),
+            14 => Some(Self::Restore),
             _ => None,
         }
     }
@@ -266,6 +287,67 @@ pub fn prop_is(buf: &mut [u8], tid: u8, key: u32, value: &[u8]) -> Result<usize,
     writer.write_pui(key)?;
     writer.write_bytes(value)?;
     Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_INSERT` frame. `item` is one item in the
+/// property's item form, with no length prefix.
+pub fn prop_insert(buf: &mut [u8], tid: u8, key: u32, item: &[u8]) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropInsert)?;
+    writer.write_pui(key)?;
+    writer.write_bytes(item)?;
+    Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_REMOVE` frame. `selector` is the property's
+/// documented item selector, with no length prefix.
+pub fn prop_remove(
+    buf: &mut [u8],
+    tid: u8,
+    key: u32,
+    selector: &[u8],
+) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropRemove)?;
+    writer.write_pui(key)?;
+    writer.write_bytes(selector)?;
+    Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_INSERTED` frame. `digest` is the inserted item in
+/// the property's digest form — never in a form containing key material.
+pub fn prop_inserted(buf: &mut [u8], tid: u8, key: u32, digest: &[u8]) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropInserted)?;
+    writer.write_pui(key)?;
+    writer.write_bytes(digest)?;
+    Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_REMOVED` frame. `digest` is the removed item in
+/// the property's digest form.
+pub fn prop_removed(buf: &mut [u8], tid: u8, key: u32, digest: &[u8]) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropRemoved)?;
+    writer.write_pui(key)?;
+    writer.write_bytes(digest)?;
+    Ok(writer.finish())
+}
+
+/// Encode a `CMD_QUEUE_DRAIN` frame (no payload).
+pub fn queue_drain(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::QueueDrain)?.finish())
+}
+
+/// Encode a `CMD_SAVE` frame (no payload).
+pub fn save(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::Save)?.finish())
+}
+
+/// Encode a `CMD_CLEAR` frame (no payload).
+pub fn clear(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::Clear)?.finish())
+}
+
+/// Encode a `CMD_RESTORE` frame (no payload).
+pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
 }
 
 /// Encode a `CMD_PROP_IS` frame carrying `PROP_LAST_STATUS`.
@@ -486,9 +568,74 @@ mod tests {
 
     #[test]
     fn unknown_command_is_well_formed() {
-        let frame = Frame::parse(&[0x81, 0x04]).unwrap();
-        assert_eq!(frame.cmd, 4);
+        let frame = Frame::parse(&[0x81, 0x0F]).unwrap();
+        assert_eq!(frame.cmd, 15);
         assert_eq!(frame.command(), None);
+    }
+
+    #[test]
+    fn every_assigned_command_round_trips() {
+        for id in 0..=14u8 {
+            let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
+            assert_eq!(cmd as u8, id);
+        }
+        assert_eq!(Cmd::from_u8(15), None);
+    }
+
+    #[test]
+    fn insert_remove_round_trip() {
+        let mut buf = [0u8; 80];
+        let item = [0xA5u8; 33];
+        let len = prop_insert(&mut buf, 3, prop::HOST_RX_FILTERS, &item).unwrap();
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::PropInsert));
+        let payload = PropPayload::parse(frame.payload).unwrap();
+        assert_eq!(payload.key, prop::HOST_RX_FILTERS);
+        assert_eq!(payload.value, &item);
+
+        let len = prop_remove(&mut buf, 4, prop::HOST_PEER_KEYS, &item[..32]).unwrap();
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::PropRemove));
+        let payload = PropPayload::parse(frame.payload).unwrap();
+        assert_eq!(payload.key, prop::HOST_PEER_KEYS);
+        assert_eq!(payload.value, &item[..32]);
+    }
+
+    #[test]
+    fn inserted_removed_round_trip() {
+        let mut buf = [0u8; 48];
+        let digest = [0x42u8; 32];
+        let len = prop_inserted(&mut buf, 5, prop::HOST_PEER_KEYS, &digest).unwrap();
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::PropInserted));
+        let payload = PropPayload::parse(frame.payload).unwrap();
+        assert_eq!(payload.value, &digest);
+
+        let len = prop_removed(&mut buf, TID_UNSOLICITED, prop::HOST_CHANNEL_KEYS, &[0x12, 0x34])
+            .unwrap();
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::PropRemoved));
+        assert_eq!(frame.header.tid(), TID_UNSOLICITED);
+        let payload = PropPayload::parse(frame.payload).unwrap();
+        assert_eq!(payload.key, prop::HOST_CHANNEL_KEYS);
+        assert_eq!(payload.value, &[0x12, 0x34]);
+    }
+
+    #[test]
+    fn payloadless_full_commands() {
+        let mut buf = [0u8; 4];
+        for (encode, cmd) in [
+            (queue_drain as fn(&mut [u8], u8) -> Result<usize, WriteError>, Cmd::QueueDrain),
+            (save, Cmd::Save),
+            (clear, Cmd::Clear),
+            (restore, Cmd::Restore),
+        ] {
+            let len = encode(&mut buf, 2).unwrap();
+            assert_eq!(len, 2);
+            let frame = Frame::parse(&buf[..len]).unwrap();
+            assert_eq!(frame.command(), Some(cmd));
+            assert!(frame.payload.is_empty());
+        }
     }
 
     #[test]
