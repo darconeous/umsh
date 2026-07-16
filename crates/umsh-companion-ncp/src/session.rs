@@ -134,6 +134,11 @@ struct PendingTx {
     /// completion must not disturb `PROP_LAST_STATUS`, which may still
     /// hold a reset code the next host needs to see.
     autonomous: bool,
+    /// Queue-entry sequence handle of the frame this transmission
+    /// acknowledges. Only on confirmed transmission does the entry earn
+    /// `RX_FLAG_ACKED` — the host MUST NOT re-ack a flagged frame, so
+    /// the flag must never assert an ack that was not actually sent.
+    ack_for: Option<u16>,
 }
 
 /// A delegated MAC acknowledgement ready to transmit.
@@ -141,25 +146,37 @@ struct AckPlan {
     /// The acknowledged frame's source hint — the ack's destination.
     dst: [u8; 3],
     tag: [u8; 8],
+    /// Flood-return radius when the acknowledged frame arrived by
+    /// flood: its accumulated hop count seeds the ack's remaining hops
+    /// (mirroring the MAC's cached flood-route behavior). `None` for
+    /// direct traffic — the ack is then direct too.
+    flood_hops: Option<u8>,
 }
 
 /// Outcome of evaluating a detached received frame against the
-/// provisioned peer keys (spec §Inbound Queueing, §Acknowledgement
+/// provisioned keys (spec §Inbound Queueing, §Acknowledgement
 /// Delegation).
 enum SecureRx {
-    /// Not authenticated as unicast-class traffic from a provisioned
-    /// peer (no keys, ambiguous source, bad MIC, or a suspected replay
-    /// outside the window): queue it unacknowledged — hints only
-    /// over-accept and the host MAC remains authoritative.
+    /// Not authenticated (no keys, ambiguous source, bad MIC, or a
+    /// suspected replay outside the window): queue it unacknowledged —
+    /// hints only over-accept and the host MAC remains authoritative.
     Plain,
-    /// Authenticated and new; the replay baseline has been advanced.
-    /// `ack` is present when the frame requests acknowledgement.
-    New { ack: Option<AckPlan> },
+    /// Authenticated and new. `ack` is present when the frame requests
+    /// acknowledgement (never for multicast); `identity` keys later
+    /// duplicate coalescing and deferred ack marking.
+    New {
+        ack: Option<AckPlan>,
+        identity: Option<RxIdentity>,
+    },
     /// Authenticated duplicate of a previously accepted frame: it is
-    /// coalesced with the existing entry rather than queued again.
-    /// `ack` is present when the idempotent re-acknowledgement window
-    /// permits retransmitting its ack.
-    Duplicate { ack: Option<AckPlan> },
+    /// coalesced rather than queued again. `ack` is present when the
+    /// idempotent re-acknowledgement window permits retransmitting its
+    /// ack; `identity` locates the original entry so a confirmed re-ack
+    /// can mark it.
+    Duplicate {
+        ack: Option<AckPlan>,
+        identity: Option<RxIdentity>,
+    },
 }
 
 /// Outcome of dispatching a property key for encoding.
@@ -296,9 +313,37 @@ fn table_error(error: ItemError) -> Status {
 /// `PROP_HOST_RX_QUEUE_CAPACITY`: the fixed size of the inbound queue.
 pub const RX_QUEUE_CAPACITY: usize = 16;
 
+/// The logical identity of an authenticated received packet: the frame
+/// counter plus the verified MIC (which covers the channel or pairwise
+/// keys, the addressing, and the body). A Route Retry form preserves
+/// both, so it matches its original. Unauthenticated frames have no
+/// identity and are never coalesced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RxIdentity {
+    counter: u32,
+    mic: [u8; 16],
+    mic_len: u8,
+}
+
+impl RxIdentity {
+    fn new(counter: u32, mic: &[u8]) -> Option<Self> {
+        if mic.is_empty() || mic.len() > 16 {
+            return None;
+        }
+        let mut padded = [0u8; 16];
+        padded[..mic.len()].copy_from_slice(mic);
+        Some(Self {
+            counter,
+            mic: padded,
+            mic_len: mic.len() as u8,
+        })
+    }
+}
+
 /// One inbound-queue entry: the frame, its receive metadata, the time
-/// of reception, and whether the NCP acknowledged it on the host's
-/// behalf (always false until `CAP_HOST_AUTO_ACK`).
+/// of reception, whether the NCP acknowledged it on the host's behalf,
+/// and — for authenticated frames — the logical packet identity used
+/// for duplicate coalescing and deferred ack marking.
 #[derive(Clone, Copy)]
 struct QueueEntry {
     data: [u8; MAX_MTU],
@@ -308,6 +353,11 @@ struct QueueEntry {
     lqi: Option<core::num::NonZeroU8>,
     rx_time_ms: u64,
     acked: bool,
+    /// Monotonic (wrapping) sequence number: a stable handle that a
+    /// pending ack transmission can use to mark this exact entry
+    /// later, immune to queue rotation and eviction.
+    seq: u16,
+    identity: Option<RxIdentity>,
 }
 
 impl QueueEntry {
@@ -319,6 +369,8 @@ impl QueueEntry {
         lqi: None,
         rx_time_ms: 0,
         acked: false,
+        seq: 0,
+        identity: None,
     };
 
     fn frame(&self) -> &[u8] {
@@ -336,6 +388,9 @@ struct RxQueue {
     head: usize,
     len: usize,
     dropped: u32,
+    /// Next entry sequence number. Never reset — a stale ack handle
+    /// from before a queue reset must not match a new entry.
+    next_seq: u16,
 }
 
 impl Default for RxQueue {
@@ -345,6 +400,7 @@ impl Default for RxQueue {
             head: 0,
             len: 0,
             dropped: 0,
+            next_seq: 0,
         }
     }
 }
@@ -352,13 +408,18 @@ impl Default for RxQueue {
 impl RxQueue {
     /// Reset to empty without constructing a fresh entry array (the
     /// array is several KB; hosts of this crate include embedded
-    /// stacks).
+    /// stacks). The sequence counter deliberately survives.
     fn clear(&mut self) {
         self.head = 0;
         self.len = 0;
         self.dropped = 0;
+        for entry in &mut self.entries {
+            entry.identity = None;
+        }
     }
 
+    /// Append an entry (evicting the oldest when full) and return its
+    /// sequence handle.
     fn push(
         &mut self,
         data: &[u8],
@@ -366,14 +427,16 @@ impl RxQueue {
         snr_cb: i16,
         lqi: Option<core::num::NonZeroU8>,
         rx_time_ms: u64,
-        acked: bool,
-    ) {
+        identity: Option<RxIdentity>,
+    ) -> u16 {
         debug_assert!(data.len() <= MAX_MTU);
         if self.len == RX_QUEUE_CAPACITY {
             self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
             self.len -= 1;
             self.dropped = self.dropped.wrapping_add(1);
         }
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
         let slot = (self.head + self.len) % RX_QUEUE_CAPACITY;
         let entry = &mut self.entries[slot];
         entry.data[..data.len()].copy_from_slice(data);
@@ -382,8 +445,11 @@ impl RxQueue {
         entry.snr_cb = snr_cb;
         entry.lqi = lqi;
         entry.rx_time_ms = rx_time_ms;
-        entry.acked = acked;
+        entry.acked = false;
+        entry.seq = seq;
+        entry.identity = identity;
         self.len += 1;
+        seq
     }
 
     fn pop_front(&mut self) -> Option<QueueEntry> {
@@ -394,6 +460,29 @@ impl RxQueue {
         self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
         self.len -= 1;
         Some(entry)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &QueueEntry> {
+        (0..self.len).map(|offset| &self.entries[(self.head + offset) % RX_QUEUE_CAPACITY])
+    }
+
+    /// The sequence handle of the queued entry holding this logical
+    /// packet, if it is still queued.
+    fn seq_for_identity(&self, identity: &RxIdentity) -> Option<u16> {
+        self.iter()
+            .find(|entry| entry.identity.as_ref() == Some(identity))
+            .map(|entry| entry.seq)
+    }
+
+    /// Mark the entry with this sequence handle acknowledged. A handle
+    /// whose entry was drained, evicted, or discarded matches nothing.
+    fn mark_acked(&mut self, seq: u16) {
+        let Some(offset) = (0..self.len)
+            .find(|offset| self.entries[(self.head + offset) % RX_QUEUE_CAPACITY].seq == seq)
+        else {
+            return;
+        };
+        self.entries[(self.head + offset) % RX_QUEUE_CAPACITY].acked = true;
     }
 }
 
@@ -1076,42 +1165,42 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         let tid = received.header.tid();
         match received.command() {
             Some(Cmd::Nop) => {
-                self.send_status(tid, Status::OK, emit);
+                self.complete(tid, Status::OK, emit);
                 None
             }
             Some(Cmd::Reset) => Some(self.reset(Status::RESET_SOFTWARE, emit)),
             Some(Cmd::PropGet) => match PropPayload::parse(received.payload) {
                 Ok(payload) => self.prop_get(tid, payload.key, now_ms, emit),
                 Err(_) => {
-                    self.fail(tid, Status::PARSE_ERROR, emit);
+                    self.complete(tid, Status::PARSE_ERROR, emit);
                     None
                 }
             },
             Some(Cmd::PropSet) => match PropPayload::parse(received.payload) {
                 Ok(payload) => self.prop_set(tid, payload.key, payload.value, now_ms, emit),
                 Err(_) => {
-                    self.fail(tid, Status::PARSE_ERROR, emit);
+                    self.complete(tid, Status::PARSE_ERROR, emit);
                     None
                 }
             },
             Some(Cmd::StrSend) => match StreamPayload::parse(received.payload) {
                 Ok(payload) => self.str_send(tid, &payload, now_ms, emit),
                 Err(_) => {
-                    self.fail(tid, Status::PARSE_ERROR, emit);
+                    self.complete(tid, Status::PARSE_ERROR, emit);
                     None
                 }
             },
             Some(Cmd::PropInsert) => {
                 match PropPayload::parse(received.payload) {
                     Ok(payload) => self.prop_insert(tid, payload.key, payload.value, emit),
-                    Err(_) => self.fail(tid, Status::PARSE_ERROR, emit),
+                    Err(_) => self.complete(tid, Status::PARSE_ERROR, emit),
                 }
                 None
             }
             Some(Cmd::PropRemove) => {
                 match PropPayload::parse(received.payload) {
                     Ok(payload) => self.prop_remove(tid, payload.key, payload.value, emit),
-                    Err(_) => self.fail(tid, Status::PARSE_ERROR, emit),
+                    Err(_) => self.complete(tid, Status::PARSE_ERROR, emit),
                 }
                 None
             }
@@ -1120,11 +1209,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             // an empty queue succeeds immediately.
             Some(Cmd::QueueDrain) => {
                 if self.session.drain.is_some() {
-                    self.fail(tid, Status::BUSY, emit);
+                    self.complete(tid, Status::BUSY, emit);
                     return None;
                 }
                 if self.host.queue.len == 0 {
-                    self.send_status(tid, Status::OK, emit);
+                    self.complete(tid, Status::OK, emit);
                     return None;
                 }
                 self.session.drain = Some(DrainState {
@@ -1146,7 +1235,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             // applies as part of the revert.
             Some(Cmd::Restore) => {
                 if self.saved.is_none() {
-                    self.fail(tid, Status::INVALID_STATE, emit);
+                    self.complete(tid, Status::INVALID_STATE, emit);
                     return None;
                 }
                 let same_host =
@@ -1167,11 +1256,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             Some(Cmd::Clear) => Some(Effect::ClearSaved { tid }),
             // NCP-to-host commands arriving from the host.
             Some(Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved) => {
-                self.fail(tid, Status::INVALID_COMMAND, emit);
+                self.complete(tid, Status::INVALID_COMMAND, emit);
                 None
             }
             None => {
-                self.fail(tid, Status::INVALID_COMMAND, emit);
+                self.complete(tid, Status::INVALID_COMMAND, emit);
                 None
             }
         }
@@ -1202,25 +1291,30 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 return None;
             }
             return match self.evaluate_detached_rx(data, now_ms) {
-                SecureRx::Duplicate { ack } => {
-                    // Coalesced with the existing queue entry.
-                    ack.and_then(|plan| self.stage_ack(plan, now_ms))
+                SecureRx::Duplicate { ack, identity } => {
+                    // Coalesced with the existing queue entry. A
+                    // confirmed re-ack marks the original entry, which
+                    // may still be queued unacked from a failed or
+                    // refused earlier attempt.
+                    let original = identity
+                        .and_then(|identity| self.host.queue.seq_for_identity(&identity));
+                    ack.and_then(|plan| self.stage_ack(plan, original, now_ms))
                 }
                 verdict => {
-                    let ack = match verdict {
-                        SecureRx::New { ack } => ack,
-                        _ => None,
+                    let (ack, identity) = match verdict {
+                        SecureRx::New { ack, identity } => (ack, identity),
+                        _ => (None, None),
                     };
-                    // Placement cannot fail (circular eviction), so the
-                    // acknowledged flag can be decided up front; a
-                    // frame the ack gates refuse stays queued unacked
-                    // and the sender's retransmission hits the re-ack
-                    // window later.
-                    let effect = ack.and_then(|plan| self.stage_ack(plan, now_ms));
-                    self.host
+                    // Entries start unacknowledged: RX_FLAG_ACKED is
+                    // earned only when the ack transmission actually
+                    // completes (on_tx_result). A refused or failed ack
+                    // leaves the frame queued unacked and the sender's
+                    // retransmission hits the re-ack window later.
+                    let seq = self
+                        .host
                         .queue
-                        .push(data, rssi_dbm, snr_cb, lqi, now_ms, effect.is_some());
-                    effect
+                        .push(data, rssi_dbm, snr_cb, lqi, now_ms, identity);
+                    ack.and_then(|plan| self.stage_ack(plan, Some(seq), now_ms))
                 }
             };
         }
@@ -1326,8 +1420,60 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 };
                 (self.engine.derive_blind_keys(&pairwise, &channel_keys), index)
             }
-            // Multicast and broadcast have no per-peer counter state at
-            // the NCP; MAC acks carry no counter at all.
+            // Multicast the NCP holds the channel key for is
+            // authenticated for queue-local duplicate coalescing only:
+            // no per-sender counter state is retained and no ack is
+            // ever delegated (multicast never requests one). Broadcast
+            // and MAC acks carry no counter at all.
+            PacketType::Multicast => {
+                let Some(channel) = header.channel else {
+                    return SecureRx::Plain;
+                };
+                let Some(channel_key) = self
+                    .host
+                    .channel_keys
+                    .iter()
+                    .find(|candidate| candidate.id == channel.0)
+                    .map(|candidate| candidate.key)
+                else {
+                    return SecureRx::Plain;
+                };
+                let derived = self.engine.derive_channel_keys(&ChannelKey(channel_key));
+                let channel_pairwise = PairwiseKeys {
+                    k_enc: derived.k_enc,
+                    k_mic: derived.k_mic,
+                };
+                if self
+                    .engine
+                    .open_packet(scratch, &header, &channel_pairwise)
+                    .is_err()
+                {
+                    return SecureRx::Plain;
+                }
+                let Some(sec_info) = header.sec_info else {
+                    return SecureRx::Plain;
+                };
+                let identity =
+                    RxIdentity::new(sec_info.frame_counter, &data[header.mic_range.clone()]);
+                let Some(identity) = identity else {
+                    return SecureRx::Plain;
+                };
+                // A Route Retry form preserves the MIC and counter, so
+                // it matches the original entry while that entry is
+                // still queued; once drained or evicted, no replay
+                // state is retained for multicast.
+                return if self.host.queue.seq_for_identity(&identity).is_some() {
+                    SecureRx::Duplicate {
+                        ack: None,
+                        identity: Some(identity),
+                    }
+                } else {
+                    SecureRx::New {
+                        ack: None,
+                        identity: Some(identity),
+                    }
+                };
+            }
             _ => return SecureRx::Plain,
         };
 
@@ -1357,8 +1503,15 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             AckPlan {
                 dst: [public_key[0], public_key[1], public_key[2]],
                 tag: self.engine.compute_ack_tag(&full_mac, &keys.k_enc),
+                // Flooded traffic gets a flood-return ack seeded from
+                // the received frame's accumulated hop count, exactly
+                // as the MAC routes acks from its learned flood routes.
+                // A duplicate's plan uses the retransmission's own
+                // routing state.
+                flood_hops: header.flood_hops.map(|hops| hops.accumulated()),
             }
         });
+        let identity = RxIdentity::new(counter, mic);
 
         let window = &mut self.host.peer_keys.entries[peer_index]
             .as_mut()
@@ -1367,7 +1520,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         match window.check(counter, mic, now_ms) {
             ReplayVerdict::Accept => {
                 window.accept(counter, mic, now_ms);
-                SecureRx::New { ack: plan }
+                SecureRx::New {
+                    ack: plan,
+                    identity,
+                }
             }
             ReplayVerdict::Replay => {
                 // Same logical packet (Route Retry forms included: same
@@ -1377,7 +1533,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     .is_acknowledgeable_duplicate(counter, mic, now_ms)
                     .then_some(())
                     .and(plan);
-                SecureRx::Duplicate { ack }
+                SecureRx::Duplicate { ack, identity }
             }
             // A suspected replay outside the window is not identified
             // as a previously accepted frame; it is queued unacked and
@@ -1390,17 +1546,21 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// serialized radio path, subject to `PROP_HOST_AUTO_ACK`, the
     /// single-transmit radio path, and the duty limiter. Returns the
     /// transmit effect, or `None` when any gate refuses (the frame then
-    /// simply remains unacknowledged).
-    fn stage_ack(&mut self, plan: AckPlan, now_ms: u64) -> Option<Effect> {
+    /// simply remains unacknowledged). `ack_for` names the queue entry
+    /// that earns `RX_FLAG_ACKED` when the transmission completes.
+    fn stage_ack(&mut self, plan: AckPlan, ack_for: Option<u16>, now_ms: u64) -> Option<Effect> {
         if !self.host.auto_ack || self.session.pending.is_some() {
             return None;
         }
         let mut buf = [0u8; 24];
-        let frame_len = PacketBuilder::new(&mut buf)
-            .mac_ack(NodeHint(plan.dst), plan.tag)
-            .build()
-            .ok()?
-            .len();
+        let mut builder = PacketBuilder::new(&mut buf).mac_ack(NodeHint(plan.dst), plan.tag);
+        if let Some(hops) = plan.flood_hops {
+            // Mirror the MAC's flood-return acks: seed the remaining
+            // hops from the acknowledged frame's accumulated count,
+            // clamped to a valid non-zero radius.
+            builder = builder.flood_hops(hops.clamp(1, 15));
+        }
+        let frame_len = builder.build().ok()?.len();
         let airtime_ms = lora_airtime_ms(
             self.device.settings.sf,
             self.device.settings.bw_hz,
@@ -1421,6 +1581,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             airtime_ms,
             power: TxPower::Default,
             autonomous: true,
+            ack_for,
         });
         Some(Effect::StartTransmit)
     }
@@ -1435,14 +1596,19 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.device.duty.record(now_ms, pending.airtime_ms);
             if pending.autonomous {
                 // NCP-initiated: PROP_LAST_STATUS is left alone so a
-                // pending reset code still reaches the next host.
-            } else if pending.tid != TID_UNSOLICITED {
-                self.send_status(pending.tid, Status::OK, emit);
+                // pending reset code still reaches the next host. Only
+                // now — with the ack actually on the air — does the
+                // acknowledged frame earn RX_FLAG_ACKED. A handle whose
+                // entry has since been drained, evicted, or discarded
+                // marks nothing.
+                if let Some(seq) = pending.ack_for {
+                    self.host.queue.mark_acked(seq);
+                }
             } else {
-                self.last_status = Status::OK;
+                self.complete(pending.tid, Status::OK, emit);
             }
         } else if !pending.autonomous {
-            self.fail(pending.tid, Status::FAILURE, emit);
+            self.complete(pending.tid, Status::FAILURE, emit);
         }
     }
 
@@ -1459,21 +1625,21 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
         if key == prop::BLE_PAIRING_PIN {
-            self.fail(tid, Status::UNIMPLEMENTED, emit);
+            self.complete(tid, Status::UNIMPLEMENTED, emit);
             return None;
         }
         if key == prop::PHY_RSSI {
             if self.device.settings.enabled {
                 return Some(Effect::SampleRssi { tid });
             }
-            self.fail(tid, Status::INVALID_STATE, emit);
+            self.complete(tid, Status::INVALID_STATE, emit);
             return None;
         }
         let mut value = [0u8; PROP_BUF];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
-            PropValue::Unimplemented => self.fail(tid, Status::UNIMPLEMENTED, emit),
-            PropValue::Unknown => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+            PropValue::Unimplemented => self.complete(tid, Status::UNIMPLEMENTED, emit),
+            PropValue::Unknown => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
         None
     }
@@ -1487,7 +1653,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 let clamped = dbm.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8;
                 self.send_prop_is(tid, prop::PHY_RSSI, &[clamped as u8], emit);
             }
-            Err(()) => self.fail(tid, Status::FAILURE, emit),
+            Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
 
@@ -1503,7 +1669,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         if drain.remaining == 0 {
             let tid = drain.tid;
             self.session.drain = None;
-            self.send_status(tid, Status::OK, emit);
+            self.complete(tid, Status::OK, emit);
             return false;
         }
         drain.remaining -= 1;
@@ -1512,7 +1678,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             // mid-drain; complete rather than stall.
             let tid = drain.tid;
             self.session.drain = None;
-            self.send_status(tid, Status::OK, emit);
+            self.complete(tid, Status::OK, emit);
             return false;
         };
         let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
@@ -1579,9 +1745,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         match result {
             Ok(()) => {
                 self.saved = Some(SavedState::capture(&self.device, &self.host));
-                self.send_status(tid, Status::OK, emit);
+                self.complete(tid, Status::OK, emit);
             }
-            Err(()) => self.fail(tid, Status::FAILURE, emit),
+            Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
 
@@ -1591,9 +1757,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         match result {
             Ok(()) => {
                 self.saved = None;
-                self.send_status(tid, Status::OK, emit);
+                self.complete(tid, Status::OK, emit);
             }
-            Err(()) => self.fail(tid, Status::FAILURE, emit),
+            Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
 
@@ -1623,7 +1789,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 let value = pending.key.as_ref().map_or(&[][..], |key| &key[..]);
                 self.send_prop_is(tid, prop::HOST_KEY, value, emit);
             }
-            Err(()) => self.fail(tid, Status::FAILURE, emit),
+            Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
 
@@ -1634,7 +1800,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         result: Result<(), ()>,
         emit: &mut impl FnMut(&[u8]),
     ) {
-        self.send_status(
+        self.complete(
             tid,
             if result.is_ok() {
                 Status::OK
@@ -1660,7 +1826,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 match parse_u32(value) {
                     Ok(pin) if pin <= 999_999 => Some(pin),
                     _ => {
-                        self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                        self.complete(tid, Status::INVALID_ARGUMENT, emit);
                         return None;
                     }
                 }
@@ -1676,7 +1842,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     Some(key)
                 }
                 _ => {
-                    self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                    self.complete(tid, Status::INVALID_ARGUMENT, emit);
                     return None;
                 }
             };
@@ -1688,7 +1854,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 return None;
             }
             if self.session.pending_host.is_some() {
-                self.fail(tid, Status::BUSY, emit);
+                self.complete(tid, Status::BUSY, emit);
                 return None;
             }
             self.session.pending_host = Some(PendingHostKey { tid, key: new_key });
@@ -1696,7 +1862,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
-                self.fail(tid, Status::INVALID_ARGUMENT, emit);
+                self.complete(tid, Status::INVALID_ARGUMENT, emit);
                 return None;
             }
             self.device.name[..value.len()].copy_from_slice(value);
@@ -1707,7 +1873,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         let radio_affecting = match self.apply_prop_set(key, value) {
             Ok(radio_affecting) => radio_affecting,
             Err(status) => {
-                self.fail(tid, status, emit);
+                self.complete(tid, status, emit);
                 return None;
             }
         };
@@ -1852,11 +2018,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             prop::HOST_RX_FILTERS => {
                 let filter = match decode_filter(item) {
                     Ok(filter) => filter,
-                    Err(status) => return self.fail(tid, status, emit),
+                    Err(status) => return self.complete(tid, status, emit),
                 };
                 match self.host.filters.insert(filter) {
                     Ok(()) => self.send_prop_inserted(tid, key, item, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
             // Key-bearing inserts require the transport's security
@@ -1870,7 +2036,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 });
                 match result {
                     Ok(id) => self.send_prop_inserted(tid, key, &id, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
             prop::HOST_PEER_KEYS => {
@@ -1883,13 +2049,13 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 });
                 match result {
                     Ok(public_key) => self.send_prop_inserted(tid, key, &public_key, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
-            _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
-            _ => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+            _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
+            _ => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
     }
 
@@ -1901,11 +2067,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 // The remove selector is the full item.
                 let filter = match decode_filter(selector) {
                     Ok(filter) => filter,
-                    Err(status) => return self.fail(tid, status, emit),
+                    Err(status) => return self.complete(tid, status, emit),
                 };
                 match self.host.filters.remove(filter) {
                     Ok(()) => self.send_prop_removed(tid, key, selector, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
             // The channel-key remove selector is the key itself; the
@@ -1919,7 +2085,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     });
                 match result {
                     Ok(id) => self.send_prop_removed(tid, key, &id, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
             // The peer remove selector is the peer public key (already
@@ -1933,11 +2099,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     });
                 match result {
                     Ok(()) => self.send_prop_removed(tid, key, selector, emit),
-                    Err(status) => self.fail(tid, status, emit),
+                    Err(status) => self.complete(tid, status, emit),
                 }
             }
-            _ if self.known_prop(key) => self.fail(tid, Status::INVALID_ARGUMENT, emit),
-            _ => self.fail(tid, Status::PROP_NOT_FOUND, emit),
+            _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
+            _ => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
     }
 
@@ -1968,23 +2134,23 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
         if payload.stream != stream::PHY_RAW {
-            self.fail(tid, Status::PROP_NOT_FOUND, emit);
+            self.complete(tid, Status::PROP_NOT_FOUND, emit);
             return None;
         }
         if !self.device.settings.enabled {
-            self.fail(tid, Status::INVALID_STATE, emit);
+            self.complete(tid, Status::INVALID_STATE, emit);
             return None;
         }
         if payload.data.len() > usize::from(self.config.mtu) {
-            self.fail(tid, Status::INVALID_ARGUMENT, emit);
+            self.complete(tid, Status::INVALID_ARGUMENT, emit);
             return None;
         }
         let Ok(tx_meta) = TxMeta::decode(payload.metadata) else {
-            self.fail(tid, Status::PARSE_ERROR, emit);
+            self.complete(tid, Status::PARSE_ERROR, emit);
             return None;
         };
         if self.session.pending.is_some() {
-            self.fail(tid, Status::BUSY, emit);
+            self.complete(tid, Status::BUSY, emit);
             return None;
         }
 
@@ -1997,7 +2163,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         if tx_meta.flags & meta::TX_FLAG_NODUTY == 0
             && self.device.duty.would_exceed(now_ms, airtime_ms, self.device.duty_limit)
         {
-            self.fail(tid, Status::DUTY_LIMIT, emit);
+            self.complete(tid, Status::DUTY_LIMIT, emit);
             return None;
         }
         // v0: the CCA flag is ignored — this firmware's radio path has
@@ -2014,6 +2180,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 dbm => TxPower::Dbm(dbm),
             },
             autonomous: false,
+            ack_for: None,
         });
         Some(Effect::StartTransmit)
     }
@@ -2171,24 +2338,39 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
 
     // ─── Emission helpers ────────────────────────────────────────────
 
-    /// Emit `CMD_PROP_IS` for `key` with `value`.
+    /// Emit `CMD_PROP_IS` for `key` with `value` as a correlated
+    /// response. Fire-and-forget commands (TID 0) receive nothing —
+    /// the state change still happened.
     fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if tid == TID_UNSOLICITED {
+            return;
+        }
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_is(&mut buf, tid, key, value) {
             emit(&buf[..len]);
         }
     }
 
-    /// Emit `CMD_PROP_INSERTED` for `key` with the item's digest form.
+    /// Emit `CMD_PROP_INSERTED` for `key` with the item's digest form,
+    /// as a correlated response (suppressed for TID 0; an unsolicited
+    /// TID-0 `CMD_PROP_INSERTED` is reserved for changes the NCP makes
+    /// for its own reasons, which none of these are).
     fn send_prop_inserted(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if tid == TID_UNSOLICITED {
+            return;
+        }
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_inserted(&mut buf, tid, key, digest) {
             emit(&buf[..len]);
         }
     }
 
-    /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form.
+    /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form,
+    /// as a correlated response (suppressed for TID 0).
     fn send_prop_removed(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if tid == TID_UNSOLICITED {
+            return;
+        }
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_removed(&mut buf, tid, key, digest) {
             emit(&buf[..len]);
@@ -2205,9 +2387,13 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         }
     }
 
-    /// Record a failure. Correlated commands get an error response;
-    /// fire-and-forget (TID 0) failures only update `PROP_LAST_STATUS`.
-    fn fail(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
+    /// Record a command's completion status, success or failure.
+    /// Correlated commands get a `PROP_LAST_STATUS` response;
+    /// fire-and-forget (TID 0) commands only update `PROP_LAST_STATUS`
+    /// — the spec grants them no correlated response. Deliberate
+    /// unsolicited notifications (reset notices, `STATUS_RESET_RESTORED`)
+    /// bypass this via [`Self::send_status`] with `TID_UNSOLICITED`.
+    fn complete(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
         if tid == TID_UNSOLICITED {
             self.last_status = status;
         } else {
@@ -4172,7 +4358,7 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_through_the_wire_encoding() {
-        let mut session = provisioned_session();
+        let session = provisioned_session();
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();
 
@@ -4334,8 +4520,294 @@ mod tests {
 
         // With nothing saved, the wiped encoding is absent (no flash
         // write needed).
-        let mut fresh = test_session();
+        let fresh = test_session();
         assert!(fresh.encode_wiped_snapshot(&mut wiped).is_none());
+    }
+
+    // ─── Review-fix regressions: ack confirmation, flood return, ─────
+    // ─── multicast coalescing, TID-zero semantics ────────────────────
+
+    /// Drain and return each entry's RX_FLAGS.
+    fn drained_flags(session: &mut TestSession) -> Vec<u8> {
+        drain(session, 0).into_iter().map(|(_, meta)| meta.flags).collect()
+    }
+
+    #[test]
+    fn ack_flag_requires_confirmed_transmission() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        let frame = sealed_unar(5, &keys, false);
+
+        // The ack is staged but the radio transmission fails: the entry
+        // must not claim an ack that never went out.
+        let effect = rx_effect(&mut session, &frame, 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(false, 0, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+
+        // The sender retransmits; the duplicate re-ack completes, which
+        // marks the original (still queued, still unacked) entry.
+        let effect = rx_effect(&mut session, &frame, 10);
+        assert_eq!(effect, Some(Effect::StartTransmit), "re-ack after failed TX");
+        session.on_tx_result(true, 10, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1, "duplicate coalesced");
+        assert_eq!(
+            drained_flags(&mut session),
+            [RX_FLAG_BUFFERED | RX_FLAG_ACKED]
+        );
+    }
+
+    #[test]
+    fn failed_ack_leaves_flag_clear_and_eviction_is_handle_safe() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+
+        // Frame 1's ack fails; its entry stays unacked.
+        let effect = rx_effect(&mut session, &sealed_unar(1, &keys, false), 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(false, 0, &mut |_: &[u8]| {});
+
+        // Evict frame 1 with newer traffic while an ack for frame 2 is
+        // in flight, then confirm it: the stale handle for the evicted
+        // entry must mark nothing, and the confirmed handle must mark
+        // exactly frame 2's entry even though the queue rotated
+        // underneath it.
+        let effect = rx_effect(&mut session, &sealed_unar(2, &keys, false), 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        for counter in 3..(2 + RX_QUEUE_CAPACITY as u32) {
+            // Radio busy: these queue unacked, no effect.
+            assert!(rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0).is_none());
+        }
+        session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
+        let flags = drained_flags(&mut session);
+        // Frame 1 was evicted; the oldest remaining entry is frame 2 —
+        // the only acknowledged one.
+        assert_eq!(flags[0], RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+        assert!(
+            flags[1..].iter().all(|flags| *flags == RX_FLAG_BUFFERED),
+            "no other entry may borrow the confirmation"
+        );
+    }
+
+    /// Build a sealed UNAR carrying flood-hop state with the given
+    /// accumulated count. FHOPS is dynamic (excluded from the AAD), so
+    /// rewriting it after sealing preserves the MIC — exactly as a
+    /// relaying node would.
+    fn sealed_flooded_unar(counter: u32, keys: &PairwiseKeys, accumulated: u8) -> Vec<u8> {
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC4, 0xC4, 0xC4]))
+            .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+            .frame_counter(counter)
+            .ack_requested()
+            .mic_size(MicSize::Mic8)
+            .flood_hops(15)
+            .payload(&[3, 1, 2])
+            .build()
+            .unwrap();
+        test_engine().seal_packet(&mut packet, keys).unwrap();
+        let mut frame = packet.as_bytes().to_vec();
+        frame[1] = umsh_core::FloodHops::new(15 - accumulated, accumulated).unwrap().0;
+        frame
+    }
+
+    #[test]
+    fn flooded_traffic_gets_flood_return_acks() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+
+        // Direct traffic: direct ack (no FHOPS on the wire).
+        let effect = rx_effect(&mut session, &sealed_unar(1, &keys, false), 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let header = PacketHeader::parse(session.tx_data()).unwrap();
+        assert_eq!(header.flood_hops, None);
+        session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+
+        // Flooded traffic: the ack's remaining hops seed from the
+        // received frame's accumulated count.
+        for (accumulated, expected_remaining) in [(3u8, 3u8), (0, 1), (15, 15)] {
+            let frame = sealed_flooded_unar(u32::from(accumulated) + 10, &keys, accumulated);
+            let effect = rx_effect(&mut session, &frame, 0);
+            assert_eq!(effect, Some(Effect::StartTransmit), "accumulated={accumulated}");
+            let header = PacketHeader::parse(session.tx_data()).unwrap();
+            assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+            let hops = header.flood_hops.expect("flood-return ack");
+            assert_eq!(hops.remaining(), expected_remaining, "accumulated={accumulated}");
+            session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+        }
+
+        // A duplicate re-ack routes from the retransmission itself: the
+        // same logical packet (counter 25, the current baseline)
+        // arriving with a different accumulated count gets a return
+        // flood sized for the path it actually took.
+        let retransmission = sealed_flooded_unar(25, &keys, 7);
+        let effect = rx_effect(&mut session, &retransmission, 5);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let header = PacketHeader::parse(session.tx_data()).unwrap();
+        assert_eq!(header.flood_hops.expect("flood-return re-ack").remaining(), 7);
+    }
+
+    /// A sealed multicast frame on `channel_key` (channel keys act as
+    /// the pairwise keys for multicast sealing).
+    fn sealed_multicast(counter: u32, channel_key: &[u8; 32], fill: u8) -> Vec<u8> {
+        let engine = test_engine();
+        let derived = engine.derive_channel_keys(&ChannelKey(*channel_key));
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .multicast(derived.channel_id)
+            .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+            .frame_counter(counter)
+            .mic_size(MicSize::Mic8)
+            .payload(&[3, fill])
+            .build()
+            .unwrap();
+        let keys = PairwiseKeys {
+            k_enc: derived.k_enc,
+            k_mic: derived.k_mic,
+        };
+        engine.seal_packet(&mut packet, &keys).unwrap();
+        packet.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn authenticated_multicast_duplicates_coalesce_queue_locally() {
+        let channel_key = [0x42u8; 32];
+        let mut session = auto_ack_session();
+        session.attach(true);
+        install_channel_key(&mut session, &channel_key);
+        session.detach();
+
+        // Exact retransmissions of an authenticated multicast frame
+        // coalesce; no ack is ever generated for multicast.
+        let frame = sealed_multicast(9, &channel_key, 0x11);
+        assert!(rx_effect(&mut session, &frame, 0).is_none());
+        assert!(rx_effect(&mut session, &frame, 5).is_none());
+        // Different counter or different content queue separately.
+        assert!(rx_effect(&mut session, &sealed_multicast(10, &channel_key, 0x11), 0).is_none());
+        assert!(rx_effect(&mut session, &sealed_multicast(11, &channel_key, 0x22), 0).is_none());
+
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 3);
+        for flags in drained_flags(&mut session) {
+            assert_eq!(flags, RX_FLAG_BUFFERED, "multicast is never acked");
+        }
+    }
+
+    #[test]
+    fn unauthenticated_multicast_duplicates_occupy_separate_entries() {
+        // Accepted via an explicit packet-type filter with no channel
+        // key: the NCP cannot authenticate, so no protocol-defined
+        // duplicate detection applies.
+        let mut session = test_session();
+        enable(&mut session);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::Multicast as u8],
+        );
+        session.detach();
+        let frame = sealed_multicast(9, &[0x42; 32], 0x11);
+        receive_detached(&mut session, &frame, 0);
+        receive_detached(&mut session, &frame, 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 2);
+    }
+
+    /// Dispatch a frame built with TID zero and assert total silence.
+    fn dispatch_tid0_silent(session: &mut TestSession, bytes: &[u8]) -> Option<Effect> {
+        let (emitted, effect) = dispatch(session, bytes, 0);
+        assert!(
+            emitted.is_empty(),
+            "fire-and-forget commands receive no correlated response"
+        );
+        effect
+    }
+
+    fn last_status_of(session: &mut TestSession) -> u32 {
+        pui::decode(&get(session, prop::LAST_STATUS)).unwrap().0
+    }
+
+    #[test]
+    fn tid_zero_commands_are_fire_and_forget() {
+        let mut session = test_session();
+        let mut buf = [0u8; 640];
+
+        // NOP, empty drain, save, and clear: silent success, recorded
+        // in PROP_LAST_STATUS only.
+        let len = frame::nop(&mut buf, 0).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert_eq!(last_status_of(&mut session), Status::OK.0);
+
+        let len = frame::queue_drain(&mut buf, 0).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+
+        let len = frame::save(&mut buf, 0).unwrap();
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        assert_eq!(effect, Some(Effect::SaveSnapshot { tid: 0 }));
+        session.respond_save(0, Ok(()), &mut |_: &[u8]| panic!("tid-0 save must be silent"));
+        assert_eq!(get(&mut session, prop::SAVED), [1]);
+
+        // A TID-zero failure is recorded silently.
+        let len = frame::clear(&mut buf, 0).unwrap();
+        let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 0 }));
+        session.respond_clear(0, Err(()), &mut |_: &[u8]| panic!("tid-0 clear must be silent"));
+        assert_eq!(last_status_of(&mut session), Status::FAILURE.0);
+        assert_eq!(get(&mut session, prop::SAVED), [1], "failed clear rolls back nothing");
+
+        // TID-zero SET and INSERT mutate state without a correlated
+        // response.
+        let len = frame::prop_set(&mut buf, 0, prop::PHY_DUTY_LIMIT, &99u16.to_le_bytes()).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert_eq!(get(&mut session, prop::PHY_DUTY_LIMIT), 99u16.to_le_bytes());
+
+        let item = [items::FILTER_PKT_TYPE, 0];
+        let len = frame::prop_insert(&mut buf, 0, prop::HOST_RX_FILTERS, &item).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_FILTERS),
+            [2, items::FILTER_PKT_TYPE, 0]
+        );
+
+        let len = frame::prop_remove(&mut buf, 0, prop::HOST_RX_FILTERS, &item).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+        assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
+
+        // TID-zero GET expects no response either.
+        let len = frame::prop_get(&mut buf, 0, prop::PHY_MTU).unwrap();
+        assert!(dispatch_tid0_silent(&mut session, &buf[..len].to_vec()).is_none());
+    }
+
+    #[test]
+    fn tid_zero_drain_delivers_frames_but_no_completion() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
+        session.attach(true);
+
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 0).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::DrainQueue));
+
+        // First step: the buffered frame. Final step: silence.
+        let mut emitted = Vec::new();
+        assert!(session.drain_step(0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            Frame::parse(&emitted[0]).unwrap().command(),
+            Some(Cmd::StrRecv)
+        );
+        let mut emitted = Vec::new();
+        assert!(!session.drain_step(0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+        assert!(emitted.is_empty(), "TID-zero drain has no completion response");
+        assert_eq!(last_status_of(&mut session), Status::OK.0);
     }
 
     #[test]
