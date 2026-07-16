@@ -40,6 +40,7 @@
 //! assert_eq!(header.body_range.len(), 5);
 //! ```
 
+pub mod base58;
 mod builder;
 mod error;
 pub mod options;
@@ -49,7 +50,7 @@ pub use builder::{
     BlindUnicastBuilder, BroadcastBuilder, MacAckBuilder, MulticastBuilder, PacketBuilder,
     UnicastBuilder, state,
 };
-pub use error::{BuildError, EncodeError, ParseError};
+pub use error::{AddressParseError, BuildError, EncodeError, ParseError};
 pub use packet::{
     ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
     PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,

@@ -23,6 +23,18 @@ pub enum ParseError {
     MalformedOption,
 }
 
+/// Errors returned while parsing a textual UMSH address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddressParseError {
+    /// The length matches neither the 44-character base58 form nor the
+    /// 64-character base16 form.
+    InvalidLength,
+    /// A character was outside the expected alphabet.
+    InvalidCharacter,
+    /// The base58 value does not fit in 32 bytes.
+    Overflow,
+}
+
 /// Errors returned while encoding wire-format values into caller-provided buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
@@ -73,6 +85,12 @@ impl fmt::Display for ParseError {
     }
 }
 
+impl fmt::Display for AddressParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
@@ -87,6 +105,9 @@ impl fmt::Display for BuildError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for ParseError {}
+
+#[cfg(feature = "std")]
+impl std::error::Error for AddressParseError {}
 
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}

@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print banner.
     println!("UMSH CLI (UDP multicast)");
-    println!("local: {}", encode_hex(&local_key.0));
+    println!("local: {}", local_key);
     println!("group: {}:{}", cfg.group, cfg.port);
     println!("type /help for commands, /quit to exit");
 
@@ -250,8 +250,4 @@ fn counter_store_root(identity_path: &Path) -> PathBuf {
         .unwrap_or("identity");
     root.set_file_name(format!("{file_name}.counters"));
     root
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }

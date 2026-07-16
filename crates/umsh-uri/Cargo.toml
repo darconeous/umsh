@@ -8,10 +8,9 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_uri/"
 
 [features]
 default = ["std"]
-std = ["alloc", "bs58/std", "lwuri/std", "umsh-core/std"]
-alloc = ["bs58/alloc", "lwuri/alloc", "umsh-core/alloc"]
+std = ["alloc", "lwuri/std", "umsh-core/std"]
+alloc = ["lwuri/alloc", "umsh-core/alloc"]
 
 [dependencies]
-bs58.workspace = true
 lwuri.workspace = true
 umsh-core = { path = "../umsh-core", default-features = false }

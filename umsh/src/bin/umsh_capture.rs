@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, FrameLink};
-use umsh::core::{PacketHeader, PacketType, ParsedOptions, PayloadType};
+use umsh::core::{PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, SourceAddrRef};
 use umsh::hal::Radio;
 
 const USAGE: &str = "\
@@ -690,11 +690,29 @@ fn print_classification(packet: &[u8]) {
         })
         .flatten();
 
+    let src = match header.source {
+        SourceAddrRef::Hint(hint) => format!("hint:{hint}"),
+        SourceAddrRef::FullKeyAt { offset } => packet
+            .get(offset..offset + 32)
+            .map_or_else(
+                || "<truncated>".to_owned(),
+                |bytes| {
+                    let mut key = [0u8; 32];
+                    key.copy_from_slice(bytes);
+                    PublicKey(key).to_string()
+                },
+            ),
+        SourceAddrRef::Encrypted { .. } => "<encrypted>".to_owned(),
+        SourceAddrRef::None => "-".to_owned(),
+    };
+    let dst = header
+        .dst
+        .map_or_else(|| "-".to_owned(), |hint| hint.to_string());
     println!(
-        "decode: UMSH {:?} src={:?} dst={:?} channel={:?}",
+        "decode: UMSH {:?} src={} dst={} channel={:?}",
         header.packet_type(),
-        header.source,
-        header.dst,
+        src,
+        dst,
         header.channel,
     );
     println!(

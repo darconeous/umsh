@@ -503,11 +503,7 @@ where
                     }
                     None => {
                         // Hint-only beacon (sender didn't include the full pubkey).
-                        let _ = write!(
-                            &mut line,
-                            "[beacon hint:{:02x}{:02x}{:02x}]",
-                            hint.0[0], hint.0[1], hint.0[2],
-                        );
+                        let _ = write!(&mut line, "[beacon hint:{}]", hint);
                     }
                 }
                 self.out.write_line(&line).await?;
@@ -831,10 +827,7 @@ where
 
     async fn cmd_whoami(&mut self) -> Result<(), CliError<OUT::Error>> {
         let mut line: HString<EVENT_LINE_MAX> = HString::new();
-        let _ = write!(&mut line, "local: ");
-        for b in &self.local_key.0 {
-            let _ = write!(&mut line, "{:02x}", b);
-        }
+        let _ = write!(&mut line, "local: {}", self.local_key);
         self.out.write_line(&line).await?;
         Ok(())
     }
@@ -957,10 +950,7 @@ where
         for (_k, entry) in self.peers.iter() {
             let mut line: HString<EVENT_LINE_MAX> = HString::new();
             let alias = entry.alias.as_deref().unwrap_or("-");
-            let _ = write!(&mut line, "{:16} ", alias);
-            for b in &entry.key.0 {
-                let _ = write!(&mut line, "{:02x}", b);
-            }
+            let _ = write!(&mut line, "{:16} {}", alias, entry.key);
             lines.push(String::from(line.as_str()));
         }
         for l in lines {
@@ -1317,15 +1307,14 @@ where
                 return self.write_err("already joined").await;
             }
             // Decode the b58 channel key.
-            let mut key_bytes = [0u8; 32];
-            match bs58::decode(_key_b58).onto(&mut key_bytes[..]) {
-                Ok(32) => {}
-                _ => {
+            let key_bytes = match umsh_core::base58::decode(_key_b58.as_bytes()) {
+                Ok(bytes) => bytes,
+                Err(_) => {
                     return self
-                        .write_err("key must be base58-encoded 32-byte channel key")
+                        .write_err("key must be a 44-character base58 channel key")
                         .await;
                 }
-            }
+            };
             let channel_key = umsh_core::ChannelKey(key_bytes);
             let channel = umsh_node::Channel::private(channel_key, name);
             match self.node.join(&channel).await {
@@ -1485,11 +1474,9 @@ where
                 return String::from(a.as_str());
             }
         }
-        // Fall back to 6-byte hex hint.
+        // Fall back to the spec's star-truncated base58 hint rendering.
         let mut s = String::new();
-        for b in key.0.iter().take(6) {
-            let _ = write!(&mut s, "{:02x}", b);
-        }
+        let _ = write!(&mut s, "{}", key.hint());
         s
     }
 }
