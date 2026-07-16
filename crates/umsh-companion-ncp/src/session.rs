@@ -5,7 +5,7 @@ use umsh_companion::airtime::lora_airtime_ms;
 use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::ids::{self, cap, prop, stream};
 use umsh_companion::items::{self, Filter, ItemError};
-use umsh_companion::meta::{self, RxMeta, TxMeta};
+use umsh_companion::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
 use umsh_companion::pui;
 use umsh_core::PacketHeader;
 
@@ -101,6 +101,12 @@ pub enum Effect {
     /// is persisted and the wipe trivially succeeds; the live host
     /// domain is replaced only on `Ok`.
     WipeHostDomain { tid: u8 },
+    /// A `CMD_QUEUE_DRAIN` accepted a non-empty queue. Repeatedly call
+    /// [`Session::drain_step`] until it returns `false`, flushing the
+    /// emitted frame to the transport between calls (each step emits at
+    /// most one frame, so a bounded emitter never overflows and the
+    /// transport can apply backpressure).
+    DrainQueue,
 }
 
 struct PendingTx {
@@ -240,20 +246,134 @@ fn table_error(error: ItemError) -> Status {
     }
 }
 
+/// `PROP_HOST_RX_QUEUE_CAPACITY`: the fixed size of the inbound queue.
+pub const RX_QUEUE_CAPACITY: usize = 16;
+
+/// One inbound-queue entry: the frame, its receive metadata, the time
+/// of reception, and whether the NCP acknowledged it on the host's
+/// behalf (always false until `CAP_HOST_AUTO_ACK`).
+#[derive(Clone, Copy)]
+struct QueueEntry {
+    data: [u8; MAX_MTU],
+    len: u16,
+    rssi_dbm: i16,
+    snr_cb: i16,
+    lqi: Option<core::num::NonZeroU8>,
+    rx_time_ms: u64,
+    acked: bool,
+}
+
+impl QueueEntry {
+    const EMPTY: Self = Self {
+        data: [0; MAX_MTU],
+        len: 0,
+        rssi_dbm: 0,
+        snr_cb: 0,
+        lqi: None,
+        rx_time_ms: 0,
+        acked: false,
+    };
+
+    fn frame(&self) -> &[u8] {
+        &self.data[..usize::from(self.len)]
+    }
+}
+
+/// The circular FIFO inbound queue (spec §Inbound Queueing). When full,
+/// accepting a new frame evicts the oldest entry and counts it in
+/// `PROP_HOST_RX_QUEUE_DROPPED`, so the queue always holds the most
+/// recent accepted traffic.
+struct RxQueue {
+    entries: [QueueEntry; RX_QUEUE_CAPACITY],
+    /// Index of the oldest entry.
+    head: usize,
+    len: usize,
+    dropped: u32,
+}
+
+impl Default for RxQueue {
+    fn default() -> Self {
+        Self {
+            entries: [QueueEntry::EMPTY; RX_QUEUE_CAPACITY],
+            head: 0,
+            len: 0,
+            dropped: 0,
+        }
+    }
+}
+
+impl RxQueue {
+    /// Reset to empty without constructing a fresh entry array (the
+    /// array is several KB; hosts of this crate include embedded
+    /// stacks).
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+        self.dropped = 0;
+    }
+
+    fn push(
+        &mut self,
+        data: &[u8],
+        rssi_dbm: i16,
+        snr_cb: i16,
+        lqi: Option<core::num::NonZeroU8>,
+        rx_time_ms: u64,
+    ) {
+        debug_assert!(data.len() <= MAX_MTU);
+        if self.len == RX_QUEUE_CAPACITY {
+            self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
+            self.len -= 1;
+            self.dropped = self.dropped.wrapping_add(1);
+        }
+        let slot = (self.head + self.len) % RX_QUEUE_CAPACITY;
+        let entry = &mut self.entries[slot];
+        entry.data[..data.len()].copy_from_slice(data);
+        entry.len = data.len() as u16;
+        entry.rssi_dbm = rssi_dbm;
+        entry.snr_cb = snr_cb;
+        entry.lqi = lqi;
+        entry.rx_time_ms = rx_time_ms;
+        entry.acked = false;
+        self.len += 1;
+    }
+
+    fn pop_front(&mut self) -> Option<QueueEntry> {
+        if self.len == 0 {
+            return None;
+        }
+        let entry = self.entries[self.head];
+        self.head = (self.head + 1) % RX_QUEUE_CAPACITY;
+        self.len -= 1;
+        Some(entry)
+    }
+}
+
 /// State belonging to the configured tethered host identity (spec
 /// §State Classes, host domain): host key, key tables, filters,
-/// auto-ACK policy, and the inbound queue. The
-/// `CAP_HOST_KEYS`/`CAP_HOST_RX_QUEUE` increments extend it; host
-/// replacement resets it as one unit.
+/// auto-ACK policy, and the inbound queue. The `CAP_HOST_KEYS`
+/// increment extends it; host replacement resets it as one unit.
 #[derive(Default)]
 struct HostDomain {
     /// `PROP_HOST_KEY`; `None` means no host identity is configured.
     key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     /// `PROP_HOST_RX_FILTERS`.
     filters: FilterTable,
+    /// The inbound queue, populated while the host is detached.
+    queue: RxQueue,
 }
 
 impl HostDomain {
+    /// Reset the whole domain to defaults with `key` installed,
+    /// in place: the domain embeds the multi-KB queue array, and a
+    /// wholesale struct replacement would stage that array on the
+    /// caller's stack.
+    fn reset(&mut self, key: Option<[u8; items::PUBLIC_KEY_LEN]>) {
+        self.key = key;
+        self.filters = FilterTable::default();
+        self.queue.clear();
+    }
+
     /// Spec §Receive Filtering compatibility rule: with no host key, no
     /// host channel keys, and an empty explicit table, filtering is
     /// unconfigured and every received frame is accepted.
@@ -304,6 +424,10 @@ struct SessionState {
     /// the wipe completes; a detach mid-flight abandons the
     /// transaction, leaving the old host domain in effect.
     pending_host: Option<PendingHostKey>,
+    /// A drain in progress ([`Effect::DrainQueue`]). Covers exactly the
+    /// frames queued when `CMD_QUEUE_DRAIN` arrived; an attach or
+    /// detach abandons the drain, leaving undelivered frames queued.
+    drain: Option<DrainState>,
 }
 
 struct PendingHostKey {
@@ -311,11 +435,20 @@ struct PendingHostKey {
     key: Option<[u8; items::PUBLIC_KEY_LEN]>,
 }
 
+struct DrainState {
+    tid: u8,
+    remaining: usize,
+}
+
 pub struct Session {
     config: SessionConfig,
     device: DeviceDomain,
     host: HostDomain,
     session: SessionState,
+    /// Whether a host is currently attached: accepted frames are
+    /// delivered live when true and queued when false. Starts detached;
+    /// the transport binding reports attach/detach edges.
+    attached: bool,
     last_status: Status,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
@@ -333,6 +466,7 @@ impl Session {
             device: DeviceDomain::post_reset(&config),
             host: HostDomain::default(),
             session: SessionState::default(),
+            attached: false,
             last_status: boot_status,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
@@ -378,7 +512,7 @@ impl Session {
     /// from it instead of the documented defaults.
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
         self.device = DeviceDomain::post_reset(&self.config);
-        self.host = HostDomain::default();
+        self.host.reset(None);
         self.session = SessionState::default();
         self.send_status(TID_UNSOLICITED, reason, emit);
         Effect::ApplyRadio(self.device.settings)
@@ -386,17 +520,22 @@ impl Session {
 
     /// A host attached. Resets session state only (spec §Attach): the
     /// device and host domains — PHY configuration and enable state,
-    /// device name, duty accounting, provisioning — are untouched, and
-    /// nothing is emitted; the attach itself produces no notification.
+    /// device name, duty accounting, provisioning, and the inbound
+    /// queue — are untouched, and nothing is emitted; the attach itself
+    /// produces no notification. Accepted frames are delivered live
+    /// from here on; queued frames wait for `CMD_QUEUE_DRAIN`.
     pub fn attach(&mut self) {
         self.session = SessionState::default();
+        self.attached = true;
     }
 
     /// The host detached. Session state is discarded; the device and
-    /// host domains keep operating (detached operation grows with the
-    /// queueing and delegated-acknowledgement increments).
+    /// host domains keep operating detached: accepted frames are queued
+    /// instead of delivered (delegated acknowledgement arrives with
+    /// `CAP_HOST_AUTO_ACK`).
     pub fn detach(&mut self) {
         self.session = SessionState::default();
+        self.attached = false;
     }
 
     /// Handle one decoded companion-link frame from the host.
@@ -451,9 +590,27 @@ impl Session {
                 }
                 None
             }
+            // Deliver queued inbound frames. The payload MUST be
+            // ignored. The drain covers exactly the frames queued now;
+            // an empty queue succeeds immediately.
+            Some(Cmd::QueueDrain) => {
+                if self.session.drain.is_some() {
+                    self.fail(tid, Status::BUSY, emit);
+                    return None;
+                }
+                if self.host.queue.len == 0 {
+                    self.send_status(tid, Status::OK, emit);
+                    return None;
+                }
+                self.session.drain = Some(DrainState {
+                    tid,
+                    remaining: self.host.queue.len,
+                });
+                Some(Effect::DrainQueue)
+            }
             // Capability-gated full commands this session does not yet
-            // advertise (`CAP_HOST_RX_QUEUE`, `CAP_SAVE`).
-            Some(Cmd::QueueDrain | Cmd::Save | Cmd::Restore) => {
+            // advertise (`CAP_SAVE`).
+            Some(Cmd::Save | Cmd::Restore) => {
                 self.fail(tid, Status::UNIMPLEMENTED, emit);
                 None
             }
@@ -477,18 +634,30 @@ impl Session {
         }
     }
 
-    /// Report a frame received on air. Emits `CMD_STR_RECV` unless the
-    /// PHY is disabled or receive filtering rejects the frame.
-    /// Promiscuous mode bypasses filtering for live delivery only.
+    /// Report a frame received on air at `now_ms`. While a host is
+    /// attached, accepted frames are emitted live as `CMD_STR_RECV`
+    /// (promiscuous mode bypasses filtering for live delivery only);
+    /// while detached, accepted frames are placed in the inbound queue
+    /// instead. Ignored while the PHY is disabled.
     pub fn on_radio_rx(
         &mut self,
         data: &[u8],
         rssi_dbm: i16,
         snr_cb: i16,
         lqi: Option<core::num::NonZeroU8>,
+        now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) {
         if !self.device.settings.enabled || data.len() > usize::from(self.config.mtu) {
+            return;
+        }
+        if !self.attached {
+            // Detached operation: no protocol-defined duplicate
+            // detection applies until keys exist (`CAP_HOST_KEYS`), so
+            // every accepted frame occupies its own entry.
+            if self.host.accepts_frame(data) {
+                self.host.queue.push(data, rssi_dbm, snr_cb, lqi, now_ms);
+            }
             return;
         }
         if !self.session.promiscuous && !self.host.accepts_frame(data) {
@@ -575,6 +744,54 @@ impl Session {
         }
     }
 
+    /// Advance the drain started by [`Effect::DrainQueue`] one step,
+    /// emitting either the next covered frame (oldest first, as
+    /// `CMD_STR_RECV` with buffered metadata) or, once the covered set
+    /// is exhausted, the completion status. Returns `true` while
+    /// another call is needed; flush the transport between calls.
+    pub fn drain_step(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> bool {
+        let Some(drain) = &mut self.session.drain else {
+            return false;
+        };
+        if drain.remaining == 0 {
+            let tid = drain.tid;
+            self.session.drain = None;
+            self.send_status(tid, Status::OK, emit);
+            return false;
+        }
+        drain.remaining -= 1;
+        let Some(entry) = self.host.queue.pop_front() else {
+            // The covered set outliving the queue means state was reset
+            // mid-drain; complete rather than stall.
+            let tid = drain.tid;
+            self.session.drain = None;
+            self.send_status(tid, Status::OK, emit);
+            return false;
+        };
+        let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
+        let meta_len = BufferedRxMeta {
+            rx: RxMeta {
+                rssi_dbm: Some(entry.rssi_dbm),
+                lqi: entry.lqi,
+                snr_cb: Some(entry.snr_cb),
+            },
+            flags: RX_FLAG_BUFFERED | if entry.acked { RX_FLAG_ACKED } else { 0 },
+            age_s: u32::try_from(now_ms.saturating_sub(entry.rx_time_ms) / 1000)
+                .unwrap_or(u32::MAX),
+        }
+        .encode(&mut rx_meta)
+        .expect("buffer sized with WIRE_LEN");
+        if let Ok(len) = frame::str_recv(
+            &mut self.scratch,
+            stream::PHY_RAW,
+            entry.frame(),
+            &rx_meta[..meta_len],
+        ) {
+            emit(&self.scratch[..len]);
+        }
+        true
+    }
+
     /// Complete a deferred host replacement requested via
     /// [`Effect::WipeHostDomain`], quoting the same `tid`. On `Ok` the
     /// live host domain resets as one unit and the new key takes
@@ -591,10 +808,7 @@ impl Session {
         };
         match result {
             Ok(()) => {
-                self.host = HostDomain {
-                    key: pending.key,
-                    ..HostDomain::default()
-                };
+                self.host.reset(pending.key);
                 let value = pending.key.as_ref().map_or(&[][..], |key| &key[..]);
                 self.send_prop_is(tid, prop::HOST_KEY, value, emit);
             }
@@ -766,6 +980,9 @@ impl Session {
                 self.host.filters = FilterTable::parse_table(value)?;
                 Ok(false)
             }
+            // This NCP's queue size is fixed; adjustment is optional in
+            // the spec and unimplemented here.
+            prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
             // Known read-only properties.
             prop::LAST_STATUS
             | prop::PROTOCOL_VERSION
@@ -774,7 +991,9 @@ impl Session {
             | prop::CAPS
             | prop::PHY_RSSI
             | prop::PHY_MTU
-            | prop::PHY_DUTY_NOW => Err(Status::INVALID_ARGUMENT),
+            | prop::PHY_DUTY_NOW
+            | prop::HOST_RX_QUEUE_COUNT
+            | prop::HOST_RX_QUEUE_DROPPED => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -906,6 +1125,9 @@ impl Session {
                 | prop::MAC_PROMISCUOUS
                 | prop::HOST_KEY
                 | prop::HOST_RX_FILTERS
+                | prop::HOST_RX_QUEUE_COUNT
+                | prop::HOST_RX_QUEUE_CAPACITY
+                | prop::HOST_RX_QUEUE_DROPPED
         )
     }
 
@@ -933,6 +1155,7 @@ impl Session {
                     cap::DEV_NAME,
                     cap::PHY_LORA,
                     cap::HOST_FILTER,
+                    cap::HOST_RX_QUEUE,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -970,6 +1193,11 @@ impl Session {
                 Some(key) => put(out, key),
                 None => 0,
             },
+            prop::HOST_RX_QUEUE_COUNT => put(out, &(self.host.queue.len as u16).to_le_bytes()),
+            prop::HOST_RX_QUEUE_CAPACITY => {
+                put(out, &(RX_QUEUE_CAPACITY as u16).to_le_bytes())
+            }
+            prop::HOST_RX_QUEUE_DROPPED => put(out, &self.host.queue.dropped.to_le_bytes()),
             prop::HOST_RX_FILTERS => {
                 // Digest form equals item form; items carry PUI length
                 // prefixes in whole-table values.
@@ -1082,12 +1310,18 @@ fn valid_device_name(value: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    /// A session with a host attached (the normal state for command
+    /// dispatch and live-delivery tests). Queueing tests detach it.
     fn test_session() -> Session {
-        test_session_with_boot_status(Status::RESET_POWER_ON)
+        let mut session = test_session_with_boot_status(Status::RESET_POWER_ON);
+        session.attach();
+        session
     }
 
     fn test_session_with_boot_status(boot_status: Status) -> Session {
-        Session::new(test_config(), boot_status)
+        let mut session = Session::new(test_config(), boot_status);
+        session.attach();
+        session
     }
 
     fn test_config() -> SessionConfig {
@@ -1241,7 +1475,8 @@ mod tests {
                 cap::PHY_DUTY_LIMIT,
                 cap::DEV_NAME,
                 cap::PHY_LORA,
-                cap::HOST_FILTER
+                cap::HOST_FILTER,
+                cap::HOST_RX_QUEUE
             ]
         );
     }
@@ -1593,7 +1828,7 @@ mod tests {
         let mut session = test_session();
         enable(&mut session);
         let mut emitted = Vec::new();
-        session.on_radio_rx(&[1, 2, 3], -91, -53, None, &mut |bytes: &[u8]| {
+        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
         let parsed = Frame::parse(&emitted[0]).unwrap();
@@ -1610,10 +1845,18 @@ mod tests {
     fn radio_rx_suppressed_while_disabled() {
         let mut session = test_session();
         let mut emitted = Vec::new();
-        session.on_radio_rx(&[1, 2, 3], -91, -53, None, &mut |bytes: &[u8]| {
+        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
         assert!(emitted.is_empty());
+        // Nothing is queued either: the PHY is disabled.
+        session.detach();
+        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |_: &[u8]| {});
+        session.attach();
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_COUNT),
+            0u16.to_le_bytes()
+        );
     }
 
     #[test]
@@ -1653,8 +1896,7 @@ mod tests {
         let mut session = test_session();
         let mut buf = [0u8; 8];
         for encode in [
-            frame::queue_drain as fn(&mut [u8], u8) -> Result<usize, frame::WriteError>,
-            frame::save,
+            frame::save as fn(&mut [u8], u8) -> Result<usize, frame::WriteError>,
             frame::restore,
         ] {
             let len = encode(&mut buf, 3).unwrap();
@@ -1758,8 +2000,12 @@ mod tests {
 
     /// Feed a radio frame in and report whether it was delivered.
     fn delivered(session: &mut Session, frame: &[u8]) -> bool {
+        delivered_at(session, frame, 0)
+    }
+
+    fn delivered_at(session: &mut Session, frame: &[u8], now_ms: u64) -> bool {
         let mut emitted = Vec::new();
-        session.on_radio_rx(frame, -80, 40, None, &mut |bytes: &[u8]| {
+        session.on_radio_rx(frame, -80, 40, None, now_ms, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
         !emitted.is_empty()
@@ -2116,5 +2362,246 @@ mod tests {
         expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
         let (emitted, _) = remove_item(&mut session, prop::HOST_KEY, &[0; 32]);
         expect_status(&emitted[0], 6, Status::INVALID_ARGUMENT);
+    }
+
+    // ─── CAP_HOST_RX_QUEUE gate ──────────────────────────────────────
+
+    /// Feed a frame while detached at `now_ms` (asserting it is not
+    /// delivered live).
+    fn receive_detached(session: &mut Session, frame: &[u8], now_ms: u64) {
+        assert!(!delivered_at(session, frame, now_ms));
+    }
+
+    fn queue_count(session: &mut Session) -> u16 {
+        let raw = get(session, prop::HOST_RX_QUEUE_COUNT);
+        u16::from_le_bytes([raw[0], raw[1]])
+    }
+
+    /// Issue CMD_QUEUE_DRAIN and run it to completion, returning the
+    /// drained (frame, metadata) pairs. Asserts correct completion.
+    fn drain(session: &mut Session, now_ms: u64) -> Vec<(Vec<u8>, BufferedRxMeta)> {
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (emitted, effect) = dispatch(session, &buf[..len], now_ms);
+        if effect.is_none() {
+            // Empty queue: immediate success, nothing drained.
+            expect_status(&emitted[0], 7, Status::OK);
+            return Vec::new();
+        }
+        assert_eq!(effect, Some(Effect::DrainQueue));
+        assert!(emitted.is_empty());
+        let mut steps = Vec::new();
+        loop {
+            let mut emitted = Vec::new();
+            let more = session.drain_step(now_ms, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            assert_eq!(emitted.len(), 1, "each step emits exactly one frame");
+            if !more {
+                expect_status(&emitted[0], 7, Status::OK);
+                return steps;
+            }
+            let parsed = Frame::parse(&emitted[0]).unwrap();
+            assert_eq!(parsed.command(), Some(Cmd::StrRecv));
+            let payload = StreamPayload::parse(parsed.payload).unwrap();
+            steps.push((
+                payload.data.to_vec(),
+                BufferedRxMeta::decode(payload.metadata).unwrap(),
+            ));
+        }
+    }
+
+    #[test]
+    fn detached_receive_then_attach_count_drain() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        receive_detached(&mut session, &unicast_to([1, 2, 3]), 1_000);
+        receive_detached(&mut session, &broadcast_frame(), 3_000);
+
+        // Attach does not flush the queue; live delivery resumes while
+        // the backlog waits for an explicit drain.
+        session.attach();
+        assert_eq!(queue_count(&mut session), 2);
+        assert!(delivered(&mut session, &unicast_to([7, 7, 7])));
+        assert_eq!(queue_count(&mut session), 2);
+
+        let drained = drain(&mut session, 8_000);
+        assert_eq!(drained.len(), 2);
+        // Oldest first, with buffered metadata: flags, one-second age
+        // granularity, and the recorded RSSI/SNR.
+        assert_eq!(drained[0].0, unicast_to([1, 2, 3]));
+        assert_eq!(drained[1].0, broadcast_frame());
+        for (_, meta) in &drained {
+            assert_eq!(meta.flags, RX_FLAG_BUFFERED);
+            assert_eq!(meta.rx.rssi_dbm, Some(-80));
+            assert_eq!(meta.rx.snr_cb, Some(40));
+        }
+        assert_eq!((drained[0].1.age_s, drained[1].1.age_s), (7, 5));
+
+        assert_eq!(queue_count(&mut session), 0);
+        // Draining an empty queue succeeds immediately.
+        assert!(drain(&mut session, 9_000).is_empty());
+    }
+
+    #[test]
+    fn queue_overflow_evicts_oldest_and_counts_dropped() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        // Overfill by three: the queue keeps the most recent traffic.
+        for index in 0..(RX_QUEUE_CAPACITY + 3) as u8 {
+            receive_detached(&mut session, &unicast_to([index, 0, 0]), 0);
+        }
+        session.attach();
+        assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            3u32.to_le_bytes()
+        );
+        let drained = drain(&mut session, 0);
+        assert_eq!(drained[0].0, unicast_to([3, 0, 0]));
+        assert_eq!(
+            drained.last().unwrap().0,
+            unicast_to([(RX_QUEUE_CAPACITY + 2) as u8, 0, 0])
+        );
+    }
+
+    #[test]
+    fn queue_respects_receive_filtering() {
+        let mut session = test_session();
+        enable(&mut session);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_DEST_HINT, 0x11, 0x22, 0x33],
+        );
+        session.detach();
+        receive_detached(&mut session, &unicast_to([0x11, 0x22, 0x33]), 0);
+        receive_detached(&mut session, &unicast_to([4, 5, 6]), 0); // rejected
+        receive_detached(&mut session, &[0xFF, 0xFE], 0); // unparseable
+        session.attach();
+        assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
+    fn unauthenticated_duplicates_occupy_separate_entries() {
+        // No keys are provisioned before CAP_HOST_KEYS, so no
+        // protocol-defined duplicate detection applies.
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        let frame = unicast_to([1, 2, 3]);
+        receive_detached(&mut session, &frame, 0);
+        receive_detached(&mut session, &frame, 0);
+        session.attach();
+        assert_eq!(queue_count(&mut session), 2);
+    }
+
+    #[test]
+    fn live_arrivals_interleave_with_a_drain() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
+        receive_detached(&mut session, &unicast_to([2, 0, 0]), 0);
+        session.attach();
+
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 10_000);
+        assert_eq!(effect, Some(Effect::DrainQueue));
+
+        // First covered frame.
+        let mut emitted = Vec::new();
+        assert!(session.drain_step(10_000, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
+
+        // A live arrival mid-drain is delivered immediately and is not
+        // part of the covered set.
+        assert!(delivered_at(&mut session, &unicast_to([3, 0, 0]), 10_000));
+
+        // The drain still covers exactly the original two frames.
+        let mut frames = 0;
+        loop {
+            let mut emitted = Vec::new();
+            let more = session.drain_step(10_000, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+            if !more {
+                expect_status(&emitted[0], 7, Status::OK);
+                break;
+            }
+            frames += 1;
+        }
+        assert_eq!(frames, 1);
+        assert_eq!(queue_count(&mut session), 0);
+    }
+
+    #[test]
+    fn second_drain_while_in_progress_is_busy() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
+        session.attach();
+
+        let mut buf = [0u8; 4];
+        let len = frame::queue_drain(&mut buf, 7).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::DrainQueue));
+
+        let len = frame::queue_drain(&mut buf, 6).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 6, Status::BUSY);
+    }
+
+    #[test]
+    fn reset_and_host_replacement_discard_the_queue() {
+        let mut session = test_session();
+        enable(&mut session);
+        session.detach();
+        for _ in 0..(RX_QUEUE_CAPACITY + 1) {
+            receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
+        }
+        session.attach();
+        assert_ne!(queue_count(&mut session), 0);
+
+        // Host replacement discards the queue and its counters as part
+        // of the host domain.
+        install_host_key(&mut session, &[0xAA; 32]);
+        assert_eq!(queue_count(&mut session), 0);
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            0u32.to_le_bytes()
+        );
+
+        // CMD_RST does too. (Refill first; the host key now filters, so
+        // address the host.)
+        enable(&mut session);
+        session.detach();
+        receive_detached(&mut session, &unicast_to([0xAA, 0xAA, 0xAA]), 0);
+        session.attach();
+        assert_eq!(queue_count(&mut session), 1);
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert_eq!(queue_count(&mut session), 0);
+    }
+
+    #[test]
+    fn queue_properties_are_read_only_and_capacity_fixed() {
+        let mut session = test_session();
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_CAPACITY),
+            (RX_QUEUE_CAPACITY as u16).to_le_bytes()
+        );
+        for (key, status) in [
+            (prop::HOST_RX_QUEUE_COUNT, Status::INVALID_ARGUMENT),
+            (prop::HOST_RX_QUEUE_DROPPED, Status::INVALID_ARGUMENT),
+            (prop::HOST_RX_QUEUE_CAPACITY, Status::UNIMPLEMENTED),
+        ] {
+            let (emitted, effect) = set(&mut session, key, &0u16.to_le_bytes());
+            assert!(effect.is_none());
+            expect_status(&emitted[0], 2, status);
+        }
     }
 }

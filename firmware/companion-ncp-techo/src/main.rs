@@ -896,6 +896,7 @@ mod firmware {
             Some(Effect::SampleRssi { .. })
             | Some(Effect::SetPairingPin { .. })
             | Some(Effect::WipeHostDomain { .. })
+            | Some(Effect::DrainQueue)
             | None => {}
         }
     }
@@ -1912,6 +1913,22 @@ mod firmware {
                                 });
                                 emitter.flush(arbitration.destination()).await;
                             }
+                            Some(Effect::DrainQueue) => {
+                                // Deliver the covered frames one per
+                                // step, flushing between steps so the
+                                // two-slot emitter never overflows and
+                                // the transport applies backpressure.
+                                loop {
+                                    let more = session.drain_step(
+                                        Instant::now().as_millis(),
+                                        &mut |frame: &[u8]| emitter.push(frame),
+                                    );
+                                    emitter.flush(arbitration.destination()).await;
+                                    if !more {
+                                        break;
+                                    }
+                                }
+                            }
                             Some(Effect::WipeHostDomain { tid }) => {
                                 // No saved host-domain state exists until
                                 // CAP_SAVE lands, so the durable wipe
@@ -1942,6 +1959,7 @@ mod firmware {
                         info.rssi,
                         info.snr.as_centibels(),
                         info.lqi,
+                        Instant::now().as_millis(),
                         &mut |frame: &[u8]| emitter.push(frame),
                     );
                     emitter.flush(arbitration.destination()).await;
