@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
+            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4c32735f.js"></script>
@@ -352,7 +352,12 @@ not dominate MAC-layer timing budgets.</p>
 connectable and include the Companion Link Service UUID in its
 advertising data or scan response, so hosts can discover companion
 radios by service rather than by name. The advertised local name is
-implementation-specific.</p>
+implementation-specific unless the NCP advertises <code>CAP_DEV_NAME</code>. Such an NCP
+<strong>SHOULD</strong> use its current <code>PROP_DEV_NAME</code> as the advertised local name,
+shortening it without splitting a UTF-8 code point when the advertising or scan
+response payload cannot hold the complete value. A name changed while a BLE
+connection is active takes effect on the next advertising cycle; changing it
+does not require disconnecting the attached host.</p>
 <p>While a host is attached over another transport (for example, an open
 companion session over USB-CDC), the NCP <strong>SHOULD</strong> suspend
 advertising, and <strong>SHOULD</strong> resume it when that host detaches.</p>

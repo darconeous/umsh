@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_CHANNEL_NAME_LEN"],"enum":["ChannelNameError","CryptoError"],"mod":["software"],"struct":["CmacState","CryptoEngine","DerivedChannelKeys","PairwiseKeys","SharedSecret"],"trait":["AesCipher","AesProvider","NodeIdentity","Sha256Provider"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_CHANNEL_NAME_LEN"],"enum":["ChannelNameError","CryptoError"],"mod":["replay","software"],"struct":["CmacState","CryptoEngine","DerivedChannelKeys","PairwiseKeys","SharedSecret"],"trait":["AesCipher","AesProvider","NodeIdentity","Sha256Provider"]};

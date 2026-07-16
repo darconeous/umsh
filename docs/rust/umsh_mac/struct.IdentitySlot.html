@@ -19,7 +19,7 @@ either forwarding confirmation or a final transport ACK.</li>
 <p>UMSH uses a monotonic frame counter instead of a timestamp for replay protection.
 If the counter resets to a previously-seen value after a reboot, replayed old frames
 might be accepted. To prevent this, the coordinator “reserves” counter ranges by writing
-boundary values to the [<code>umsh_hal::CounterStore</code>] <em>before</em> using them. The slot tracks
+boundary values to the <a href="../umsh_hal/trait.CounterStore.html" title="trait umsh_hal::CounterStore"><code>umsh_hal::CounterStore</code></a> <em>before</em> using them. The slot tracks
 three values:</p>
 <ul>
 <li><code>frame_counter</code> — the live in-use value, advanced on every secured send.</li>

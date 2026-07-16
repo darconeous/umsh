@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
+            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4c32735f.js"></script>
@@ -252,7 +252,8 @@ the saved snapshot — see (#saved-state))</li>
 list ((#prop-dev-peers))</li>
 <li>the RF configuration (<code>PROP_PHY_*</code>), including <code>PROP_PHY_ENABLED</code>, and
 the duty-cycle limit</li>
-<li>device behavior settings (property identifiers 68–95, reserved for
+<li>the human-readable device name (<code>PROP_DEV_NAME</code>)</li>
+<li>device behavior settings (property identifiers 69–95, reserved for
 future definition: repeater policy, positioning, periodic advertisement
 of the device identity, and similar)</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
@@ -490,37 +491,36 @@ own reasons.</p>
 <p>The payload is the property identifier followed by the removed item in the
 property’s digest form.</p>
 <h3 id="cmd-queue-drain"><a class="header" href="#cmd-queue-drain">CMD 11: (Host -&gt; NCP) <code>CMD_QUEUE_DRAIN</code></a></h3>
-<pre><code>  0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |      CMD      | STREAM_KEY (PUI, 1-3 bytes) ...
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_QUEUE_DRAIN|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 </code></pre>
 <p>Figure: Structure of <code>CMD_QUEUE_DRAIN</code></p>
 <p>Deliver queued inbound frames. Commands the NCP to deliver every frame
-currently held in the inbound queue associated with the given stream (for
-this protocol, <code>STR_PHY_RAW</code>), oldest first, as ordinary <code>CMD_STR_RECV</code>
-commands carrying the buffered-frame metadata described in
-(#buffered-metadata).</p>
+currently held in the inbound queue (see (#inbound-queueing)), oldest
+first, as ordinary <code>CMD_STR_RECV</code> commands on <code>STR_PHY_RAW</code> carrying the
+buffered-frame metadata described in (#buffered-metadata). The command
+payload SHOULD be empty and MUST be ignored.</p>
 <p>Queued frames are <strong>only</strong> delivered in response to this command; attaching
 to the NCP does not by itself cause queued frames to be delivered (see
 (#inbound-queueing)). This lets the host finish synchronizing its session
 and signal that it is actually ready to process backlogged traffic.</p>
-<p>The command’s completion boundary is captured when the command is
-received: the frame at the tail of the queue at that moment is the last
-frame the command covers. If the command was sent with a non-zero TID, the
-NCP reports completion by emitting <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code>
-with <code>STATUS_OK</code> and the matching TID immediately after delivering that
-frame; frames arriving after the command was received <strong>MUST NOT</strong> delay
-the response. Draining an empty queue succeeds immediately.</p>
-<p>Frames that arrive while a drain is in progress are appended to the queue
-(they are not interleaved as live deliveries mid-drain) and continue to be
-delivered, with buffered metadata, after the response; live delivery
-resumes once the queue is empty.</p>
-<p>If the stream key does not identify a stream with an inbound queue, the
-command fails with <code>STATUS_PROP_NOT_FOUND</code>. If the NCP does not implement
-queueing (<code>CAP_HOST_RX_QUEUE</code> not advertised), the command fails with
-<code>STATUS_UNIMPLEMENTED</code>.</p>
+<p>The drain covers exactly the frames held in the queue when the command is
+received. Because accepted frames are always delivered live while a host
+is attached, the queue cannot grow while a drain is in progress: the drain
+always covers a fixed set of frames and always terminates. If the command
+was sent with a non-zero TID, the NCP reports completion by emitting
+<code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with <code>STATUS_OK</code> and the matching TID
+immediately after delivering the last covered frame. Draining an empty
+queue succeeds immediately.</p>
+<p>Frames that arrive while a drain is in progress are not part of it: they
+are delivered live, and MAY therefore interleave with the buffered
+deliveries. <code>RX_FLAG_BUFFERED</code> distinguishes the two, and UMSH does not
+guarantee in-order delivery in any case (see (#inbound-queueing)).</p>
+<p>If the NCP does not implement queueing (<code>CAP_HOST_RX_QUEUE</code> not
+advertised), the command fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
 accordingly to the status code for the error.</p>
 <h3 id="cmd-save"><a class="header" href="#cmd-save">CMD 12: (Host -&gt; NCP) <code>CMD_SAVE</code></a></h3>
@@ -707,6 +707,7 @@ host domain fully in effect and the new host key not installed.</li>
 <tr><td>65</td><td><code>PROP_DEV_PRIVATE_KEY</code></td><td>Set</td><td>Device identity private key (write-only)</td></tr>
 <tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
 <tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
+<tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
 <tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
 <tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
 <tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
@@ -836,6 +837,25 @@ secret material.</p>
 <p>How the device node uses this list (management access control, secure
 diagnostics, and so on) is application behavior outside the scope of this
 protocol.</p>
+<h3 id="prop-dev-name"><a class="header" href="#prop-dev-name">PROP 68: <code>PROP_DEV_NAME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_NAME</code></li>
+<li>Value Type: 1–64 octets of UTF-8, without U+0000</li>
+<li>Post-Reset Value: Implementation-defined default, or restored from saved state</li>
+</ul>
+<p>The operator-assigned, human-readable name of the physical companion-radio
+device. It is independent of the device and host cryptographic identities and
+<strong>MUST NOT</strong> be derived from a bonded host or other host-domain state.</p>
+<p>Setting the property changes the live name immediately. Like other ordinary
+device-domain configuration, it is included in a <code>CMD_SAVE</code> snapshot but is
+not independently persisted merely by being set. Applications and transports
+that present the device to a person <strong>SHOULD</strong> use this value when practical.
+They <strong>MAY</strong> shorten it to fit a constrained presentation, but <strong>MUST NOT</strong>
+split a UTF-8 code point when doing so.</p>
+<p>The name is intentionally public metadata. Operators should assume that any
+value used in discovery advertisements can be observed by nearby devices.</p>
 <h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -913,8 +933,11 @@ never derives these itself — it cannot, because it does not hold the host’s
 private key.</p>
 <p>As an exception to the usual <code>CMD_PROP_INSERT</code> duplicate rule, inserting an
 entry whose <code>PEER_PUBLIC_KEY</code> matches an existing entry replaces that
-entry. The digest form is the peer public key alone: <code>K_ENC</code> and <code>K_MIC</code>
-are never read back.</p>
+entry. Replacement updates only the stored key material: the peer’s replay
+baseline (see (#ack-delegation)) and any frames already queued from that
+peer are unaffected, since both are keyed by the peer’s identity rather
+than by the key values. The digest form is the peer public key alone:
+<code>K_ENC</code> and <code>K_MIC</code> are never read back.</p>
 <p>Provisioned peer keys let the NCP authenticate inbound unicast and blind
 unicast from those specific peers and acknowledge it on the host’s behalf
 (see (#ack-delegation)). They grant no capability regarding any other peer,
@@ -1051,11 +1074,13 @@ LQI, SNR), the time of reception, and whether the NCP acknowledged it (see
 the queue: frames queued while the host was away remain queued until the
 host issues <code>CMD_QUEUE_DRAIN</code> (see (#cmd-queue-drain)). Frames received
 after attach are therefore delivered live even while older frames remain
-queued. A host that wants to process the backlog first drains before
-processing live traffic; <code>RX_AGE</code> in the buffered-frame metadata gives
-coarse (one-second) relative timing but is not sufficient to reconstruct
-a strict total order — and UMSH itself does not guarantee in-order
-delivery in any case.</p>
+queued, and live deliveries MAY interleave with buffered deliveries during
+a drain (<code>RX_FLAG_BUFFERED</code> distinguishes them). A host that wants to
+process the backlog first drains promptly after attaching and MAY defer
+its processing of interleaved live deliveries; <code>RX_AGE</code> in the
+buffered-frame metadata gives coarse (one-second) relative timing but is
+not sufficient to reconstruct a strict total order — and UMSH itself does
+not guarantee in-order delivery in any case.</p>
 <p>The queue is <strong>circular</strong>: when a new frame is accepted and the queue is
 full, the oldest queued frame is discarded and the new frame is appended.
 The queue therefore always holds the most recent accepted traffic. Every
@@ -1275,6 +1300,7 @@ not indicate a problem.</dd>
 <tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><code>PROP_HOST_AUTO_ACK</code> and acknowledgement delegation</td></tr>
 <tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><code>CMD_SAVE</code>, <code>CMD_RESTORE</code>, <code>PROP_SAVED</code>, and boot-time restoration of saved state</td></tr>
 <tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
+<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
 </tbody>
 </table>
 </div>

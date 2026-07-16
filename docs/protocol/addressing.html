@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b1b21d55.js";
+            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4c32735f.js"></script>
@@ -176,14 +176,22 @@
                     <main>
                         <h1 id="addressing"><a class="header" href="#addressing">Addressing</a></h1>
 <p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
-<p>The sections below describe the three addressing forms used across the protocol: destination hints, router hints, and source addresses.</p>
-<h2 id="destination-hint"><a class="header" href="#destination-hint">Destination Hint</a></h2>
-<p>A <strong>destination hint</strong> is defined as:</p>
+<p>The sections below describe the three addressing forms used across the protocol: node hints, router hints, and source addresses.</p>
+<h2 id="presentation"><a class="header" href="#presentation">Presentation</a></h2>
+<p>UMSH addresses are canonically encoded and displayed using <a href="https://bitcoinwiki.org/wiki/base58">base 58</a>. Addresses may also be rendered using base 16 as 64 hexadecimal digits — lowercase preferred, either case accepted when parsing — but the preferred encoding is base58. The two forms are unambiguously distinguished by length.</p>
+<p>The base58 encoding is fixed-length: a 32-byte address always renders as exactly 44 digits, left-padded with <code>1</code> (the base58 zero digit) when its numeric value would otherwise encode shorter.</p>
+<h2 id="node-hint"><a class="header" href="#node-hint">Node Hint</a></h2>
+<p>A <strong>node hint</strong> is defined as:</p>
 <ul>
-<li>the <strong>first three bytes of the destination node’s 32-byte public key</strong></li>
+<li>the <strong>first three bytes of a node’s 32-byte public key</strong></li>
 </ul>
-<p>This hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.</p>
+<p>Node hints serve as the destination hint in unicast packets and as the compact source hint in source addresses (see below). A node hint is not authoritative and is used only as a fast prefilter to avoid unnecessary cryptographic work.</p>
 <p>A receiver that sees a matching destination hint must still confirm that it is the intended destination by successfully processing the packet cryptographically.</p>
+<h3 id="rendering-node-hints"><a class="header" href="#rendering-node-hints">Rendering Node Hints</a></h3>
+<p>Rendering a node hint to the user is a little tricky due to the fact that <em>most</em> node hints can be rendered as just the first four characters of the encoded public key. In these cases, we would simply take our node hint, append 29 zeros, perform the base 58 encoding, and just drop everything except the first four characters.</p>
+<p>However, in some cases when using this method, the fourth character may differ from the fourth character in the actual address. This is highly undesirable.</p>
+<p>One way to address this is to perform two base58 encodings: one padded with 0x00 and one padded with 0xFF. If the fourth encoded character is the same between them both, then four characters can be used as the rendered node hint. However, if the encodings differ, the rendered hint is the longest common prefix of the two encodings followed by a single <code>*</code>. The common prefix is three characters except in the rare case where a carry propagates into the third digit, leaving two verified characters. Every character preceding the <code>*</code> is guaranteed to match the full base58 rendering of any matching address.</p>
+<p>Note that there are more efficient ways of calculating this than padding with 0x00 and 0xFF and encoding the whole address twice, but logically that is the process.</p>
 <h2 id="router-hint"><a class="header" href="#router-hint">Router Hint</a></h2>
 <p>A <strong>router hint</strong> is defined as:</p>
 <ul>
@@ -195,6 +203,8 @@
 <li>trace-route options</li>
 </ul>
 <p>Because router hints are only 2 bytes, collisions are possible in dense networks but are handled gracefully: the MIC-based duplicate suppression ensures that each repeater forwards a given packet at most once, so a router hint collision causes a spurious forward but not a loop or incorrect delivery.</p>
+<h3 id="rendering-router-hints"><a class="header" href="#rendering-router-hints">Rendering Router Hints</a></h3>
+<p>Router hints are rendered using the same procedure as node hints, with a three-character budget and 30 bytes of padding. Because two bytes pin down only slightly more than two base58 digits, the third character is ambiguous for most router hints; the two-characters-plus-<code>*</code> form is the common case.</p>
 <h2 id="source-address"><a class="header" href="#source-address">Source Address</a></h2>
 <p>A source address in a packet is either:</p>
 <ul>
