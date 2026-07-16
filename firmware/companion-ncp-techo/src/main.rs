@@ -64,6 +64,7 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 mod ble_security;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
+mod proto_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod transport_policy;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -93,6 +94,7 @@ mod defmt_logger {
 mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
     use super::ble_store::{self, Snapshot, StoredBond};
+    use super::proto_store;
     use super::transport_policy::{SessionArbitration, Transport, generation_checked};
     use super::ui::UiNotice;
     #[cfg(not(feature = "t1000e"))]
@@ -309,9 +311,12 @@ mod firmware {
     type NcpSender = embassy_usb::class::cdc_acm::Sender<'static, NcpUsbDriver>;
     type NcpRescue = CdcAcmRescue<'static, NcpUsbDriver>;
     type BleStoreMutex = Mutex<ThreadModeRawMutex, BleStore>;
+    /// The one MPSL-coordinated flash driver, shared between the BLE
+    /// bond/PIN journal and the protocol snapshot journal.
+    type SharedFlash = Mutex<ThreadModeRawMutex, nrf_mpsl::Flash<'static>>;
 
     struct BleStore {
-        flash: nrf_mpsl::Flash<'static>,
+        flash: &'static SharedFlash,
         snapshot: Snapshot,
         slot: Option<u32>,
     }
@@ -347,8 +352,87 @@ mod firmware {
         }
     }
 
+    /// Scan a two-page journal's slot range for a fully erased slot.
+    fn erased_journal_slot(
+        flash: &mut nrf_mpsl::Flash<'static>,
+        start: u32,
+        end: u32,
+        slot_size: usize,
+    ) -> Option<u32> {
+        let mut address = start;
+        while address < end {
+            let mut erased = true;
+            let mut offset = 0usize;
+            while offset < slot_size {
+                let mut chunk = [0u8; 256];
+                let take = (slot_size - offset).min(chunk.len());
+                match flash.read(address + offset as u32, &mut chunk[..take]) {
+                    Ok(()) if chunk[..take].iter().all(|byte| *byte == 0xff) => {}
+                    Ok(()) => {
+                        erased = false;
+                        break;
+                    }
+                    Err(_) => {
+                        debug_log(format_args!(
+                            "store erased-slot read=FAILED address=0x{address:06x}"
+                        ));
+                        erased = false;
+                        break;
+                    }
+                }
+                offset += take;
+            }
+            if erased {
+                return Some(address);
+            }
+            address += slot_size as u32;
+        }
+        None
+    }
+
+    /// Pick the write target for a two-page rotating journal starting at
+    /// `page0`: the next erased slot after the current record, or the
+    /// opposite page after erasing it.
+    async fn journal_write_target(
+        flash: &mut nrf_mpsl::Flash<'static>,
+        current: Option<u32>,
+        page0: u32,
+        slot_size: usize,
+    ) -> Result<u32, ()> {
+        let page1 = page0 + ble_store::PAGE_SIZE;
+        let target = if let Some(current) = current {
+            let page = if current < page1 { page0 } else { page1 };
+            erased_journal_slot(
+                flash,
+                current + slot_size as u32,
+                page + ble_store::PAGE_SIZE,
+                slot_size,
+            )
+        } else {
+            erased_journal_slot(flash, page0, page0 + ble_store::PAGE_SIZE, slot_size)
+        };
+        match target {
+            Some(target) => Ok(target),
+            None => {
+                let page = if current.is_some_and(|slot| slot < page1) {
+                    page1
+                } else {
+                    page0
+                };
+                debug_log(format_args!("store erase begin page=0x{page:06x}"));
+                if ble_store::erase_journal_page(flash, page).await.is_err() {
+                    debug_log(format_args!("store erase=FAILED page=0x{page:06x}"));
+                    return Err(());
+                }
+                debug_log(format_args!("store erase=ok page=0x{page:06x}"));
+                Ok(page)
+            }
+        }
+    }
+
     impl BleStore {
-        fn mount(mut flash: nrf_mpsl::Flash<'static>) -> Self {
+        async fn mount(shared: &'static SharedFlash) -> Self {
+            let mut flash = shared.lock().await;
             let mut latest: Option<(u32, Snapshot)> = None;
             let mut read_failures = 0u8;
             let mut valid_records = 0u8;
@@ -380,8 +464,9 @@ mod firmware {
                 snapshot.pin.is_some(),
                 snapshot.local_irk.is_some(),
             ));
+            drop(flash);
             Self {
-                flash,
+                flash: shared,
                 snapshot,
                 slot,
             }
@@ -391,64 +476,23 @@ mod firmware {
             &self.snapshot
         }
 
-        fn erased_slot(&mut self, start: u32, end: u32) -> Option<u32> {
-            let mut address = start;
-            while address < end {
-                let mut bytes = [0u8; ble_store::SLOT_SIZE];
-                match self.flash.read(address, &mut bytes) {
-                    Ok(()) if bytes.iter().all(|byte| *byte == 0xff) => return Some(address),
-                    Ok(()) => {}
-                    Err(_) => debug_log(format_args!(
-                        "store erased-slot read=FAILED address=0x{address:06x}"
-                    )),
-                }
-                address += ble_store::SLOT_SIZE as u32;
-            }
-            None
-        }
-
         async fn persist(&mut self, mut snapshot: Snapshot) -> Result<(), ()> {
             snapshot.generation = self.snapshot.generation.wrapping_add(1);
-            let target = if let Some(current) = self.slot {
-                let page = if current < ble_store::PAGE1 {
-                    ble_store::PAGE0
-                } else {
-                    ble_store::PAGE1
-                };
-                self.erased_slot(
-                    current + ble_store::SLOT_SIZE as u32,
-                    page + ble_store::PAGE_SIZE,
-                )
-            } else {
-                self.erased_slot(ble_store::PAGE0, ble_store::PAGE0 + ble_store::PAGE_SIZE)
-            };
-            let target = match target {
-                Some(target) => target,
-                None => {
-                    let page = if self.slot.is_some_and(|slot| slot < ble_store::PAGE1) {
-                        ble_store::PAGE1
-                    } else {
-                        ble_store::PAGE0
-                    };
-                    debug_log(format_args!("store erase begin page=0x{page:06x}"));
-                    if ble_store::erase_journal_page(&mut self.flash, page)
-                        .await
-                        .is_err()
-                    {
-                        debug_log(format_args!("store erase=FAILED page=0x{page:06x}"));
-                        return Err(());
-                    }
-                    debug_log(format_args!("store erase=ok page=0x{page:06x}"));
-                    page
-                }
-            };
+            let mut flash = self.flash.lock().await;
+            let target = journal_write_target(
+                &mut flash,
+                self.slot,
+                ble_store::PAGE0,
+                ble_store::SLOT_SIZE,
+            )
+            .await?;
 
             let bytes = snapshot.encode();
             debug_log(format_args!(
                 "store body-write begin generation={} target=0x{target:06x}",
                 snapshot.generation
             ));
-            match ble_store::write_committed_record(&mut self.flash, target, &bytes).await {
+            match ble_store::write_committed_record(&mut *flash, target, &bytes).await {
                 Ok(()) => debug_log(format_args!(
                     "store body-write=ok commit-write=ok target=0x{target:06x}"
                 )),
@@ -514,6 +558,120 @@ mod firmware {
             next.generation = self.snapshot.generation;
             next.local_irk = self.snapshot.local_irk;
             self.persist(next).await
+        }
+    }
+
+    /// The stored protocol snapshot payload as read at boot.
+    type BootSnapshot = heapless::Vec<u8, { proto_store::MAX_PAYLOAD }>;
+
+    /// Runtime handle for the full-protocol snapshot journal
+    /// (`proto_store`). Executes the session's SaveSnapshot/ClearSaved/
+    /// WipeHostDomain durable effects; the session's RAM mirror is only
+    /// updated through the respond_* completions after these return.
+    #[cfg(not(feature = "no-ble"))]
+    struct ProtoStore {
+        flash: &'static SharedFlash,
+        generation: u32,
+        slot: Option<u32>,
+    }
+
+    #[cfg(not(feature = "no-ble"))]
+    impl ProtoStore {
+        async fn mount(shared: &'static SharedFlash) -> (Self, Option<BootSnapshot>) {
+            let mut flash = shared.lock().await;
+            let mut latest: Option<(u32, proto_store::Record)> = None;
+            for page in [proto_store::PAGE0, proto_store::PAGE1] {
+                let mut address = page;
+                while address < page + proto_store::PAGE_SIZE {
+                    let mut bytes = [0u8; proto_store::SLOT_SIZE];
+                    if flash.read(address, &mut bytes).is_ok() {
+                        latest = proto_store::consider_record(latest, address, &bytes);
+                    }
+                    address += proto_store::SLOT_SIZE as u32;
+                }
+            }
+            drop(flash);
+            let (slot, generation, payload) = match latest {
+                Some((slot, record)) => (Some(slot), record.generation, Some(record.payload)),
+                None => (None, 0, None),
+            };
+            debug_log(format_args!(
+                "proto-store mount slot={:?} generation={} payload={}",
+                slot,
+                generation,
+                payload.as_ref().map_or(0, |payload| payload.len()),
+            ));
+            (
+                Self {
+                    flash: shared,
+                    generation,
+                    slot,
+                },
+                payload,
+            )
+        }
+
+        async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
+            let mut record = proto_store::Record {
+                generation: self.generation.wrapping_add(1),
+                payload: heapless::Vec::new(),
+            };
+            record.payload.extend_from_slice(payload).map_err(|_| ())?;
+            let mut flash = self.flash.lock().await;
+            let target = journal_write_target(
+                &mut flash,
+                self.slot,
+                proto_store::PAGE0,
+                proto_store::SLOT_SIZE,
+            )
+            .await?;
+            match proto_store::write_record(&mut *flash, target, &record).await {
+                Ok(()) => {
+                    debug_log(format_args!(
+                        "proto-store commit generation={} slot=0x{target:06x} len={}",
+                        record.generation,
+                        record.payload.len(),
+                    ));
+                    self.generation = record.generation;
+                    self.slot = Some(target);
+                    Ok(())
+                }
+                Err(_) => {
+                    debug_log(format_args!(
+                        "proto-store write=FAILED target=0x{target:06x}"
+                    ));
+                    Err(())
+                }
+            }
+        }
+
+        async fn clear(&mut self) -> Result<(), ()> {
+            let mut flash = self.flash.lock().await;
+            for page in [proto_store::PAGE0, proto_store::PAGE1] {
+                if proto_store::erase_page(&mut *flash, page).await.is_err() {
+                    debug_log(format_args!("proto-store clear=FAILED page=0x{page:06x}"));
+                    return Err(());
+                }
+            }
+            debug_log(format_args!("proto-store clear=ok"));
+            self.slot = None;
+            Ok(())
+        }
+    }
+
+    /// The no-ble diagnostic image has no MPSL flash driver; durable
+    /// protocol state is unavailable and saves fail honestly.
+    #[cfg(feature = "no-ble")]
+    struct ProtoStore;
+
+    #[cfg(feature = "no-ble")]
+    impl ProtoStore {
+        async fn persist(&mut self, _payload: &[u8]) -> Result<(), ()> {
+            Err(())
+        }
+
+        async fn clear(&mut self) -> Result<(), ()> {
+            Err(())
         }
     }
 
@@ -904,6 +1062,8 @@ mod firmware {
             | Some(Effect::SetPairingPin { .. })
             | Some(Effect::WipeHostDomain { .. })
             | Some(Effect::DrainQueue)
+            | Some(Effect::SaveSnapshot { .. })
+            | Some(Effect::ClearSaved { .. })
             | None => {}
         }
     }
@@ -1855,7 +2015,11 @@ mod firmware {
     /// radio receptions, and transmit completions into session calls and
     /// executes the resulting radio effects.
     #[embassy_executor::task]
-    async fn ncp_task(boot_reason: Status) {
+    async fn ncp_task(
+        boot_reason: Status,
+        mut proto_store: ProtoStore,
+        boot_snapshot: Option<BootSnapshot>,
+    ) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
         let mut session = Session::new(
@@ -1865,6 +2029,19 @@ mod firmware {
         );
         let mut emitter = Emitter::new();
         let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
+
+        // Restore a stored snapshot before processing any host command:
+        // the saved configuration is applied, the PHY re-enabled if it
+        // was enabled when saved, and detached operation begins
+        // immediately. A snapshot that fails to decode is ignored.
+        if let Some(payload) = boot_snapshot {
+            let effect = session.restore_at_boot(&payload);
+            debug_log(format_args!(
+                "proto-store boot-restore={}",
+                if effect.is_some() { "ok" } else { "IGNORED" }
+            ));
+            apply_effect(&session, effect).await;
+        }
 
         loop {
             // Only wait for a TX completion while one is outstanding,
@@ -1945,11 +2122,34 @@ mod firmware {
                                 }
                             }
                             Some(Effect::WipeHostDomain { tid }) => {
-                                // No saved host-domain state exists until
-                                // CAP_SAVE lands, so the durable wipe
-                                // required by host replacement succeeds
-                                // trivially.
-                                session.respond_host_wipe(tid, Ok(()), &mut |frame: &[u8]| {
+                                // Durably wipe the host-domain portion of
+                                // any saved snapshot before the new host
+                                // key takes effect; with nothing saved the
+                                // wipe is trivially satisfied.
+                                let mut buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
+                                let result = match session.encode_wiped_snapshot(&mut buf) {
+                                    Some(len) => proto_store.persist(&buf[..len]).await,
+                                    None => Ok(()),
+                                };
+                                session.respond_host_wipe(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination()).await;
+                            }
+                            Some(Effect::SaveSnapshot { tid }) => {
+                                let mut buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
+                                let result = match session.encode_snapshot(&mut buf) {
+                                    Some(len) => proto_store.persist(&buf[..len]).await,
+                                    None => Err(()),
+                                };
+                                session.respond_save(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination()).await;
+                            }
+                            Some(Effect::ClearSaved { tid }) => {
+                                let result = proto_store.clear().await;
+                                session.respond_clear(tid, result, &mut |frame: &[u8]| {
                                     emitter.push(frame)
                                 });
                                 emitter.flush(arbitration.destination()).await;
@@ -2718,7 +2918,7 @@ mod firmware {
         #[cfg(not(feature = "no-ble"))]
         let mut sdc_memory = sdc::Mem::<8192>::new();
         #[cfg(not(feature = "no-ble"))]
-        let (controller, ble_store) = {
+        let (controller, ble_store, proto_store, boot_snapshot) = {
         let mpsl_peripherals =
             mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
         let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -2741,7 +2941,13 @@ mod firmware {
         );
         spawner.spawn(mpsl_task(mpsl).unwrap());
         super::panic::breadcrumb_mark(5);
-        let mut ble_store = BleStore::mount(nrf_mpsl::Flash::take(mpsl, p.NVMC));
+        static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
+        let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
+        let mut ble_store = BleStore::mount(flash).await;
+        // Mount the protocol snapshot journal before the NCP session
+        // starts: a stored snapshot must be restored and the PHY
+        // re-applied before the first host command.
+        let (proto_store, boot_snapshot) = ProtoStore::mount(flash).await;
 
         // Deliberate recovery image for hardware testing. This runs before the
         // Trouble host is constructed, so there is no live bond table to keep
@@ -2798,8 +3004,10 @@ mod firmware {
         let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
             .unwrap_or_else(|_| panic!("sdc init"));
         super::panic::breadcrumb_mark(7);
-        (controller, ble_store)
+        (controller, ble_store, proto_store, boot_snapshot)
         };
+        #[cfg(feature = "no-ble")]
+        let (proto_store, boot_snapshot): (ProtoStore, Option<BootSnapshot>) = (ProtoStore, None);
 
         // ── USB stack ────────────────────────────────────────────────────────
         // HardwareVbusDetect cannot share POWER with MPSL. This tethered NCP
@@ -2847,7 +3055,7 @@ mod firmware {
 
         spawner.spawn(output_task(tx, wdt_report).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
-        spawner.spawn(ncp_task(boot_reason).unwrap());
+        spawner.spawn(ncp_task(boot_reason, proto_store, boot_snapshot).unwrap());
         super::panic::breadcrumb_mark(8);
 
         // The touch button only controls the e-paper backlight. Menu input is

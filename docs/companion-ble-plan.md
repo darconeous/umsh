@@ -697,21 +697,79 @@ suite passes and both boards build. `CAP_HOST_AUTO_ACK` is advertised —
 the full-protocol capability set is now
 FILTER/RX_QUEUE/KEYS/AUTO_ACK.
 
+### Increment 6 — complete (2026-07-16)
+
+`CAP_SAVE` is implemented and advertised. Session side:
+
+* `SavedState` is the RAM mirror of the durable snapshot — the saveable
+  subset of both domains (RF config including the PHY enable state,
+  duty limit, device name, host key, filters, channel keys, peer key
+  material, auto-ACK) and deliberately never the queue, the replay
+  baselines, or the device identity. A versioned fixed-order wire codec
+  (`SNAPSHOT_MAX` = 1024) round-trips it; channel identifiers are
+  re-derived on decode rather than trusted from storage, and any
+  structural defect (bad version, truncation, out-of-range counts,
+  trailing bytes) rejects the whole snapshot so the NCP boots as if
+  nothing were saved.
+* `CMD_SAVE` → `Effect::SaveSnapshot` (bytes from `encode_snapshot`);
+  `CMD_CLEAR` → `Effect::ClearSaved`; both complete through
+  `respond_save`/`respond_clear` and report success only after the
+  durable operation commits — a failure leaves the previous snapshot
+  and `PROP_SAVED` untouched. `CMD_RST` post-reset values now come from
+  the snapshot when one exists (the PHY comes back configured and
+  enabled); factory defaults require `CMD_CLEAR` + `CMD_RST`.
+* `CMD_RESTORE` implements the spec's reset reporting form: the revert
+  applies in place, session state resets, and an unsolicited
+  `STATUS_RESET_RESTORED` announces completion. Queue contents and
+  per-peer replay baselines survive a same-host restore (windows are
+  transplanted by peer identity); a snapshot naming a different host
+  key applies the host-replacement rule as part of the revert. No
+  snapshot → `STATUS_INVALID_STATE`, nothing modified.
+* Host replacement's durable wipe is now real: the firmware persists
+  `encode_wiped_snapshot` (saved device domain + defaulted host domain)
+  before `respond_host_wipe(Ok)` installs the new key, and the RAM
+  mirror wipes with it — a power cycle cannot resurrect the previous
+  host's provisioning, verified by booting a fresh session from the
+  wiped bytes.
+
+Firmware side: the snapshot journal (`proto_store`) lives in the two
+4 KB pages after the BLE store's (0x000E_6000..0x000E_8000, inside the
+NV region both boards share), with 2048-byte slots — MAGIC `UPRS`,
+generation, length-prefixed opaque payload, CRC, and a trailing commit
+word written last, reusing `ble_store`'s record machinery (its
+committed-write helper is now generic over slot size). The single
+MPSL-coordinated flash driver moved into a shared async mutex so the
+BLE store and the NCP task can both reach it; the two-page rotation
+logic was factored out and shared. The journal is mounted at boot
+before the NCP session starts, and `restore_at_boot` applies the saved
+configuration — re-enabling the PHY and beginning detached
+filtering/queueing/delegation — before the first host command. The
+`no-ble` diagnostic image has no MPSL flash driver: saves and clears
+fail honestly there.
+
+Gate: 81 session tests (codec round trip through a fresh boot, save
+rollback, `PROP_SAVED`, reset-from-snapshot including the PHY enable
+state, factory reset via clear+reset, restore preserving queue and
+baselines, restore-as-host-replacement, wiped-snapshot semantics) and
+27 firmware host tests including a byte-boundary power-cut sweep over
+the whole record write — every cut point mounts the complete old
+record. Both boards and the no-ble variant build.
+
 ### What the next agent should do first
 
-Start increment 6 (`CAP_SAVE`): design the full-protocol snapshot
-journal separately from the BLE bond/PIN journal, allocate its flash
-region explicitly on both boards, and implement `CMD_SAVE`/
-`CMD_RESTORE`/`CMD_CLEAR`/`PROP_SAVED` plus boot restoration before the
-first host command (see increment 6 above for the exact snapshot
-contents and rollback rules). Reuse the existing sequential-storage
-mock-flash and byte-boundary power-cut testing approach from the BLE
-store. Note the session already has the deferred-effect pattern
-(`WipeHostDomain`) that host replacement's durable wipe will now
-actually need to exercise, and `CMD_RST`'s post-reset values must start
-coming from the snapshot when one exists. This increment is the first
-whose firmware side needs real flash plumbing; the session-side state
-machine and both reporting forms of `CMD_RESTORE` remain host-testable.
+Start increment 7 (`CAP_DEV_IDENTITY`): on-device identity generation
+and private-key installation (`PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`),
+device channel keys and device peers, with the identity persisted
+immediately and independently of snapshots — `CMD_RESTORE` can never
+resurrect an older identity, and `CMD_CLEAR` (which already erases the
+proto journal) must also erase it. Private and symmetric keys are
+write-only behind the existing secure-transport gate. Identity
+generation needs the hardware TRNG (`Nrf52840Rng`) — mind the
+[[no-non-crypto-rng]] rule — and `SoftwareIdentity::generate` from
+umsh-crypto's software module for the key math. Do not expand into
+repeater/autonomous application behavior; the spec deliberately defers
+that. Increment 8 (provisioning workflow + adapter-free integration
+tests) follows.
 
 ## BLE transport closure work — parallel, not a full-protocol prerequisite
 

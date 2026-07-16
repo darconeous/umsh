@@ -187,22 +187,25 @@ pub enum CommitError<E> {
     Commit(E),
 }
 
-/// Write a snapshot body first and its visibility marker last.
+/// Write a record body first and its visibility marker last. The
+/// record's last four bytes are the commit word (shared journal
+/// convention with `proto_store`).
 ///
 /// The caller must not publish the corresponding in-RAM snapshot until this
 /// returns `Ok(())`. A mount ignores either failure shape because the commit
 /// word remains incomplete.
-pub async fn write_committed_record<W: RecordWriter>(
+pub async fn write_committed_record<W: RecordWriter, const SLOT: usize>(
     writer: &mut W,
     target: u32,
-    bytes: &[u8; SLOT_SIZE],
+    bytes: &[u8; SLOT],
 ) -> Result<(), CommitError<W::Error>> {
+    let commit_offset = SLOT - 4;
     writer
-        .write_record(target, &bytes[..COMMIT_OFFSET])
+        .write_record(target, &bytes[..commit_offset])
         .await
         .map_err(CommitError::Body)?;
     writer
-        .write_record(target + COMMIT_OFFSET as u32, &[0; 4])
+        .write_record(target + commit_offset as u32, &[0; 4])
         .await
         .map_err(CommitError::Commit)
 }
@@ -211,7 +214,7 @@ pub async fn erase_journal_page<E: PageEraser>(eraser: &mut E, page: u32) -> Res
     eraser.erase_page(page, page + PAGE_SIZE).await
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
+pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for &byte in bytes {
         crc ^= u32::from(byte);
