@@ -3,7 +3,7 @@
 *Drafted 2026-07-13. Phase measurements and the license check are
 recorded inline as phases complete.*
 
-## Implementation status — 2026-07-14
+## Implementation status — 2026-07-15
 
 Phases A, B, C, and the implementation portion of D are now present.
 The workspace is on `embassy-nrf` 0.11 / `embassy-sync` 0.8. Trouble
@@ -194,8 +194,8 @@ Link service as `UMSH T-1000E NCP`, accepts a configured passkey, completes the
 protected Frame-Out subscription and companion reset/property handshake over
 BLE, reports a successful durable commit for the resulting bond, reconnects
 without another pairing exchange, and continues reconnecting in the same boot
-after the temporary passkey is
-cleared. Persistence reported success, but restoration across a T-1000E reboot
+after the temporary passkey is cleared. Persistence reported success, but
+restoration across a T-1000E reboot
 remains unverified because further startup testing was deferred. A live
 `umsh-capture` session configured the LR1110 at 910.525 MHz / SF7 / BW62.5 kHz /
 CR4/5 and completed an idle RSSI health probe over BLE (`link=ok`, -119 dBm).
@@ -203,18 +203,378 @@ The USB attach/detach arbitration also behaved as specified; on macOS the
 serial client may leave DTR asserted after process exit, in which case an
 explicit 115200-baud DTR drop is required before BLE advertising resumes.
 
-One startup defect remains open. The first boot after some DFU updates held the
-initial buzzer tone for approximately one watchdog interval, then reset and
-played the normal startup chirp; the companion reset status subsequently
-reported `RESET_WATCHDOG`. The source now forces the buzzer PWM and enable pins
-low immediately after GPIO initialization and starts watchdog servicing before
-radio, flash, MPSL, and BLE initialization, while retaining the intentional
-short power-on chirp after the buzzer task starts. That watchdog-ordering
-revision builds for both boards but has deliberately not been reflashed after
-the operator chose to defer further startup-audio iteration. Forced pairing on
-the startup-held gesture therefore remains implemented but hardware-unverified.
+The post-DFU first-boot freeze (the "8-second startup beep") is **root-caused
+and fixed (2026-07-15)**. The bootloader's DFU USB stack enables the `POWER`
+`USBDETECTED`/`USBREMOVED`/`USBPWRRDY` interrupt sources (`INTEN` bits
+7–9 = 0x380), and `POWER` lives in the always-on domain, so the enable
+survives the activation soft reset into the application. With VBUS present the
+corresponding events latch after boot; once MPSL initializes it owns the
+shared `CLOCK_POWER` vector but services only CLOCK events, so the pending
+POWER USB event re-enters `MPSL_IRQ_CLOCK_Handler` forever at that interrupt
+priority. Thread mode and embassy-time starve — the power-on chirp's first
+PWM note latches on, heartbeat pets stop — and the 8 s watchdog is the only
+thing that survives to reset the device. This is why the freeze required the
+BLE image (the `no-ble` diagnostic build never enables that vector and booted
+clean over the identical DFU chain), only followed DFU (a normal bootloader
+fast-path boot never initializes its USB stack), and was immune to the earlier
+pin-silencing/early-heartbeat fix. The fix in the shared firmware main
+disarms the inherited `POWER` USB interrupt enables and pending events
+immediately after the `RESETREAS` capture, before MPSL takes the vector; it
+was verified over repeated 1200-touch → serial-DFU cycles on the T-1000E
+(first boot now chirps and attaches immediately). **The T-Echo runs the same
+bootloader and MPSL stack and gets the same fix automatically via the shared
+main; on it the symptom would have been a silent post-DFU watchdog reboot
+(no buzzer), easy to miss.**
 
-### Remaining work — prioritized
+Diagnosis evidence and remaining caveats: the freeze was localized with
+retained-RAM instrumentation still present in the tree — boot-stage
+breadcrumbs and a heartbeat counter, a WDT TIMEOUT-interrupt exception-frame
+capture (the nRF52840 fires the WDT interrupt ~61 µs before the reset), and a
+1 kHz TIMER2 PC-sampling ring whose contents are dumped as ASCII over the
+first DTR-gated USB connect and were symbolized to `MPSL_IRQ_CLOCK_Handler`.
+The compact diagnostic `PROP_NCP_VERSION` string currently carries
+crumb/beats/RESETREAS/ring fields in place of the SHA and bond count. This
+instrumentation is temporary and should be stripped (or feature-gated) before
+the next release-quality image. Note also that `RESETREAS.DOG` observed after
+a DFU cycle is expected noise: the *previous* image's still-running watchdog
+legitimately expires inside the bootloader window between DFU entry and the
+transfer, so a post-DFU `RESET_WATCHDOG` boot status alone does not indicate
+an application freeze. Forced pairing on the startup-held gesture remains
+implemented but hardware-unverified.
+
+## Full-protocol handoff — current position and next work
+
+The BLE transport is no longer the primary implementation blocker. Both the
+T-Echo and T-1000E now run the same host-tested NCP session engine over USB and
+encrypted BLE GATT/SAR, and a desktop host can configure the PHY, transmit,
+receive, capture, reconnect, and inspect the companion frame exchange. What is
+working today is the **minimal** companion-radio protocol plus the independently
+persisted BLE pairing PIN and `PROP_DEV_NAME`. It remains a raw radio pipe: the
+host owns the UMSH MAC and must be attached to receive traffic or generate MAC
+acknowledgements.
+
+The normative target for the next development is
+[Full Companion Radio Protocol](protocol/src/companion-radio-full.md). The full
+protocol keeps the host as MAC owner but adds filtering, detached inbound
+queueing, delegated acknowledgements, key provisioning, a device identity, and
+explicit saved-state snapshots. These features are not implemented merely by
+having a reliable BLE bearer.
+
+### Exact implementation state
+
+* `crates/umsh-companion` currently defines the minimal command grammar,
+  minimal properties/capabilities, GATT UUIDs/SAR, HDLC framing, and
+  `PROP_DEV_NAME`. It does **not** yet define the full commands, properties,
+  capabilities, table item encodings, or full-protocol status codes.
+* `crates/umsh-companion-ncp::Session` is the framing-free, host-tested NCP
+  engine used by both firmware targets. It currently owns PHY configuration,
+  duty tracking, one pending transmit, the device name, and minimal property /
+  stream dispatch. It has no host-domain tables, receive filters, detached
+  queue, replay state, snapshot, or delegated-ACK scheduler.
+* `umsh::companion_radio::CompanionRadio` supplies the desktop host's minimal
+  property/radio API over a generic frame link. It can already use serial or
+  BLE, but it has no full-protocol provisioning, synchronization, table, queue,
+  save, clear, or restore API.
+* `firmware/companion-ncp-techo/src/main.rs` is shared by the T-Echo and
+  T-1000E packages. It executes `Session` effects and owns the radio, BLE,
+  USB, watchdog, board UI, and the BLE bond/PIN journal. That journal is
+  transport-security storage, **not** the full protocol's saved snapshot.
+* The reusable UMSH implementation already contains packet parsing,
+  authentication/key derivation, MAC-ACK construction, and the standard
+  `umsh_mac::ReplayWindow`, including the eight-counter duplicate-ACK window.
+  Reuse or factor those primitives; do not invent a second replay policy.
+
+One current behavior is incompatible with the full protocol and must be fixed
+before advertising any full capability: `Session::attach()` calls the same
+reset path used for protocol reset and therefore restores default PHY settings
+and disables the radio. Full-protocol attach resets only session state. It
+**MUST NOT** change the PHY, device domain, host domain, or queued frames.
+
+### Implementation order
+
+Implement the following increments in order. Keep protocol policy and data
+structures in host-testable, `no_std` crates; firmware should remain an I/O and
+effect-execution layer. Do not advertise a capability until all behavior it
+grants and all prerequisite capabilities are implemented.
+
+#### 1. Full wire vocabulary and host API foundation
+
+Extend `crates/umsh-companion` with:
+
+* `CMD_PROP_INSERT`, `CMD_PROP_REMOVE`, `CMD_PROP_INSERTED`, and
+  `CMD_PROP_REMOVED` (4, 5, 7, and 8);
+* `CMD_QUEUE_DRAIN`, `CMD_SAVE`, `CMD_CLEAR`, and `CMD_RESTORE` (11–14) —
+  all four carry no payload (spec amended 2026-07-15: `CMD_QUEUE_DRAIN` no
+  longer takes a stream key; it drains the sole `STR_PHY_RAW` inbound
+  queue). Note `CMD_CLEAR` is base-protocol, not gated on `CAP_SAVE`: until
+  increment 6 lands it must succeed trivially (nothing persisted), never
+  fail `STATUS_UNIMPLEMENTED`;
+* `STATUS_ALREADY`, `STATUS_ITEM_NOT_FOUND`, and
+  `STATUS_RESET_RESTORED`;
+* every full property and capability identifier; and
+* parsers/encoders for fixed and length-prefixed multi-value items, preserving
+  the distinction between secret-bearing item forms and non-secret digest
+  forms.
+
+Extend `CompanionRadio` with correlated command helpers and response handling
+for insert/remove, queue drain, save/clear/restore, and unsolicited
+`PROP_IS`/`PROP_INSERTED`/`PROP_REMOVED` updates. Tests must cover malformed
+PUIs, truncated items, invalid TIDs, unknown commands, and secret-free digest
+responses. This increment must not change advertised capabilities yet.
+
+#### 2. Split session, device, and host state
+
+Refactor `Session` around the state classes in the full specification:
+
+* session state: attachment and `PROP_MAC_PROMISCUOUS`;
+* device domain: PHY configuration, duty limit, device name, device identity
+  tables, and transport configuration references; and
+* host domain: host key, host channel/peer keys, filters, auto-ACK policy, and
+  inbound queue.
+
+Add explicit attach and detach transitions. Attach clears only session state;
+detach preserves device/host state and begins autonomous operation. A protocol
+`CMD_RST` restores the applicable post-reset values, which will later come from
+the saved snapshot when one exists. Host replacement must be represented as a
+single validate-before-mutate operation and must expose a deferred durable-wipe
+effect before the new host becomes active.
+
+Acceptance gate: host tests prove that attach leaves an enabled/configured PHY,
+the device name, host provisioning, and queued data unchanged, while resetting
+promiscuous mode. No firmware/hardware interaction is required for this gate.
+
+#### 3. `CAP_HOST_FILTER` vertical slice
+
+Implement `PROP_MAC_PROMISCUOUS`, `PROP_HOST_KEY`, and
+`PROP_HOST_RX_FILTERS`, including whole-table set and individual
+insert/remove. Evaluate received frames against explicit filters plus the
+implicit host destination hint and provisioned host channel identifiers.
+Preserve the compatibility rule: with no host key, channel keys, or explicit
+filters, every valid received frame is accepted just as it is today.
+
+The host-domain replacement path must atomically clear filters, keys, auto-ACK
+policy, and the queue. Until full persistence exists, use a mock durable-wipe
+effect in tests. Note the durable-wipe requirement only applies to saved
+host-domain state: before `CAP_SAVE` exists there is none, the wipe is
+trivially satisfied, and advertising `CAP_HOST_FILTER` is spec-clean.
+
+Acceptance gate: table-atomicity tests, filter tests for every filter type,
+implicit-filter tests, promiscuous-live-delivery tests, factory-compatibility
+tests, and host-replacement rollback tests all pass.
+
+#### 4. `CAP_HOST_RX_QUEUE`
+
+Add a fixed-capacity circular RAM queue containing the radio frame, receive
+metadata, receive timestamp, and whether delegated acknowledgement succeeded.
+While attached, accepted traffic is delivered live. While detached, accepted
+traffic is queued. Implement the queue count/capacity/dropped properties,
+buffered `RX_FLAGS`/`RX_AGE`, and `CMD_QUEUE_DRAIN`.
+
+A drain covers exactly the frames queued when the command is received.
+Because accepted traffic is always delivered live while a host is attached,
+the queue cannot grow mid-drain: emit the covered frames oldest-first, then
+the correlated completion response immediately after the last one. Live
+arrivals during the drain interleave with the buffered deliveries
+(`RX_FLAG_BUFFERED` distinguishes them); UMSH does not promise total
+ordering. The spec's `CMD_QUEUE_DRAIN` section was amended 2026-07-15 to
+this live-interleave model — it previously required mid-drain arrivals to
+be appended and delivered buffered after the response.
+
+Use the standard authenticated replay/MIC identity to coalesce duplicates and
+Route Retry forms where keys are available. Unauthenticated frames have no
+protocol-defined deduplication and occupy separate entries.
+
+Acceptance gate: detached receive -> attach -> count -> drain works entirely in
+host tests; overflow evicts the oldest entry and increments the dropped count;
+drain-tail liveness, metadata age/flags, live-arrival interleaving, duplicate
+coalescing, and reset/host-replacement behavior are covered.
+
+#### 5. `CAP_HOST_KEYS` and `CAP_HOST_AUTO_ACK`
+
+Implement host channel-key and peer-key tables with strict validate-before-
+mutate semantics. `CMD_PROP_INSERT` into `PROP_HOST_PEER_KEYS` with a
+`PEER_PUBLIC_KEY` matching an existing entry replaces that entry's key
+material only — the peer's replay baseline and queued frames are untouched
+(both are keyed by the peer's identity, per the spec's 2026-07-15
+clarification). Symmetric keys are accepted only over an authorized secure
+transport and are never returned: gets and mutation notifications use digest
+forms. The session dispatch API therefore needs explicit transport-security
+context rather than inferring safety from BLE-specific globals.
+
+For detached acknowledgement delegation, reuse the core UMSH packet crypto,
+MAC-ACK construction, and standard replay window. Advance a peer baseline only
+after the frame is stored. A duplicate may be re-ACKed only when it authenticates
+and falls within the core eight-counter window, without changing the baseline
+or adding another queue entry. ACK transmission uses the ordinary serialized
+radio path and duty limiter; a frame not stored or an ACK prohibited by duty
+limits remains unacknowledged.
+
+Acceptance gate: normative packet vectors cover UNAR and BUAR success, missing
+keys, ambiguous source hints, bad MICs, first-contact/reboot baseline behavior,
+duplicates inside and outside the re-ACK window, queue-store failure, duty-limit
+failure, attached suppression, and buffered `RX_FLAG_ACKED` reporting.
+
+#### 6. `CAP_SAVE` and durable state boundaries
+
+Design a full-protocol snapshot journal separately from the BLE bond/PIN
+journal and allocate its flash region explicitly for both boards. Implement
+`CMD_SAVE`, `CMD_RESTORE`, `CMD_CLEAR`, `PROP_SAVED`, and boot restoration before
+the first host command. The snapshot contains device and host domains, including
+the saved PHY-enabled state, but excludes queue contents, replay baselines, and
+the independently persisted device identity. The BLE PIN and BLE bonds remain
+governed by their existing independent storage rules.
+
+All durable operations must commit before reporting success. A failed save,
+clear, restore, identity write, or host replacement leaves both live and durable
+old state intact and emits no partial property notifications. Reuse the existing
+mock-flash and byte-boundary power-cut testing approach.
+
+Acceptance gate: exhaustive cut-point tests always mount either the complete old
+snapshot or complete new snapshot; boot restores and applies the PHY before host
+commands; restore has identical rollback semantics in both permitted reporting
+forms and preserves queue contents and replay baselines except when the
+snapshot's host key differs (host replacement then applies as part of the
+revert); clear plus reset produces factory protocol state without altering BLE
+bonds or the pairing PIN.
+
+#### 7. `CAP_DEV_IDENTITY`
+
+Implement on-device identity generation and private-key installation,
+`PROP_DEV_KEY`, device channel keys, and device peers. Persist the device
+identity immediately and independently of snapshots; it changes only through
+explicit provisioning or `CMD_CLEAR`, and `CMD_RESTORE` can never resurrect an
+older identity. Private and symmetric keys are write-only and subject to the
+same secure-transport gate as host key tables.
+
+The current full protocol defines provisioning and identity ownership but does
+not yet require repeater or autonomous application behavior for the device
+identity. Do not expand this increment into those deferred behaviors.
+
+#### 8. Provisioning/synchronization workflow and integration tests
+
+Add a host-facing provisioning/diagnostic workflow that:
+
+1. reads `PROP_CAPS` and last status;
+2. verifies `PROP_HOST_KEY` before treating queued data as its own;
+3. reconciles device/host properties and key-table digests;
+4. provisions changes transactionally and explicitly saves them; and
+5. reads queue count and drains only when the host is ready.
+
+Exercise this against an adapter-free simulated NCP before hardware. Include
+capture/log output for every full-protocol command and unsolicited update so a
+hardware failure can be placed at the host API, framing, session, storage, or
+radio boundary.
+
+#### 9. Full-protocol hardware completion
+
+Validate first on one board, then repeat storage-layout and board-specific
+checks on the other. Provision a host identity, filters, channels, peer keys,
+auto-ACK, PHY configuration, and saved state; detach the host; receive relevant
+traffic and reject unrelated traffic; transmit delegated ACKs; power-cycle with
+no host; reconnect; synchronize; and drain the queue. Exercise duplicate
+coalescing/re-ACK, overflow, storage failure, host replacement, and BLE/USB
+displacement. Record capability lists, flash/RAM sizes, attach/RTT measurements,
+queue capacity, and soak results here.
+
+The full-protocol milestone is complete only when a saved configuration boots
+into detached autonomous filtering/queueing/ACK operation, and a returning host
+can safely identify ownership, reconcile state, and drain buffered traffic on
+both firmware targets.
+
+### Increments 1 and 2 — complete (2026-07-15)
+
+The full wire vocabulary is in `crates/umsh-companion`: commands 4/5/7/8 and
+11–14, the full property and capability identifiers, the `items` module
+(peer-key entries with secret-free digest/Debug forms, filter entries for all
+three types, fixed-size and PUI-length-prefixed table iterators), and the
+`BufferedRxMeta` `RX_FLAGS`/`RX_AGE` extension with field-boundary truncation
+tests. Two spec amendments landed the decided simplifications:
+`CMD_QUEUE_DRAIN` carries no stream key (payload ignored; it drains the sole
+`STR_PHY_RAW` queue, and mid-drain arrivals are delivered live and may
+interleave), and peer-key insert-replacement is documented to leave the peer's
+replay baseline and queued frames untouched.
+
+`CompanionRadio` gained `insert_prop_item`/`remove_prop_item` (digest-returning,
+`STATUS_ALREADY`/`STATUS_ITEM_NOT_FOUND` surfaced), `queue_drain`/
+`queue_drain_with`, `save`/`clear`, `restore` handling both completion forms
+(`RESET_RESTORED` is consumed as success, not an unexpected reset), and a
+bounded `pop_prop_event` queue for unsolicited `PROP_IS`/`PROP_INSERTED`/
+`PROP_REMOVED`. Responses are now kind-tagged so a table notification can never
+satisfy a property transaction.
+
+`Session` is refactored into explicit `DeviceDomain`/`HostDomain`/
+`SessionState` structs. `attach()` now resets session state only — the PHY
+configuration and enable state, device name, and duty accounting survive, and
+nothing is emitted; `detach()` exists and firmware calls it only when the
+active transport detaches (stale-detach immune). The boot reset cause is seeded
+at `Session::new` and attach no longer touches `PROP_LAST_STATUS`.
+`PROP_MAC_PROMISCUOUS` is implemented as the sole session-scoped property
+(reverts on attach) without advertising `CAP_HOST_FILTER`; with filtering
+unconfigured its delivery behavior is definitionally unchanged. `CMD_CLEAR`
+succeeds trivially (base protocol); drain/save/restore fail `UNIMPLEMENTED`
+until their capabilities exist; insert/remove distinguish known-but-not-a-table
+(`INVALID_ARGUMENT`) from unknown (`PROP_NOT_FOUND`). Advertised capabilities
+are unchanged.
+
+The increment-2 acceptance gate passes in host tests (attach preserves an
+enabled/configured PHY, name, duty limit and usage; resets promiscuous and
+pending-TX correlation; reset still restores post-reset values and announces).
+All workspace suites pass and both firmware images build. The reflashed
+T-1000E completes the USB probe handshake twice: the first attach reported the
+retained hardware boot cause and the second reported `RESET_SOFTWARE` from the
+prior session's `CMD_RST`, confirming the new attach semantics on hardware.
+
+### Increment 3 — complete (2026-07-15)
+
+`CAP_HOST_FILTER` is implemented and advertised. `umsh-companion-ncp` now
+depends on `umsh-core` (no default features) for `PacketHeader` parsing;
+protocol policy stays in the host-testable session crate and the firmware
+remains an effect executor.
+
+* `HostDomain` holds `PROP_HOST_KEY` and a fixed-capacity (16-entry)
+  `PROP_HOST_RX_FILTERS` table. Whole-table `CMD_PROP_SET` validates the
+  complete value into a candidate table before committing (invalid entry →
+  `INVALID_ARGUMENT`, unsplittable value → `PARSE_ERROR`, either leaves the
+  old table fully intact); duplicates in a set value collapse per set
+  semantics. Insert/remove enforce `STATUS_ALREADY`/`STATUS_ITEM_NOT_FOUND`/
+  `STATUS_NOMEM` and emit `CMD_PROP_INSERTED`/`CMD_PROP_REMOVED` digests.
+  Filter validation also rejects packet types above 7.
+* Receive filtering follows the spec union: explicit filters (dest hint —
+  which also matches a MAC ack's DST — channel id, packet type) plus the
+  implicit destination-hint filter derived from the host key. The factory
+  compatibility rule is preserved: with no host key and an empty table,
+  every frame is delivered without being parsed at all (raw/junk frames
+  included), exactly like the minimal protocol. Once any filter exists,
+  a frame that does not parse as UMSH matches nothing. Promiscuous mode
+  bypasses filtering for live delivery only.
+* Host replacement is a deferred validate-before-mutate transaction:
+  setting `PROP_HOST_KEY` to a different value (including empty) parks the
+  new key and returns `Effect::WipeHostDomain { tid }`; only
+  `respond_host_wipe(tid, Ok)` installs it and resets the host domain as
+  one unit. `Err` rolls back with `STATUS_FAILURE` and the old domain fully
+  in effect; a second set while pending is `BUSY`; attach abandons the
+  pending transaction. Setting the current value is idempotent (no wipe,
+  filters survive). Firmware completes the wipe trivially until `CAP_SAVE`
+  exists (nothing persisted).
+
+The whole increment-3 gate passes in host tests (50 in the session crate):
+table atomicity, all three filter types, implicit-filter matching,
+promiscuous live delivery, factory compatibility, replacement
+rollback/busy/abandonment, `CMD_RST` clearing the host domain, and filters
+surviving attach. Both firmware images build; firmware host tests pass.
+
+### What the next agent should do first
+
+Start increment 4 (`CAP_HOST_RX_QUEUE`): the fixed-capacity circular RAM
+queue (frame + RX metadata + timestamp + acked flag), detached queueing of
+accepted traffic, the queue count/capacity/dropped properties, buffered
+`RX_FLAGS`/`RX_AGE` metadata, and `CMD_QUEUE_DRAIN` with the amended
+live-interleave model (see increment 4 above). The session does not yet
+track attached-vs-detached for delivery decisions — introducing that is
+part of this increment. Do not advertise `CAP_HOST_RX_QUEUE` until the
+whole gate passes. This work is independent of manual hardware access.
+
+## BLE transport closure work — parallel, not a full-protocol prerequisite
 
 1. **Complete the BLE/live-LoRa soak.** Continue running the recovery-enabled
    `umsh-capture --ble` with representative RF traffic and retain any failure
@@ -489,9 +849,10 @@ external 32.768 kHz crystal is configured at 20 ppm. MPSL owns RADIO,
 RTC0, TIMER0, TEMP and PPI 19/30/31; SDC owns PPI 17/18/20–29 and RNG;
 embassy-time remains on RTC1. SDC's controller buffer limit is 251,
 while Trouble's 255-byte packet pool includes higher-layer headroom.
-On macOS the local build must ignore the developer's ESP-specific
-`LIBCLANG_PATH` and give bindgen the active macOS SDK sysroot; this is a
-host build-environment workaround, not a firmware dependency.
+(A historical macOS gotcha: a globally exported ESP-specific
+`LIBCLANG_PATH` broke `nrf-sdc-sys` bindgen; the export was removed from
+the developer's shell profile 2026-07-15 and stock builds work with no
+environment overrides.)
 MPSL must be constructed with `with_timeslots` and one `SessionMem`
 slot—using plain `new` correctly caused the first hardware PIN commit to
 fail closed with `STATUS_INTERNAL_ERROR`; the corrected initialization
