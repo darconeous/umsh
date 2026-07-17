@@ -364,6 +364,53 @@ async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Drive the T-Echo as an RF peer transmitting sealed multicast on a
+/// device channel (device-node plan increment 3 acceptance). Watch the
+/// T-1000E's debug console for `node rx: Multicast` lines; afterwards
+/// verify the host queue ignored the frames (`info` queue_count).
+async fn rf_dev_multicast(
+    port: &str,
+    channel_key: [u8; 32],
+    base: u32,
+    count: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio_serial::SerialPortBuilderExt;
+    let stream = tokio_serial::new(port, 115_200).open_native_async()?;
+    // The peer radio is disposable: the resetting attach configures its
+    // PHY to the fixture parameters the T-1000E saved.
+    let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
+    println!("peer ncp={} base counter={base} count={count}", radio.ncp_version());
+
+    let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+    let derived = crypto.derive_channel_keys(&umsh::core::ChannelKey(channel_key));
+    let keys = PairwiseKeys {
+        k_enc: derived.k_enc,
+        k_mic: derived.k_mic,
+    };
+    println!("channel id {}", hex(&derived.channel_id.0));
+
+    for offset in 0..count {
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .multicast(derived.channel_id)
+            .source_hint(NodeHint([PEER_PUB[0], PEER_PUB[1], PEER_PUB[2]]))
+            .frame_counter(base + offset)
+            .mic_size(MicSize::Mic8)
+            .payload(&[3, 1, 2])
+            .build()
+            .unwrap();
+        crypto.seal_packet(&mut packet, &keys).unwrap();
+        transmit(&mut radio, packet.as_bytes()).await?;
+        println!("  multicast counter={} on the air", base + offset);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    println!(
+        "RF DEV MULTICAST OK — check the T-1000E console for `node rx: Multicast ch={}`",
+        hex(&derived.channel_id.0)
+    );
+    Ok(())
+}
+
 /// Reattach the T-1000E after the RF pass and verify what autonomous
 /// operation left behind.
 async fn phase_e(
@@ -515,6 +562,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("phase-c") if args.len() == 3 => phase_c(&args[2]).await,
         Some("phase-d") if args.len() == 3 => phase_d(&args[2]).await,
         Some("rf-peer") if args.len() == 4 => rf_peer(&args[2], args[3].parse()?).await,
+        Some("rf-dev-multicast") if (5..=6).contains(&args.len()) => {
+            let count = args.get(5).map(|text| text.parse()).transpose()?.unwrap_or(3);
+            rf_dev_multicast(&args[2], parse_key32(&args[3])?, args[4].parse()?, count).await
+        }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
@@ -532,7 +583,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
             );
             std::process::exit(2);
         }

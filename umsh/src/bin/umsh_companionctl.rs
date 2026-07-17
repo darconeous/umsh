@@ -21,7 +21,8 @@ use umsh::core::PublicKey;
 
 const USAGE: &str = "\
 usage: umsh-companionctl <serial-port> <command> [options]\n\
-       umsh-companionctl --ble[=selector] <command> [options]\n\n\
+       umsh-companionctl --ble[=selector] <command> [options]\n\
+       umsh-companionctl --ble-scan\n\n\
 Manages a companion-radio NCP without disturbing it: attaches with the\n\
 non-resetting full-protocol handshake, so an autonomously operating\n\
 board keeps its configuration unless the command changes it.\n\n\
@@ -39,7 +40,16 @@ Commands:\n\
   reset                 protocol reset (CMD_RST): state returns to its\n\
                         post-reset values, restoring any saved\n\
                         snapshot; the MCU does not reboot\n\
-  pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\n\
+  pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\
+  dev-channel [list]    list device-identity channel ids (digest form)\n\
+  dev-channel add <KEY>    add a device channel key (the on-board node\n\
+                           joins it and processes its multicast)\n\
+  dev-channel remove <KEY> remove a device channel key\n\
+  dev-peer [list]       list device-identity peer public keys\n\
+  dev-peer add <KEY>       add a device peer public key\n\
+  dev-peer remove <KEY>    remove a device peer public key\n\n\
+--ble-scan lists nearby companion radios (id, name, RSSI) without\n\
+connecting; the id works as a --ble= selector.\n\n\
 Options:\n\
   --baud=115200           serial bit rate\n\
   --trace                 print every companion frame on stderr\n\
@@ -70,12 +80,16 @@ const COMMANDS: &[&str] = &[
     "factory-reset",
     "reset",
     "pin",
+    "dev-channel",
+    "dev-peer",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
 enum Transport {
     Serial(String),
     Ble(Option<String>),
+    /// `--ble-scan`: list companion radios without connecting.
+    BleScan,
 }
 
 #[derive(Debug)]
@@ -91,6 +105,20 @@ enum Command {
     FactoryReset,
     Reset,
     Pin(Option<u32>),
+    DevChannel(TableOp),
+    DevPeer(TableOp),
+    /// `--ble-scan` (a transport mode more than a command; carried here
+    /// so the invocation stays one shape).
+    BleScan,
+}
+
+/// One operation on a device-domain key table (`PROP_DEV_CHANNEL_KEYS`
+/// / `PROP_DEV_PEERS`).
+#[derive(Debug, PartialEq, Eq)]
+enum TableOp {
+    List,
+    Add([u8; 32]),
+    Remove([u8; 32]),
 }
 
 #[derive(Debug)]
@@ -249,7 +277,17 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
     let mut index = 0;
     let first = args.get(index).ok_or("missing transport")?.clone();
     index += 1;
-    let transport = if let Some(rest) = first.strip_prefix("--ble") {
+    let transport = if first == "--ble-scan" {
+        if let Some(extra) = args.get(index) {
+            return Err(format!("--ble-scan takes no arguments (got {extra:?})"));
+        }
+        return Ok(Invocation {
+            transport: Transport::BleScan,
+            baud: 115_200,
+            trace: false,
+            command: Command::BleScan,
+        });
+    } else if let Some(rest) = first.strip_prefix("--ble") {
         let selector = match rest.strip_prefix('=') {
             Some(selector) => Some(selector.to_string()),
             None if rest.is_empty() => match args.get(index) {
@@ -455,6 +493,8 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             Some(digits) if positionals.len() == 1 => Command::Pin(Some(parse_pin(digits)?)),
             _ => return Err("pin takes exactly one argument: a 6-digit PIN or `clear`".into()),
         },
+        "dev-channel" => Command::DevChannel(parse_table_op(&word, &positionals)?),
+        "dev-peer" => Command::DevPeer(parse_table_op(&word, &positionals)?),
         _ => unreachable!("command word validated above"),
     };
 
@@ -464,6 +504,17 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
         trace,
         command,
     })
+}
+
+fn parse_table_op(word: &str, positionals: &[String]) -> Result<TableOp, String> {
+    match positionals.first().map(String::as_str) {
+        None | Some("list") if positionals.len() <= 1 => Ok(TableOp::List),
+        Some("add") if positionals.len() == 2 => Ok(TableOp::Add(parse_key32(&positionals[1])?)),
+        Some("remove") if positionals.len() == 2 => {
+            Ok(TableOp::Remove(parse_key32(&positionals[1])?))
+        }
+        _ => Err(format!("{word} takes `list`, `add <KEY>`, or `remove <KEY>`")),
+    }
 }
 
 /// The RF parameters here only size the driver's airtime-derived
@@ -838,22 +889,76 @@ async fn dispatch<L: FrameLink>(
             }
             Ok(())
         }
+        Command::DevChannel(op) => {
+            dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op).await
+        }
+        Command::DevPeer(op) => dev_table(&mut radio, prop::DEV_PEERS, "peer", op).await,
+        // --ble-scan never dispatches: it is handled before any link is
+        // opened.
+        Command::BleScan => unreachable!("scan handled in run()"),
     }
 }
 
+/// Operate on one device-domain key table. The digest form differs by
+/// table (2-byte channel id vs the 32-byte peer key itself), so
+/// listings and mutation reports print whatever digest the NCP quotes.
+async fn dev_table<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    key: u32,
+    noun: &str,
+    op: TableOp,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match op {
+        TableOp::List => {
+            let value = radio.get_prop(key).await?;
+            let digest_len = if key == prop::DEV_CHANNEL_KEYS { 2 } else { 32 };
+            if value.is_empty() {
+                println!("no device {noun}s provisioned");
+            } else if value.len() % digest_len != 0 {
+                return Err(format!("malformed device {noun} listing").into());
+            } else {
+                for digest in value.chunks(digest_len) {
+                    println!("{}", hex(digest));
+                }
+            }
+        }
+        TableOp::Add(item) => {
+            let digest = radio.insert_prop_item(key, &item).await?;
+            println!("device {noun} added (digest {})", hex(&digest));
+            println!("note: live only; use the save command to persist it");
+        }
+        TableOp::Remove(item) => {
+            let digest = radio.remove_prop_item(key, &item).await?;
+            println!("device {noun} removed (digest {})", hex(&digest));
+            println!("note: live only; use the save command to persist it");
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         print!("{USAGE}");
-        return if args.is_empty() {
-            Err("missing arguments".into())
-        } else {
-            Ok(())
-        };
+        std::process::exit(if args.is_empty() { 2 } else { 0 });
     }
-    let invocation = parse_invocation(&args).map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let invocation = match parse_invocation(&args) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!();
+            eprint!("{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = run(invocation).await {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+}
 
+async fn run(invocation: Invocation) -> Result<(), Box<dyn std::error::Error>> {
     match &invocation.transport {
         Transport::Serial(port) => {
             #[cfg(feature = "serial-radio")]
@@ -877,6 +982,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(feature = "ble-radio"))]
             Err("the ble-radio feature is required for --ble".into())
+        }
+        Transport::BleScan => {
+            #[cfg(feature = "ble-radio")]
+            {
+                use umsh::companion_radio::BleFrameLink;
+                let timeout = std::time::Duration::from_secs(5);
+                println!("scanning for companion radios ({timeout:?})...");
+                let results = BleFrameLink::scan(timeout).await?;
+                if results.is_empty() {
+                    println!("no companion radios found");
+                } else {
+                    for result in results {
+                        let name = result.name.as_deref().unwrap_or("(no name)");
+                        match result.rssi {
+                            Some(rssi) => {
+                                println!("{}  {name}  rssi {rssi} dBm", result.id)
+                            }
+                            None => println!("{}  {name}", result.id),
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            #[cfg(not(feature = "ble-radio"))]
+            Err("the ble-radio feature is required for --ble-scan".into())
         }
     }
 }
