@@ -73,6 +73,7 @@ impl core::fmt::Debug for Snr {
 }
 
 /// Metadata returned with a received frame.
+#[derive(Clone, Copy)]
 pub struct RxInfo {
     /// Number of bytes written into the receive buffer.
     pub len: usize,

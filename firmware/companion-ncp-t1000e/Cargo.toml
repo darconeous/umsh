@@ -34,6 +34,9 @@ umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
+# Ungated (host-buildable) because the shared radio_mux module uses them.
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7" }
@@ -42,8 +45,6 @@ embassy-executor = { version = "0.10", default-features = false, features = ["pl
 embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
 embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
 embassy-usb = { version = "0.6", default-features = false }
-embassy-futures = { version = "0.1", default-features = false }
-embassy-sync = { version = "0.8", default-features = false }
 static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
