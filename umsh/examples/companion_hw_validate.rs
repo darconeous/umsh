@@ -37,6 +37,11 @@ use umsh::hal::{CadPolicy, Radio, TxOptions};
 const HOST_KEY: [u8; 32] = [0xC4; 32];
 const PEER_PUB: [u8; 32] = [0x0A; 32];
 const CHANNEL_KEY: [u8; 32] = [0x42; 32];
+/// Deterministic secret for the rf-dev-unicast peer *node* identity
+/// (a real Ed25519 keypair, unlike the raw-key host fixtures above:
+/// the device node derives the pairwise keys via X25519, so the peer
+/// must own a valid signing key).
+const PEER_NODE_SECRET: [u8; 32] = [0x5E; 32];
 
 fn config() -> CompanionRadioConfig {
     let mut config = CompanionRadioConfig::new(906_875, 250_000, 9, 5);
@@ -411,6 +416,71 @@ async fn rf_dev_multicast(
     Ok(())
 }
 
+/// Drive the T-Echo as an RF peer sending pairwise-sealed,
+/// ack-requesting unicast to the *device identity* (device-node plan
+/// increment 4 acceptance). The peer node identity is deterministic —
+/// register its printed public key once with
+/// `umsh-companionctl <port> dev-peer add <pk>` — and the pairwise
+/// keys come from the real X25519 derivation, so the device's MAC
+/// authenticates, acks through the shared duty ledger, and schedules
+/// an RX counter-boundary persist when the counter jump crosses a
+/// 128-frame block.
+///
+/// `expect` is `ack` (frames are fresh: every one must draw a MAC ack
+/// on the air) or `silence` (frames sit at or below the persisted
+/// replay boundary: none may be acknowledged) — the latter is the
+/// power-cycle replay probe.
+async fn rf_dev_unicast(
+    port: &str,
+    dev_key: [u8; 32],
+    base: u32,
+    count: u32,
+    expect_ack: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio_serial::SerialPortBuilderExt;
+    use umsh::crypto::NodeIdentity as _;
+    let stream = tokio_serial::new(port, 115_200).open_native_async()?;
+    let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
+    println!("peer ncp={} base counter={base} count={count}", radio.ncp_version());
+
+    let peer = umsh::crypto::software::SoftwareIdentity::from_secret_bytes(&PEER_NODE_SECRET);
+    let peer_pub = *peer.public_key();
+    println!("peer node pk {peer_pub} (must be in dev-peer list)");
+    let shared = peer
+        .shared_secret_with(&PublicKey(dev_key))
+        .map_err(|error| format!("pairwise derivation failed: {error:?}"))?;
+    let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+    let keys = crypto.derive_pairwise_keys(&shared);
+
+    for offset in 0..count {
+        let counter = base + offset;
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(PublicKey(dev_key).hint())
+            .source_hint(peer_pub.hint())
+            .frame_counter(counter)
+            .ack_requested()
+            .mic_size(MicSize::Mic8)
+            .payload(&[4, 2])
+            .build()
+            .unwrap();
+        crypto.seal_packet(&mut packet, &keys).unwrap();
+        transmit(&mut radio, packet.as_bytes()).await?;
+        println!("  unicast counter={counter} on the air");
+        if expect_ack {
+            expect_air_ack(&mut radio, &format!("device node acked counter={counter}")).await?;
+        } else {
+            let stray = recv_frame(&mut radio, Duration::from_secs(3)).await;
+            expect(
+                stray.is_none(),
+                &format!("counter={counter} at/below the persisted boundary drew no ack"),
+            )?;
+        }
+    }
+    println!("RF DEV UNICAST OK — check the T-1000E console for `node rx: Unicast` lines");
+    Ok(())
+}
+
 /// Reattach the T-1000E after the RF pass and verify what autonomous
 /// operation left behind.
 async fn phase_e(
@@ -566,6 +636,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let count = args.get(5).map(|text| text.parse()).transpose()?.unwrap_or(3);
             rf_dev_multicast(&args[2], parse_key32(&args[3])?, args[4].parse()?, count).await
         }
+        Some("rf-dev-unicast") if (5..=7).contains(&args.len()) => {
+            let count = args.get(5).map(|text| text.parse()).transpose()?.unwrap_or(1);
+            let expect_ack = match args.get(6).map(String::as_str) {
+                None | Some("ack") => true,
+                Some("silence") => false,
+                Some(other) => return Err(format!("expected ack|silence, got {other}").into()),
+            };
+            rf_dev_unicast(&args[2], parse_key32(&args[3])?, args[4].parse()?, count, expect_ack)
+                .await
+        }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
@@ -583,7 +663,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
             );
             std::process::exit(2);
         }
