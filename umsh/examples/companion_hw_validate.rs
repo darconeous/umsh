@@ -317,7 +317,7 @@ async fn transmit<L: FrameLink>(
 /// Drive the T-Echo as the RF peer while the T-1000E sits detached:
 /// delegated ack on the air, duplicate re-ack, unrelated-traffic
 /// rejection, then queue overflow with one late acknowledged frame.
-/// Follow with `phase-e <t1000e-port> 16 3 1 <base>`.
+/// Follow with `phase-e <t1000e-port> 16 3 1`.
 async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>> {
     use tokio_serial::SerialPortBuilderExt;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
