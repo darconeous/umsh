@@ -64,7 +64,8 @@ Options:\n\
   --file=PATH             provision: read the same settings from a file\n\
                           (`setting = value` lines, `#` comments)\n\
   --force                 provision: displace another host's provisioning\n\
-  --save                  provision: persist the result immediately\n\
+  --no-save               leave a mutation live-only (mutating commands\n\
+                          otherwise persist automatically via CMD_SAVE)\n\
   --yes                   factory-reset: confirm the wipe\n\n\
 KEY values are 44-character base58 or 64-character hex. Secrets are\n\
 never echoed in output or traces.\n";
@@ -95,7 +96,7 @@ enum Transport {
 #[derive(Debug)]
 enum Command {
     Info { expected: Option<[u8; 32]> },
-    Provision { desired: HostProvisioning, force: bool, save: bool },
+    Provision { desired: HostProvisioning, force: bool },
     IdentityShow,
     IdentityGenerate,
     SetName(String),
@@ -126,6 +127,10 @@ struct Invocation {
     transport: Transport,
     baud: u32,
     trace: bool,
+    /// Skip the automatic `CMD_SAVE` after a mutating command. As a
+    /// one-command-per-invocation tool there is no later "save before
+    /// quitting?" moment, so mutations persist by default.
+    no_save: bool,
     command: Command,
 }
 
@@ -285,6 +290,7 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             transport: Transport::BleScan,
             baud: 115_200,
             trace: false,
+            no_save: false,
             command: Command::BleScan,
         });
     } else if let Some(rest) = first.strip_prefix("--ble") {
@@ -316,7 +322,7 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
     let mut trace = false;
     let mut expect_host_key = None;
     let mut force = false;
-    let mut save = false;
+    let mut no_save = false;
     let mut yes = false;
     let mut file: Option<String> = None;
     let mut prov = ProvisionArgs::default();
@@ -406,10 +412,13 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
                 no_value()?;
                 force = true;
             }
-            "--save" => {
-                provision_only()?;
+            "--no-save" => {
+                if !matches!(word.as_str(), "provision" | "set-name" | "dev-channel" | "dev-peer")
+                {
+                    return Err(format!("{name} only applies to mutating commands"));
+                }
                 no_value()?;
-                save = true;
+                no_save = true;
             }
             "--yes" => {
                 if word != "factory-reset" {
@@ -447,7 +456,6 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             Command::Provision {
                 desired: prov.finish()?,
                 force,
-                save,
             }
         }
         "identity" => match positionals.first().map(String::as_str) {
@@ -502,6 +510,7 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
         transport,
         baud,
         trace,
+        no_save,
         command,
     })
 }
@@ -736,7 +745,7 @@ async fn provision<L: FrameLink>(
     radio: &mut CompanionRadio<L>,
     desired: HostProvisioning,
     force: bool,
-    save: bool,
+    no_save: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let sync = radio.sync(Some(&desired.host_key)).await?;
     match sync.ownership {
@@ -783,11 +792,25 @@ async fn provision<L: FrameLink>(
     if !report.changed() {
         println!("already provisioned as requested; nothing changed");
     }
-    if save {
+    persist_mutation(radio, no_save, report.changed()).await
+}
+
+/// Finish a mutating command: persist by default (there is no later
+/// "save before quitting?" moment in a one-shot tool), or report the
+/// live-only state under `--no-save`.
+async fn persist_mutation<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    no_save: bool,
+    changed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !changed {
+        return Ok(());
+    }
+    if no_save {
+        println!("note: --no-save — changes are live only; the save command persists them");
+    } else {
         radio.save().await?;
-        println!("saved: provisioning persists across reboots");
-    } else if report.changed() {
-        println!("note: changes are live only; use --save (or the save command) to persist them");
+        println!("saved: changes persist across reboots");
     }
     Ok(())
 }
@@ -836,19 +859,18 @@ async fn dispatch<L: FrameLink>(
         radio.ncp_version(),
         radio.boot_status()
     );
+    let no_save = invocation.no_save;
     match invocation.command {
         Command::Info { expected } => info(&mut radio, expected).await,
-        Command::Provision {
-            desired,
-            force,
-            save,
-        } => provision(&mut radio, desired, force, save).await,
+        Command::Provision { desired, force } => {
+            provision(&mut radio, desired, force, no_save).await
+        }
         Command::IdentityShow => identity_show(&mut radio).await,
         Command::IdentityGenerate => identity_generate(&mut radio).await,
         Command::SetName(name) => {
             radio.set_device_name(&name).await?;
             println!("device name set to {name:?}");
-            Ok(())
+            persist_mutation(&mut radio, no_save, true).await
         }
         Command::Save => {
             radio.save().await?;
@@ -890,9 +912,11 @@ async fn dispatch<L: FrameLink>(
             Ok(())
         }
         Command::DevChannel(op) => {
-            dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op).await
+            dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
-        Command::DevPeer(op) => dev_table(&mut radio, prop::DEV_PEERS, "peer", op).await,
+        Command::DevPeer(op) => {
+            dev_table(&mut radio, prop::DEV_PEERS, "peer", op, no_save).await
+        }
         // --ble-scan never dispatches: it is handled before any link is
         // opened.
         Command::BleScan => unreachable!("scan handled in run()"),
@@ -907,6 +931,7 @@ async fn dev_table<L: FrameLink>(
     key: u32,
     noun: &str,
     op: TableOp,
+    no_save: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match op {
         TableOp::List => {
@@ -921,19 +946,19 @@ async fn dev_table<L: FrameLink>(
                     println!("{}", hex(digest));
                 }
             }
+            Ok(())
         }
         TableOp::Add(item) => {
             let digest = radio.insert_prop_item(key, &item).await?;
             println!("device {noun} added (digest {})", hex(&digest));
-            println!("note: live only; use the save command to persist it");
+            persist_mutation(radio, no_save, true).await
         }
         TableOp::Remove(item) => {
             let digest = radio.remove_prop_item(key, &item).await?;
             println!("device {noun} removed (digest {})", hex(&digest));
-            println!("note: live only; use the save command to persist it");
+            persist_mutation(radio, no_save, true).await
         }
     }
-    Ok(())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -1068,18 +1093,13 @@ mod tests {
             "channel-id:9b68",
             "--auto-ack=off",
             "--force",
-            "--save",
+            "--no-save",
         ]))
         .unwrap();
-        let Command::Provision {
-            desired,
-            force,
-            save,
-        } = invocation.command
-        else {
+        let Command::Provision { desired, force } = invocation.command else {
             panic!("expected provision");
         };
-        assert!(force && save);
+        assert!(force && invocation.no_save);
         assert_eq!(desired.host_key, [0xC4; 32]);
         assert_eq!(desired.channel_keys, vec![[0xC4; 32]]);
         assert_eq!(desired.peer_keys.len(), 1);

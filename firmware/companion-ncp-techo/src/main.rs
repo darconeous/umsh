@@ -238,6 +238,23 @@ mod firmware {
     #[cfg(feature = "t1000e")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-1000E NCP";
 
+    /// The board default name plus a stable per-die suffix — the low 16
+    /// bits of FICR DEVICEADDR, the same die-unique value the BLE
+    /// identity address is built from — so factory-fresh radios are
+    /// tellable apart in scan lists and on multi-board benches.
+    fn default_device_name() -> &'static str {
+        use core::fmt::Write as _;
+        static NAME: embassy_sync::once_lock::OnceLock<heapless09::String<24>> =
+            embassy_sync::once_lock::OnceLock::new();
+        NAME.get_or_init(|| {
+            let suffix = embassy_nrf::pac::FICR.deviceaddr(0).read() & 0xFFFF;
+            let mut name = heapless09::String::new();
+            let _ = write!(name, "{DEFAULT_DEVICE_NAME} {suffix:04X}");
+            name
+        })
+        .as_str()
+    }
+
     #[gatt_server]
     struct CompanionServer {
         companion: CompanionService,
@@ -296,7 +313,7 @@ mod firmware {
                 BLE_BONDS_AT_BOOT.load(Ordering::Acquire),
                 PREV_BOOT_CRUMB.load(Ordering::Acquire),
             ),
-            default_device_name: DEFAULT_DEVICE_NAME,
+            default_device_name: default_device_name(),
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
             // private-network word 0x12 → SX126x registers 0x1424.
@@ -1374,7 +1391,8 @@ mod firmware {
         let name = {
             let configured = DEVICE_NAME.lock().await;
             if configured.is_empty() {
-                DeviceName::from_slice(DEFAULT_DEVICE_NAME.as_bytes()).expect("default name fits")
+                DeviceName::from_slice(default_device_name().as_bytes())
+                    .expect("default name fits")
             } else {
                 configured.clone()
             }
@@ -2000,7 +2018,7 @@ mod firmware {
         let mut peripheral = stack.peripheral();
         let server_result =
             CompanionServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-                name: DEFAULT_DEVICE_NAME,
+                name: default_device_name(),
                 appearance: &appearance::computer::GENERIC_COMPUTER,
             }));
         let server = match server_result {
