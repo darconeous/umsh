@@ -6,8 +6,7 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **increments 1–2 complete and hardware-validated 2026-07-17;
-increment 3 code-complete the same day (hardware gate pending).**
+Status: **increments 1–3 complete and hardware-validated 2026-07-17.**
 Increment 1 (radio mux): host tests plus the T-1000E gate (companion
 probe, RF delegated-ack, drain) green. Increment 2 (device node +
 button beacon): T-1000E single-click beacons from the device identity
@@ -17,9 +16,18 @@ delegated-ack gate re-passes with the node running beside the session.
 Bring-up hard lesson: the ~37 KiB Mac must be constructed in place
 (`StaticCell::init_with`) — building it on the stack overflowed the
 ~114 KiB left above this image's statics and corrupted .bss on every
-boot. Increment 3 (device-domain wiring + RAM diet): see the RAM
-results table in that increment. Flash/static-RAM: T-1000E 596/116 KiB,
-T-Echo 606/124 KiB (of 756/256 KiB). Increments 4–5 pending.
+boot. Increment 3 (device-domain wiring + RAM diet): acceptance ran on
+the T-1000E with the T-Echo as sealed-multicast peer
+(`companion_hw_validate rf-dev-multicast`) — live `dev-channel add`
+joins the node and multicast is processed (`node rx: Multicast
+ch=1d06 auth=true` on the debug console); the host queue stays at
+0/0 through detached bursts (filter independence); `dev-channel
+remove` silences the channel; a reboot replays the saved table and
+multicast is processed again with no live mutation; the RF
+delegated-ack gate (rf-peer + phase-e 16/3/1) re-passes beside the
+provisioned node on the production image. See the RAM results table
+in that increment. Flash/static-RAM: T-1000E 596/116 KiB, T-Echo
+606/124 KiB (of 756/256 KiB). Increments 4–5 pending.
 
 ## Why
 
@@ -162,7 +170,7 @@ final table here. Stack headroom (~114 KiB, ~90 KiB spare after the
 in-place-construction fix) and the 8 KiB heap are deliberate margins —
 leave them.
 
-**Implemented 2026-07-17** (hardware gate pending). Wiring: rather than
+**Implemented and hardware-validated 2026-07-17.** Wiring: rather than
 per-mutation effects, the session carries a monotonic
 `dev_domain_version` (bumped by every device-table mutation, reset,
 restore, and boot restore) plus `dev_channel_keys()`/`dev_peers()`/
