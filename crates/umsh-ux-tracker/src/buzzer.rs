@@ -100,7 +100,10 @@ pub mod melodies {
     /// Short low blip played just before the buzzer goes silent.
     pub static DO_SILENCE: Melody = Melody::new(&[Tone {
         frequency_hz: 1_200 / 8,
-        duration: Duration::from_millis(10),
+        // The amplified T1000-E piezo needs at least ~60 ms to become
+        // audible. Keep this at the hardware floor so it reads as a subtle
+        // thump rather than a notification tone.
+        duration: Duration::from_millis(60),
     }]);
 }
 

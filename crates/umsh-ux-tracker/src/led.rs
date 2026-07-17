@@ -21,9 +21,13 @@
 
 use core::time::Duration;
 
+use crate::battery::BatteryState;
+
 /// A one-shot LED flash sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedSequence {
+    /// One short flash confirming an accepted local action.
+    ActionConfirm,
     /// 1 s on at boot.
     PowerOn,
     /// Three short flashes just before System OFF.
@@ -35,6 +39,7 @@ pub enum LedSequence {
 impl LedSequence {
     fn pattern(self) -> &'static Pattern {
         match self {
+            Self::ActionConfirm => &patterns::ACTION_CONFIRM,
             Self::PowerOn => &patterns::POWER_ON,
             Self::PowerOff => &patterns::POWER_OFF,
             Self::LocationAdvert => &patterns::LOCATION_ADVERT,
@@ -66,6 +71,169 @@ pub struct LedDecision {
     pub next_deadline_ms: u64,
 }
 
+/// PWM brightness decision for the T1000-E's state-aware indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrightnessDecision {
+    /// Linear brightness in the inclusive range 0..=1000.
+    pub brightness: u16,
+    pub next_deadline_ms: u64,
+}
+
+/// State-aware T1000-E LED policy. One-shot confirmations preempt persistent
+/// state; Charging and Low Battery preempt Attention; Attention replaces only
+/// the ordinary heartbeat.
+#[derive(Debug)]
+pub struct T1000eLedEngine {
+    timings: LedTimings,
+    heartbeat_anchor_ms: u64,
+    battery: BatteryState,
+    attention: bool,
+    active: Option<ActiveSequence>,
+}
+
+impl T1000eLedEngine {
+    pub fn new(start_ms: u64) -> Self {
+        Self {
+            timings: LedTimings::default(),
+            heartbeat_anchor_ms: start_ms,
+            battery: BatteryState::BatteryOnly,
+            attention: false,
+            active: None,
+        }
+    }
+
+    pub fn set_battery(&mut self, battery: BatteryState) {
+        self.battery = battery;
+    }
+
+    pub fn set_attention(&mut self, attention: bool) {
+        self.attention = attention;
+    }
+
+    pub fn play(&mut self, sequence: LedSequence, now_ms: u64) {
+        self.active = Some(ActiveSequence {
+            pattern: sequence.pattern(),
+            started_at_ms: now_ms,
+        });
+    }
+
+    pub fn tick(&mut self, now_ms: u64) -> BrightnessDecision {
+        if let Some(sequence) = &self.active {
+            if let Some((on, deadline)) = sequence.resolve(now_ms) {
+                return BrightnessDecision {
+                    brightness: if on { 1_000 } else { 0 },
+                    next_deadline_ms: deadline,
+                };
+            }
+            self.active = None;
+        }
+
+        match self.battery {
+            BatteryState::BatteryCharging => breathing(now_ms, 3_000, 20),
+            BatteryState::BatteryLow => low_battery(now_ms, self.heartbeat_anchor_ms, 4_000),
+            BatteryState::BatteryCritical => BrightnessDecision {
+                brightness: 0,
+                next_deadline_ms: now_ms.saturating_add(1_000),
+            },
+            BatteryState::BatteryOnly | BatteryState::BatteryCharged if self.attention => {
+                attention_pulse(
+                    now_ms,
+                    self.heartbeat_anchor_ms,
+                    self.timings.heartbeat_interval.as_millis() as u64,
+                )
+            }
+            BatteryState::BatteryCharged => binary_heartbeat(
+                now_ms,
+                self.heartbeat_anchor_ms,
+                self.timings.heartbeat_interval.as_millis() as u64,
+                60,
+            ),
+            BatteryState::BatteryOnly => binary_heartbeat(
+                now_ms,
+                self.heartbeat_anchor_ms,
+                self.timings.heartbeat_interval.as_millis() as u64,
+                self.timings.heartbeat_pulse.as_millis() as u64,
+            ),
+        }
+    }
+}
+
+fn breathing(now_ms: u64, cycle_ms: u64, step_ms: u64) -> BrightnessDecision {
+    let phase = now_ms % cycle_ms;
+    let half = cycle_ms / 2;
+    let ramp = if phase < half {
+        phase
+    } else {
+        cycle_ms - phase
+    };
+    BrightnessDecision {
+        brightness: ((1_000 * ramp) / half) as u16,
+        next_deadline_ms: now_ms.saturating_add(step_ms),
+    }
+}
+
+fn attention_pulse(now_ms: u64, anchor_ms: u64, interval_ms: u64) -> BrightnessDecision {
+    const PULSE_MS: u64 = 300;
+    const STEP_MS: u64 = 10;
+    let elapsed = now_ms.saturating_sub(anchor_ms);
+    let phase = elapsed % interval_ms;
+    let cycle_start = now_ms - phase;
+    if phase >= PULSE_MS {
+        return BrightnessDecision {
+            brightness: 0,
+            next_deadline_ms: cycle_start + interval_ms,
+        };
+    }
+    let half = PULSE_MS / 2;
+    let ramp = if phase < half {
+        phase
+    } else {
+        PULSE_MS - phase
+    };
+    BrightnessDecision {
+        brightness: ((1_000 * ramp) / half) as u16,
+        next_deadline_ms: (now_ms + STEP_MS).min(cycle_start + PULSE_MS),
+    }
+}
+
+fn low_battery(now_ms: u64, anchor_ms: u64, interval_ms: u64) -> BrightnessDecision {
+    let elapsed = now_ms.saturating_sub(anchor_ms);
+    let phase = elapsed % interval_ms;
+    let cycle_start = now_ms - phase;
+    let (on, boundary) = match phase {
+        0..100 => (true, 100),
+        100..200 => (false, 200),
+        200..300 => (true, 300),
+        _ => (false, interval_ms),
+    };
+    BrightnessDecision {
+        brightness: if on { 1_000 } else { 0 },
+        next_deadline_ms: cycle_start + boundary,
+    }
+}
+
+fn binary_heartbeat(
+    now_ms: u64,
+    anchor_ms: u64,
+    interval_ms: u64,
+    pulse_ms: u64,
+) -> BrightnessDecision {
+    let elapsed = now_ms.saturating_sub(anchor_ms);
+    let phase = elapsed % interval_ms;
+    let cycle_start = now_ms - phase;
+    if phase < pulse_ms {
+        BrightnessDecision {
+            brightness: 1_000,
+            next_deadline_ms: cycle_start + pulse_ms,
+        }
+    } else {
+        BrightnessDecision {
+            brightness: 0,
+            next_deadline_ms: cycle_start + interval_ms,
+        }
+    }
+}
+
 /// A pre-computed LED pattern. `steps` is an alternating list of
 /// durations starting with the ON phase: `[on_0, off_0, on_1, off_1, ...]`.
 #[derive(Debug)]
@@ -76,6 +244,10 @@ pub struct Pattern {
 mod patterns {
     use super::Pattern;
     use core::time::Duration;
+
+    pub static ACTION_CONFIRM: Pattern = Pattern {
+        steps: &[Duration::from_millis(100)],
+    };
 
     pub static POWER_ON: Pattern = Pattern {
         steps: &[Duration::from_millis(1_000)],
@@ -427,5 +599,36 @@ mod tests {
         assert_eq!(e.tick(149).on, true);
         // After 150ms → back to heartbeat (off-gap since past pulse window).
         assert_eq!(e.tick(150).on, false);
+    }
+
+    #[test]
+    fn attention_replaces_each_heartbeat_with_smooth_300ms_pulse() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_attention(true);
+        assert_eq!(e.tick(0).brightness, 0);
+        assert!(e.tick(75).brightness > 0);
+        assert_eq!(e.tick(150).brightness, 1_000);
+        assert!(e.tick(225).brightness > 0);
+        assert_eq!(e.tick(300).brightness, 0);
+        assert_eq!(e.tick(4_150).brightness, 1_000);
+    }
+
+    #[test]
+    fn charging_preempts_attention() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_attention(true);
+        e.set_battery(BatteryState::BatteryCharging);
+        assert_eq!(e.tick(1_500).brightness, 1_000);
+        assert_eq!(e.tick(3_000).brightness, 0);
+    }
+
+    #[test]
+    fn low_battery_is_a_double_flash() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_battery(BatteryState::BatteryLow);
+        assert_eq!(e.tick(0).brightness, 1_000);
+        assert_eq!(e.tick(100).brightness, 0);
+        assert_eq!(e.tick(200).brightness, 1_000);
+        assert_eq!(e.tick(300).brightness, 0);
     }
 }

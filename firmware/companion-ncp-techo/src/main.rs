@@ -109,16 +109,14 @@ mod firmware {
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, Either3, select, select3};
-    #[cfg(not(feature = "t1000e"))]
-    use embassy_futures::select::{Either4, select4};
+    use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
     use embassy_nrf::pac;
     use embassy_nrf::peripherals::{self, RNG};
     #[cfg(feature = "t1000e")]
-    use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
+    use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
     #[cfg(feature = "t1000e")]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
@@ -153,10 +151,10 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::system_off::Port;
-    #[cfg(feature = "t1000e")]
-    use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(not(feature = "t1000e"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
+    #[cfg(feature = "t1000e")]
+    use umsh_bsp_nrf52840::system_off::{drive_pin_low, read_pin};
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
     #[cfg(not(feature = "t1000e"))]
@@ -184,7 +182,10 @@ mod firmware {
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     #[cfg(feature = "t1000e")]
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
+    #[cfg(not(feature = "t1000e"))]
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
+    #[cfg(feature = "t1000e")]
+    use umsh_ux_tracker::led::{LedSequence, T1000eLedEngine};
 
     bind_interrupts!(struct Irqs {
         USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -654,13 +655,9 @@ mod firmware {
                 record,
             };
             let mut flash = self.flash.lock().await;
-            let target = journal_write_target(
-                &mut flash,
-                self.slot,
-                self.page0,
-                proto_store::SLOT_SIZE,
-            )
-            .await?;
+            let target =
+                journal_write_target(&mut flash, self.slot, self.page0, proto_store::SLOT_SIZE)
+                    .await?;
             match proto_store::write_record(&mut *flash, target, &stored).await {
                 Ok(()) => {
                     debug_log(format_args!(
@@ -2153,6 +2150,8 @@ mod firmware {
                                         break;
                                     }
                                 }
+                                #[cfg(feature = "t1000e")]
+                                umsh_bsp_t1000e::indicator::clear_attention();
                             }
                             Some(Effect::WipeHostDomain { tid }) => {
                                 // Durably wipe the host-domain portion of
@@ -2215,17 +2214,11 @@ mod firmware {
                                                 secret
                                             }
                                         };
-                                        let identity =
-                                            SoftwareIdentity::from_secret_bytes(&secret);
+                                        let identity = SoftwareIdentity::from_secret_bytes(&secret);
                                         let public_key = identity.public_key().0;
-                                        let payload = proto_store::encode_identity(
-                                            &secret,
-                                            &public_key,
-                                        );
-                                        identity_store
-                                            .persist(&payload)
-                                            .await
-                                            .map(|()| public_key)
+                                        let payload =
+                                            proto_store::encode_identity(&secret, &public_key);
+                                        identity_store.persist(&payload).await.map(|()| public_key)
                                     }
                                     None => Err(()),
                                 };
@@ -2246,11 +2239,17 @@ mod firmware {
                             }
                             other => apply_effect(&session, other).await,
                         }
+                        #[cfg(feature = "t1000e")]
+                        if session.queued_frame_count() == 0 {
+                            umsh_bsp_t1000e::indicator::clear_attention();
+                        }
                     }
                 }
                 Either3::Second(RxFrame { data, info }) => {
                     // While detached this may stage a delegated MAC
                     // acknowledgement (Effect::StartTransmit).
+                    #[cfg(feature = "t1000e")]
+                    let queued_before = session.queued_frame_count();
                     let effect = session.on_radio_rx(
                         &data,
                         info.rssi,
@@ -2259,6 +2258,10 @@ mod firmware {
                         Instant::now().as_millis(),
                         &mut |frame: &[u8]| emitter.push(frame),
                     );
+                    #[cfg(feature = "t1000e")]
+                    if session.queued_frame_count() > queued_before {
+                        umsh_bsp_t1000e::indicator::request_attention();
+                    }
                     emitter.flush(arbitration.destination()).await;
                     apply_effect(&session, effect).await;
                 }
@@ -2547,13 +2550,18 @@ mod firmware {
     /// runner is monomorphized in this binary.
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
-    async fn t1000e_buzzer_task(pwm: SimplePwm<'static>, enable: Output<'static>) {
-        umsh_bsp_t1000e::buzzer::run(pwm, enable).await;
+    async fn t1000e_buzzer_task(
+        pwm: SimplePwm<'static>,
+        enable: Output<'static>,
+        initially_silenced: bool,
+    ) {
+        umsh_bsp_t1000e::buzzer::run(pwm, enable, initially_silenced).await;
     }
 
-    /// Preserve the T-1000E's established runtime recognizer and actions:
-    /// double-click toggles silence, triple-click enters UF2 DFU, and the
-    /// three-second long press powers off. A startup-held press has already
+    /// Apply the T-1000E device profile: the unsupported single and quadruple
+    /// slots remain inert, double-click toggles persisted Silence State,
+    /// triple-click is reserved for unsupported GPS control, and the
+    /// three-second long press enters persisted Sleep State. A startup-held press has already
     /// been consumed by the force-pairing ceremony, so it is ignored through
     /// its release instead of becoming an immediate shutdown.
     #[cfg(feature = "t1000e")]
@@ -2594,21 +2602,23 @@ mod firmware {
 
             match event {
                 Some(ButtonEvent::Single) => {
-                    // The NCP role has no autonomous MAC identity with which
-                    // to emit the CLI firmware's beacon. Retain its audible
-                    // single-press acknowledgement without stealing the press
-                    // for pairing; pairing requires the startup-held gesture.
-                    umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
+                    // The NCP has no autonomous primary action. An unsupported
+                    // slot is inert and must not emit a false confirmation.
                 }
                 Some(ButtonEvent::Double) => {
-                    umsh_bsp_t1000e::BUZZER_SILENCE_TOGGLE.signal(());
+                    let preferences = umsh_bsp_t1000e::preferences::toggle_silent();
+                    umsh_bsp_t1000e::BUZZER_SILENCE_SET.signal(preferences.silent);
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
+                        .signal(LedSequence::ActionConfirm);
                 }
                 Some(ButtonEvent::Triple) => {
-                    umsh_bsp_nrf52840::gpregret::enter_dfu_uf2();
+                    // Reserved for GPS power control. The NCP does not own
+                    // GNSS, so the slot remains inert.
                 }
                 Some(ButtonEvent::Long) => {
                     pressed = false;
                     fsm = ButtonFsm::new(ButtonTimings::default());
+                    umsh_bsp_t1000e::preferences::set_asleep(true);
                     umsh_bsp_t1000e::SHUTDOWN_SIGNAL.signal(());
                 }
                 Some(ButtonEvent::Quad | ButtonEvent::VeryLong) | None => {}
@@ -2624,8 +2634,19 @@ mod firmware {
 
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
-    async fn t1000e_power_task(saadc: Saadc<'static, 1>, sensor_rail: Output<'static>) {
-        umsh_bsp_t1000e::power::run_battery_monitor(saadc, sensor_rail).await;
+    async fn t1000e_power_task(
+        saadc: Saadc<'static, 1>,
+        sensor_rail: Output<'static>,
+        external_power: Input<'static>,
+        charge_active: Input<'static>,
+    ) {
+        umsh_bsp_t1000e::power::run_battery_monitor(
+            saadc,
+            sensor_rail,
+            external_power,
+            charge_active,
+        )
+        .await;
     }
 
     /// Controlled power-off: put the e-paper controller to sleep, tri-state
@@ -2725,6 +2746,42 @@ mod firmware {
         let hardware_reset_reasons = pac::POWER.resetreas().read();
         pac::POWER.resetreas().write(|reasons| reasons.0 = u32::MAX);
         BOOT_RESETREAS.store(hardware_reset_reasons.0, Ordering::Release);
+        #[cfg(feature = "t1000e")]
+        let t1000e_button_wake = read_pin(Port::P0, 6);
+        #[cfg(feature = "t1000e")]
+        let t1000e_external_power = read_pin(Port::P0, 5);
+        #[cfg(feature = "t1000e")]
+        let t1000e_retained_state = umsh_bsp_t1000e::preferences::load();
+        #[cfg(feature = "t1000e")]
+        if t1000e_retained_state.battery_critical && !t1000e_external_power {
+            umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
+        }
+        #[cfg(feature = "t1000e")]
+        if t1000e_retained_state.battery_critical && t1000e_external_power {
+            umsh_bsp_t1000e::preferences::set_battery_critical(false);
+        }
+        #[cfg(feature = "t1000e")]
+        if hardware_reset_reasons.off() && t1000e_button_wake {
+            umsh_bsp_t1000e::preferences::set_asleep(false);
+        } else if umsh_bsp_t1000e::preferences::load().asleep {
+            if t1000e_external_power {
+                let mut led_config = SimpleConfig::default();
+                led_config.prescaler = Prescaler::Div16;
+                let led_pwm = SimplePwm::new_1ch(p.PWM1, p.P0_24, &led_config);
+                let sleep_button = Input::new(p.P0_06, Pull::Down);
+                let sleep_external_power = Input::new(p.P0_05, Pull::Down);
+                let sleep_charge_active = Input::new(p.P1_03, Pull::Up);
+                umsh_bsp_t1000e::shutdown::run_charging_sleep(
+                    led_pwm,
+                    sleep_button,
+                    sleep_external_power,
+                    sleep_charge_active,
+                )
+                .await;
+            } else {
+                umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
+            }
+        }
 
         // Disarm POWER USB interrupt state inherited across the DFU
         // handoff. The bootloader's USB stack enables the POWER
@@ -2859,7 +2916,9 @@ mod firmware {
         // processing, below MPSL's radio-critical priority 0.
         {
             let timer = pac::TIMER2;
-            timer.mode().write(|w| w.set_mode(pac::timer::vals::Mode::Timer));
+            timer
+                .mode()
+                .write(|w| w.set_mode(pac::timer::vals::Mode::Timer));
             timer
                 .bitmode()
                 .write(|w| w.set_bitmode(pac::timer::vals::Bitmode::_32bit));
@@ -2879,7 +2938,11 @@ mod firmware {
         #[cfg(not(feature = "t1000e"))]
         let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
         #[cfg(feature = "t1000e")]
-        let led = Output::new(p.P0_24, Level::Low, OutputDrive::Standard);
+        let led = {
+            let mut config = SimpleConfig::default();
+            config.prescaler = Prescaler::Div16;
+            SimplePwm::new_1ch(p.PWM1, p.P0_24, &config)
+        };
         // Service the watchdog throughout radio, persistence, MPSL, and BLE
         // initialization. Deferring this task until the final steady-state
         // join caused first-boot persistence to consume the entire watchdog
@@ -2998,106 +3061,124 @@ mod firmware {
         #[cfg(not(feature = "no-ble"))]
         let mut sdc_memory = sdc::Mem::<8192>::new();
         #[cfg(not(feature = "no-ble"))]
-        let (controller, ble_store, proto_store, boot_snapshot, identity_store, boot_identity, identity_rng) = {
-        let mpsl_peripherals =
-            mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
-        let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-            source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
-            rc_ctiv: 0,
-            rc_temp_ctiv: 0,
-            accuracy_ppm: 20,
-            skip_wait_lfclk_started: false,
-        };
-        static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
-        static TIMESLOT_MEM: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
-        let mpsl = MPSL.init(
-            MultiprotocolServiceLayer::with_timeslots(
-                mpsl_peripherals,
-                Irqs,
-                lfclk,
-                TIMESLOT_MEM.init(mpsl::SessionMem::new()),
-            )
-            .unwrap_or_else(|_| panic!("mpsl init")),
-        );
-        spawner.spawn(mpsl_task(mpsl).unwrap());
-        super::panic::breadcrumb_mark(5);
-        static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
-        let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
-        let mut ble_store = BleStore::mount(flash).await;
-        // Mount the protocol journals before the NCP session starts: a
-        // stored snapshot must be restored (and the PHY re-applied) and
-        // the persisted device identity installed before the first host
-        // command.
-        let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
-        let (identity_store, identity_payload) =
-            ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
-        let boot_identity = identity_payload
-            .as_deref()
-            .and_then(proto_store::decode_identity)
-            .map(|(_secret, public)| public);
+        let (
+            controller,
+            ble_store,
+            proto_store,
+            boot_snapshot,
+            identity_store,
+            boot_identity,
+            identity_rng,
+        ) = {
+            let mpsl_peripherals = mpsl::Peripherals::new(
+                p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31,
+            );
+            let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
+                source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+                rc_ctiv: 0,
+                rc_temp_ctiv: 0,
+                accuracy_ppm: 20,
+                skip_wait_lfclk_started: false,
+            };
+            static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
+            static TIMESLOT_MEM: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
+            let mpsl = MPSL.init(
+                MultiprotocolServiceLayer::with_timeslots(
+                    mpsl_peripherals,
+                    Irqs,
+                    lfclk,
+                    TIMESLOT_MEM.init(mpsl::SessionMem::new()),
+                )
+                .unwrap_or_else(|_| panic!("mpsl init")),
+            );
+            spawner.spawn(mpsl_task(mpsl).unwrap());
+            super::panic::breadcrumb_mark(5);
+            static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
+            let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
+            let mut ble_store = BleStore::mount(flash).await;
+            // Mount the protocol journals before the NCP session starts: a
+            // stored snapshot must be restored (and the PHY re-applied) and
+            // the persisted device identity installed before the first host
+            // command.
+            let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
+            let (identity_store, identity_payload) =
+                ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
+            let boot_identity = identity_payload
+                .as_deref()
+                .and_then(proto_store::decode_identity)
+                .map(|(_secret, public)| public);
 
-        // Deliberate recovery image for hardware testing. This runs before the
-        // Trouble host is constructed, so there is no live bond table to keep
-        // in sync: the empty persisted snapshot becomes the host's initial
-        // state below. Preserve the device's local IRK, matching the normal
-        // security-wipe operation.
-        #[cfg(feature = "ble-wipe-on-boot")]
-        {
-            debug_log(format_args!(
-                "ONE-TIME BLE WIPE begin bonds={} pin={}",
-                ble_store.snapshot().bonds.len(),
-                ble_store.snapshot().pin.is_some(),
-            ));
-            ble_store
-                .clear_security()
-                .await
-                .unwrap_or_else(|_| panic!("one-time ble wipe failed"));
-            debug_log(format_args!(
-                "ONE-TIME BLE WIPE complete bonds={} pin={}",
-                ble_store.snapshot().bonds.len(),
-                ble_store.snapshot().pin.is_some(),
-            ));
-        }
-        BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
-        BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
-        PAIRING_MODE.store(
-            ble_store.snapshot().bonds.is_empty() || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire),
-            Ordering::Release,
-        );
-
-        let sdc_peripherals = sdc::Peripherals::new(
-            p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
-            p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
-        );
-        if ble_store.snapshot().local_irk.is_none() {
-            let mut local_irk = [0u8; 16];
-            rng.fill_bytes(&mut local_irk).await;
-            if local_irk == [0; 16] {
-                local_irk[0] = 1;
+            // Deliberate recovery image for hardware testing. This runs before the
+            // Trouble host is constructed, so there is no live bond table to keep
+            // in sync: the empty persisted snapshot becomes the host's initial
+            // state below. Preserve the device's local IRK, matching the normal
+            // security-wipe operation.
+            #[cfg(feature = "ble-wipe-on-boot")]
+            {
+                debug_log(format_args!(
+                    "ONE-TIME BLE WIPE begin bonds={} pin={}",
+                    ble_store.snapshot().bonds.len(),
+                    ble_store.snapshot().pin.is_some(),
+                ));
+                ble_store
+                    .clear_security()
+                    .await
+                    .unwrap_or_else(|_| panic!("one-time ble wipe failed"));
+                debug_log(format_args!(
+                    "ONE-TIME BLE WIPE complete bonds={} pin={}",
+                    ble_store.snapshot().bonds.len(),
+                    ble_store.snapshot().pin.is_some(),
+                ));
             }
-            ble_store
-                .set_local_irk(local_irk)
-                .await
-                .unwrap_or_else(|_| panic!("local irk persist"));
-        }
-        #[cfg(feature = "ble-store-fault-inject")]
-        {
-            BLE_STORE_FAULT_ARMED.store(true, Ordering::Release);
-            debug_log(format_args!(
-                "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
-            ));
-        }
-        // Seed the identity-generation CSPRNG from the TRNG while the
-        // peripheral is still ours: build_sdc below hands the RNG to
-        // the SoftDevice Controller for its lifetime.
-        let mut identity_seed = [0u8; 32];
-        rng.fill_bytes(&mut identity_seed).await;
-        let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
-        super::panic::breadcrumb_mark(6);
-        let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
-            .unwrap_or_else(|_| panic!("sdc init"));
-        super::panic::breadcrumb_mark(7);
-        (controller, ble_store, proto_store, boot_snapshot, identity_store, boot_identity, identity_rng)
+            BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
+            BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
+            PAIRING_MODE.store(
+                ble_store.snapshot().bonds.is_empty()
+                    || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire),
+                Ordering::Release,
+            );
+
+            let sdc_peripherals = sdc::Peripherals::new(
+                p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+                p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+            );
+            if ble_store.snapshot().local_irk.is_none() {
+                let mut local_irk = [0u8; 16];
+                rng.fill_bytes(&mut local_irk).await;
+                if local_irk == [0; 16] {
+                    local_irk[0] = 1;
+                }
+                ble_store
+                    .set_local_irk(local_irk)
+                    .await
+                    .unwrap_or_else(|_| panic!("local irk persist"));
+            }
+            #[cfg(feature = "ble-store-fault-inject")]
+            {
+                BLE_STORE_FAULT_ARMED.store(true, Ordering::Release);
+                debug_log(format_args!(
+                    "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
+                ));
+            }
+            // Seed the identity-generation CSPRNG from the TRNG while the
+            // peripheral is still ours: build_sdc below hands the RNG to
+            // the SoftDevice Controller for its lifetime.
+            let mut identity_seed = [0u8; 32];
+            rng.fill_bytes(&mut identity_seed).await;
+            let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
+            super::panic::breadcrumb_mark(6);
+            let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
+                .unwrap_or_else(|_| panic!("sdc init"));
+            super::panic::breadcrumb_mark(7);
+            (
+                controller,
+                ble_store,
+                proto_store,
+                boot_snapshot,
+                identity_store,
+                boot_identity,
+                identity_rng,
+            )
         };
         #[cfg(feature = "no-ble")]
         let (proto_store, boot_snapshot, identity_store, boot_identity, identity_rng): (
@@ -3218,7 +3299,10 @@ mod firmware {
             buzzer_config.prescaler = Prescaler::Div16;
             let buzzer_pwm = SimplePwm::new_1ch(p.PWM0, p.P0_25, &buzzer_config);
             let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
-            spawner.spawn(t1000e_buzzer_task(buzzer_pwm, buzzer_enable).unwrap());
+            let initial_preferences = umsh_bsp_t1000e::preferences::load();
+            spawner.spawn(
+                t1000e_buzzer_task(buzzer_pwm, buzzer_enable, initial_preferences.silent).unwrap(),
+            );
             // The normal power-on chirp is intentional. Early startup already
             // forced both buzzer pins low, so this is the first and only sound.
             umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
@@ -3230,7 +3314,11 @@ mod firmware {
                 SaadcConfig::default(),
                 [ChannelConfig::single_ended(p.P0_02)],
             );
-            spawner.spawn(t1000e_power_task(saadc, sensor_rail).unwrap());
+            let external_power = Input::new(p.P0_05, Pull::Down);
+            let charge_active = Input::new(p.P1_03, Pull::Up);
+            spawner.spawn(
+                t1000e_power_task(saadc, sensor_rail, external_power, charge_active).unwrap(),
+            );
             spawner.spawn(t1000e_button_task(button, force_pairing_at_boot).unwrap());
             spawner.spawn(t1000e_shutdown_task().unwrap());
         }
@@ -3251,6 +3339,7 @@ mod firmware {
 
     // ─── Heartbeat + WDT pet ─────────────────────────────────────────────────
 
+    #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
@@ -3282,19 +3371,65 @@ mod firmware {
             }
             let decision = engine.tick(Instant::now().as_millis());
             // T-Echo P0.14 is active-low; T-1000E P0.24 is active-high.
-            #[cfg(not(feature = "t1000e"))]
             if decision.on {
                 led.set_low()
             } else {
                 led.set_high()
-            }
-            #[cfg(feature = "t1000e")]
-            if decision.on {
-                led.set_high()
-            } else {
-                led.set_low()
             }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
+        }
+    }
+
+    #[cfg(feature = "t1000e")]
+    #[embassy_executor::task]
+    async fn heartbeat(mut led: SimplePwm<'static>, mut wdt: WatchdogHandle) -> ! {
+        led.set_period(1_000);
+        led.enable();
+        let mut engine = T1000eLedEngine::new(Instant::now().as_millis());
+        loop {
+            wdt.pet();
+            super::panic::breadcrumb_beat();
+            let battery = umsh_bsp_t1000e::battery_state();
+            engine.set_battery(battery);
+            engine.set_attention(umsh_bsp_t1000e::indicator::attention_requested());
+
+            let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
+            if ble_mode != 0
+                && matches!(
+                    battery,
+                    umsh_ux_tracker::battery::BatteryState::BatteryOnly
+                        | umsh_ux_tracker::battery::BatteryState::BatteryCharged
+                )
+            {
+                let phase = Instant::now().as_millis() % 2_000;
+                let on = if ble_mode == 1 {
+                    phase < 100 || (500..600).contains(&phase)
+                } else {
+                    phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
+                };
+                let duty = if on { led.max_duty() } else { 0 };
+                led.set_duty(0, DutyCycle::normal(duty));
+                Timer::after_millis(50).await;
+                continue;
+            }
+
+            let decision = engine.tick(Instant::now().as_millis());
+            let duty =
+                ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
+            led.set_duty(0, DutyCycle::normal(duty));
+            match select4(
+                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
+                umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
+                umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
+            )
+            .await
+            {
+                Either4::First(()) | Either4::Second(_) | Either4::Third(()) => {}
+                Either4::Fourth(sequence) => {
+                    engine.play(sequence, Instant::now().as_millis());
+                }
+            }
         }
     }
 }

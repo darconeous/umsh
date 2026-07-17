@@ -35,7 +35,9 @@
 //! See `docs/firmware-architecture.md` for the broader BSP / UX / App
 //! / Binary layering.
 
+pub mod battery;
 pub mod button;
 pub mod buzzer;
 pub mod led;
 pub mod power;
+pub mod state;

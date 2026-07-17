@@ -2927,6 +2927,7 @@ name = "umsh-bsp-t1000e"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "critical-section",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
