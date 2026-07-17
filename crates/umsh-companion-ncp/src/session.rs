@@ -1217,6 +1217,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         self.session.pending.is_some()
     }
 
+    /// Number of received frames currently waiting for the host.
+    pub fn queued_frame_count(&self) -> usize {
+        self.host.queue.len
+    }
+
     /// Reset all protocol state to post-reset values, announce the
     /// reset with the given reason, and return the radio effect
     /// applying the post-reset radio configuration.

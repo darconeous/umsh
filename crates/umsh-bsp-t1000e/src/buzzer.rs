@@ -29,11 +29,10 @@ const COLD_START_WARMUP: Duration = Duration::from_millis(20);
 /// toggled to the silenced state.
 pub static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
 
-/// Firmware-visible signal: pulse to flip the buzzer between
-/// silenced / un-silenced. Plays `DO_SILENCE` before silencing and
-/// `UNSILENCE` after un-silencing so the user gets audible feedback
-/// in both directions.
-pub static BUZZER_SILENCE_TOGGLE: Signal<ThreadModeRawMutex, ()> = Signal::new();
+/// Firmware-visible signal: apply a persisted Silence-state transition.
+/// Setting `true` plays `DO_SILENCE` immediately before silencing; setting
+/// `false` unsilences first and then plays `UNSILENCE`.
+pub static BUZZER_SILENCE_SET: Signal<ThreadModeRawMutex, bool> = Signal::new();
 
 /// Runs the buzzer state machine. Wrap in `#[embassy_executor::task]`
 /// in the firmware binary so the linker sees a concrete monomorphisation.
@@ -41,8 +40,13 @@ pub static BUZZER_SILENCE_TOGGLE: Signal<ThreadModeRawMutex, ()> = Signal::new()
 /// PWM clock is expected to be 1 MHz (caller picks `Prescaler::Div16`),
 /// so for the 1–2 kHz melody range max_duty is 500–1000 — plenty of
 /// resolution for the 50% duty square wave we emit.
-pub async fn run(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
+pub async fn run(
+    mut pwm: SimplePwm<'static>,
+    mut enable: Output<'static>,
+    initially_silenced: bool,
+) {
     let mut engine = BuzzerEngine::new();
+    engine.set_silenced(initially_silenced);
 
     // When set, silence the engine the next time it returns Silent. Lets
     // us play the `DO_SILENCE` feedback blip through the normal Tone path
@@ -91,7 +95,7 @@ pub async fn run(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
                 pwm.set_duty(0, DutyCycle::normal(half));
                 match select3(
                     BUZZER_SIGNAL.wait(),
-                    BUZZER_SILENCE_TOGGLE.wait(),
+                    BUZZER_SILENCE_SET.wait(),
                     Timer::at(Instant::from_millis(next_deadline_ms)),
                 )
                 .await
@@ -99,7 +103,9 @@ pub async fn run(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
                     Either3::First(melody) => {
                         engine.play(melody, Instant::now().as_millis());
                     }
-                    Either3::Second(()) => apply_silence_toggle(&mut engine, &mut silence_pending),
+                    Either3::Second(silenced) => {
+                        apply_silence_state(&mut engine, &mut silence_pending, silenced)
+                    }
                     Either3::Third(()) => {}
                 }
             }
@@ -109,11 +115,13 @@ pub async fn run(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
                     enable.set_low();
                     driving = false;
                 }
-                match select(BUZZER_SIGNAL.wait(), BUZZER_SILENCE_TOGGLE.wait()).await {
+                match select(BUZZER_SIGNAL.wait(), BUZZER_SILENCE_SET.wait()).await {
                     Either::First(melody) => {
                         engine.play(melody, Instant::now().as_millis());
                     }
-                    Either::Second(()) => apply_silence_toggle(&mut engine, &mut silence_pending),
+                    Either::Second(silenced) => {
+                        apply_silence_state(&mut engine, &mut silence_pending, silenced)
+                    }
                 }
             }
         }
@@ -125,11 +133,12 @@ pub async fn run(mut pwm: SimplePwm<'static>, mut enable: Output<'static>) {
 /// case defers the `set_silenced(true)` call to the main loop via
 /// `silence_pending` so the `DO_SILENCE` blip finishes before the engine
 /// is muted.
-fn apply_silence_toggle(engine: &mut BuzzerEngine, silence_pending: &mut bool) {
-    if engine.is_silenced() {
+fn apply_silence_state(engine: &mut BuzzerEngine, silence_pending: &mut bool, silenced: bool) {
+    if !silenced {
+        *silence_pending = false;
         engine.set_silenced(false);
         engine.play(&melodies::UNSILENCE, Instant::now().as_millis());
-    } else {
+    } else if !engine.is_silenced() {
         engine.play(&melodies::DO_SILENCE, Instant::now().as_millis());
         *silence_pending = true;
     }

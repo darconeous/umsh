@@ -93,12 +93,12 @@ mod firmware {
 
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, select};
+    use embassy_futures::select::{Either, Either4, select, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
-    use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
+    use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
@@ -137,7 +137,7 @@ mod firmware {
     use umsh_sync::AsyncRefCell;
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
-    use umsh_ux_tracker::led::{LedEngine, LedTimings};
+    use umsh_ux_tracker::led::{LedSequence, T1000eLedEngine};
 
     use super::cli_io;
 
@@ -235,8 +235,12 @@ mod firmware {
     /// Body lives in `umsh_bsp_t1000e::buzzer`; this shim is required so
     /// the embassy task macro sees concrete monomorphised types.
     #[embassy_executor::task]
-    async fn buzzer_task(pwm: SimplePwm<'static>, enable: Output<'static>) {
-        umsh_bsp_t1000e::buzzer::run(pwm, enable).await;
+    async fn buzzer_task(
+        pwm: SimplePwm<'static>,
+        enable: Output<'static>,
+        initially_silenced: bool,
+    ) {
+        umsh_bsp_t1000e::buzzer::run(pwm, enable, initially_silenced).await;
     }
 
     /// Drives the MAC coordinator. Independent of USB so radio RX/TX and
@@ -347,13 +351,19 @@ mod firmware {
 
             match event {
                 Some(ButtonEvent::Single) => {
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
+                        .signal(LedSequence::ActionConfirm);
                     BEACON_SIGNAL.signal(());
                 }
                 Some(ButtonEvent::Double) => {
-                    umsh_bsp_t1000e::BUZZER_SILENCE_TOGGLE.signal(());
+                    let preferences = umsh_bsp_t1000e::preferences::toggle_silent();
+                    umsh_bsp_t1000e::BUZZER_SILENCE_SET.signal(preferences.silent);
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
+                        .signal(LedSequence::ActionConfirm);
                 }
                 Some(ButtonEvent::Triple) => {
-                    umsh_bsp_nrf52840::gpregret::enter_dfu_uf2();
+                    // Reserved for GPS power control. This firmware does not
+                    // yet own a GNSS task, so the slot remains inert.
                 }
                 Some(ButtonEvent::Quad) => {
                     // No action defined for Quad yet
@@ -361,6 +371,7 @@ mod firmware {
                 Some(ButtonEvent::Long) => {
                     pressed = false;
                     fsm = ButtonFsm::new(ButtonTimings::default());
+                    umsh_bsp_t1000e::preferences::set_asleep(true);
                     SHUTDOWN_SIGNAL.signal(());
                 }
                 _ => {}
@@ -379,21 +390,46 @@ mod firmware {
     /// Monitors battery voltage via SAADC and forces shutdown on low VBAT.
     /// Body lives in `umsh_bsp_t1000e::power`.
     #[embassy_executor::task]
-    async fn power_task(saadc: Saadc<'static, 1>, sensor_rail: Output<'static>) {
-        umsh_bsp_t1000e::power::run_battery_monitor(saadc, sensor_rail).await;
+    async fn power_task(
+        saadc: Saadc<'static, 1>,
+        sensor_rail: Output<'static>,
+        external_power: Input<'static>,
+        charge_active: Input<'static>,
+    ) {
+        umsh_bsp_t1000e::power::run_battery_monitor(
+            saadc,
+            sensor_rail,
+            external_power,
+            charge_active,
+        )
+        .await;
     }
 
-    async fn heartbeat(mut led: Output<'static>, mut wdt: WatchdogHandle) -> ! {
-        let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
+    async fn heartbeat(mut led: SimplePwm<'static>, mut wdt: WatchdogHandle) -> ! {
+        led.set_period(1_000);
+        led.enable();
+        let mut engine = T1000eLedEngine::new(Instant::now().as_millis());
         loop {
             wdt.pet();
+            engine.set_battery(umsh_bsp_t1000e::battery_state());
+            engine.set_attention(umsh_bsp_t1000e::indicator::attention_requested());
             let decision = engine.tick(Instant::now().as_millis());
-            if decision.on {
-                led.set_high()
-            } else {
-                led.set_low()
+            let duty =
+                ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
+            led.set_duty(0, DutyCycle::normal(duty));
+            match select4(
+                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
+                umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
+                umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
+            )
+            .await
+            {
+                Either4::First(()) | Either4::Second(_) | Either4::Third(()) => {}
+                Either4::Fourth(sequence) => {
+                    engine.play(sequence, Instant::now().as_millis());
+                }
             }
-            Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
     }
 
@@ -409,6 +445,44 @@ mod firmware {
 
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
+        let reset_reasons = embassy_nrf::pac::POWER.resetreas().read();
+        embassy_nrf::pac::POWER
+            .resetreas()
+            .write(|reasons| reasons.0 = u32::MAX);
+        let woke_from_system_off = reset_reasons.off();
+        let button_wake =
+            umsh_bsp_nrf52840::system_off::read_pin(umsh_bsp_nrf52840::system_off::Port::P0, 6);
+        let external_power_present =
+            umsh_bsp_nrf52840::system_off::read_pin(umsh_bsp_nrf52840::system_off::Port::P0, 5);
+        let retained_state = umsh_bsp_t1000e::preferences::load();
+        if retained_state.battery_critical && !external_power_present {
+            umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
+        }
+        if retained_state.battery_critical && external_power_present {
+            umsh_bsp_t1000e::preferences::set_battery_critical(false);
+        }
+        if woke_from_system_off && button_wake {
+            umsh_bsp_t1000e::preferences::set_asleep(false);
+        } else if umsh_bsp_t1000e::preferences::load().asleep {
+            if external_power_present {
+                let mut led_config = SimpleConfig::default();
+                led_config.prescaler = Prescaler::Div16;
+                let led_pwm = SimplePwm::new_1ch(p.PWM1, p.P0_24, &led_config);
+                let sleep_button = Input::new(p.P0_06, Pull::Down);
+                let sleep_external_power = Input::new(p.P0_05, Pull::Down);
+                let sleep_charge_active = Input::new(p.P1_03, Pull::Up);
+                umsh_bsp_t1000e::shutdown::run_charging_sleep(
+                    led_pwm,
+                    sleep_button,
+                    sleep_external_power,
+                    sleep_charge_active,
+                )
+                .await;
+            } else {
+                umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
+            }
+        }
+
         // Seize LR1110 RESET immediately and hold it low. The LR1110 can
         // outlive nRF soft resets; if a previous image left it in a bad state
         // (e.g. broken DCDC on this board), holding RESET prevents that state
@@ -418,7 +492,7 @@ mod firmware {
         // Button-held-at-boot DFU check (active-HIGH, pull-down).
         let button = Input::new(p.P0_06, Pull::Down);
         cortex_m::asm::delay(640_000); // ~10 ms settle
-        if button.is_high() {
+        if !woke_from_system_off && button.is_high() {
             umsh_bsp_nrf52840::gpregret::enter_dfu_serial();
         }
 
@@ -444,7 +518,9 @@ mod firmware {
         };
         let prev_panic_buf: &'static [u8; 256] = PREV_PANIC_BUF.init(prev_panic_tmp);
 
-        let led = Output::new(p.P0_24, Level::Low, OutputDrive::Standard);
+        let mut led_config = SimpleConfig::default();
+        led_config.prescaler = Prescaler::Div16;
+        let led = SimplePwm::new_1ch(p.PWM1, p.P0_24, &led_config);
 
         // ── Piezo buzzer ─────────────────────────────────────────────────────
         // P0.25 = PWM, P1.05 = power-enable for the buzzer driver chip.
@@ -456,7 +532,8 @@ mod firmware {
             SimplePwm::new_1ch(p.PWM0, p.P0_25, &cfg)
         };
         let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
-        spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable).unwrap());
+        let initial_preferences = umsh_bsp_t1000e::preferences::load();
+        spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable, initial_preferences.silent).unwrap());
         // Boot chirp — independent of USB, so headless boots also signal life.
         umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
@@ -644,6 +721,8 @@ mod firmware {
             SaadcConfig::default(), // 12-bit, no oversample
             [ChannelConfig::single_ended(p.P0_02)],
         );
+        let external_power = Input::new(p.P0_05, Pull::Down);
+        let charge_active = Input::new(p.P1_03, Pull::Up);
 
         // ── Host + LocalNode ──────────────────────────────────────────────────
         // Build the Host and add the local identity's node here in main() so
@@ -689,7 +768,7 @@ mod firmware {
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(button_task(button).unwrap());
         spawner.spawn(shutdown_task().unwrap());
-        spawner.spawn(power_task(saadc, sensor_rail).unwrap());
+        spawner.spawn(power_task(saadc, sensor_rail, external_power, charge_active).unwrap());
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());
         spawner

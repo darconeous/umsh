@@ -17,10 +17,16 @@ pub use umsh_bsp_nrf52840::panic_persist;
 pub mod buzzer;
 
 #[cfg(target_os = "none")]
+pub mod indicator;
+
+#[cfg(target_os = "none")]
 pub mod platform;
 
 #[cfg(target_os = "none")]
 pub mod power;
+
+#[cfg(target_os = "none")]
+pub mod preferences;
 
 #[cfg(target_os = "none")]
 pub mod radio;
@@ -29,11 +35,11 @@ pub mod radio;
 pub mod shutdown;
 
 #[cfg(target_os = "none")]
-pub use buzzer::{BUZZER_SIGNAL, BUZZER_SILENCE_TOGGLE};
+pub use buzzer::{BUZZER_SIGNAL, BUZZER_SILENCE_SET};
 #[cfg(target_os = "none")]
 pub use platform::{T1000EMac, T1000EPlatform};
 #[cfg(target_os = "none")]
-pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
+pub use power::{BATTERY_STATE_CHANGED, PowerSignaler, SHUTDOWN_SIGNAL, battery_state};
 #[cfg(target_os = "none")]
 pub use radio::RF_SWITCH;
 
