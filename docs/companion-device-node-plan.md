@@ -139,7 +139,7 @@ dormant; `no-ble` image behaves the same (identity fails closed).
 Acceptance: beacon received by a second board; RAM/flash deltas recorded;
 UX conformance re-checked against `docs/ux/src/hardware/t1000e.md`.
 
-### 3. Device-domain wiring
+### 3. Device-domain wiring + RAM diet
 
 Propagate `PROP_DEV_PRIVATE_KEY` provisioning, `PROP_DEV_CHANNEL_KEYS`, and
 `PROP_DEV_PEERS` mutations into the MAC via new effects; replay them from
@@ -147,6 +147,18 @@ restore-at-boot; handle `CMD_CLEAR`/factory reset (node returns to dormant).
 Acceptance: provision a device channel with `umsh-companionctl`, confirm the
 node processes multicast on it (debug log), and that host filtering remains
 independent (device traffic reaches the host only through host filters).
+
+Fold in the 2026-07-17 RAM audit (T-1000E statics 141.7 KiB): now that
+this increment fixes the node's real capacity needs, right-size
+`NcpNodeMac`'s generics (37.5 KiB today, ~15–20 KiB savable — 1 identity,
+no PFS; peer/TX counts from the actual device-domain tables); share one
+scratch buffer across the session's CMD-arm locals (`ncp_task` future is
+29.5 KiB against a measured 11.2 KiB `Session`); stop holding UX encode
+buffers across awaits in `t1000e_button_task` (8.5 KiB → <1 KiB). Guard
+the results with `memory_budget.rs`-style size tests and record the
+final table here. Stack headroom (~114 KiB, ~90 KiB spare after the
+in-place-construction fix) and the 8 KiB heap are deliberate margins —
+leave them.
 
 ### 4. Shared duty ledger + counter persistence
 
