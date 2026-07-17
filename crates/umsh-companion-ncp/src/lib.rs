@@ -32,6 +32,6 @@ pub mod session;
 
 pub use duty::DutyTracker;
 pub use session::{
-    Effect, IdentitySource, MAX_DEVICE_NAME_LEN, PRIVATE_KEY_LEN, RadioSettings, SNAPSHOT_MAX,
-    Session, SessionConfig, TxPower,
+    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN, PRIVATE_KEY_LEN,
+    RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TxPower,
 };

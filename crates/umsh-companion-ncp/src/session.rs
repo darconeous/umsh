@@ -1159,6 +1159,14 @@ pub struct Session<A: AesProvider, S: Sha256Provider> {
     /// the identity.
     dev_key_persisted: Option<[u8; items::PUBLIC_KEY_LEN]>,
     last_status: Status,
+    /// Monotonic generation of the device-domain node tables
+    /// (`PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`). Bumped on every
+    /// mutation, boot restore, `CMD_RESTORE`, and `CMD_RST`. The
+    /// firmware compares it against a cached value to know when to
+    /// re-sync the live device node's MAC (device-node plan increment
+    /// 3); the session stays authoritative for the property surface and
+    /// the firmware applies the change to its `MacHandle`.
+    dev_domain_version: u32,
     tx_buf: [u8; MAX_MTU],
     tx_len: usize,
     scratch: [u8; SCRATCH],
@@ -1182,6 +1190,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             dev_key: None,
             dev_key_persisted: None,
             last_status: boot_status,
+            dev_domain_version: 0,
             tx_buf: [0; MAX_MTU],
             tx_len: 0,
             scratch: [0; SCRATCH],
@@ -1222,6 +1231,45 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         self.host.queue.len
     }
 
+    /// Monotonic generation of the device-domain node tables. The
+    /// firmware caches this and re-syncs the live device node's MAC
+    /// whenever it changes (device-node plan increment 3). Identity
+    /// provisioning is deliberately excluded: the running node's
+    /// identity is fixed at bring-up and a newly provisioned key takes
+    /// effect at the next boot (live-state-until-reboot, as with
+    /// `CMD_CLEAR`).
+    pub fn dev_domain_version(&self) -> u32 {
+        self.dev_domain_version
+    }
+
+    /// Bump [`Session::dev_domain_version`]. Call after any change to
+    /// the device channel-key or peer tables.
+    fn bump_dev_domain(&mut self) {
+        self.dev_domain_version = self.dev_domain_version.wrapping_add(1);
+    }
+
+    /// The device identity's provisioned channel keys (raw symmetric
+    /// keys, not the derived identifiers). The firmware joins each into
+    /// the device node so it processes multicast on that channel.
+    pub fn dev_channel_keys(
+        &self,
+    ) -> impl Iterator<Item = [u8; items::CHANNEL_KEY_LEN]> + '_ {
+        self.device.channel_keys.iter().map(|entry| entry.key)
+    }
+
+    /// The device identity's provisioned peer public keys. The firmware
+    /// registers each with the device node's MAC.
+    pub fn dev_peers(&self) -> impl Iterator<Item = [u8; items::PUBLIC_KEY_LEN]> + '_ {
+        self.device.peers.iter().copied()
+    }
+
+    /// The live `PROP_DEV_KEY` value. `None` once a factory reset
+    /// (`CMD_CLEAR` + `CMD_RST`) completes — the firmware uses this
+    /// edge to make a running device node dormant.
+    pub fn dev_key(&self) -> Option<&[u8; items::PUBLIC_KEY_LEN]> {
+        self.dev_key.as_ref()
+    }
+
     /// Reset all protocol state to post-reset values, announce the
     /// reset with the given reason, and return the radio effect
     /// applying the post-reset radio configuration.
@@ -1244,6 +1292,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.apply_saved_host(false);
         }
         self.session = SessionState::default();
+        // The device tables were rebuilt from post-reset (and possibly
+        // the saved snapshot); the node must re-sync.
+        self.bump_dev_domain();
         self.send_status(TID_UNSOLICITED, reason, emit);
         Effect::ApplyRadio(self.device.settings)
     }
@@ -1260,6 +1311,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         self.device.name_len = saved.name_len;
         self.device.channel_keys = saved.dev_channel_keys;
         self.device.peers = saved.dev_peers;
+        self.bump_dev_domain();
     }
 
     /// Apply the saved host-domain configuration to the live domain.
@@ -2249,12 +2301,14 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     }
                 }
                 self.device.channel_keys = table;
+                self.bump_dev_domain();
                 Ok(false)
             }
             // Peer public keys carry no secret material, so no
             // secure-link gate — like PROP_HOST_KEY itself.
             prop::DEV_PEERS => {
                 self.device.peers = DevPeerTable::parse_table(value)?;
+                self.bump_dev_domain();
                 Ok(false)
             }
             // This NCP's queue size is fixed; adjustment is optional in
@@ -2327,7 +2381,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     self.device.channel_keys.insert(entry).map(|()| entry.id)
                 });
                 match result {
-                    Ok(id) => self.send_prop_inserted(tid, key, &id, emit),
+                    Ok(id) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, &id, emit);
+                    }
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
@@ -2339,7 +2396,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                         self.device.peers.insert(*public_key)
                     });
                 match result {
-                    Ok(()) => self.send_prop_inserted(tid, key, item, emit),
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, item, emit);
+                    }
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
@@ -2401,7 +2461,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                         self.device.channel_keys.remove(key)
                     });
                 match result {
-                    Ok(id) => self.send_prop_removed(tid, key, &id, emit),
+                    Ok(id) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, &id, emit);
+                    }
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
@@ -2413,7 +2476,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                         self.device.peers.remove(public_key)
                     });
                 match result {
-                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, selector, emit);
+                    }
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
@@ -5241,6 +5307,61 @@ mod tests {
         }
         let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xFF; 32]);
         expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    #[test]
+    fn dev_domain_version_tracks_node_table_changes() {
+        let mut session = test_session();
+        assert_eq!(session.dev_domain_version(), 0);
+        assert_eq!(session.dev_channel_keys().count(), 0);
+        assert_eq!(session.dev_peers().count(), 0);
+        assert!(session.dev_key().is_none());
+
+        // Every successful device-table mutation moves the version and
+        // is visible through the node-sync accessors.
+        let dev_channel = [0x66u8; 32];
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        assert_eq!(session.dev_domain_version(), 1);
+        assert_eq!(session.dev_channel_keys().collect::<Vec<_>>(), [dev_channel]);
+        insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
+        assert_eq!(session.dev_domain_version(), 2);
+        assert_eq!(session.dev_peers().collect::<Vec<_>>(), [[0xD0; 32]]);
+
+        // Failed mutations do not: the node has nothing to re-sync.
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        remove_item(&mut session, prop::DEV_PEERS, &[0xEE; 32]);
+        assert_eq!(session.dev_domain_version(), 2);
+
+        // Neither do host-domain mutations — device and host tables are
+        // independent surfaces.
+        insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &[0x42; 32]);
+        assert_eq!(session.dev_domain_version(), 2);
+
+        // Whole-table set and remove bump.
+        set(&mut session, prop::DEV_PEERS, &[0xD1; 32]);
+        assert_eq!(session.dev_domain_version(), 3);
+        remove_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        assert_eq!(session.dev_domain_version(), 4);
+
+        // CMD_RST rebuilds the tables (from the snapshot when one is
+        // saved, post-reset defaults otherwise) — always a re-sync.
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(session.dev_domain_version(), 5);
+        assert_eq!(session.dev_channel_keys().count(), 0);
+        assert_eq!(session.dev_peers().count(), 0);
+
+        // A boot restore replays the saved tables into a fresh session:
+        // the version moves off its initial value so the firmware
+        // publishes the restored tables to the node.
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        assert_eq!(booted.dev_domain_version(), 0);
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_ne!(booted.dev_domain_version(), 0);
+        assert_eq!(booted.dev_channel_keys().collect::<Vec<_>>(), [dev_channel]);
     }
 
     #[test]

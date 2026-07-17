@@ -650,9 +650,10 @@ mod firmware {
         }
 
         async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-            let mut buffered = heapless::Vec::new();
-            buffered.extend_from_slice(payload).map_err(|_| ())?;
-            self.write(proto_store::Record::Snapshot(buffered)).await
+            if payload.len() > proto_store::MAX_PAYLOAD {
+                return Err(());
+            }
+            self.write(proto_store::RecordRef::Snapshot(payload)).await
         }
 
         /// The clear transaction is one committed tombstone record: if
@@ -661,26 +662,26 @@ mod firmware {
         /// are never erased as part of a clear — stale records are
         /// reclaimed by the ordinary rotation.
         async fn clear(&mut self) -> Result<(), ()> {
-            self.write(proto_store::Record::Cleared).await
+            self.write(proto_store::RecordRef::Cleared).await
         }
 
-        async fn write(&mut self, record: proto_store::Record) -> Result<(), ()> {
-            let stored = proto_store::Stored {
-                generation: self.generation.wrapping_add(1),
-                record,
-            };
+        // The record travels by reference down to the single slot-image
+        // encode: this future is held across awaits in several task
+        // pools, and every avoided MAX_PAYLOAD copy is RAM off each of
+        // them.
+        async fn write(&mut self, record: proto_store::RecordRef<'_>) -> Result<(), ()> {
+            let generation = self.generation.wrapping_add(1);
             let mut flash = self.flash.lock().await;
             let target =
                 journal_write_target(&mut flash, self.slot, self.page0, proto_store::SLOT_SIZE)
                     .await?;
-            match proto_store::write_record(&mut *flash, target, &stored).await {
+            match proto_store::write_record(&mut *flash, target, generation, record).await {
                 Ok(()) => {
                     debug_log(format_args!(
-                        "proto-store commit generation={} slot=0x{target:06x} cleared={}",
-                        stored.generation,
-                        matches!(stored.record, proto_store::Record::Cleared),
+                        "proto-store commit generation={generation} slot=0x{target:06x} cleared={}",
+                        matches!(record, proto_store::RecordRef::Cleared),
                     ));
-                    self.generation = stored.generation;
+                    self.generation = generation;
                     self.slot = Some(target);
                     Ok(())
                 }
@@ -1156,6 +1157,30 @@ mod firmware {
             | Some(Effect::ProvisionIdentity { .. })
             | None => {}
         }
+    }
+
+    /// Mirror the session's device-domain node tables to the device
+    /// node when their generation moved (device-node plan increment 3).
+    /// `synced_version` is the caller's cache of the last published
+    /// generation. Cheap when nothing changed — one u32 compare — so
+    /// callers run it after every session interaction.
+    fn sync_dev_domain(session: &Session, synced_version: &mut u32) {
+        if session.dev_domain_version() == *synced_version {
+            return;
+        }
+        *synced_version = session.dev_domain_version();
+        let mut snapshot = super::device_node::DevDomainSnapshot {
+            channel_keys: heapless::Vec::new(),
+            peers: heapless::Vec::new(),
+            identity_present: session.dev_key().is_some(),
+        };
+        for key in session.dev_channel_keys() {
+            let _ = snapshot.channel_keys.push(key);
+        }
+        for public_key in session.dev_peers() {
+            let _ = snapshot.peers.push(public_key);
+        }
+        super::device_node::DEV_SYNC.signal(snapshot);
     }
 
     async fn publish_device_name(session: &Session) {
@@ -2136,6 +2161,15 @@ mod firmware {
         );
         let mut emitter = Emitter::new();
         let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
+        // Last device-domain generation mirrored to the device node.
+        // Matches the session's initial value; the first mutation (or a
+        // boot restore) publishes the first snapshot.
+        let mut dev_domain_synced: u32 = session.dev_domain_version();
+        // Shared staging buffer for the durable-write effect arms
+        // (save/wipe). Held across their persist awaits, so as a
+        // loop-lifetime local it costs one future slot instead of one
+        // per arm.
+        let mut snapshot_buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
 
         // The device identity is persisted independently of snapshots;
         // its post-reset value is whatever the identity journal holds.
@@ -2154,6 +2188,10 @@ mod firmware {
                 if effect.is_some() { "ok" } else { "IGNORED" }
             ));
             apply_effect(&session, effect).await;
+            // Replay the restored device-domain tables into the device
+            // node before any host interaction: detached multicast
+            // processing must not wait for an attach.
+            sync_dev_domain(&session, &mut dev_domain_synced);
         }
 
         loop {
@@ -2241,9 +2279,9 @@ mod firmware {
                                 // any saved snapshot before the new host
                                 // key takes effect; with nothing saved the
                                 // wipe is trivially satisfied.
-                                let mut buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
-                                let result = match session.encode_wiped_snapshot(&mut buf) {
-                                    Some(len) => proto_store.persist(&buf[..len]).await,
+                                let result = match session.encode_wiped_snapshot(&mut snapshot_buf)
+                                {
+                                    Some(len) => proto_store.persist(&snapshot_buf[..len]).await,
                                     None => Ok(()),
                                 };
                                 session.respond_host_wipe(tid, result, &mut |frame: &[u8]| {
@@ -2252,9 +2290,8 @@ mod firmware {
                                 emitter.flush(arbitration.destination()).await;
                             }
                             Some(Effect::SaveSnapshot { tid }) => {
-                                let mut buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
-                                let result = match session.encode_snapshot(&mut buf) {
-                                    Some(len) => proto_store.persist(&buf[..len]).await,
+                                let result = match session.encode_snapshot(&mut snapshot_buf) {
+                                    Some(len) => proto_store.persist(&snapshot_buf[..len]).await,
                                     None => Err(()),
                                 };
                                 session.respond_save(tid, result, &mut |frame: &[u8]| {
@@ -2356,6 +2393,10 @@ mod firmware {
                     emitter.flush(arbitration.destination()).await;
                 }
             }
+            // Any of the arms may have moved the device-domain tables
+            // (property mutation, CMD_RST, CMD_RESTORE); one u32
+            // compare when they did not.
+            sync_dev_domain(&session, &mut dev_domain_synced);
         }
     }
 
