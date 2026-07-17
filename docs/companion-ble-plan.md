@@ -1054,9 +1054,12 @@ parse as 44-char base58 or 64-char hex and print as base58; secrets
 (channel keys, peer pairwise keys, PIN) are never echoed. Supporting
 API addition: public `CompanionRadio::reset()` (CMD_RST + reset
 notification), unit-tested against the fake NCP. Ten arg-parsing unit
-tests ride in the binary. Not yet exercised against hardware (no board
-was attached when it landed); a read-only `info` run on each board is
-the remaining smoke test. Flashing
+tests ride in the binary. Hardware smoke test (2026-07-16): read-only
+`info --expect-host-key` and `identity --trace` against the live
+provisioned T-1000E over BLE — attach, full sync report, ownership
+verdict, and trace hook all correct, with the snapshot-restored state
+matching what increment 9 left on the board; the T-Echo run is still
+pending. Flashing
 notes: `diag/reflash_t1000e.py` automates the T-1000E serial-DFU
 touch+retry; the T-Echo path is 1200-baud touch → wait for TECHOBOOT →
 copy the UF2 **under a fresh filename with `cp`** (overwriting the
