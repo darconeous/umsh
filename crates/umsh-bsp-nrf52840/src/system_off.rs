@@ -47,6 +47,14 @@ pub enum WakeSense {
     Low,
 }
 
+/// Pull resistor to apply when fully configuring a GPIO wake input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WakePull {
+    None,
+    Down,
+    Up,
+}
+
 /// A pin to configure for DETECT-driven wake from System OFF.
 ///
 /// Only the SENSE bits of `PIN_CNF[n]` are modified; the existing DIR /
@@ -166,6 +174,38 @@ pub fn configure_wake(pin: WakePin) {
         let new = (cur & !PIN_CNF_SENSE_MASK) | sense_bits;
         core::ptr::write_volatile(addr, new);
     }
+}
+
+fn pull_cnf_bits(pull: WakePull) -> u32 {
+    (match pull {
+        WakePull::None => 0b00,
+        WakePull::Down => 0b01,
+        WakePull::Up => 0b11,
+    }) << 2
+}
+
+/// Fully configure a wake pin as a connected GPIO input. Unlike
+/// [`configure_wake`], this does not preserve state left by an asynchronous
+/// GPIO waiter; use it when another task may have reconfigured SENSE or INPUT
+/// immediately before shutdown.
+pub fn configure_wake_input(pin: WakePin, pull: WakePull) {
+    let addr = pin_cnf_addr(pin.port, pin.pin);
+    let sense_bits = match pin.sense {
+        WakeSense::High => PIN_CNF_SENSE_HIGH,
+        WakeSense::Low => PIN_CNF_SENSE_LOW,
+    };
+    // DIR=input, INPUT=connect, standard drive, requested pull and SENSE.
+    unsafe { core::ptr::write_volatile(addr, pull_cnf_bits(pull) | sense_bits) };
+}
+
+/// Connect a pin's input buffer with the requested pull and SENSE disabled,
+/// so [`read_pin`] returns the physical level. Needed before polling a pin
+/// whose configuration may still be at the reset value (input buffer
+/// disconnected — the IN register then reads 0 regardless of the pad).
+pub fn connect_input(port: Port, pin: u8, pull: WakePull) {
+    let addr = pin_cnf_addr(port, pin);
+    // DIR=input, INPUT=connect, standard drive, requested pull, SENSE off.
+    unsafe { core::ptr::write_volatile(addr, pull_cnf_bits(pull)) };
 }
 
 /// Convenience wrapper for [`configure_wake`] with [`WakeSense::Low`].

@@ -12,7 +12,8 @@ use embassy_nrf::gpio::Input;
 use embassy_nrf::pwm::{DutyCycle, SimplePwm};
 use embassy_time::{Duration, Instant, Timer};
 use umsh_bsp_nrf52840::system_off::{
-    Port, WakePin, WakeSense, drive_pin_low, power_off, read_pin, tristate_pin,
+    Port, WakePin, WakePull, WakeSense, configure_wake_input, connect_input, drive_pin_low,
+    enter_system_off as system_off, read_pin, tristate_pin,
 };
 use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
 
@@ -27,6 +28,13 @@ use crate::power::SHUTDOWN_SIGNAL;
 pub async fn run() -> ! {
     SHUTDOWN_SIGNAL.wait().await;
 
+    run_after_request().await
+}
+
+/// Complete shutdown after the caller has consumed [`SHUTDOWN_SIGNAL`]. This
+/// lets a firmware durably commit user preferences before peripherals are
+/// torn down.
+pub async fn run_after_request() -> ! {
     // Play the power-off chirp before tearing anything down. POWER_OFF
     // is 80+80+120 = 280 ms; wait 320 ms to let the final note finish
     // and the buzzer task return to its silent state.
@@ -65,7 +73,7 @@ pub async fn run_charging_sleep(
             crate::preferences::set_asleep(false);
             cortex_m::peripheral::SCB::sys_reset();
         }
-        if external_power.is_low() {
+        if !crate::power::usb_power_present() {
             led_pwm.disable();
             enter_system_off().await;
         }
@@ -82,7 +90,7 @@ pub async fn run_charging_sleep(
         } else {
             0
         };
-        led_pwm.set_duty(0, DutyCycle::normal(duty));
+        led_pwm.set_duty(0, DutyCycle::inverted(duty));
 
         match select3(
             Timer::after(STEP),
@@ -100,7 +108,11 @@ async fn enter_system_off() -> ! {
     // If the shutdown was triggered by a long-press, the button (P0.06,
     // active-high) may still be held. Arming WakeSense::High on an already-HIGH
     // pin fires DETECT immediately → the chip wakes right back up. Poll until
-    // the button is released before entering System OFF.
+    // the button is released before entering System OFF. Connect the input
+    // buffer first: on the early-boot resume path P0.06 is still at its reset
+    // configuration (disconnected), where the IN register reads 0 even while
+    // the button is held.
+    connect_input(Port::P0, 6, WakePull::Down);
     while read_pin(Port::P0, 6) {
         Timer::after(Duration::from_millis(50)).await;
     }
@@ -117,8 +129,10 @@ async fn enter_system_off() -> ! {
     // any such pin matching its SENSE level at System OFF entry fires
     // DETECT and the chip wakes immediately (observable as a reboot).
     //
-    // Button P0.06 and external-power detect P0.05 are left alone —
-    // power_off configures them for wake.
+    // Button P0.06 is left alone for GPIO wake. USB insertion wakes the
+    // nRF52840 through its native VBUS detector; P0.05 is deliberately not a
+    // wake source because hardware validation showed it can remain asserted
+    // after the magnetic cable is removed.
     // P1.10 (LR1110 RESET) is left driving LOW intentionally.
     tristate_pin(Port::P0, 24); // LED
     tristate_pin(Port::P0, 25); // Buzzer PWM
@@ -131,18 +145,17 @@ async fn enter_system_off() -> ! {
     tristate_pin(Port::P1, 1); // LR1110 DIO1/IRQ
     tristate_pin(Port::P1, 8); // SPI MISO
     tristate_pin(Port::P1, 9); // SPI MOSI
+    tristate_pin(Port::P0, 5); // External-power detect (status hint only)
+    tristate_pin(Port::P1, 3); // Charge-active status
 
     // Button is active-high with pull-down → wake on rising edge.
-    power_off(&[
+    configure_wake_input(
         WakePin {
             port: Port::P0,
             pin: 6,
             sense: WakeSense::High,
         },
-        WakePin {
-            port: Port::P0,
-            pin: 5,
-            sense: WakeSense::High,
-        },
-    ])
+        WakePull::Down,
+    );
+    system_off()
 }
