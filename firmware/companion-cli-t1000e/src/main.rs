@@ -196,8 +196,8 @@ mod firmware {
     // BUZZER_SIGNAL now lives in `umsh_bsp_t1000e::buzzer` alongside the
     // buzzer runner; firmware code uses `umsh_bsp_t1000e::BUZZER_SIGNAL`.
 
-    /// Button-driven beacon request. Single or Double presses both fire this
-    /// so users get feedback no matter how the FSM classifies the press.
+    /// Button-driven beacon request, fired by the single-click primary
+    /// action slot.
     static BEACON_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     // ─── USB types ────────────────────────────────────────────────────────────
@@ -317,10 +317,10 @@ mod firmware {
     }
 
     /// Resolves raw GPIO edges on the user button (P0.06, active-high, pull-down)
-    /// into `ButtonFsm` events. `Long` raises `SHUTDOWN_SIGNAL`,
-    /// `Triple` enters UF2 DFU directly (diverges via system reset).
+    /// into `ButtonFsm` events. `Long` raises `SHUTDOWN_SIGNAL`;
+    /// `Triple` stays inert (reserved for GPS power control).
     #[embassy_executor::task]
-    async fn button_task(mut button: Input<'static>) {
+    async fn button_task(mut button: Input<'static>, storage: &'static NvmcStorage) {
         let mut fsm = ButtonFsm::new(ButtonTimings::default());
         let mut pressed = button.is_high();
         loop {
@@ -360,6 +360,12 @@ mod firmware {
                     umsh_bsp_t1000e::BUZZER_SILENCE_SET.signal(preferences.silent);
                     umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
                         .signal(LedSequence::ActionConfirm);
+                    // Confirmation reflects the applied (in-RAM) toggle. A
+                    // failed flash write costs only durability across the
+                    // next reset; there is no user-facing fault channel.
+                    let mut durable = preferences;
+                    durable.battery_critical = false;
+                    let _ = storage.store_tracker_preferences(durable.encode()).await;
                 }
                 Some(ButtonEvent::Triple) => {
                     // Reserved for GPS power control. This firmware does not
@@ -371,6 +377,8 @@ mod firmware {
                 Some(ButtonEvent::Long) => {
                     pressed = false;
                     fsm = ButtonFsm::new(ButtonTimings::default());
+                    // shutdown_task persists the Asleep preference for every
+                    // shutdown source (button, PowerSignaler, battery cutoff).
                     umsh_bsp_t1000e::preferences::set_asleep(true);
                     SHUTDOWN_SIGNAL.signal(());
                 }
@@ -383,8 +391,12 @@ mod firmware {
     /// System OFF with button as wake). Body lives in
     /// `umsh_bsp_t1000e::shutdown`.
     #[embassy_executor::task]
-    async fn shutdown_task() -> ! {
-        umsh_bsp_t1000e::shutdown::run().await
+    async fn shutdown_task(storage: &'static NvmcStorage) -> ! {
+        SHUTDOWN_SIGNAL.wait().await;
+        let mut durable = umsh_bsp_t1000e::preferences::load();
+        durable.battery_critical = false;
+        let _ = storage.store_tracker_preferences(durable.encode()).await;
+        umsh_bsp_t1000e::shutdown::run_after_request().await
     }
 
     /// Monitors battery voltage via SAADC and forces shutdown on low VBAT.
@@ -416,7 +428,7 @@ mod firmware {
             let decision = engine.tick(Instant::now().as_millis());
             let duty =
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
-            led.set_duty(0, DutyCycle::normal(duty));
+            led.set_duty(0, DutyCycle::inverted(duty));
             match select4(
                 Timer::at(Instant::from_millis(decision.next_deadline_ms)),
                 umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
@@ -445,24 +457,48 @@ mod firmware {
 
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::default_config());
 
+        // Mount durable user preferences before deciding whether normal
+        // application startup is permitted. GPREGRET2 remains only a fast
+        // mirror and a retained critical-shutdown reason.
+        let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+
         let reset_reasons = embassy_nrf::pac::POWER.resetreas().read();
         embassy_nrf::pac::POWER
             .resetreas()
             .write(|reasons| reasons.0 = u32::MAX);
+        // RESETREAS.OFF alone proves a button wake: P0.06 is the only GPIO
+        // DETECT source armed at System OFF entry (USB insertion wakes via
+        // the native VBUS detector and sets its own reason bit). The pin
+        // itself cannot be sampled this early — PIN_CNF resets to
+        // input-disconnected, so the IN register reads 0 regardless of the
+        // physical level.
         let woke_from_system_off = reset_reasons.off();
-        let button_wake =
-            umsh_bsp_nrf52840::system_off::read_pin(umsh_bsp_nrf52840::system_off::Port::P0, 6);
-        let external_power_present =
-            umsh_bsp_nrf52840::system_off::read_pin(umsh_bsp_nrf52840::system_off::Port::P0, 5);
-        let retained_state = umsh_bsp_t1000e::preferences::load();
+        let external_power_present = umsh_bsp_t1000e::power::usb_power_present();
+        let gpregret_state = umsh_bsp_t1000e::preferences::load_retained();
+        let retained_critical =
+            gpregret_state.is_some_and(|preferences| preferences.battery_critical);
+        let mut retained_state = storage
+            .load_tracker_preferences()
+            .await
+            .ok()
+            .flatten()
+            .and_then(umsh_ux_tracker::state::UserPreferences::try_decode)
+            .unwrap_or_default();
+        retained_state.battery_critical = retained_critical;
+        umsh_bsp_t1000e::preferences::store(retained_state);
         if retained_state.battery_critical && !external_power_present {
             umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
         }
         if retained_state.battery_critical && external_power_present {
             umsh_bsp_t1000e::preferences::set_battery_critical(false);
         }
-        if woke_from_system_off && button_wake {
-            umsh_bsp_t1000e::preferences::set_asleep(false);
+        let charging_sleep_wake_requested = reset_reasons.sreq()
+            && gpregret_state.is_some_and(|preferences| !preferences.asleep);
+        if woke_from_system_off || charging_sleep_wake_requested {
+            let preferences = umsh_bsp_t1000e::preferences::set_asleep(false);
+            let mut durable = preferences;
+            durable.battery_critical = false;
+            let _ = storage.store_tracker_preferences(durable.encode()).await;
         } else if umsh_bsp_t1000e::preferences::load().asleep {
             if external_power_present {
                 let mut led_config = SimpleConfig::default();
@@ -489,12 +525,9 @@ mod firmware {
         // from destabilizing USB before LoRa::new() runs.
         let radio_rst = Output::new(p.P1_10, Level::Low, OutputDrive::Standard);
 
-        // Button-held-at-boot DFU check (active-HIGH, pull-down).
+        // User button (active-HIGH, pull-down). DFU entry is the
+        // bootloader's 1200-baud touch, never a button gesture.
         let button = Input::new(p.P0_06, Pull::Down);
-        cortex_m::asm::delay(640_000); // ~10 ms settle
-        if !woke_from_system_off && button.is_high() {
-            umsh_bsp_nrf52840::gpregret::enter_dfu_serial();
-        }
 
         // WDT: 8 s timeout, petted by heartbeat.
         let mut wdt_config = WdtConfig::default();
@@ -536,10 +569,6 @@ mod firmware {
         spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable, initial_preferences.silent).unwrap());
         // Boot chirp — independent of USB, so headless boots also signal life.
         umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
-
-        // ── NVMC storage ─────────────────────────────────────────────────────
-        // 64 KB at 0xE4000..0xF4000 (top of app window, per memory.x).
-        let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
 
         // ── Local identity ────────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
@@ -766,8 +795,8 @@ mod firmware {
             .ok();
 
         spawner.spawn(output_task(tx).unwrap());
-        spawner.spawn(button_task(button).unwrap());
-        spawner.spawn(shutdown_task().unwrap());
+        spawner.spawn(button_task(button, storage).unwrap());
+        spawner.spawn(shutdown_task(storage).unwrap());
         spawner.spawn(power_task(saadc, sensor_rail, external_power, charge_active).unwrap());
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());

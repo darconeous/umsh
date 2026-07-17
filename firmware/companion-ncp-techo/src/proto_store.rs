@@ -26,6 +26,9 @@ pub const PAGE1: u32 = PAGE0 + PAGE_SIZE;
 /// the identity record away, and each journal clears atomically with
 /// one committed tombstone.
 pub const IDENTITY_PAGE0: u32 = PAGE1 + PAGE_SIZE;
+/// T-1000E user-facing Sleep/Silence preference journal. The shared T-Echo
+/// image does not use it, but reserving it here keeps the flash map explicit.
+pub const UX_PAGE0: u32 = IDENTITY_PAGE0 + 2 * PAGE_SIZE;
 
 /// A device-identity record payload: the Ed25519 private key followed
 /// by its public key (stored so boot does not repeat the derivation).
@@ -398,7 +401,8 @@ mod tests {
         // The identity journal sits after the snapshot journal, still
         // inside the reserved NV region (0x000E_4000..0x000F_4000).
         assert_eq!(IDENTITY_PAGE0, 0x000E_8000);
-        assert!(IDENTITY_PAGE0 + 2 * PAGE_SIZE <= 0x000F_4000);
+        assert_eq!(UX_PAGE0, 0x000E_A000);
+        assert!(UX_PAGE0 + 2 * PAGE_SIZE <= 0x000F_4000);
     }
 
     /// Generation comparison survives wraparound: a record numbered 0

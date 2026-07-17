@@ -182,8 +182,24 @@ fn make_key(bytes: &[u8]) -> Result<StoreKey, Error> {
 
 /// Key under which the local Ed25519 secret scalar is stored.
 const SK_KEY: &[u8] = b"id.sk";
+const TRACKER_PREFERENCES_KEY: &[u8] = b"ux.tracker";
 
 impl NvmcStorage {
+    /// Load the board-independent encoded tracker preferences byte.
+    pub async fn load_tracker_preferences(&self) -> Result<Option<u8>, Error> {
+        let mut byte = [0u8; 1];
+        match self.load_bytes(TRACKER_PREFERENCES_KEY, &mut byte).await? {
+            Some(1) => Ok(Some(byte[0])),
+            Some(_) => Err(Error::CorruptedData),
+            None => Ok(None),
+        }
+    }
+
+    /// Persist the board-independent encoded tracker preferences byte.
+    pub async fn store_tracker_preferences(&self, value: u8) -> Result<(), Error> {
+        self.store_bytes(TRACKER_PREFERENCES_KEY, &[value]).await
+    }
+
     /// Load the local Ed25519 secret key from storage.
     ///
     /// Returns `Ok(Some(sk))` when a valid 32-byte key is present,

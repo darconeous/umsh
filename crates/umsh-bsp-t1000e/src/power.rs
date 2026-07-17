@@ -12,6 +12,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_futures::select::{Either3, select3};
 use embassy_nrf::gpio::{Input, Output};
+use embassy_nrf::pac;
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
@@ -33,6 +34,14 @@ pub static BATTERY_STATE_CHANGED: Signal<ThreadModeRawMutex, BatteryState> = Sig
 
 pub fn battery_state() -> BatteryState {
     BatteryState::from_u8(BATTERY_STATE.load(Ordering::Acquire))
+}
+
+/// Whether the nRF USB regulator currently detects VBUS. On the T1000-E this
+/// is the authoritative indication that the magnetic USB cable is supplying
+/// external power. P0.05 is still useful as a wake/status hint, but hardware
+/// validation showed that it may remain asserted after cable removal.
+pub fn usb_power_present() -> bool {
+    pac::POWER.usbregstatus().read().vbusdetect()
 }
 
 fn publish_battery_state(state: BatteryState) {
@@ -102,7 +111,7 @@ pub async fn run_battery_monitor(
         let battery_mv = ((raw * 7_200) / 4_096).min(u32::from(u16::MAX)) as u16;
         let state = classify(
             battery_mv,
-            external_power.is_high(),
+            usb_power_present(),
             charge_active.is_low(),
             BatteryThresholds::default(),
         );

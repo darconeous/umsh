@@ -154,7 +154,7 @@ mod firmware {
     #[cfg(not(feature = "t1000e"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(feature = "t1000e")]
-    use umsh_bsp_nrf52840::system_off::{drive_pin_low, read_pin};
+    use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
     #[cfg(not(feature = "t1000e"))]
@@ -677,6 +677,54 @@ mod firmware {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "t1000e")]
+    fn mapped_ux_preferences() -> Option<umsh_ux_tracker::state::UserPreferences> {
+        let mut latest: Option<(u32, proto_store::Stored)> = None;
+        for page in [
+            proto_store::UX_PAGE0,
+            proto_store::UX_PAGE0 + proto_store::PAGE_SIZE,
+        ] {
+            let mut address = page;
+            while address < page + proto_store::PAGE_SIZE {
+                let mut bytes = [0u8; proto_store::SLOT_SIZE];
+                // Internal flash is memory mapped. This early read happens
+                // before MPSL takes NVMC and never mutates flash.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        address as *const u8,
+                        bytes.as_mut_ptr(),
+                        bytes.len(),
+                    );
+                }
+                latest = proto_store::consider_record(latest, address, &bytes);
+                address += proto_store::SLOT_SIZE as u32;
+            }
+        }
+        let (_, stored) = latest?;
+        let proto_store::Record::Snapshot(payload) = stored.record else {
+            return None;
+        };
+        let mut preferences = umsh_ux_tracker::state::UserPreferences::try_decode(*payload.first()?)?;
+        // Critical shutdown is a live protective condition mirrored in the
+        // retained register, not a durable user preference.
+        preferences.battery_critical = false;
+        Some(preferences)
+    }
+
+    /// Callers deliberately ignore the result: the preference is already
+    /// applied in RAM and mirrored in GPREGRET2, so a failed journal write
+    /// costs only durability across the next reset. There is no user-facing
+    /// fault channel, and confirmation feedback reflects the applied state,
+    /// not the flash commit.
+    #[cfg(feature = "t1000e")]
+    async fn persist_ux_preferences(
+        store: &mut ProtoStore,
+        mut preferences: umsh_ux_tracker::state::UserPreferences,
+    ) -> Result<(), ()> {
+        preferences.battery_critical = false;
+        store.persist(&[preferences.encode()]).await
     }
 
     /// The no-ble diagnostic image has no MPSL flash driver; durable
@@ -2566,7 +2614,11 @@ mod firmware {
     /// its release instead of becoming an immediate shutdown.
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
-    async fn t1000e_button_task(mut button: Input<'static>, held_at_boot: bool) {
+    async fn t1000e_button_task(
+        mut button: Input<'static>,
+        held_at_boot: bool,
+        mut ux_store: ProtoStore,
+    ) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
 
         if held_at_boot {
@@ -2610,6 +2662,7 @@ mod firmware {
                     umsh_bsp_t1000e::BUZZER_SILENCE_SET.signal(preferences.silent);
                     umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
                         .signal(LedSequence::ActionConfirm);
+                    let _ = persist_ux_preferences(&mut ux_store, preferences).await;
                 }
                 Some(ButtonEvent::Triple) => {
                     // Reserved for GPS power control. The NCP does not own
@@ -2618,7 +2671,8 @@ mod firmware {
                 Some(ButtonEvent::Long) => {
                     pressed = false;
                     fsm = ButtonFsm::new(ButtonTimings::default());
-                    umsh_bsp_t1000e::preferences::set_asleep(true);
+                    let preferences = umsh_bsp_t1000e::preferences::set_asleep(true);
+                    let _ = persist_ux_preferences(&mut ux_store, preferences).await;
                     umsh_bsp_t1000e::SHUTDOWN_SIGNAL.signal(());
                 }
                 Some(ButtonEvent::Quad | ButtonEvent::VeryLong) | None => {}
@@ -2747,11 +2801,19 @@ mod firmware {
         pac::POWER.resetreas().write(|reasons| reasons.0 = u32::MAX);
         BOOT_RESETREAS.store(hardware_reset_reasons.0, Ordering::Release);
         #[cfg(feature = "t1000e")]
-        let t1000e_button_wake = read_pin(Port::P0, 6);
+        let t1000e_external_power = umsh_bsp_t1000e::power::usb_power_present();
         #[cfg(feature = "t1000e")]
-        let t1000e_external_power = read_pin(Port::P0, 5);
+        let t1000e_gpregret_state = umsh_bsp_t1000e::preferences::load_retained();
         #[cfg(feature = "t1000e")]
-        let t1000e_retained_state = umsh_bsp_t1000e::preferences::load();
+        let t1000e_retained_critical = t1000e_gpregret_state
+            .is_some_and(|preferences| preferences.battery_critical);
+        #[cfg(feature = "t1000e")]
+        let mut t1000e_retained_state = mapped_ux_preferences().unwrap_or_default();
+        #[cfg(feature = "t1000e")]
+        {
+            t1000e_retained_state.battery_critical = t1000e_retained_critical;
+            umsh_bsp_t1000e::preferences::store(t1000e_retained_state);
+        }
         #[cfg(feature = "t1000e")]
         if t1000e_retained_state.battery_critical && !t1000e_external_power {
             umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
@@ -2760,8 +2822,20 @@ mod firmware {
         if t1000e_retained_state.battery_critical && t1000e_external_power {
             umsh_bsp_t1000e::preferences::set_battery_critical(false);
         }
+        // RESETREAS.OFF alone proves a button wake: P0.06 is the only GPIO
+        // DETECT source armed at System OFF entry (USB insertion wakes via
+        // the native VBUS detector and sets its own reason bit). The pin
+        // itself cannot be sampled this early — PIN_CNF resets to
+        // input-disconnected, so the IN register reads 0 regardless of the
+        // physical level.
         #[cfg(feature = "t1000e")]
-        if hardware_reset_reasons.off() && t1000e_button_wake {
+        let t1000e_wake_requested = hardware_reset_reasons.off()
+            || (hardware_reset_reasons.sreq()
+                && t1000e_gpregret_state.is_some_and(|preferences| !preferences.asleep));
+        #[cfg(feature = "t1000e")]
+        let t1000e_wake_cleared_sleep = t1000e_wake_requested && t1000e_retained_state.asleep;
+        #[cfg(feature = "t1000e")]
+        if t1000e_wake_requested {
             umsh_bsp_t1000e::preferences::set_asleep(false);
         } else if umsh_bsp_t1000e::preferences::load().asleep {
             if t1000e_external_power {
@@ -3069,6 +3143,7 @@ mod firmware {
             identity_store,
             boot_identity,
             identity_rng,
+            ux_store,
         ) = {
             let mpsl_peripherals = mpsl::Peripherals::new(
                 p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31,
@@ -3103,6 +3178,17 @@ mod firmware {
             let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
             let (identity_store, identity_payload) =
                 ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
+            let (ux_store, _) = ProtoStore::mount(flash, proto_store::UX_PAGE0).await;
+            #[cfg(feature = "t1000e")]
+            let mut ux_store = ux_store;
+            #[cfg(feature = "t1000e")]
+            if t1000e_wake_cleared_sleep {
+                let _ = persist_ux_preferences(
+                    &mut ux_store,
+                    umsh_bsp_t1000e::preferences::load(),
+                )
+                .await;
+            }
             let boot_identity = identity_payload
                 .as_deref()
                 .and_then(proto_store::decode_identity)
@@ -3178,15 +3264,17 @@ mod firmware {
                 identity_store,
                 boot_identity,
                 identity_rng,
+                ux_store,
             )
         };
         #[cfg(feature = "no-ble")]
-        let (proto_store, boot_snapshot, identity_store, boot_identity, identity_rng): (
+        let (proto_store, boot_snapshot, identity_store, boot_identity, identity_rng, ux_store): (
             ProtoStore,
             Option<BootSnapshot>,
             ProtoStore,
             Option<[u8; 32]>,
             IdentityRng,
+            ProtoStore,
         ) = {
             // No MPSL flash driver, so identity provisioning fails
             // closed; the TRNG peripheral is free in this image and
@@ -3200,6 +3288,7 @@ mod firmware {
                 ProtoStore,
                 None,
                 <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed),
+                ProtoStore,
             )
         };
 
@@ -3319,9 +3408,12 @@ mod firmware {
             spawner.spawn(
                 t1000e_power_task(saadc, sensor_rail, external_power, charge_active).unwrap(),
             );
-            spawner.spawn(t1000e_button_task(button, force_pairing_at_boot).unwrap());
+            spawner.spawn(t1000e_button_task(button, force_pairing_at_boot, ux_store).unwrap());
             spawner.spawn(t1000e_shutdown_task().unwrap());
         }
+
+        #[cfg(not(feature = "t1000e"))]
+        drop(ux_store);
 
         super::panic::breadcrumb_mark(9);
         #[cfg(not(feature = "no-ble"))]
@@ -3408,7 +3500,7 @@ mod firmware {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
                 let duty = if on { led.max_duty() } else { 0 };
-                led.set_duty(0, DutyCycle::normal(duty));
+                led.set_duty(0, DutyCycle::inverted(duty));
                 Timer::after_millis(50).await;
                 continue;
             }
@@ -3416,7 +3508,7 @@ mod firmware {
             let decision = engine.tick(Instant::now().as_millis());
             let duty =
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
-            led.set_duty(0, DutyCycle::normal(duty));
+            led.set_duty(0, DutyCycle::inverted(duty));
             match select4(
                 Timer::at(Instant::from_millis(decision.next_deadline_ms)),
                 umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),

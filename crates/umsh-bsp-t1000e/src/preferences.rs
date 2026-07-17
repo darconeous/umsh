@@ -12,6 +12,10 @@ pub fn load() -> UserPreferences {
     UserPreferences::decode(pac::POWER.gpregret2().read().gpregret())
 }
 
+pub fn load_retained() -> Option<UserPreferences> {
+    UserPreferences::try_decode(pac::POWER.gpregret2().read().gpregret())
+}
+
 pub fn store(preferences: UserPreferences) {
     pac::POWER
         .gpregret2()

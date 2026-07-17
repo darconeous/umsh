@@ -18,6 +18,17 @@ pub struct UserPreferences {
 }
 
 impl UserPreferences {
+    pub const fn try_decode(value: u8) -> Option<Self> {
+        if value & MAGIC_MASK != MAGIC {
+            return None;
+        }
+        Some(Self {
+            asleep: value & ASLEEP != 0,
+            silent: value & SILENT != 0,
+            battery_critical: value & BATTERY_CRITICAL != 0,
+        })
+    }
+
     pub const fn encode(self) -> u8 {
         MAGIC
             | (self.asleep as u8) * ASLEEP
@@ -26,17 +37,13 @@ impl UserPreferences {
     }
 
     pub const fn decode(value: u8) -> Self {
-        if value & MAGIC_MASK != MAGIC {
-            return Self {
+        match Self::try_decode(value) {
+            Some(preferences) => preferences,
+            None => Self {
                 asleep: false,
                 silent: false,
                 battery_critical: false,
-            };
-        }
-        Self {
-            asleep: value & ASLEEP != 0,
-            silent: value & SILENT != 0,
-            battery_critical: value & BATTERY_CRITICAL != 0,
+            },
         }
     }
 }
