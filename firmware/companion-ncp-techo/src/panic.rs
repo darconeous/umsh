@@ -24,7 +24,7 @@ use umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter, SyncNoinit};
 /// startup, allowing the previous boot's panic message to survive a warm
 /// reset and be read on the next boot.
 #[unsafe(link_section = ".uninit")]
-pub static PANIC_REGION: SyncNoinit<[u8; 512]> = SyncNoinit::uninit();
+pub static PANIC_REGION: SyncNoinit<[u8; 1024]> = SyncNoinit::uninit();
 
 /// Return a mutable byte slice over [`PANIC_REGION`].
 ///
@@ -308,18 +308,84 @@ core::arch::global_asm!(
 fn panic(info: &core::panic::PanicInfo) -> ! {
     let mut slot = PanicSlot::new(panic_region());
 
-    let mut msg = [0u8; 504];
+    let mut msg = [0u8; 1000];
     let msg_len = {
         let mut w = SliceWriter {
             buf: &mut msg,
             pos: 0,
         };
         let _ = core::fmt::write(&mut w, format_args!("{}", info));
+        // Raw stack words above the current SP (older frames), for
+        // offline symbolization of return addresses with addr2line.
+        let sp = cortex_m::register::msp::read();
+        let _ = core::fmt::write(&mut w, format_args!(" sp={sp:#010x} stack:"));
+        let mut addr = sp & !3;
+        let mut words = 0;
+        while words < 48 && addr < 0x2004_0000 {
+            let word = unsafe { (addr as *const u32).read_volatile() };
+            // Only code-plausible words earn the space: flash addresses
+            // are candidate return addresses.
+            if (0x0002_0000..0x000F_5000).contains(&word) {
+                let _ = core::fmt::write(&mut w, format_args!(" {word:#x}"));
+                words += 1;
+            }
+            addr += 4;
+        }
         w.pos
     };
     slot.capture(&msg[..msg_len]);
 
     // Clear GPREGRET so the bootloader boots the app on next start,
     // letting the captured message be printed over USB-CDC.
+    umsh_bsp_nrf52840::gpregret::reset_to_app();
+}
+
+/// Capture hard faults the same way panics are captured: fault status
+/// registers plus the faulting PC/LR into the retained slot, then reset
+/// to the app so the next boot prints the report over USB-CDC. Without
+/// this, cortex-m-rt's default handler parks in an infinite loop and
+/// the only trace is a watchdog reset with no message.
+#[cortex_m_rt::exception(trampoline = true)]
+unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
+    let mut slot = PanicSlot::new(panic_region());
+
+    let scb = 0xE000_ED00 as *const u32;
+    // CFSR @ +0x28, HFSR @ +0x2C, BFAR @ +0x38, MMFAR @ +0x34.
+    let (cfsr, hfsr, mmfar, bfar) = unsafe {
+        (
+            scb.add(0x28 / 4).read_volatile(),
+            scb.add(0x2C / 4).read_volatile(),
+            scb.add(0x34 / 4).read_volatile(),
+            scb.add(0x38 / 4).read_volatile(),
+        )
+    };
+
+    let mut msg = [0u8; 504];
+    let msg_len = {
+        let mut w = SliceWriter {
+            buf: &mut msg,
+            pos: 0,
+        };
+        let _ = core::fmt::write(
+            &mut w,
+            format_args!(
+                "HARDFAULT pc={:#010x} lr={:#010x} cfsr={:#010x} hfsr={:#010x} mmfar={:#010x} bfar={:#010x} r0={:#010x} r1={:#010x} r2={:#010x} r3={:#010x} xpsr={:#010x}",
+                frame.pc(),
+                frame.lr(),
+                cfsr,
+                hfsr,
+                mmfar,
+                bfar,
+                frame.r0(),
+                frame.r1(),
+                frame.r2(),
+                frame.r3(),
+                frame.xpsr(),
+            ),
+        );
+        w.pos
+    };
+    slot.capture(&msg[..msg_len]);
+
     umsh_bsp_nrf52840::gpregret::reset_to_app();
 }

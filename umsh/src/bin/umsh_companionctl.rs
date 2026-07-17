@@ -36,7 +36,9 @@ Commands:\n\
   restore               revert live state to the saved snapshot\n\
   clear                 erase persisted state; live state keeps running\n\
   factory-reset         clear + reboot into factory state (needs --yes)\n\
-  reset                 reboot (a saved snapshot is restored)\n\
+  reset                 protocol reset (CMD_RST): state returns to its\n\
+                        post-reset values, restoring any saved\n\
+                        snapshot; the MCU does not reboot\n\
   pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\n\
 Options:\n\
   --baud=115200           serial bit rate\n\

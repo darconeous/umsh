@@ -56,6 +56,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 # UF2 block layout (https://github.com/microsoft/uf2).
 UF2_MAGIC_START0 = 0x0A324655   # "UF2\n"
@@ -329,6 +330,24 @@ def main(argv: list[str]) -> int:
             if "device not configured" in msg or "no such file" in msg:
                 print(f"flash.py: copied to {dest} (bootloader unmounted "
                       f"mid-copy; this is normal — flash succeeded)")
+            elif "input/output error" in msg:
+                # EIO is ambiguous: it is what in-flight writes get when
+                # the bootloader detaches after the final block, but it is
+                # also what a genuinely failed partial copy produces. The
+                # volume disappearing shortly afterwards is the success
+                # signal — the bootloader only exits DFU on a complete UF2.
+                mount_root = copy_to if os.path.isdir(copy_to) else os.path.dirname(dest)
+                for _ in range(10):
+                    if not os.path.exists(mount_root):
+                        break
+                    time.sleep(0.5)
+                if os.path.exists(mount_root):
+                    print(f"flash.py: copy to {dest} failed mid-write and "
+                          f"the device is still in DFU — partial flash; "
+                          f"rerun.", file=sys.stderr)
+                    raise
+                print(f"flash.py: copied to {dest} (bootloader detached on "
+                      f"the final block; flash succeeded)")
             else:
                 raise
 
