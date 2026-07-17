@@ -28,14 +28,14 @@ The public product and firmware documentation describe it as an nRF52840 + LR111
 | Function | nRF52840 pin | Firmware names | Notes |
 |---|---:|---|---|
 | Battery ADC | P0.02 / AIN0 | `BATTERY_PIN` | Battery voltage divider, `ADC_MULTIPLIER = 2.0`, so likely a 1:1 divider. |
-| External / charger detect | P0.05 / AIN3 | `EXT_PWR_DETECT`, comment says `CHARGER_DET` | Detects external charger / VBUS-ish signal. |
+| External / charger detect | P0.05 / AIN3 | `EXT_PWR_DETECT`, comment says `CHARGER_DET` | Detects external charger / VBUS-ish signal. **Observed to remain asserted after cable removal** — see “Hardware-validated power and UX findings”. |
 | Charger “charging” status | P1.03 | `EXT_CHRG_DETECT`, comment says `CHARGE_STA` | Active-low charging-status input in Meshtastic. |
 | Charge done | P1.04 | commented `EXT_IS_CHRGD`, comment says `CHARGE_DONE` | Present in comments, but not used by Meshtastic. |
 | Sensor 3.3 V rail enable | P1.06 | `PIN_3V3_EN` | “Power to Sensors.” |
 | Accelerometer 3.3 V rail enable | P1.07 | `PIN_3V3_ACC_EN` | “Power to Acc.” |
 | Temp/lux sensor enable | P0.04 | `T1000X_SENSOR_EN_PIN` / `SENSOR_EN` | Separate sensor enable. |
 | Button | P0.06 | `BUTTON_PIN` | Active high, pulldown/sense-high behavior. |
-| Green LED | P0.24 | `PIN_LED1` / `LED_GREEN` | LED on = high. |
+| Green LED | P0.24 | `PIN_LED1` / `LED_GREEN` | LED on = high (hardware-validated; see PWM polarity note below). |
 | Buzzer PWM | P0.25 | `PIN_BUZZER` | PWM output. |
 | Buzzer enable | P1.05 | `BUZZER_EN_PIN` / `BUZZER_EN` | Enable held high when active. |
 | I²C SDA/SCL | P0.26 / P0.27 | `PIN_WIRE_SDA`, `PIN_WIRE_SCL` | Used for QMA6100P accelerometer. |
@@ -114,6 +114,52 @@ Power control is mostly:
 MeshCore’s `powerOff()` is particularly revealing. It turns off GPS-related pins, buzzer enable, sensor rails, accelerometer rail, and sensor enable. It then configures the button as a wake source and calls `sd_power_system_off()`.
 
 So “off” is probably an nRF52840 System OFF state plus disabled peripheral rails, not a hard mechanical or PMIC-controlled disconnect of the whole board.
+
+## Hardware-validated power and UX findings
+
+The following were established on real hardware during the 2026-07 UMSH UX
+bringup. They correct assumptions that the firmware-tree reconstruction above
+would otherwise suggest.
+
+### P0.05 is not reliable cable-presence truth
+
+P0.05 (`CHARGER_DET`) **can remain asserted after the magnetic cable is
+removed**. Firmware must treat the nRF52840's native
+`POWER.USBREGSTATUS.VBUSDETECT` as the authoritative indication of external
+power; P0.05 is at most an edge/status hint for re-sampling. For the same
+reason P0.05 must not be a System OFF wake source — a stuck-high level defeats
+a high-sense DETECT arm. USB insertion wakes the chip from System OFF through
+the native VBUS detector, which reports with its own `RESETREAS.VBUS` bit.
+
+### P1.03 charge-status polarity confirmed
+
+`CHARGE_STA` on P1.03 is active-low as Meshtastic documents: low = actively
+charging, high = charge complete (or no charger). Validated by driving the
+charging “breathing” LED indication from it.
+
+### System OFF wake and early-boot GPIO rules
+
+- Waking from System OFF is a reset, and GPIO configuration returns to its
+  reset value: **input buffer disconnected**. The GPIO `IN` register reads 0
+  while the buffer is disconnected, so the button **cannot be sampled during
+  early boot** to detect the wake cause. With P0.06 as the only SENSE-armed
+  pin, `RESETREAS.OFF` alone is the proof of a button wake.
+- Arming SENSE for DETECT wake only works on a **connected** input buffer with
+  the proper pull. Write the complete `PIN_CNF` (input connect, pull-down,
+  SENSE-high for P0.06) at System OFF entry. Read-modify-writing only the
+  SENSE bits silently produces an unwakeable device when entered from early
+  boot, where the pin is still disconnected and floating.
+- The button is active-high: a high level at System OFF entry fires DETECT
+  immediately (instant re-wake). Wait for release before entering System OFF.
+
+### LED PWM polarity
+
+P0.24 is active-high, and with the nRF PWM peripheral (embassy-nrf
+`SimplePwm`), `DutyCycle::normal(0)` parks the output **high** — a solid-on
+LED. Brightness therefore requires `DutyCycle::inverted(duty)` (output high
+while the counter is below the duty value). The observable signature of the
+wrong mapping is an LED that is solid-on with brief dips where pulses should
+be. The buzzer PWM is unaffected: its 50 % waveform is polarity-symmetric.
 
 ## Low-battery cutoff
 
@@ -313,7 +359,7 @@ The firmware does **not** reveal:
 - whether there is a hardware undervoltage cutoff independent of firmware,
 - exact MOSFET / load-switch topology for switched rails,
 - exact regulator topology,
-- whether P0.05 is raw VBUS detect, charger-present, or a conditioned charger-detect signal,
+- whether P0.05 is raw VBUS detect, charger-present, or a conditioned charger-detect signal (hardware testing shows it can remain asserted after cable removal, suggesting a conditioned/latching signal rather than raw VBUS),
 - whether P1.04 charge-done is populated and connected on all hardware revisions.
 
 ## Most likely mental block diagram
