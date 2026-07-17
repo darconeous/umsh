@@ -1151,6 +1151,20 @@ where
         self.status_only_command(frame::clear).await
     }
 
+    /// Reset the NCP (`CMD_RST`) and wait for the reset notification,
+    /// returning the announced reset status. The NCP comes up as from
+    /// a power cycle — restoring its saved snapshot when one exists,
+    /// factory configuration otherwise. All session-scoped state and
+    /// cached views are gone; follow with [`Self::sync`].
+    pub async fn reset(&mut self) -> Result<Status, CompanionRadioError> {
+        let mut buf = [0u8; 2];
+        let len = frame::reset(&mut buf, TID_UNSOLICITED)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        let deadline = Instant::now() + self.config.response_timeout;
+        self.wait_reset(deadline).await
+    }
+
     /// Revert the NCP to its saved snapshot (`CMD_RESTORE`; requires
     /// `CAP_SAVE`), accepting both spec-permitted completion forms.
     pub async fn restore(&mut self) -> Result<RestoreCompletion, CompanionRadioError> {
@@ -2384,6 +2398,15 @@ mod tests {
         assert_eq!(radio.ncp_version(), "fake-ncp/0.1");
         assert_eq!(radio.boot_status(), Status::RESET_POWER_ON);
         assert!(radio.t_frame_ms() > 0);
+    }
+
+    #[tokio::test]
+    async fn explicit_reset_returns_the_announced_status() {
+        let mut radio = attached_radio().await;
+        let status = radio.reset().await.unwrap();
+        assert_eq!(status, Status::RESET_SOFTWARE);
+        // The link and session must remain usable after the reset.
+        radio.get_prop(prop::LAST_STATUS).await.unwrap();
     }
 
     #[tokio::test]
