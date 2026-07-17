@@ -60,6 +60,9 @@ fn session_config() -> SessionConfig {
             tx_power_dbm: 14,
         },
         default_duty_limit: 0xFFFF,
+        // One leaked ledger per simulated NCP: sessions in parallel
+        // tests must not share duty state.
+        duty: Box::leak(Box::new(umsh_companion_ncp::DutyLedger::new())),
     }
 }
 

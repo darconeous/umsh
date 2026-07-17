@@ -14,10 +14,15 @@
 //! - **Rng** is a ChaCha20 CSPRNG seeded from the hardware TRNG at boot
 //!   ([`NodeRng`]): under BLE builds MPSL owns the RNG peripheral, and
 //!   project policy forbids non-crypto RNGs outright.
-//! - **Counter/key-value stores** are no-ops for now: the node currently
-//!   transmits nothing but unsecured broadcasts, for which no counter
-//!   state exists. The durable counter journal is the device-node plan's
-//!   increment 4 and must land before the node sends secured traffic.
+//! - **Radio** transmissions pass through the shared duty ledger
+//!   (`duty_gate`): the node and the session draw from one combined
+//!   `PROP_PHY_DUTY_LIMIT` budget, and a refused transmit is shed via
+//!   the MAC's CAD-backoff path rather than killing the pump.
+//! - **The counter store** is the `COUNTER_PAGE0` journal
+//!   (`firmware::NodeCounterStore`): TX reservation boundaries for the
+//!   device identity and per-peer RX replay boundaries survive power
+//!   cycles, flushed from inside the MAC pump (`MacHandle::next_event`)
+//!   one whole-map record per persist block.
 //!
 //! The node is **dormant unless a device identity exists** at boot (the
 //! identity journal is empty until provisioned; the `no-ble` image has no
@@ -42,7 +47,7 @@ use umsh_companion_ncp::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS};
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_hal::{NoCounterStore, NoKeyValueStore};
+use umsh_hal::NoKeyValueStore;
 use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{Host, LocalNode};
 use umsh_sync::AsyncRefCell;
@@ -87,15 +92,22 @@ impl rand::TryCryptoRng for NodeRng {}
 /// use software crypto, the embassy clock, and the mux-backed radio.
 pub struct NcpNodePlatform;
 
+/// The node's radio path: its virtual mux bundle behind the shared
+/// duty-ledger admission gate.
+type NcpNodeRadio = crate::duty_gate::DutyGatedRadio<
+    umsh_radio_loraphy::LoraphyRadio<ThreadModeRawMutex, 4, 2>,
+    EmbassyClock,
+>;
+
 impl umsh_mac::Platform for NcpNodePlatform {
     type Identity = SoftwareIdentity;
     type Aes = SoftwareAes;
     type Sha = SoftwareSha256;
-    type Radio = umsh_radio_loraphy::LoraphyRadio<ThreadModeRawMutex, 4, 2>;
+    type Radio = NcpNodeRadio;
     type Delay = embassy_time::Delay;
     type Clock = EmbassyClock;
     type Rng = NodeRng;
-    type CounterStore = NoCounterStore;
+    type CounterStore = crate::firmware::NodeCounterStore;
     type KeyValueStore = NoKeyValueStore;
 }
 
@@ -211,6 +223,13 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
                 ));
             }
         }
+        // Seed persisted RX replay boundaries for the registered peers
+        // (a repeat only refreshes each peer's initial boundary; live
+        // replay windows are untouched). Without this, a peer's replay
+        // floor would restart at zero after every power cycle.
+        if !snapshot.peers.is_empty() {
+            let _ = mac.load_all_persisted_rx_counters().await;
+        }
         crate::firmware::debug_log(format_args!(
             "node dev-sync: {} channels, {} peers, identity={}",
             snapshot.channel_keys.len(),
@@ -294,7 +313,13 @@ async fn node_beacon_task(node: NcpNode) {
 /// yielded a keypair; without one the node stays dormant.
 ///
 /// `t_frame_ms` is the worst-case airtime hint for the MAC scheduler.
-pub fn bring_up(spawner: Spawner, identity_secret: &[u8; 32], node_seed: [u8; 32], t_frame_ms: u32) {
+pub async fn bring_up(
+    spawner: Spawner,
+    identity_secret: &[u8; 32],
+    node_seed: [u8; 32],
+    t_frame_ms: u32,
+    counters: &'static crate::firmware::NodeCountersMutex,
+) {
     // The Mac is ~37 KiB. `init_with` lets the compiler construct it
     // in place inside the static cell; building it as a stack local
     // (what `StaticCell::init` does) transits the stack once per move
@@ -304,11 +329,15 @@ pub fn bring_up(spawner: Spawner, identity_secret: &[u8; 32], node_seed: [u8; 32
     // Keep the construction a single in-place expression.
     let mac_cell: &'static AsyncRefCell<NcpNodeMac> = NODE_MAC_CELL.init_with(|| {
         AsyncRefCell::new(NcpNodeMac::new(
-            umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
+            crate::duty_gate::DutyGatedRadio::new(
+                umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
+                &crate::firmware::DUTY_LEDGER,
+                EmbassyClock,
+            ),
             CryptoEngine::new(SoftwareAes, SoftwareSha256),
             EmbassyClock,
             NodeRng::from_seed(node_seed),
-            NoCounterStore,
+            crate::firmware::NodeCounterStore::new(counters),
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         ))
@@ -320,8 +349,15 @@ pub fn bring_up(spawner: Spawner, identity_secret: &[u8; 32], node_seed: [u8; 32
         .expect("mac cell is unshared during bring-up")
         .add_identity(identity)
         .unwrap_or_else(|_| panic!("device node identity"));
-    // No persisted-counter load: the store is a no-op until the counter
-    // journal lands (device-node plan increment 4).
+    // Seed the identity's TX frame counter from the persisted boundary
+    // so secured sends can never reuse counter space from a previous
+    // boot. With nothing persisted the random initial counter stands.
+    match MacHandle::new(mac_cell).load_persisted_counter(identity_id).await {
+        Ok(counter) => {
+            crate::firmware::debug_log(format_args!("node bring-up: tx counter {counter}"))
+        }
+        Err(_) => crate::firmware::debug_log(format_args!("node bring-up: tx counter load FAILED")),
+    }
 
     let mut host: NcpNodeHost = Host::new(MacHandle::new(mac_cell));
     let node = host.add_node(identity_id);

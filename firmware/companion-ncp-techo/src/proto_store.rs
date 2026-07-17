@@ -29,6 +29,13 @@ pub const IDENTITY_PAGE0: u32 = PAGE1 + PAGE_SIZE;
 /// T-1000E user-facing Sleep/Silence preference journal. The shared T-Echo
 /// image does not use it, but reserving it here keeps the flash map explicit.
 pub const UX_PAGE0: u32 = IDENTITY_PAGE0 + 2 * PAGE_SIZE;
+/// Device-node frame-counter journal (device-node plan increment 4):
+/// the persisted TX reservation boundary for the device identity and
+/// RX replay boundaries for its peers, batch-written as one
+/// `counter_map` payload per flush. Separate journal because its write
+/// cadence (every `COUNTER_PERSIST_BLOCK_SIZE` secured frames) must
+/// never rotate a snapshot or the identity record away.
+pub const COUNTER_PAGE0: u32 = UX_PAGE0 + 2 * PAGE_SIZE;
 
 /// A device-identity record payload: the Ed25519 private key followed
 /// by its public key (stored so boot does not repeat the derivation).
@@ -442,7 +449,8 @@ mod tests {
         // inside the reserved NV region (0x000E_4000..0x000F_4000).
         assert_eq!(IDENTITY_PAGE0, 0x000E_8000);
         assert_eq!(UX_PAGE0, 0x000E_A000);
-        assert!(UX_PAGE0 + 2 * PAGE_SIZE <= 0x000F_4000);
+        assert_eq!(COUNTER_PAGE0, 0x000E_C000);
+        assert!(COUNTER_PAGE0 + 2 * PAGE_SIZE <= 0x000F_4000);
     }
 
     /// Generation comparison survives wraparound: a record numbered 0
