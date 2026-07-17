@@ -148,7 +148,9 @@ pub fn request_beacon(trigger: BeaconTrigger) {
 /// through the panic handler beats silently losing the device identity.
 #[embassy_executor::task]
 async fn node_pump_task(mut host: NcpNodeHost) {
-    let _ = host.run().await;
+    crate::firmware::debug_log(format_args!("node pump: running"));
+    let result = host.run().await;
+    crate::firmware::debug_log(format_args!("node pump: EXITED ok={}", result.is_ok()));
     panic!("device node host exited");
 }
 
@@ -181,26 +183,37 @@ async fn node_beacon_task(node: NcpNode) {
 ///
 /// `t_frame_ms` is the worst-case airtime hint for the MAC scheduler.
 pub fn bring_up(spawner: Spawner, identity_secret: &[u8; 32], node_seed: [u8; 32], t_frame_ms: u32) {
-    let radio = umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms);
-    let mut mac = NcpNodeMac::new(
-        radio,
-        CryptoEngine::new(SoftwareAes, SoftwareSha256),
-        EmbassyClock,
-        NodeRng::from_seed(node_seed),
-        NoCounterStore,
-        RepeaterConfig::default(),
-        OperatingPolicy::default(),
-    );
+    // The Mac is ~37 KiB. `init_with` lets the compiler construct it
+    // in place inside the static cell; building it as a stack local
+    // (what `StaticCell::init` does) transits the stack once per move
+    // in the chain, and this image's statics leave only ~110 KiB of
+    // stack — hardware-diagnosed as boot HardFaults (INVSTATE jumps to
+    // 0) and a smashed allocator when the temporaries blew through it.
+    // Keep the construction a single in-place expression.
+    let mac_cell: &'static AsyncRefCell<NcpNodeMac> = NODE_MAC_CELL.init_with(|| {
+        AsyncRefCell::new(NcpNodeMac::new(
+            umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
+            CryptoEngine::new(SoftwareAes, SoftwareSha256),
+            EmbassyClock,
+            NodeRng::from_seed(node_seed),
+            NoCounterStore,
+            RepeaterConfig::default(),
+            OperatingPolicy::default(),
+        ))
+    });
+    crate::firmware::debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
-    let identity_id = mac
+    let identity_id = mac_cell
+        .try_borrow_mut()
+        .expect("mac cell is unshared during bring-up")
         .add_identity(identity)
         .unwrap_or_else(|_| panic!("device node identity"));
     // No persisted-counter load: the store is a no-op until the counter
     // journal lands (device-node plan increment 4).
-    let mac_cell = NODE_MAC_CELL.init(AsyncRefCell::new(mac));
 
     let mut host: NcpNodeHost = Host::new(MacHandle::new(mac_cell));
     let node = host.add_node(identity_id);
+    crate::firmware::debug_log(format_args!("node bring-up: host ready"));
     spawner.spawn(node_pump_task(host).unwrap());
     spawner.spawn(node_beacon_task(node).unwrap());
 }

@@ -911,7 +911,7 @@ mod firmware {
     #[cfg(feature = "ble-debug")]
     static DEBUG_DROPPED: AtomicU32 = AtomicU32::new(0);
 
-    fn debug_log(args: core::fmt::Arguments<'_>) {
+    pub(crate) fn debug_log(args: core::fmt::Arguments<'_>) {
         #[cfg(feature = "ble-debug")]
         {
             let mut line = DebugLine::new();
@@ -2029,20 +2029,26 @@ mod firmware {
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
-    async fn output_task(mut tx: NcpSender, wdt_report: Option<&'static str>) {
-        // TEMPORARY freeze diagnostics: emit the previous boot's watchdog
-        // capture as ASCII to the first USB reader. HDLC hosts
+    async fn output_task(
+        mut tx: NcpSender,
+        wdt_report: Option<&'static str>,
+        panic_report: Option<&'static str>,
+    ) {
+        // Emit the previous boot's diagnostics (watchdog capture and/or
+        // panic message) as ASCII to the first USB reader. HDLC hosts
         // resynchronize past it; humans read it with a serial terminal.
         // Wait for DTR — the OS CDC driver drains the IN endpoint even
         // with no process attached, so writing before a real opener
         // exists would discard the report into the void.
-        if let Some(report) = wdt_report {
+        if wdt_report.is_some() || panic_report.is_some() {
             while !tx.dtr() {
                 Timer::after_millis(50).await;
             }
             Timer::after_millis(300).await;
-            for chunk in report.as_bytes().chunks(64) {
-                let _ = tx.write_packet(chunk).await;
+            for report in [wdt_report, panic_report].into_iter().flatten() {
+                for chunk in report.as_bytes().chunks(64) {
+                    let _ = tx.write_packet(chunk).await;
+                }
             }
         }
         loop {
@@ -2812,7 +2818,8 @@ mod firmware {
         super::panic::breadcrumb_mark(1);
 
         // Init heap before any alloc-using code (the device node's
-        // bring-up allocates). 8 KiB matches the CLI firmware's budget.
+        // bring-up allocates a small bounded amount). 8 KiB matches the
+        // CLI firmware's budget for the same node stack.
         {
             use core::mem::MaybeUninit;
             const HEAP_SIZE: usize = 8192;
@@ -3061,10 +3068,22 @@ mod firmware {
         super::panic::breadcrumb_mark(3);
 
         // A message in the panic slot means the last reset was a crash;
-        // report that as the reset reason. The slot is cleared either way.
+        // report that as the reset reason and keep the message text for
+        // the first-USB-reader dump. The slot is cleared either way.
+        let mut panic_report: Option<&'static str> = None;
         let boot_reason = {
             let mut slot = PanicSlot::new(super::panic::panic_region());
-            if slot.read().is_some() {
+            if let Some(message) = slot.read() {
+                use core::fmt::Write as _;
+                static PANIC_REPORT: StaticCell<heapless09::String<1100>> = StaticCell::new();
+                let text = PANIC_REPORT.init(heapless09::String::new());
+                let _ = write!(text, "\r\n=== PANIC (previous boot) ===\r\n");
+                for byte in message.iter().take(1000) {
+                    let c = *byte as char;
+                    let _ = text.push(if c.is_ascii_graphic() || c == ' ' { c } else { '.' });
+                }
+                let _ = write!(text, "\r\n=== END PANIC ===\r\n");
+                panic_report = Some(text.as_str());
                 slot.clear();
                 Status::RESET_CRASH
             } else if hardware_reset_reasons.dog() {
@@ -3400,7 +3419,7 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
-        spawner.spawn(output_task(tx, wdt_report).unwrap());
+        spawner.spawn(output_task(tx, wdt_report, panic_report).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
         spawner.spawn(
             ncp_task(
@@ -3426,7 +3445,12 @@ mod firmware {
                 lora_phy::mod_params::Bandwidth::_62KHz,
                 umsh_radio_loraphy::MAX_PAYLOAD,
             );
-            super::device_node::bring_up(spawner, identity_secret, node_seed, t_frame_ms);
+            // After a crash reboot, skip one boot of the device node so
+            // the surviving boot stays reachable and prints the previous
+            // panic over USB. A healthy boot always brings the node up.
+            if panic_report.is_none() {
+                super::device_node::bring_up(spawner, identity_secret, node_seed, t_frame_ms);
+            }
         }
         super::panic::breadcrumb_mark(8);
 
