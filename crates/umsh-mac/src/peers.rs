@@ -354,6 +354,21 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         self.channels.iter_mut()
     }
 
+    /// Remove the channel holding this exact key, discarding its replay
+    /// state with it (re-adding the key later starts at first contact).
+    /// Returns whether a channel was removed.
+    pub fn remove_by_key(&mut self, key: &ChannelKey) -> bool {
+        let Some(index) = self
+            .channels
+            .iter()
+            .position(|channel| channel.channel_key.0 == key.0)
+        else {
+            return false;
+        };
+        self.channels.swap_remove(index);
+        true
+    }
+
     /// Add or replace a channel entry.
     pub fn try_add(
         &mut self,

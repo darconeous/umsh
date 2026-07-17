@@ -29,12 +29,17 @@
 //! timer-driven advertisement policy (reserved device-domain properties
 //! 69–95) will feed the same path later.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use static_cell::StaticCell;
 
 use umsh_bsp_nrf52840::EmbassyClock;
+use umsh_companion_ncp::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS};
+use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{NoCounterStore, NoKeyValueStore};
@@ -94,12 +99,21 @@ impl umsh_mac::Platform for NcpNodePlatform {
     type KeyValueStore = NoKeyValueStore;
 }
 
-/// Device-node MAC with the same capacities as the CLI firmware (which
-/// proves the footprint on identical hardware): 2 identities, 8 peers,
-/// 4 channels, 4 pending ACKs, 8 TX slots, 255-byte frames, 32-entry
-/// dup cache.
-pub type NcpNodeMac = umsh_mac::Mac<NcpNodePlatform, 2, 8, 4, 4, 8, 255, 32>;
-type NcpNodeHandle = MacHandle<'static, NcpNodePlatform, 2, 8, 4, 4, 8, 255, 32>;
+/// Device-node MAC sized to the session's device-domain tables, which
+/// are the only provisioning source it has: 1 identity (the device
+/// identity; no PFS ephemerals on the NCP node), `MAX_DEV_PEERS` peers,
+/// `MAX_CHANNEL_KEYS` channels (a smaller MAC table would refuse
+/// channels the property surface accepted), 4 pending ACKs, 4 TX slots
+/// (beacons and future acks — no application traffic), 255-byte frames,
+/// 32-entry dup cache. The per-channel replay maps are the RAM hot
+/// spot (~330 bytes per tracked sender): 4 full-key + 2 hint-only
+/// senders per channel keeps the whole table ~2 KiB/channel; extra
+/// concurrent senders on one channel fail closed (dropped, never
+/// accepted unchecked).
+pub type NcpNodeMac =
+    umsh_mac::Mac<NcpNodePlatform, 1, MAX_DEV_PEERS, MAX_CHANNEL_KEYS, 4, 4, 255, 32, 4, 2>;
+type NcpNodeHandle =
+    MacHandle<'static, NcpNodePlatform, 1, MAX_DEV_PEERS, MAX_CHANNEL_KEYS, 4, 4, 255, 32, 4, 2>;
 type NcpNodeHost = Host<NcpNodeHandle>;
 type NcpNode = LocalNode<NcpNodeHandle>;
 
@@ -112,6 +126,99 @@ pub static NODE_CH: umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2> =
     umsh_radio_loraphy::Channels::new();
 
 static NODE_MAC_CELL: StaticCell<AsyncRefCell<NcpNodeMac>> = StaticCell::new();
+
+// ─── Device-domain sync input ────────────────────────────────────────────────
+
+/// A point-in-time copy of the session's device-domain node tables
+/// (`PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`) plus whether a device
+/// identity is live. Built by `ncp_task` whenever the session's
+/// `dev_domain_version` moves and handed to [`node_dev_sync_task`],
+/// which reconciles the node's MAC against it. The session stays
+/// authoritative for the property surface; the node only mirrors it.
+pub struct DevDomainSnapshot {
+    pub channel_keys: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS>,
+    pub peers: heapless::Vec<[u8; 32], MAX_DEV_PEERS>,
+    /// `PROP_DEV_KEY` is live. Goes false when a factory reset
+    /// (`CMD_CLEAR` + `CMD_RST`) completes; the running node then goes
+    /// dormant (beacons gated off, channels removed) until the reboot
+    /// that finishes tearing it down.
+    pub identity_present: bool,
+}
+
+/// Latest-wins hand-off from `ncp_task` to the sync task. A `Signal`
+/// rather than a queue: intermediate table states are irrelevant, only
+/// convergence on the newest snapshot matters. With the node dormant
+/// (never brought up) a pending snapshot just sits here unconsumed.
+pub static DEV_SYNC: Signal<ThreadModeRawMutex, DevDomainSnapshot> = Signal::new();
+
+/// Whether the device node may transmit. Cleared when a snapshot
+/// reports the identity gone (factory reset); the MAC still holds the
+/// old identity until reboot, but it must stop originating traffic.
+static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
+
+/// Reconciles the node's MAC against each [`DevDomainSnapshot`]: joins
+/// newly provisioned channels, removes de-provisioned ones (dropping
+/// their replay state), and registers peers. Peer *removal* is not
+/// propagated — MAC registry entries carry no key material, so a stale
+/// entry is inert, and the registry is rebuilt from the live table at
+/// the next boot.
+#[embassy_executor::task]
+async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
+    // Channel keys currently applied to the MAC. Starts empty: the MAC
+    // is built bare at bring-up and every channel arrives through here.
+    let mut applied: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS> = heapless::Vec::new();
+    loop {
+        let snapshot = DEV_SYNC.wait().await;
+        NODE_ACTIVE.store(snapshot.identity_present, Ordering::Relaxed);
+        let mut index = 0;
+        while index < applied.len() {
+            if snapshot.channel_keys.contains(&applied[index]) {
+                index += 1;
+                continue;
+            }
+            let key = applied.swap_remove(index);
+            let _ = node.leave(&umsh_node::Channel::private(ChannelKey(key), ""));
+            mac.remove_channel(&ChannelKey(key)).await;
+            crate::firmware::debug_log(format_args!(
+                "node dev-sync: channel {:02x}{:02x}.. removed",
+                key[0], key[1]
+            ));
+        }
+        for key in snapshot.channel_keys.iter() {
+            if applied.contains(key) {
+                continue;
+            }
+            match node.join(&umsh_node::Channel::private(ChannelKey(*key), "")).await {
+                Ok(_) => {
+                    let _ = applied.push(*key);
+                    crate::firmware::debug_log(format_args!(
+                        "node dev-sync: channel {:02x}{:02x}.. joined",
+                        key[0], key[1]
+                    ));
+                }
+                Err(_) => crate::firmware::debug_log(format_args!(
+                    "node dev-sync: channel {:02x}{:02x}.. join FAILED",
+                    key[0], key[1]
+                )),
+            }
+        }
+        // Registration is add-or-refresh; repeats are harmless.
+        for public_key in snapshot.peers.iter() {
+            if node.peer(PublicKey(*public_key)).await.is_err() {
+                crate::firmware::debug_log(format_args!(
+                    "node dev-sync: peer {:02x}{:02x}.. register FAILED",
+                    public_key[0], public_key[1]
+                ));
+            }
+        }
+        crate::firmware::debug_log(format_args!(
+            "node dev-sync: {} channels, {} peers, identity={}",
+            snapshot.channel_keys.len(),
+            snapshot.peers.len(),
+            snapshot.identity_present
+        ));
+    }
+}
 
 // ─── Beacon trigger input ────────────────────────────────────────────────────
 
@@ -162,6 +269,11 @@ async fn node_beacon_task(node: NcpNode) {
     use umsh_node::Transport as _;
     loop {
         let _trigger = BEACON_TRIGGER.receive().await;
+        // A factory-cleared identity leaves the slot inert, exactly
+        // like an unprovisioned one.
+        if !NODE_ACTIVE.load(Ordering::Relaxed) {
+            continue;
+        }
         let accepted = node.send_all(&[], &SendOptions::default()).await.is_ok();
         #[cfg(feature = "t1000e")]
         if accepted {
@@ -213,7 +325,27 @@ pub fn bring_up(spawner: Spawner, identity_secret: &[u8; 32], node_seed: [u8; 32
 
     let mut host: NcpNodeHost = Host::new(MacHandle::new(mac_cell));
     let node = host.add_node(identity_id);
+    // Permanent observability tap: every packet the node processes is
+    // one debug line. This is the device-domain acceptance instrument
+    // (multicast on a provisioned device channel shows up here) and it
+    // never consumes the packet. The subscription is leaked because the
+    // node lives for the rest of the boot.
+    core::mem::forget(node.on_receive(|packet| {
+        let channel = packet
+            .channel()
+            .map(|info| u16::from_be_bytes(info.id().0))
+            .unwrap_or(0);
+        crate::firmware::debug_log(format_args!(
+            "node rx: {:?} ch={:04x} len={} auth={}",
+            packet.packet_family(),
+            channel,
+            packet.payload().len(),
+            packet.source_authenticated(),
+        ));
+        false
+    }));
     crate::firmware::debug_log(format_args!("node bring-up: host ready"));
     spawner.spawn(node_pump_task(host).unwrap());
+    spawner.spawn(node_dev_sync_task(node.clone(), MacHandle::new(mac_cell)).unwrap());
     spawner.spawn(node_beacon_task(node).unwrap());
 }

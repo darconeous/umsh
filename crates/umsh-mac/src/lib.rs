@@ -202,6 +202,14 @@ pub const DEFAULT_TX: usize = 16;
 pub const DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
 /// Default duplicate-cache capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
+/// Default per-channel full-key replay-window capacity (senders tracked
+/// per channel). Replay windows are ~330 bytes each, so these two
+/// capacities dominate the MAC's channel-table footprint; small targets
+/// shrink them. A full map fail-closes: frames from additional senders
+/// are dropped, never accepted unchecked.
+pub const DEFAULT_CHANNEL_REPLAY: usize = 8;
+/// Default per-channel hint-only replay-window capacity.
+pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
 
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

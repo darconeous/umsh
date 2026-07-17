@@ -78,6 +78,16 @@ pub enum Record {
     Cleared,
 }
 
+/// Borrowed form of [`Record`] for the write path: persist callers pass
+/// their payload by reference so the record machinery never buffers a
+/// second copy (the write path's task futures hold these across awaits,
+/// so every avoided `MAX_PAYLOAD` copy is RAM off a task pool).
+#[derive(Clone, Copy, Debug)]
+pub enum RecordRef<'a> {
+    Snapshot(&'a [u8]),
+    Cleared,
+}
+
 /// One journal record with its monotonically increasing generation;
 /// the newest valid record is authoritative.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,23 +96,33 @@ pub struct Stored {
     pub record: Record,
 }
 
+/// Encode one record body into a slot image. The payload must fit
+/// `MAX_PAYLOAD`; the commit word stays erased (0xFF) —
+/// `write_committed_record` writes zeros there only after the body
+/// lands.
+pub fn encode_record(generation: u32, record: RecordRef<'_>) -> [u8; SLOT_SIZE] {
+    let mut bytes = [0xFFu8; SLOT_SIZE];
+    bytes[..4].copy_from_slice(&MAGIC);
+    bytes[4..8].copy_from_slice(&generation.to_le_bytes());
+    let (kind, payload): (u8, &[u8]) = match record {
+        RecordRef::Snapshot(payload) => (KIND_SNAPSHOT, payload),
+        RecordRef::Cleared => (KIND_CLEARED, &[]),
+    };
+    bytes[8] = kind;
+    bytes[9..11].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+    bytes[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
+    let crc = ble_store::crc32(&bytes[..CRC_OFFSET]);
+    bytes[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
+    bytes
+}
+
 impl Stored {
     pub fn encode(&self) -> [u8; SLOT_SIZE] {
-        let mut bytes = [0xFFu8; SLOT_SIZE];
-        bytes[..4].copy_from_slice(&MAGIC);
-        bytes[4..8].copy_from_slice(&self.generation.to_le_bytes());
-        let (kind, payload): (u8, &[u8]) = match &self.record {
-            Record::Snapshot(payload) => (KIND_SNAPSHOT, payload),
-            Record::Cleared => (KIND_CLEARED, &[]),
+        let record = match &self.record {
+            Record::Snapshot(payload) => RecordRef::Snapshot(payload),
+            Record::Cleared => RecordRef::Cleared,
         };
-        bytes[8] = kind;
-        bytes[9..11].copy_from_slice(&(payload.len() as u16).to_le_bytes());
-        bytes[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
-        let crc = ble_store::crc32(&bytes[..CRC_OFFSET]);
-        bytes[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
-        // The commit word stays erased (0xFF); write_committed_record
-        // writes zeros there only after the body lands.
-        bytes
+        encode_record(self.generation, record)
     }
 
     pub fn decode(bytes: &[u8; SLOT_SIZE]) -> Option<Self> {
@@ -160,9 +180,10 @@ pub fn consider_record(
 pub async fn write_record<W: RecordWriter>(
     writer: &mut W,
     target: u32,
-    stored: &Stored,
+    generation: u32,
+    record: RecordRef<'_>,
 ) -> Result<(), CommitError<W::Error>> {
-    let bytes = stored.encode();
+    let bytes = encode_record(generation, record);
     ble_store::write_committed_record(writer, target, &bytes).await
 }
 
@@ -272,6 +293,21 @@ mod tests {
             generation,
             record: Record::Cleared,
         }
+    }
+
+    /// Test-side wrapper keeping the owned-`Stored` write shape the
+    /// tests were written against (the production path takes a
+    /// [`RecordRef`]; this local definition shadows the glob import).
+    async fn write_record<W: RecordWriter>(
+        writer: &mut W,
+        target: u32,
+        stored: &Stored,
+    ) -> Result<(), CommitError<W::Error>> {
+        let record = match &stored.record {
+            Record::Snapshot(payload) => RecordRef::Snapshot(payload),
+            Record::Cleared => RecordRef::Cleared,
+        };
+        super::write_record(writer, target, stored.generation, record).await
     }
 
     #[test]

@@ -570,6 +570,23 @@ fn mac_adds_identities_peers_and_channels() {
 }
 
 #[test]
+fn remove_channel_by_key() {
+    let mut mac = make_mac();
+    let key = ChannelKey([0x5A; 32]);
+    mac.add_channel(key).unwrap();
+    assert_eq!(mac.channels().len(), 1);
+
+    assert!(mac.remove_channel(&key));
+    assert_eq!(mac.channels().len(), 0);
+    // Removing an absent key reports false rather than failing.
+    assert!(!mac.remove_channel(&key));
+
+    // The slot is genuinely free again.
+    mac.add_channel(key).unwrap();
+    assert_eq!(mac.channels().len(), 1);
+}
+
+#[test]
 fn new_identity_starts_with_random_frame_counter() {
     let mut mac = make_mac();
 

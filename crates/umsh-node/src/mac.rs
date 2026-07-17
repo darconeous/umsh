@@ -145,7 +145,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-> MacBackend for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    const RN: usize,
+    const HN: usize,
+> MacBackend for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>
 {
     type SendError = SendError;
     type CapacityError = CapacityError;

@@ -15,7 +15,8 @@ use umsh_crypto::{
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
+    DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES,
     DEFAULT_PEERS, DEFAULT_TX, MAX_CAD_ATTEMPTS, MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN,
     MAX_SOURCE_ROUTE_HOPS, Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
@@ -780,6 +781,8 @@ pub struct Mac<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = MAX_RESEND_FRAME_LEN,
     const DUP: usize = DEFAULT_DUP,
+    const RN: usize = DEFAULT_CHANNEL_REPLAY,
+    const HN: usize = DEFAULT_CHANNEL_HINT_REPLAY,
 > {
     radio: P::Radio,
     crypto: CryptoEngine<P::Aes, P::Sha>,
@@ -788,7 +791,7 @@ pub struct Mac<
     counter_store: P::CounterStore,
     identities: Vec<Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>, IDENTITIES>,
     peer_registry: PeerRegistry<PEERS>,
-    channels: ChannelTable<CHANNELS>,
+    channels: ChannelTable<CHANNELS, RN, HN>,
     dup_cache: DuplicateCache<DUP>,
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
     tx_queue: TxQueue<TX, FRAME>,
@@ -808,7 +811,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    const RN: usize,
+    const HN: usize,
+> Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>
 {
     /// Creates a MAC coordinator with the supplied radio, crypto, timing, and policy state.
     pub fn new(
@@ -895,11 +900,11 @@ impl<
         &mut self.peer_registry
     }
     /// Borrow the channel table.
-    pub fn channels(&self) -> &ChannelTable<CHANNELS> {
+    pub fn channels(&self) -> &ChannelTable<CHANNELS, RN, HN> {
         &self.channels
     }
     /// Mutably borrow the channel table.
-    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS> {
+    pub fn channels_mut(&mut self) -> &mut ChannelTable<CHANNELS, RN, HN> {
         &mut self.channels
     }
     /// Borrow repeater configuration.
@@ -1166,6 +1171,13 @@ impl<
     pub fn add_channel(&mut self, key: ChannelKey) -> Result<(), CapacityError> {
         let derived = self.crypto.derive_channel_keys(&key);
         self.channels.try_add(key, derived)
+    }
+
+    /// Removes a previously added channel by its exact key, discarding
+    /// the channel's replay state with it (re-adding the key later
+    /// starts at first contact). Returns whether a channel was removed.
+    pub fn remove_channel(&mut self, key: &ChannelKey) -> bool {
+        self.channels.remove_by_key(key)
     }
 
     /// Adds or updates a named channel using the coordinator's channel-key derivation.

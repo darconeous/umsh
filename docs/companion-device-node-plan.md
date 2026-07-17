@@ -6,7 +6,8 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **increments 1–2 complete and hardware-validated 2026-07-17.**
+Status: **increments 1–2 complete and hardware-validated 2026-07-17;
+increment 3 code-complete the same day (hardware gate pending).**
 Increment 1 (radio mux): host tests plus the T-1000E gate (companion
 probe, RF delegated-ack, drain) green. Increment 2 (device node +
 button beacon): T-1000E single-click beacons from the device identity
@@ -16,8 +17,9 @@ delegated-ack gate re-passes with the node running beside the session.
 Bring-up hard lesson: the ~37 KiB Mac must be constructed in place
 (`StaticCell::init_with`) — building it on the stack overflowed the
 ~114 KiB left above this image's statics and corrupted .bss on every
-boot. Flash/static-RAM: T-1000E 590/138 KiB, T-Echo 602/141 KiB (of
-756/256 KiB). Increments 3–5 pending.
+boot. Increment 3 (device-domain wiring + RAM diet): see the RAM
+results table in that increment. Flash/static-RAM: T-1000E 596/116 KiB,
+T-Echo 606/124 KiB (of 756/256 KiB). Increments 4–5 pending.
 
 ## Why
 
@@ -159,6 +161,42 @@ the results with `memory_budget.rs`-style size tests and record the
 final table here. Stack headroom (~114 KiB, ~90 KiB spare after the
 in-place-construction fix) and the 8 KiB heap are deliberate margins —
 leave them.
+
+**Implemented 2026-07-17** (hardware gate pending). Wiring: rather than
+per-mutation effects, the session carries a monotonic
+`dev_domain_version` (bumped by every device-table mutation, reset,
+restore, and boot restore) plus `dev_channel_keys()`/`dev_peers()`/
+`dev_key()` accessors; `ncp_task` publishes a `DevDomainSnapshot`
+through a latest-wins `Signal` whenever the version moves (one u32
+compare per loop otherwise), and a `node_dev_sync_task` reconciles the
+node against it — `join` for new channels, `leave` + the new
+`Mac::remove_channel` (dropping that channel's replay state) for
+removed ones, add-or-refresh `node.peer()` for peers. Peer *removal*
+stays live-until-reboot (registry entries hold no key material). A
+factory reset publishes `identity_present: false`: beacons gate off and
+channels drop, full teardown at next boot. A permanent `on_receive`
+debug tap logs every packet the node processes (the acceptance
+instrument).
+
+RAM diet results (T-1000E, measured via `arm-none-eabi-nm`): the MAC's
+channel table dominated everything — each tracked sender costs one
+~330-byte replay window per channel, so `Mac` gained two trailing
+const generics `RN`/`HN` (per-channel full-key/hint-only replay-window
+capacities, default 8/8 = previous behavior; a full map fail-closes).
+The persist path (`proto_store`) now passes payloads by reference
+(`RecordRef`) down to a single slot-image encode, removing two ~2 KiB
+copies from every persist future in every task pool.
+
+| Item | Audit (increment 2) | Now | Note |
+|---|---|---|---|
+| `NODE_MAC_CELL` | 37.5 KiB (4 ch) | 25.7 KiB (8 ch) | `Mac<_, 1, 8, 8, 4, 4, 255, 32, 4, 2>` |
+| `ncp_task` future pool | 29.5 KiB | 21.4 KiB | shared snapshot scratch + slim persist |
+| `t1000e_button_task` pool | 8.5 KiB | 2.4 KiB | slim persist (UX writes) |
+| **Total statics** | **141.7 KiB** | **116.2 KiB** | T-Echo: 124.4 KiB |
+
+Guards: `umsh-mac/tests/size_decomposition.rs` (ReplayWindow ≤ 384 B,
+NCP channel table ≤ 20 KiB) beside the existing Session budget test.
+Stack (~140 KiB above statics) and the 8 KiB heap margins untouched.
 
 ### 4. Shared duty ledger + counter persistence
 

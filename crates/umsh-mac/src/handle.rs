@@ -6,8 +6,9 @@ use umsh_hal::{Clock, CounterStore};
 use umsh_sync::AsyncRefCell;
 
 use crate::{
-    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME,
-    DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX, Platform,
+    AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY,
+    DEFAULT_CHANNEL_REPLAY, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES,
+    DEFAULT_PEERS, DEFAULT_TX, Platform,
     coordinator::{CounterPersistenceError, LocalIdentityId, Mac, MacError, SendError},
     peers::PeerId,
     send::{SendOptions, SendReceipt},
@@ -29,8 +30,10 @@ pub struct MacHandle<
     const TX: usize = DEFAULT_TX,
     const FRAME: usize = DEFAULT_FRAME,
     const DUP: usize = DEFAULT_DUP,
+    const RN: usize = DEFAULT_CHANNEL_REPLAY,
+    const HN: usize = DEFAULT_CHANNEL_HINT_REPLAY,
 > {
-    mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+    mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>>,
 }
 
 impl<
@@ -43,7 +46,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-> Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    const RN: usize,
+    const HN: usize,
+> Copy for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>
 {
 }
 
@@ -57,7 +62,9 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-> Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    const RN: usize,
+    const HN: usize,
+> Clone for MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>
 {
     fn clone(&self) -> Self {
         *self
@@ -74,11 +81,13 @@ impl<
     const TX: usize,
     const FRAME: usize,
     const DUP: usize,
-> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>
+    const RN: usize,
+    const HN: usize,
+> MacHandle<'a, P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>
 {
     /// Creates a cloneable handle backed by shared coordinator state.
     pub fn new(
-        mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>,
+        mac: &'a AsyncRefCell<Mac<P, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP, RN, HN>>,
     ) -> Self {
         Self { mac }
     }
@@ -136,6 +145,12 @@ impl<
     /// Adds or updates a shared channel and derives its multicast keys.
     pub async fn add_channel(&self, key: ChannelKey) -> Result<(), CapacityError> {
         self.mac.borrow_mut().await.add_channel(key)
+    }
+
+    /// Removes a previously added channel by its exact key. Returns
+    /// whether a channel was removed.
+    pub async fn remove_channel(&self, key: &ChannelKey) -> bool {
+        self.mac.borrow_mut().await.remove_channel(key)
     }
 
     /// Adds or updates a named channel using the coordinator's channel-key derivation.
