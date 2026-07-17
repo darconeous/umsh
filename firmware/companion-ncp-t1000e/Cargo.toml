@@ -57,3 +57,9 @@ trouble-host = { version = "0.7", default-features = false, features = ["derive"
 # TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
 rand_core = { workspace = true }
 rand_chacha = { version = "0.3", default-features = false }
+# The device node: a full on-board MAC/node stack for the device
+# identity (device_node.rs), sharing the radio through the mux.
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
+rand = { workspace = true }

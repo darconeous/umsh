@@ -28,8 +28,8 @@ ble-wipe-on-boot = ["ble-debug"]
 # Companion-radio NCP firmware for the LilyGO T-Echo: exposes the
 # SX1262 as a host-controlled PHY speaking the minimal companion-radio
 # protocol over HDLC-Lite/USB-CDC and encrypted, bonded GATT/SAR BLE.
-# The UMSH MAC does not run on the
-# device in this role — the host owns it via `umsh::companion_radio`.
+# The host owns its own MAC via `umsh::companion_radio`; the on-board
+# device node runs a separate MAC/node stack for the device identity.
 #
 # Like the other firmware crates, this is in `workspace.members` but
 # NOT in `default-members`, so root-level `cargo check` does not try
@@ -83,6 +83,14 @@ trouble-host = { version = "0.7", default-features = false, features = ["derive"
 # TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
 rand_core = { workspace = true }
 rand_chacha = { version = "0.3", default-features = false }
+# The device node: a full on-board MAC/node stack for the device
+# identity (device_node.rs), sharing the radio through the mux.
+# embedded-alloc provides the global heap umsh-sync/umsh-node need.
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
+rand = { workspace = true }
+embedded-alloc = { version = "0.5", default-features = false }
 
 [dev-dependencies]
 # RadioError values for the radio_mux completion-attribution tests.

@@ -3,9 +3,11 @@
 //
 // Exposes the board's LoRa radio as a host-controlled PHY speaking the minimal
 // companion-radio protocol plus advertised full-profile extensions
-// over USB-CDC/HDLC-Lite and encrypted+bonded BLE GATT/SAR. The UMSH MAC does not run here:
-// the host owns it and drives this device through
-// `umsh::companion_radio::CompanionRadio`.
+// over USB-CDC/HDLC-Lite and encrypted+bonded BLE GATT/SAR. The host owns its
+// own MAC and drives this device through `umsh::companion_radio::CompanionRadio`;
+// alongside that session, the **device node** (device_node.rs) runs a full
+// on-board MAC/node stack for the device identity, sharing the radio through
+// the mux.
 //
 // Protocol behavior lives in `umsh-companion-ncp::Session` (host-tested,
 // no I/O); this binary is only glue:
@@ -17,8 +19,11 @@
 //                        through NCP_CTL as the host sets properties
 //   - radio_mux_task:    multiplexes the physical radio across its clients
 //                        (per-client TX completion routing, RX fan-out);
-//                        the session is client A, the device node joins
-//                        as client B (docs/companion-device-node-plan.md)
+//                        the session is client A, the device node client B
+//                        (docs/companion-device-node-plan.md)
+//   - node_pump_task /   the device node: MAC pump + beacon requests for
+//     node_beacon_task   the device identity (spawned only when a persisted
+//                        identity exists; dormant otherwise)
 //   - usb_in_task:       owns CdcAcmRescue + HDLC decoder; forwards frames and
 //                        attach/detach edges into INPUT_CH (keeps
 //                        read_packet out of any select, so cancel safety
@@ -62,10 +67,12 @@ fn main() {
     // Host placeholder. This binary only runs on the embedded target.
 }
 
-// The T-1000E BSP also supports the on-device MAC/CLI firmware and therefore
-// links a small amount of alloc-using board glue. The NCP does not allocate in
-// steady state, but the final binary still needs a valid global allocator.
-#[cfg(all(target_os = "none", feature = "t1000e"))]
+// Global heap allocator. The device node (umsh-sync's AsyncRefCell plus
+// umsh-node's Rc-based plumbing) allocates a small bounded amount at
+// bring-up; the companion session remains allocation-free. Initialized
+// with an 8 KiB region at the top of main() — the same budget the CLI
+// firmware's full stack runs in on identical hardware.
+#[cfg(target_os = "none")]
 #[global_allocator]
 static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 
@@ -73,6 +80,8 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 mod ble_security;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
+#[cfg(target_os = "none")]
+mod device_node;
 mod proto_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod radio_mux;
@@ -809,10 +818,9 @@ mod firmware {
     static RADIO_CH: RadioCh = RadioCh::new();
 
     /// The session's virtual radio endpoint (mux client A). The device
-    /// node joins as a second client in the device-node plan's
-    /// increment 2.
+    /// node's endpoint (client B) lives in `device_node::NODE_CH`.
     static SESSION_CH: RadioCh = RadioCh::new();
-    static MUX_CLIENTS: [&RadioCh; 1] = [&SESSION_CH];
+    static MUX_CLIENTS: [&RadioCh; 2] = [&SESSION_CH, &super::device_node::NODE_CH];
 
     /// Runtime radio settings pushed by the session to the runner.
     static NCP_CTL: NcpControl<ThreadModeRawMutex> = NcpControl::new();
@@ -2675,8 +2683,14 @@ mod firmware {
 
             match event {
                 Some(ButtonEvent::Single) => {
-                    // The NCP has no autonomous primary action. An unsupported
-                    // slot is inert and must not emit a false confirmation.
+                    // Primary action: beacon from the device identity. The
+                    // node task emits the confirmation (LED + melody) only
+                    // when the MAC accepts the send; with no identity the
+                    // node is dormant and the slot stays inert, with no
+                    // false confirmation.
+                    super::device_node::request_beacon(
+                        super::device_node::BeaconTrigger::Button,
+                    );
                 }
                 Some(ButtonEvent::Double) => {
                     let preferences = umsh_bsp_t1000e::preferences::toggle_silent();
@@ -2797,7 +2811,8 @@ mod firmware {
         PREV_RING_COUNT.store(pc_ring_count as u16, Ordering::Release);
         super::panic::breadcrumb_mark(1);
 
-        #[cfg(feature = "t1000e")]
+        // Init heap before any alloc-using code (the device node's
+        // bring-up allocates). 8 KiB matches the CLI firmware's budget.
         {
             use core::mem::MaybeUninit;
             const HEAP_SIZE: usize = 8192;
@@ -3167,8 +3182,9 @@ mod firmware {
             proto_store,
             boot_snapshot,
             identity_store,
-            boot_identity,
+            boot_identity_keys,
             identity_rng,
+            node_seed,
             ux_store,
         ) = {
             let mpsl_peripherals = mpsl::Peripherals::new(
@@ -3215,10 +3231,12 @@ mod firmware {
                 )
                 .await;
             }
-            let boot_identity = identity_payload
+            // Both halves of the persisted keypair: the public key seeds
+            // the session's PROP_DEV_KEY surface, the secret brings up
+            // the device node's MAC identity.
+            let boot_identity_keys = identity_payload
                 .as_deref()
-                .and_then(proto_store::decode_identity)
-                .map(|(_secret, public)| public);
+                .and_then(proto_store::decode_identity);
 
             // Deliberate recovery image for hardware testing. This runs before the
             // Trouble host is constructed, so there is no live bond table to keep
@@ -3272,12 +3290,15 @@ mod firmware {
                     "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
                 ));
             }
-            // Seed the identity-generation CSPRNG from the TRNG while the
-            // peripheral is still ours: build_sdc below hands the RNG to
-            // the SoftDevice Controller for its lifetime.
+            // Seed the identity-generation and device-node CSPRNGs from
+            // the TRNG while the peripheral is still ours: build_sdc
+            // below hands the RNG to the SoftDevice Controller for its
+            // lifetime.
             let mut identity_seed = [0u8; 32];
             rng.fill_bytes(&mut identity_seed).await;
             let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
+            let mut node_seed = [0u8; 32];
+            rng.fill_bytes(&mut node_seed).await;
             super::panic::breadcrumb_mark(6);
             let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
                 .unwrap_or_else(|_| panic!("sdc init"));
@@ -3288,35 +3309,52 @@ mod firmware {
                 proto_store,
                 boot_snapshot,
                 identity_store,
-                boot_identity,
+                boot_identity_keys,
                 identity_rng,
+                node_seed,
                 ux_store,
             )
         };
         #[cfg(feature = "no-ble")]
-        let (proto_store, boot_snapshot, identity_store, boot_identity, identity_rng, ux_store): (
+        let (
+            proto_store,
+            boot_snapshot,
+            identity_store,
+            boot_identity_keys,
+            identity_rng,
+            node_seed,
+            ux_store,
+        ): (
             ProtoStore,
             Option<BootSnapshot>,
             ProtoStore,
-            Option<[u8; 32]>,
+            Option<([u8; 32], [u8; 32])>,
             IdentityRng,
+            [u8; 32],
             ProtoStore,
         ) = {
             // No MPSL flash driver, so identity provisioning fails
-            // closed; the TRNG peripheral is free in this image and
-            // seeds the (unused) generator directly.
+            // closed (and the device node stays dormant); the TRNG
+            // peripheral is free in this image and seeds the (unused)
+            // generators directly.
             let mut rng = rng::Rng::new(p.RNG, Irqs);
             let mut identity_seed = [0u8; 32];
             rng.fill_bytes(&mut identity_seed).await;
+            let mut node_seed = [0u8; 32];
+            rng.fill_bytes(&mut node_seed).await;
             (
                 ProtoStore,
                 None,
                 ProtoStore,
                 None,
                 <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed),
+                node_seed,
                 ProtoStore,
             )
         };
+        // The session surfaces only the public key; the secret stays with
+        // the device node.
+        let boot_identity = boot_identity_keys.map(|(_secret, public)| public);
 
         // ── USB stack ────────────────────────────────────────────────────────
         // HardwareVbusDetect cannot share POWER with MPSL. This tethered NCP
@@ -3375,6 +3413,21 @@ mod firmware {
             )
             .unwrap(),
         );
+
+        // ── Device node ─────────────────────────────────────────────────────
+        // With a persisted device identity, bring up the full MAC/node
+        // stack on mux client B; without one the node is dormant and the
+        // beacon slot is inert. The airtime hint is the worst case at the
+        // MeshCore-US default profile — the MAC scheduler only uses it as
+        // a conservative bound.
+        if let Some((identity_secret, _public)) = boot_identity_keys.as_ref() {
+            let t_frame_ms = umsh_radio_loraphy::airtime_ms(
+                lora_phy::mod_params::SpreadingFactor::_7,
+                lora_phy::mod_params::Bandwidth::_62KHz,
+                umsh_radio_loraphy::MAX_PAYLOAD,
+            );
+            super::device_node::bring_up(spawner, identity_secret, node_seed, t_frame_ms);
+        }
         super::panic::breadcrumb_mark(8);
 
         // The touch button only controls the e-paper backlight. Menu input is

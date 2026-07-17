@@ -272,6 +272,30 @@ pub trait CounterStore {
     async fn flush(&self) -> Result<(), Self::Error>;
 }
 
+/// No-op counter store — counters restart from zero every boot.
+///
+/// Use only where counter persistence is not (yet) load-bearing: a node
+/// that sends nothing but unsecured broadcasts, or a bring-up stage whose
+/// durable store lands later. Reusing TX counters after a reboot breaks
+/// replay protection for secured traffic.
+pub struct NoCounterStore;
+
+impl CounterStore for NoCounterStore {
+    type Error = core::convert::Infallible;
+
+    async fn load(&self, _: &[u8]) -> Result<u32, Self::Error> {
+        Ok(0)
+    }
+
+    async fn store(&self, _: &[u8], _: u32) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 /// Optional power-control hook for higher layers (e.g. the CLI).
 ///
 /// Implementations request a controlled shutdown — the actual sequencing
@@ -306,4 +330,25 @@ pub trait KeyValueStore {
     async fn store(&self, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
     /// Delete any stored value for `key`.
     async fn delete(&self, key: &[u8]) -> Result<(), Self::Error>;
+}
+
+/// No-op key-value store — loads find nothing, stores succeed silently.
+/// Use when a platform bundle needs the associated type but nothing in
+/// the deployment reads cached state back.
+pub struct NoKeyValueStore;
+
+impl KeyValueStore for NoKeyValueStore {
+    type Error = core::convert::Infallible;
+
+    async fn load(&self, _: &[u8], _: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+        Ok(None)
+    }
+
+    async fn store(&self, _: &[u8], _: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn delete(&self, _: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }

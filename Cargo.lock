@@ -1278,6 +1278,7 @@ dependencies = [
  "lora-phy",
  "nrf-mpsl",
  "nrf-sdc",
+ "rand 0.10.1",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
@@ -1288,7 +1289,10 @@ dependencies = [
  "umsh-companion-ncp",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-mac",
+ "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-sync",
  "umsh-ux-tracker",
 ]
 
@@ -1306,6 +1310,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embassy-usb",
+ "embedded-alloc",
  "embedded-graphics",
  "embedded-hal-bus",
  "heapless 0.8.0",
@@ -1313,6 +1318,7 @@ dependencies = [
  "lora-phy",
  "nrf-mpsl",
  "nrf-sdc",
+ "rand 0.10.1",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
@@ -1323,7 +1329,10 @@ dependencies = [
  "umsh-companion-ncp",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-mac",
+ "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-sync",
  "umsh-ux-tracker",
 ]
 
