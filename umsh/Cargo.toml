@@ -69,6 +69,11 @@ name = "umsh-capture"
 path = "src/bin/umsh_capture.rs"
 required-features = ["tokio-support"]
 
+[[bin]]
+name = "umsh-companionctl"
+path = "src/bin/umsh_companionctl.rs"
+required-features = ["tokio-support"]
+
 [[example]]
 name = "companion_link_soak"
 required-features = ["tokio-support"]
