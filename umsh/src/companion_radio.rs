@@ -525,6 +525,19 @@ impl BleNotificationReceiver {
     }
 }
 
+/// One Companion Link Service peripheral seen during a
+/// [`BleFrameLink::scan`].
+#[cfg(feature = "ble-radio")]
+#[derive(Clone, Debug)]
+pub struct BleScanResult {
+    /// Platform peripheral identifier, usable as a connect selector.
+    pub id: String,
+    /// Advertised local name, when present.
+    pub name: Option<String>,
+    /// Last advertisement RSSI in dBm, when the platform reports it.
+    pub rssi: Option<i16>,
+}
+
 /// GATT/SAR frame transport backed by `btleplug`.
 #[cfg(feature = "ble-radio")]
 pub struct BleFrameLink {
@@ -537,6 +550,70 @@ pub struct BleFrameLink {
 
 #[cfg(feature = "ble-radio")]
 impl BleFrameLink {
+    /// Scan for Companion Link Service peripherals without connecting.
+    ///
+    /// Runs discovery for the full `timeout` and reports every matching
+    /// peripheral seen, so nearby radios all get listed (unlike
+    /// [`connect`](Self::connect), which returns as soon as a match
+    /// appears).
+    pub async fn scan(timeout: Duration) -> Result<Vec<BleScanResult>, CompanionRadioError> {
+        use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+
+        let manager = btleplug::platform::Manager::new()
+            .await
+            .map_err(ble_error)?;
+        let adapters = manager.adapters().await.map_err(ble_error)?;
+        let service = uuid::Uuid::from_u128(umsh_companion::gatt::SERVICE_UUID);
+        let deadline = Instant::now() + timeout;
+        let mut results: Vec<BleScanResult> = Vec::new();
+
+        for adapter in adapters {
+            adapter
+                .start_scan(ScanFilter {
+                    services: vec![service],
+                })
+                .await
+                .map_err(ble_error)?;
+            while Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                let peripherals =
+                    match tokio::time::timeout_at(deadline, adapter.peripherals()).await {
+                        Ok(result) => result.map_err(ble_error)?,
+                        Err(_) => break,
+                    };
+                for peripheral in peripherals {
+                    let properties =
+                        match tokio::time::timeout_at(deadline, peripheral.properties()).await {
+                            Ok(result) => result.map_err(ble_error)?,
+                            Err(_) => break,
+                        };
+                    let advertises_service = properties
+                        .as_ref()
+                        .is_some_and(|properties| properties.services.contains(&service));
+                    if !advertises_service {
+                        continue;
+                    }
+                    let id = peripheral.id().to_string();
+                    let name = properties
+                        .as_ref()
+                        .and_then(|properties| properties.local_name.clone());
+                    let rssi = properties.as_ref().and_then(|properties| properties.rssi);
+                    match results.iter_mut().find(|result| result.id == id) {
+                        Some(existing) => {
+                            existing.name = name.or(existing.name.take());
+                            existing.rssi = rssi.or(existing.rssi);
+                        }
+                        None => results.push(BleScanResult { id, name, rssi }),
+                    }
+                }
+            }
+            // CoreBluetooth operations can block indefinitely; bound the
+            // cleanup like connect does.
+            let _ = tokio::time::timeout(Duration::from_secs(1), adapter.stop_scan()).await;
+        }
+        Ok(results)
+    }
+
     /// Discover and attach to a Companion Link Service peripheral.
     ///
     /// `selector` matches a local-name substring or the platform peripheral ID.
