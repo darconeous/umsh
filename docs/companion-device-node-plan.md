@@ -6,10 +6,18 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **increment 1 (radio mux) complete and hardware-validated
-2026-07-16** — host tests plus the T-1000E gate (companion probe, RF
-delegated-ack scenario with a T-Echo peer, drain verification) all
-green. Increments 2–5 pending.
+Status: **increments 1–2 complete and hardware-validated 2026-07-17.**
+Increment 1 (radio mux): host tests plus the T-1000E gate (companion
+probe, RF delegated-ack, drain) green. Increment 2 (device node +
+button beacon): T-1000E single-click beacons from the device identity
+received on a T-Echo (6-byte spec-form broadcast, source hint of the
+device key, −26 dBm) with acceptance-gated LED/melody confirm; the RF
+delegated-ack gate re-passes with the node running beside the session.
+Bring-up hard lesson: the ~37 KiB Mac must be constructed in place
+(`StaticCell::init_with`) — building it on the stack overflowed the
+~114 KiB left above this image's statics and corrupted .bss on every
+boot. Flash/static-RAM: T-1000E 590/138 KiB, T-Echo 602/141 KiB (of
+756/256 KiB). Increments 3–5 pending.
 
 ## Why
 
