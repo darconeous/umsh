@@ -6,7 +6,7 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **increments 1–3 complete and hardware-validated 2026-07-17.**
+Status: **increments 1–4 complete and hardware-validated 2026-07-17.**
 Increment 1 (radio mux): host tests plus the T-1000E gate (companion
 probe, RF delegated-ack, drain) green. Increment 2 (device node +
 button beacon): T-1000E single-click beacons from the device identity
@@ -26,8 +26,14 @@ remove` silences the channel; a reboot replays the saved table and
 multicast is processed again with no live mutation; the RF
 delegated-ack gate (rf-peer + phase-e 16/3/1) re-passes beside the
 provisioned node on the production image. See the RAM results table
-in that increment. Flash/static-RAM: T-1000E 596/116 KiB, T-Echo
-606/124 KiB (of 756/256 KiB). Increments 4–5 pending.
+in that increment. Increment 4 (shared duty ledger + counter
+persistence): pairwise unicast to the device identity authenticated
+and acked by the node through the duty gate; RX replay boundary
+committed to the 0xEC000 journal and enforced across a reboot; a
+duty limit of 0 sheds node acks without killing the pump and
+`PROP_PHY_DUTY_NOW` reflects both clients' airtime; details in that
+increment. Flash/static-RAM: T-1000E 605/117 KiB, T-Echo 617/126 KiB
+(of 756/256 KiB). Increment 5 pending.
 
 ## Why
 
@@ -214,6 +220,54 @@ Add the `0xEC000` counter journal and pump-integrated persistence
 (maintenance inside the pump, not a firmware timer task). Acceptance:
 duty-limit integration test covering interleaved session/node TX; counters
 survive a power cycle.
+
+**Implemented and hardware-validated 2026-07-17.** Duty: the session's
+`DutyTracker` moved behind a shared `DutyLedger`
+(`umsh-companion-ncp::duty`, one static per image) — the session keeps
+owning the limit lifecycle (defaults, property sets, snapshot
+save/restore, reset) and recording its own completed transmissions,
+while the node's radio path is wrapped in `DutyGatedRadio`
+(`duty_gate.rs`) admitting every transmit against the combined budget.
+The enforcement point is the client's own TX path rather than the mux
+grant loop, for one load-bearing reason: a refusal must surface as
+`TxError::CadTimeout` (the MAC's back-off-and-shed path) — a mux-side
+`tx_done` error would surface as fatal `MacError::Transmit` and kill
+the node pump. The ledger also mirrors the session's applied
+modulation, so node frames are priced at what is actually on the air.
+
+Counters: a fourth two-page `proto_store` journal at `COUNTER_PAGE0 =
+0xEC000` (pages 0xEE000+ remain free) holds the whole counter map
+(`counter_map.rs`: raw-pk TX boundary + `mac.rx:`-prefixed per-peer
+boundaries) as one record per dirty flush; the MAC's existing
+128-frame persist blocks and the pump's built-in
+`service_counter_persistence`/`service_rx_counter_persistence` calls
+provide the batching and the in-pump maintenance. Boot loads the TX
+boundary after `add_identity`, dev-sync seeds per-peer RX boundaries
+after registration, a successful `CMD_CLEAR` tombstones the journal,
+and boot prunes TX entries left behind by a replaced identity.
+`umsh-companionctl duty` reports/sets the limit; `rf-dev-unicast` in
+`companion_hw_validate` drives pairwise-sealed unicast at the device
+identity with an ack/silence expectation.
+
+Hardware gate (T-1000E with T-Echo peer, 2026-07-17): pairwise unicast
+sealed with the real X25519 derivation authenticated on the node
+(`node rx: Unicast auth=true`) and the node acked on the air through
+the duty gate (12-byte MAC acks at −30 dBm); the accepted counter jump
+committed an RX-boundary record (`proto-store commit generation=1
+slot=0x0ec000`, second commit rotated to `0x0ec800`); after a reboot,
+counter 4000 drew silence (boundary loaded from flash — without the
+journal it would have been accepted fresh) while 6000 was accepted and
+acked, with counter 5002 confirming the documented 128-frame block
+granularity; under `duty limit 0` fresh frames were still processed
+but both acks were shed (no ack on air, pump alive), recovering
+immediately at `limit off`; `PROP_PHY_DUTY_NOW` moved from node acks
+(1) and later from the session's delegated acks (4) — both clients
+visibly draw one budget. rf-peer (4/4) + phase-e (16/3/1) re-pass on
+the production image; dev tables, identity, and provisioning intact.
+The TX-boundary round trip is host-tested only for now — the node
+sends no secured traffic until increment 5, whose BeaconRequest work
+inherits that hardware check. RAM: T-1000E statics 116.2→117.4 KiB
+(counter map + ledger).
 
 ### 5. Device-node behaviors + hardware completion
 
