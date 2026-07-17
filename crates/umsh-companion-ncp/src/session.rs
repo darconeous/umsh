@@ -13,7 +13,7 @@ use umsh_core::{
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 
-use crate::duty::DutyTracker;
+use crate::duty::DutyLedger;
 
 /// Largest radio payload the session can carry (SX126x-class limit).
 pub const MAX_MTU: usize = 255;
@@ -80,6 +80,13 @@ pub struct SessionConfig {
     pub defaults: RadioSettings,
     /// Post-reset `PROP_PHY_DUTY_LIMIT`.
     pub default_duty_limit: u16,
+    /// The shared duty ledger. The session owns the limit's lifecycle
+    /// and records its own transmissions here, but the ledger is
+    /// consulted by every radio client on the device (the device node's
+    /// TX path draws from the same budget), so `PROP_PHY_DUTY_NOW`
+    /// reports the combined figure and `PROP_PHY_DUTY_LIMIT` bounds the
+    /// combined airtime.
+    pub duty: &'static DutyLedger,
 }
 
 /// A radio side effect for the caller to execute.
@@ -214,8 +221,6 @@ enum PropValue {
 /// values.
 struct DeviceDomain {
     settings: RadioSettings,
-    duty_limit: u16,
-    duty: DutyTracker,
     name: [u8; MAX_DEVICE_NAME_LEN],
     name_len: usize,
     /// `PROP_DEV_CHANNEL_KEYS`: the device identity's own channels.
@@ -233,10 +238,15 @@ impl DeviceDomain {
         let mut name = [0; MAX_DEVICE_NAME_LEN];
         let name_len = config.default_device_name.len();
         name[..name_len].copy_from_slice(config.default_device_name.as_bytes());
+        // Duty accounting restarts with the domain; the limit and the
+        // ledger's modulation view return to the configured defaults.
+        config.duty.reset_accounting();
+        config.duty.set_limit(config.default_duty_limit);
+        config
+            .duty
+            .set_phy(settings.sf, settings.bw_hz, settings.cr_denom);
         Self {
             settings,
-            duty_limit: config.default_duty_limit,
-            duty: DutyTracker::new(),
             name,
             name_len,
             channel_keys: ChannelKeyTable::default(),
@@ -840,14 +850,14 @@ struct SavedState {
 
 impl SavedState {
     /// Capture the saveable subset of the live domains.
-    fn capture(device: &DeviceDomain, host: &HostDomain) -> Self {
+    fn capture(device: &DeviceDomain, host: &HostDomain, duty_limit: u16) -> Self {
         let mut peers = [None; MAX_PEER_KEYS];
         for (slot, entry) in peers.iter_mut().zip(host.peer_keys.iter()) {
             *slot = Some(entry.entry);
         }
         Self {
             settings: device.settings,
-            duty_limit: device.duty_limit,
+            duty_limit,
             name: device.name,
             name_len: device.name_len,
             dev_channel_keys: device.channel_keys,
@@ -1296,7 +1306,18 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
         self.send_status(TID_UNSOLICITED, reason, emit);
-        Effect::ApplyRadio(self.device.settings)
+        self.apply_radio()
+    }
+
+    /// Build the [`Effect::ApplyRadio`] for the current settings,
+    /// mirroring the modulation into the shared duty ledger so every
+    /// radio client prices airtime against what is actually on the air.
+    fn apply_radio(&self) -> Effect {
+        let settings = self.device.settings;
+        self.config
+            .duty
+            .set_phy(settings.sf, settings.bw_hz, settings.cr_denom);
+        Effect::ApplyRadio(settings)
     }
 
     /// Apply the saved device-domain configuration to the live domain.
@@ -1306,7 +1327,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     fn apply_saved_device(&mut self) {
         let saved = self.saved.as_ref().expect("caller checked saved");
         self.device.settings = saved.settings;
-        self.device.duty_limit = saved.duty_limit;
+        self.config.duty.set_limit(saved.duty_limit);
         self.device.name = saved.name;
         self.device.name_len = saved.name_len;
         self.device.channel_keys = saved.dev_channel_keys;
@@ -1461,7 +1482,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 self.apply_saved_host(same_host);
                 self.session = SessionState::default();
                 self.send_status(TID_UNSOLICITED, Status::RESET_RESTORED, emit);
-                Some(Effect::ApplyRadio(self.device.settings))
+                Some(self.apply_radio())
             }
             // Erase all persisted provisioning. Live state, BLE bonds,
             // and the pairing PIN are unaffected; a subsequent CMD_RST
@@ -1781,11 +1802,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.device.settings.cr_denom,
             frame_len,
         );
-        if self
-            .device
-            .duty
-            .would_exceed(now_ms, airtime_ms, self.device.duty_limit)
-        {
+        if self.config.duty.would_exceed(now_ms, airtime_ms) {
             return None;
         }
         self.tx_buf[..frame_len].copy_from_slice(&buf[..frame_len]);
@@ -1807,7 +1824,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             return;
         };
         if success {
-            self.device.duty.record(now_ms, pending.airtime_ms);
+            self.config.duty.record(now_ms, pending.airtime_ms);
             if pending.autonomous {
                 // NCP-initiated: PROP_LAST_STATUS is left alone so a
                 // pending reset code still reaches the next host. Only
@@ -1927,7 +1944,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// [`Effect::SaveSnapshot`]. `out` must hold [`SNAPSHOT_MAX`]
     /// bytes.
     pub fn encode_snapshot(&self, out: &mut [u8]) -> Option<usize> {
-        SavedState::capture(&self.device, &self.host).encode(out)
+        SavedState::capture(&self.device, &self.host, self.config.duty.limit()).encode(out)
     }
 
     /// Encode the stored snapshot with its host-domain portion wiped,
@@ -1951,7 +1968,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         self.saved = Some(saved);
         self.apply_saved_device();
         self.apply_saved_host(false);
-        Some(Effect::ApplyRadio(self.device.settings))
+        Some(self.apply_radio())
     }
 
     /// Complete the durable write requested via
@@ -1962,7 +1979,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     pub fn respond_save(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
         match result {
             Ok(()) => {
-                self.saved = Some(SavedState::capture(&self.device, &self.host));
+                self.saved = Some(SavedState::capture(
+                    &self.device,
+                    &self.host,
+                    self.config.duty.limit(),
+                ));
                 self.complete(tid, Status::OK, emit);
             }
             Err(()) => self.complete(tid, Status::FAILURE, emit),
@@ -2179,7 +2200,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         if let PropValue::Encoded(len) = self.encode_prop(key, now_ms, &mut encoded) {
             self.send_prop_is(tid, key, &encoded[..len], emit);
         }
-        radio_affecting.then_some(Effect::ApplyRadio(self.device.settings))
+        radio_affecting.then(|| self.apply_radio())
     }
 
     /// Validate and apply a property write. Returns whether the radio
@@ -2239,7 +2260,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 Ok(false)
             }
             prop::PHY_DUTY_LIMIT => {
-                self.device.duty_limit = parse_u16(value)?;
+                self.config.duty.set_limit(parse_u16(value)?);
                 Ok(false)
             }
             prop::MAC_PROMISCUOUS => {
@@ -2542,7 +2563,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             payload.data.len(),
         );
         if tx_meta.flags & meta::TX_FLAG_NODUTY == 0
-            && self.device.duty.would_exceed(now_ms, airtime_ms, self.device.duty_limit)
+            && self.config.duty.would_exceed(now_ms, airtime_ms)
         {
             self.complete(tid, Status::DUTY_LIMIT, emit);
             return None;
@@ -2683,8 +2704,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 }
                 len
             }
-            prop::PHY_DUTY_NOW => put(out, &self.device.duty.usage(now_ms).to_le_bytes()),
-            prop::PHY_DUTY_LIMIT => put(out, &self.device.duty_limit.to_le_bytes()),
+            prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
+            prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
                 out[0] = self.session.promiscuous as u8;
                 1
@@ -2895,6 +2916,9 @@ mod tests {
                 tx_power_dbm: 14,
             },
             default_duty_limit: 0xFFFF,
+            // Each test session gets its own leaked ledger so parallel
+            // tests never share duty state.
+            duty: Box::leak(Box::new(DutyLedger::new())),
         }
     }
 
@@ -3361,6 +3385,42 @@ mod tests {
         let meta = [meta::TX_POWER_DEFAULT as u8, meta::TX_FLAG_NODUTY];
         let (_, effect) = send_packet(&mut session, 3, &packet, &meta, 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
+    }
+
+    /// The ledger is shared with every other radio client on the
+    /// device (the device node). Airtime recorded by another client
+    /// counts against the session's limit — host transmits refuse with
+    /// STATUS_DUTY_LIMIT — and PROP_PHY_DUTY_NOW reports the combined
+    /// figure, all without the session transmitting anything itself.
+    #[test]
+    fn foreign_client_airtime_counts_against_the_session() {
+        let config = test_config();
+        let ledger = config.duty;
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        enable(&mut session);
+        set(&mut session, prop::PHY_DUTY_LIMIT, &655u16.to_le_bytes());
+
+        assert_eq!(get(&mut session, prop::PHY_DUTY_NOW), 0u16.to_le_bytes());
+        // The device node completes 36 s of transmission (≈1%).
+        for _ in 0..36 {
+            ledger.record(0, 1_000);
+        }
+        let duty_now = get(&mut session, prop::PHY_DUTY_NOW);
+        assert!(u16::from_le_bytes([duty_now[0], duty_now[1]]) >= 655);
+
+        let (emitted, effect) = send_packet(&mut session, 3, &[0u8; 32], &[], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 3, Status::DUTY_LIMIT);
+
+        // And the session's settings feed the ledger's modulation view,
+        // so the node prices its frames at what is actually on the air.
+        set(&mut session, prop::PHY_LORA_SF, &[12]);
+        set(&mut session, prop::PHY_LORA_BW, &7_810u32.to_le_bytes());
+        assert_eq!(
+            ledger.airtime_ms(32),
+            umsh_companion::airtime::lora_airtime_ms(12, 7_810, 5, 32)
+        );
     }
 
     #[test]

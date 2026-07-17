@@ -10,8 +10,12 @@ description = "NCP-side session engine for the minimal UMSH companion-radio prot
 umsh-companion = { path = "../umsh-companion" }
 umsh-core = { path = "../umsh-core", default-features = false }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
 
 [dev-dependencies]
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = [
 	"software-crypto",
 ] }
+# Host implementation of critical-section for the DutyLedger's blocking
+# mutex in tests; firmware images provide theirs via nrf-mpsl.
+critical-section = { version = "1", features = ["std"] }

@@ -30,7 +30,7 @@
 pub mod duty;
 pub mod session;
 
-pub use duty::DutyTracker;
+pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use session::{
     Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN, PRIVATE_KEY_LEN,
     RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TxPower,

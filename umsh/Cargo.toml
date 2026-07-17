@@ -47,6 +47,9 @@ umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-st
 # The adapter-free full-protocol integration tests drive the real NCP
 # session engine behind a FrameLink (umsh/tests/companion_full_protocol.rs).
 umsh-companion-ncp = { path = "../crates/umsh-companion-ncp" }
+# Host critical-section implementation for the session's shared duty
+# ledger; firmware images provide theirs via nrf-mpsl.
+critical-section = { version = "1", features = ["std"] }
 
 [[example]]
 name = "cli_udp"

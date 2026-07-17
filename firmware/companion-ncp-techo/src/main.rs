@@ -80,8 +80,12 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 mod ble_security;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod counter_map;
 #[cfg(target_os = "none")]
 mod device_node;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod duty_gate;
 mod proto_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod radio_mux;
@@ -334,8 +338,18 @@ mod firmware {
                 tx_power_dbm: 14,
             },
             default_duty_limit: umsh_companion::ids::DUTY_LIMIT_DISABLED,
+            duty: &DUTY_LEDGER,
         }
     }
+
+    /// The one duty ledger shared by every radio client (device-node
+    /// plan increment 4): the session prices and records its own
+    /// transmissions here, and the device node's radio path admits
+    /// each transmit against the same combined budget (`duty_gate`),
+    /// so `PROP_PHY_DUTY_LIMIT` bounds session + node airtime together
+    /// and `PROP_PHY_DUTY_NOW` reports the combined figure.
+    pub(crate) static DUTY_LEDGER: umsh_companion_ncp::DutyLedger =
+        umsh_companion_ncp::DutyLedger::new();
 
     // ─── Concrete types ──────────────────────────────────────────────────────
 
@@ -773,6 +787,126 @@ mod firmware {
 
         async fn clear(&mut self) -> Result<(), ()> {
             Err(())
+        }
+    }
+
+    // ─── Device-node counter persistence (plan increment 4) ─────────────────
+
+    // ─── Device-node counter persistence (plan increment 4) ─────────────────
+
+    /// RAM image + journal handle behind the device node's counter
+    /// store. `store` upserts the map; a dirty `flush` writes the whole
+    /// map as one record in the counter journal (`COUNTER_PAGE0`).
+    ///
+    /// Lives in a `StaticCell` (not a plain static) because the journal
+    /// handle carries the MPSL flash reference, which is deliberately
+    /// only ever shared through the cell pattern.
+    pub struct NodeCounters {
+        map: super::counter_map::CounterMap,
+        dirty: bool,
+        /// Mounted counter journal; `None` in the no-ble image (no
+        /// MPSL flash driver), where counters live only in RAM — the
+        /// node is dormant there anyway (no identity journal either).
+        journal: Option<ProtoStore>,
+    }
+
+    pub type NodeCountersMutex = Mutex<ThreadModeRawMutex, NodeCounters>;
+
+    static NODE_COUNTERS_CELL: StaticCell<NodeCountersMutex> = StaticCell::new();
+
+    /// Initialize the (still journal-less) counter state. Call exactly
+    /// once, early in boot; the BLE image attaches the journal with
+    /// [`mount_node_counters`] before the device node comes up.
+    fn init_node_counters() -> &'static NodeCountersMutex {
+        NODE_COUNTERS_CELL.init(Mutex::new(NodeCounters {
+            map: super::counter_map::CounterMap::new(),
+            dirty: false,
+            journal: None,
+        }))
+    }
+
+    /// Mount the counter journal and load the persisted map.
+    #[cfg(not(feature = "no-ble"))]
+    async fn mount_node_counters(counters: &'static NodeCountersMutex, flash: &'static SharedFlash) {
+        let (journal, payload) = ProtoStore::mount(flash, proto_store::COUNTER_PAGE0).await;
+        let map = payload
+            .as_deref()
+            .and_then(super::counter_map::CounterMap::decode)
+            .unwrap_or_default();
+        debug_log(format_args!("counter journal: {} entries", map.len()));
+        let mut counters = counters.lock().await;
+        counters.map = map;
+        counters.journal = Some(journal);
+    }
+
+    /// Drop a previous identity's persisted TX boundary (its context is
+    /// the raw 32-byte public key; per-peer RX boundaries are keyed by
+    /// the *peer* key and stay meaningful across identity replacement).
+    /// The next dirty flush persists the pruned map.
+    async fn prune_stale_tx_counters(counters: &'static NodeCountersMutex, public_key: &[u8; 32]) {
+        let mut counters = counters.lock().await;
+        if counters.map.prune_tx_except(public_key) {
+            counters.dirty = true;
+        }
+    }
+
+    /// Drop all persisted device-node counters (factory clear). The
+    /// RAM map clears unconditionally; a failed tombstone write
+    /// self-heals because the map is left dirty and the next flush
+    /// rewrites the (now empty) state.
+    async fn clear_node_counters(counters: &'static NodeCountersMutex) {
+        let mut counters = counters.lock().await;
+        counters.map.clear();
+        counters.dirty = match counters.journal.as_mut() {
+            Some(journal) => journal.clear().await.is_err(),
+            None => false,
+        };
+    }
+
+    /// The device node's `umsh_hal::CounterStore`. The MAC batches its
+    /// calls (one flush per `COUNTER_PERSIST_BLOCK_SIZE` secured
+    /// frames), so each flush costs one journal record write.
+    pub struct NodeCounterStore {
+        counters: &'static NodeCountersMutex,
+    }
+
+    impl NodeCounterStore {
+        pub fn new(counters: &'static NodeCountersMutex) -> Self {
+            Self { counters }
+        }
+    }
+
+    impl umsh_hal::CounterStore for NodeCounterStore {
+        type Error = ();
+
+        async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
+            // Missing entries read as 0, the MAC's "no boundary
+            // persisted yet" sentinel.
+            Ok(self.counters.lock().await.map.get(context).unwrap_or(0))
+        }
+
+        async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
+            let mut counters = self.counters.lock().await;
+            let changed = counters.map.set(context, value).map_err(|_| ())?;
+            counters.dirty |= changed;
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), Self::Error> {
+            let mut counters = self.counters.lock().await;
+            if !counters.dirty {
+                return Ok(());
+            }
+            let mut payload = [0u8; super::counter_map::ENCODED_MAX];
+            let len = counters.map.encode(&mut payload).ok_or(())?;
+            match counters.journal.as_mut() {
+                Some(journal) => journal.persist(&payload[..len]).await?,
+                // no-ble: RAM only. Report success so the MAC marks
+                // the boundary instead of re-flushing every cycle.
+                None => {}
+            }
+            counters.dirty = false;
+            Ok(())
         }
     }
 
@@ -2169,6 +2303,7 @@ mod firmware {
         mut identity_store: ProtoStore,
         boot_identity: Option<[u8; 32]>,
         mut identity_rng: IdentityRng,
+        node_counters: &'static NodeCountersMutex,
     ) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -2329,6 +2464,15 @@ mod firmware {
                                     Ok(()) => identity_store.clear().await,
                                     Err(()) => Err(()),
                                 };
+                                // With the identity durably gone, its
+                                // counter boundaries are dead weight;
+                                // drop them with it. (Kept if the
+                                // identity clear failed — the identity
+                                // then survives the reboot and still
+                                // needs its TX boundary.)
+                                if result.is_ok() {
+                                    clear_node_counters(node_counters).await;
+                                }
                                 session.respond_clear(tid, result, &mut |frame: &[u8]| {
                                     emitter.push(frame)
                                 });
@@ -3242,6 +3386,11 @@ mod firmware {
 
         super::panic::breadcrumb_mark(4);
 
+        // Device-node counter state exists in every image; the BLE
+        // branch below attaches its journal once the shared flash is
+        // up. Must precede ncp_task/bring_up, which hold references.
+        let node_counters = init_node_counters();
+
         // ── MPSL + Nordic SoftDevice Controller ────────────────────────────
         // MPSL owns CLOCK/POWER, RADIO, RTC0, TIMER0, TEMP, and the listed
         // PPI channels. embassy-time remains on RTC1; LoRa remains on SPIM1.
@@ -3299,6 +3448,7 @@ mod firmware {
             let (identity_store, identity_payload) =
                 ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
             let (ux_store, _) = ProtoStore::mount(flash, proto_store::UX_PAGE0).await;
+            mount_node_counters(node_counters, flash).await;
             #[cfg(feature = "t1000e")]
             let mut ux_store = ux_store;
             #[cfg(feature = "t1000e")]
@@ -3315,6 +3465,11 @@ mod firmware {
             let boot_identity_keys = identity_payload
                 .as_deref()
                 .and_then(proto_store::decode_identity);
+            // A replaced identity leaves its TX boundary behind in the
+            // counter journal; drop it so the map cannot silt up.
+            if let Some((_, public)) = boot_identity_keys.as_ref() {
+                prune_stale_tx_counters(node_counters, public).await;
+            }
 
             // Deliberate recovery image for hardware testing. This runs before the
             // Trouble host is constructed, so there is no live bond table to keep
@@ -3488,6 +3643,7 @@ mod firmware {
                 identity_store,
                 boot_identity,
                 identity_rng,
+                node_counters,
             )
             .unwrap(),
         );
@@ -3508,7 +3664,14 @@ mod firmware {
             // the surviving boot stays reachable and prints the previous
             // panic over USB. A healthy boot always brings the node up.
             if panic_report.is_none() {
-                super::device_node::bring_up(spawner, identity_secret, node_seed, t_frame_ms);
+                super::device_node::bring_up(
+                    spawner,
+                    identity_secret,
+                    node_seed,
+                    t_frame_ms,
+                    node_counters,
+                )
+                .await;
             }
         }
         super::panic::breadcrumb_mark(8);

@@ -2886,6 +2886,7 @@ name = "umsh"
 version = "0.1.0"
 dependencies = [
  "btleplug",
+ "critical-section",
  "embassy-executor 0.7.0",
  "embassy-time",
  "embedded-hal-async",
@@ -3015,6 +3016,8 @@ version = "0.1.0"
 name = "umsh-companion-ncp"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
  "umsh-companion",
  "umsh-core",
  "umsh-crypto",
