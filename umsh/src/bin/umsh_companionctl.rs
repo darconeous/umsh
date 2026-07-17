@@ -41,6 +41,10 @@ Commands:\n\
                         post-reset values, restoring any saved\n\
                         snapshot; the MCU does not reboot\n\
   pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\
+  duty                  print duty-cycle usage and limit\n\
+  duty limit <N|off>    set PROP_PHY_DUTY_LIMIT on its raw 0-65535\n\
+                        scale (655 \u{2248} 1% of the hour); `off` disables\n\
+                        enforcement\n\
   dev-channel [list]    list device-identity channel ids (digest form)\n\
   dev-channel add <KEY>    add a device channel key (the on-board node\n\
                            joins it and processes its multicast)\n\
@@ -81,6 +85,7 @@ const COMMANDS: &[&str] = &[
     "factory-reset",
     "reset",
     "pin",
+    "duty",
     "dev-channel",
     "dev-peer",
 ];
@@ -106,6 +111,8 @@ enum Command {
     FactoryReset,
     Reset,
     Pin(Option<u32>),
+    /// `duty` (`None`: report usage + limit) / `duty limit <value>`.
+    Duty(Option<u16>),
     DevChannel(TableOp),
     DevPeer(TableOp),
     /// `--ble-scan` (a transport mode more than a command; carried here
@@ -413,8 +420,10 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
                 force = true;
             }
             "--no-save" => {
-                if !matches!(word.as_str(), "provision" | "set-name" | "dev-channel" | "dev-peer")
-                {
+                if !matches!(
+                    word.as_str(),
+                    "provision" | "set-name" | "duty" | "dev-channel" | "dev-peer"
+                ) {
                     return Err(format!("{name} only applies to mutating commands"));
                 }
                 no_value()?;
@@ -500,6 +509,16 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             Some("clear") if positionals.len() == 1 => Command::Pin(None),
             Some(digits) if positionals.len() == 1 => Command::Pin(Some(parse_pin(digits)?)),
             _ => return Err("pin takes exactly one argument: a 6-digit PIN or `clear`".into()),
+        },
+        "duty" => match positionals.first().map(String::as_str) {
+            None => Command::Duty(None),
+            Some("limit") => {
+                let [_, value] = &positionals[..] else {
+                    return Err("duty limit takes exactly one value (0-65535 or `off`)".into());
+                };
+                Command::Duty(Some(parse_duty_limit(value)?))
+            }
+            Some(other) => return Err(format!("duty does not take {other:?}")),
         },
         "dev-channel" => Command::DevChannel(parse_table_op(&word, &positionals)?),
         "dev-peer" => Command::DevPeer(parse_table_op(&word, &positionals)?),
@@ -911,6 +930,7 @@ async fn dispatch<L: FrameLink>(
             }
             Ok(())
         }
+        Command::Duty(limit) => duty(&mut radio, limit, no_save).await,
         Command::DevChannel(op) => {
             dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
@@ -921,6 +941,44 @@ async fn dispatch<L: FrameLink>(
         // opened.
         Command::BleScan => unreachable!("scan handled in run()"),
     }
+}
+
+fn parse_duty_limit(value: &str) -> Result<u16, String> {
+    if value == "off" {
+        return Ok(u16::MAX);
+    }
+    value
+        .parse::<u16>()
+        .map_err(|_| format!("expected 0-65535 or `off`, got {value:?}"))
+}
+
+fn print_duty_limit(raw: u16) {
+    match raw {
+        u16::MAX => println!("duty limit off (enforcement disabled)"),
+        raw => println!("duty limit {raw} ({:.2}% of the hour)", duty_percent(raw)),
+    }
+}
+
+/// Report or bound the combined duty-cycle budget. The limit spans
+/// every radio client on the device (host transmits, delegated acks,
+/// and the on-board node's own traffic draw from one ledger), and
+/// `PROP_PHY_DUTY_NOW` reports that combined figure.
+async fn duty<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    limit: Option<u16>,
+    no_save: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(limit) = limit {
+        let echoed = radio.set_prop(prop::PHY_DUTY_LIMIT, &limit.to_le_bytes()).await?;
+        print_duty_limit(decode_u16(&echoed).ok_or("malformed PHY_DUTY_LIMIT echo")?);
+        return persist_mutation(radio, no_save, true).await;
+    }
+    let now = radio.get_prop(prop::PHY_DUTY_NOW).await?;
+    let now = decode_u16(&now).ok_or("malformed PHY_DUTY_NOW")?;
+    let limit = radio.get_prop(prop::PHY_DUTY_LIMIT).await?;
+    println!("duty now   {now} ({:.2}% of the hour)", duty_percent(now));
+    print_duty_limit(decode_u16(&limit).ok_or("malformed PHY_DUTY_LIMIT")?);
+    Ok(())
 }
 
 /// Operate on one device-domain key table. The digest form differs by
@@ -1172,6 +1230,22 @@ mod tests {
         assert!(parse_invocation(&args(&["--ble", "pin", "12345"])).is_err());
         assert!(parse_invocation(&args(&["--ble", "pin", "1234567"])).is_err());
         assert!(parse_invocation(&args(&["--ble", "pin"])).is_err());
+    }
+
+    #[test]
+    fn duty_parses_show_and_limit_forms() {
+        let show = parse_invocation(&args(&["--ble", "duty"])).unwrap();
+        assert!(matches!(show.command, Command::Duty(None)));
+        let raw = parse_invocation(&args(&["--ble", "duty", "limit", "655"])).unwrap();
+        assert!(matches!(raw.command, Command::Duty(Some(655))));
+        let off = parse_invocation(&args(&["--ble", "duty", "limit", "off"])).unwrap();
+        assert!(matches!(off.command, Command::Duty(Some(u16::MAX))));
+        let no_save =
+            parse_invocation(&args(&["--ble", "duty", "limit", "1", "--no-save"])).unwrap();
+        assert!(no_save.no_save);
+        assert!(parse_invocation(&args(&["--ble", "duty", "limit"])).is_err());
+        assert!(parse_invocation(&args(&["--ble", "duty", "limit", "70000"])).is_err());
+        assert!(parse_invocation(&args(&["--ble", "duty", "now"])).is_err());
     }
 
     #[test]
