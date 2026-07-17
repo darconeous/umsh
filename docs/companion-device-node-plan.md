@@ -6,7 +6,10 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **plan approved 2026-07-16 — implementation not yet started.**
+Status: **increment 1 (radio mux) complete and hardware-validated
+2026-07-16** — host tests plus the T-1000E gate (companion probe, RF
+delegated-ack scenario with a T-Echo peer, drain verification) all
+green. Increments 2–5 pending.
 
 ## Why
 
