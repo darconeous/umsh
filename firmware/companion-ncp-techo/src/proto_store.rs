@@ -117,6 +117,10 @@ pub fn encode_record(generation: u32, record: RecordRef<'_>) -> [u8; SLOT_SIZE] 
 }
 
 impl Stored {
+    /// Owned-record slot image, kept for the host tests; the production
+    /// write path encodes through [`RecordRef`] without owning the
+    /// payload.
+    #[cfg(test)]
     pub fn encode(&self) -> [u8; SLOT_SIZE] {
         let record = match &self.record {
             Record::Snapshot(payload) => RecordRef::Snapshot(payload),
