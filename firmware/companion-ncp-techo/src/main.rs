@@ -15,6 +15,10 @@
 //   - radio_task:        owns lora_phy::LoRa via umsh_radio_loraphy::ncp_runner;
 //                        modulation/frequency/power are pushed at runtime
 //                        through NCP_CTL as the host sets properties
+//   - radio_mux_task:    multiplexes the physical radio across its clients
+//                        (per-client TX completion routing, RX fan-out);
+//                        the session is client A, the device node joins
+//                        as client B (docs/companion-device-node-plan.md)
 //   - usb_in_task:       owns CdcAcmRescue + HDLC decoder; forwards frames and
 //                        attach/detach edges into INPUT_CH (keeps
 //                        read_packet out of any select, so cancel safety
@@ -70,6 +74,8 @@ mod ble_security;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
 mod proto_store;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod radio_mux;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod transport_policy;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -797,9 +803,16 @@ mod firmware {
 
     // ─── Static shared state ─────────────────────────────────────────────────
 
-    /// Channels shared between the radio runner and the NCP session task.
+    /// Channels shared between the radio runner and the radio mux, which
+    /// is the runner's only client.
     type RadioCh = umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
+
+    /// The session's virtual radio endpoint (mux client A). The device
+    /// node joins as a second client in the device-node plan's
+    /// increment 2.
+    static SESSION_CH: RadioCh = RadioCh::new();
+    static MUX_CLIENTS: [&RadioCh; 1] = [&SESSION_CH];
 
     /// Runtime radio settings pushed by the session to the runner.
     static NCP_CTL: NcpControl<ThreadModeRawMutex> = NcpControl::new();
@@ -1121,7 +1134,7 @@ mod firmware {
                     TxPower::Max => Some(i32::from(MAX_TX_POWER_DBM)),
                     TxPower::Dbm(dbm) => Some(i32::from(dbm)),
                 };
-                RADIO_CH.tx.send(TxRequest { data, power_dbm }).await;
+                SESSION_CH.tx.send(TxRequest { data, power_dbm }).await;
             }
             Some(Effect::DeviceNameChanged) => publish_device_name(session).await,
             // Deferred effects needing `&mut Session` + the emitter are
@@ -1998,6 +2011,14 @@ mod firmware {
         umsh_radio_loraphy::ncp_runner(lora, &RADIO_CH, &NCP_CTL, RX_PREAMBLE, 16).await;
     }
 
+    /// Owns the real `RADIO_CH` bundle and multiplexes it across the
+    /// virtual per-client bundles (see `radio_mux`): per-client TX
+    /// completion routing plus RX fan-out to every client.
+    #[embassy_executor::task]
+    async fn radio_mux_task() {
+        super::radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS).await
+    }
+
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
     #[embassy_executor::task]
     async fn output_task(mut tx: NcpSender, wdt_report: Option<&'static str>) {
@@ -2126,13 +2147,13 @@ mod firmware {
             // so a spurious tx_done can never be consumed early.
             let tx_done = async {
                 if session.has_pending_tx() {
-                    RADIO_CH.tx_done.wait().await
+                    SESSION_CH.tx_done.wait().await
                 } else {
                     core::future::pending().await
                 }
             };
 
-            match select3(INPUT_CH.receive(), RADIO_CH.rx.receive(), tx_done).await {
+            match select3(INPUT_CH.receive(), SESSION_CH.rx.receive(), tx_done).await {
                 Either3::First(InEvent::Attached(transport)) => {
                     // Fresh session state for the new host session; the
                     // device domain (PHY configuration and enable state,
@@ -3120,6 +3141,11 @@ mod firmware {
                 .unwrap_or_else(|_| panic!("radio init"));
             spawner.spawn(radio_task(lora).unwrap());
         }
+
+        // The mux is the radio runner's only client; the session (and,
+        // later, the device node) transmit and receive through their
+        // virtual bundles.
+        spawner.spawn(radio_mux_task().unwrap());
 
         super::panic::breadcrumb_mark(4);
 
