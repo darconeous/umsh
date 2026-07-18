@@ -6,7 +6,9 @@ itself, alongside the companion session, as the spec has always described.
 The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
-Status: **increments 1–4 complete and hardware-validated 2026-07-17.**
+Status: **all five increments complete and hardware-validated
+(increment 5 on 2026-07-18) — the milestone is done.** Remaining
+follow-ups are recorded in increment 5's closing notes.
 Increment 1 (radio mux): host tests plus the T-1000E gate (companion
 probe, RF delegated-ack, drain) green. Increment 2 (device node +
 button beacon): T-1000E single-click beacons from the device identity
@@ -32,8 +34,11 @@ and acked by the node through the duty gate; RX replay boundary
 committed to the 0xEC000 journal and enforced across a reboot; a
 duty limit of 0 sheds node acks without killing the pump and
 `PROP_PHY_DUTY_NOW` reflects both clients' airtime; details in that
-increment. Flash/static-RAM: T-1000E 605/117 KiB, T-Echo 617/126 KiB
-(of 756/256 KiB). Increment 5 pending.
+increment. Increment 5 (Advertisement Request + hardware completion):
+solicited signed advertisements with nonce echo, verified detached,
+attached, across displacement and a power cycle; dual delivery and
+duty interplay proven; details in that increment. Flash/static-RAM:
+T-1000E 605/117 KiB, T-Echo 617/126 KiB (of 756/256 KiB).
 
 ## Why
 
@@ -277,6 +282,57 @@ style of the BLE plan's increment 9: beacon under detached and attached
 operation, dual delivery to a filtering host, duty interplay, displacement,
 power cycle. The milestone is complete when the device node runs on both
 boards with the companion session fully functional beside it.
+
+**Implemented and hardware-validated 2026-07-18.** Spec decision along
+the way: MAC command 0 is really an *Advertisement Request* — the
+response is an advertisement (a broadcast carrying the responder's
+node identity payload, newly defined in `beacons.md`), and the
+request's nonce is echoed in the identity payload's new Nonce option
+(5, fixed 4 bytes) rather than in a payload-less beacon.
+`mac-commands.md`/`node-identity.md` updated; `CommandId`,
+`MacCommand`, and `OwnedMacCommand` renamed accordingly (wire format
+unchanged). `NodeIdentityPayload` gained the `nonce` field and an
+`encode_for_signing` helper that produces the exact `ROLE..0xFF`
+signed range for a detached Ed25519 signing step.
+
+On the NCP, the request is a third beacon-trigger input: the node's
+`on_mac_command` tap feeds `BeaconTrigger::Advertise { nonce }` into
+the same depth-2 coalescing queue as the button slot (NODE_ACTIVE-
+gated, duty-bounded like every node transmit, no LED/melody — that
+feedback stays button-only), and the beacon task answers with a
+*signed* solicited advertisement carrying the live device name
+(24-byte spec cap) and the echoed nonce. Tooling:
+`rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]`
+solicits and verifies; `hold <port> [secs]` keeps a non-resetting
+session attached as the attached-operation / displacement fixture.
+
+Hardware pass (T-1000E + T-Echo, 2026-07-18): solicited
+advertisements verified detached with and without a nonce (90/95
+bytes on air, role=Tracker, name="UMSH TRACKER 1", signed, nonce
+echoed verbatim); again while a serial session was attached (`hold`);
+again after a BLE attach displaced that serial session mid-hold (the
+hold observed its own displacement; the node never blinked); and
+again on the production image immediately after a power cycle (boot
+restore, nonce 0xDEADBEEF). Dual delivery: with the dev channel key
+provisioned in *both* domains, one multicast burst produced `node rx:
+Multicast ch=1d06` on the node AND live STR_RECV delivery to an
+attached host — and, detached, the same burst queued 3/3 in the host
+queue, drained clean (phase-e 3/0/0). Duty interplay: `duty limit 0`
+shed the advertisement (frames still processed, request logged,
+nothing on air), recovery after `limit off` with a one-request lag
+from the shed frame's CAD backoff. Button beacon re-verified by hand
+(beep + beacon received on the T-Echo) — closing the increment-2
+leftover. rf-peer (4/4) + phase-e (16/3/1) re-pass on the production
+image; both boards end on the increment-5 image with the T-1000E in
+canonical fixture provisioning.
+
+The milestone is complete: the device node runs on both boards with
+the companion session fully functional beside it. Recorded follow-ups:
+management endpoints (application-layer), periodic/at-wake
+advertisement policy (device-domain properties 69–95), advertisement
+signature verification on receive, and the TX-counter-boundary
+hardware round trip (first secured node TX now exists via delegated
+acks; a dedicated check rides the next counter-block flush).
 
 ## Open questions
 
