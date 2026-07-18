@@ -657,6 +657,23 @@ async fn rf_advert_request(
     expect(false, "advertisement received")
 }
 
+/// Hold a non-resetting attached session open for `seconds`: the
+/// attached-operation backdrop for node-behavior checks (the device
+/// node must keep responding while a host session is live) and the
+/// displacement fixture (a second transport's attach must displace
+/// this one without disturbing the node).
+async fn hold(port: &str, seconds: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    println!("holding attached session for {seconds}s");
+    tokio::time::sleep(Duration::from_secs(seconds)).await;
+    match radio.get_prop(prop::PHY_ENABLED).await {
+        Ok(_) => println!("HOLD DONE (still attached)"),
+        Err(error) => println!("HOLD DONE (displaced: {error:?})"),
+    }
+    Ok(())
+}
+
 /// Reattach the T-1000E after the RF pass and verify what autonomous
 /// operation left behind.
 async fn phase_e(
@@ -858,6 +875,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await
         }
+        Some("hold") if (3..=4).contains(&args.len()) => {
+            let seconds = args
+                .get(3)
+                .map(|text| text.parse())
+                .transpose()?
+                .unwrap_or(30);
+            hold(&args[2], seconds).await
+        }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
@@ -881,7 +906,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate hold <port> [seconds]\n       companion_hw_validate probe-restore <port>"
             );
             std::process::exit(2);
         }

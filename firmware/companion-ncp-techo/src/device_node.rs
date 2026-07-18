@@ -327,7 +327,11 @@ async fn node_beacon_task(node: NcpNode, identity: SoftwareIdentity) {
 /// identity payload (role, live device name, echoed nonce) with the
 /// standalone EdDSA signature the spec prefers for broadcasts, typed as
 /// a NodeIdentity payload.
-async fn send_advertisement(node: &NcpNode, identity: &SoftwareIdentity, nonce: Option<u32>) -> bool {
+async fn send_advertisement(
+    node: &NcpNode,
+    identity: &SoftwareIdentity,
+    nonce: Option<u32>,
+) -> bool {
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
     let name_bytes = crate::firmware::device_name_snapshot().await;

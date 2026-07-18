@@ -365,9 +365,7 @@ mod tests {
         let len = id.encode(&mut buf).unwrap();
         let window = &buf[..len];
         assert!(
-            window
-                .windows(4)
-                .any(|w| w == [0x00, 0x00, 0x00, 0x42]),
+            window.windows(4).any(|w| w == [0x00, 0x00, 0x00, 0x42]),
             "nonce not fixed-width on the wire"
         );
         // A truncated nonce option is rejected, not minimally decoded.
