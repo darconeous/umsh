@@ -1714,7 +1714,7 @@ fn pfs_failure_str(reason: umsh_node::PfsFailure) -> &'static str {
 fn mac_cmd_id(cmd: &OwnedMacCommand) -> u8 {
     use umsh_node::CommandId;
     match cmd {
-        OwnedMacCommand::BeaconRequest { .. } => CommandId::BeaconRequest as u8,
+        OwnedMacCommand::AdvertisementRequest { .. } => CommandId::AdvertisementRequest as u8,
         OwnedMacCommand::IdentityRequest => CommandId::IdentityRequest as u8,
         OwnedMacCommand::SignalReportRequest => CommandId::SignalReportRequest as u8,
         OwnedMacCommand::SignalReportResponse { .. } => CommandId::SignalReportResponse as u8,

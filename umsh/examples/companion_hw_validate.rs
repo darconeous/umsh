@@ -20,13 +20,13 @@
 
 use std::time::{Duration, Instant};
 
+use umsh::companion::ids::{cap, prop};
+use umsh::companion::items::{Filter, PeerKeyEntry};
+use umsh::companion::meta::{BufferedRxMeta, RX_FLAG_ACKED};
 use umsh::companion_radio::{
     CompanionRadio, CompanionRadioConfig, FrameLink, HostOwnership, HostProvisioning, NcpSync,
     SerialFrameLink,
 };
-use umsh::companion::ids::{cap, prop};
-use umsh::companion::items::{Filter, PeerKeyEntry};
-use umsh::companion::meta::{BufferedRxMeta, RX_FLAG_ACKED};
 use umsh::core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType, PublicKey};
 use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, PairwiseKeys};
@@ -81,8 +81,7 @@ async fn open(
     use tokio_serial::SerialPortBuilderExt;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
     let started = Instant::now();
-    let mut radio =
-        CompanionRadio::attach_existing(SerialFrameLink::new(stream), config()).await?;
+    let mut radio = CompanionRadio::attach_existing(SerialFrameLink::new(stream), config()).await?;
     println!(
         "attached in {:?}: ncp={} boot_status={:?}",
         started.elapsed(),
@@ -97,17 +96,40 @@ async fn open(
 
 fn print_sync(sync: &NcpSync) {
     println!("sync:");
-    println!("  last_status={:?} reset_since_last_contact={}", sync.last_status, sync.reset_since_last_contact);
+    println!(
+        "  last_status={:?} reset_since_last_contact={}",
+        sync.last_status, sync.reset_since_last_contact
+    );
     println!("  capabilities={:?}", sync.capabilities);
     println!("  ownership={:?}", sync.ownership);
-    println!("  phy_enabled={} freq_khz={}", sync.phy_enabled, sync.freq_khz);
+    println!(
+        "  phy_enabled={} freq_khz={}",
+        sync.phy_enabled, sync.freq_khz
+    );
     println!("  device_name={:?}", sync.device_name);
-    println!("  saved={:?} queue_count={:?} queue_dropped={:?}", sync.saved, sync.queue_count, sync.queue_dropped);
+    println!(
+        "  saved={:?} queue_count={:?} queue_dropped={:?}",
+        sync.saved, sync.queue_count, sync.queue_dropped
+    );
     println!("  filters={:?}", sync.filters);
-    println!("  host_channel_ids={:?}", sync.host_channel_ids.as_ref().map(|ids| ids.iter().map(|id| hex(id)).collect::<Vec<_>>()));
-    println!("  host_peer_keys={:?}", sync.host_peer_keys.as_ref().map(|keys| keys.iter().map(|key| PublicKey(*key).to_string()).collect::<Vec<_>>()));
+    println!(
+        "  host_channel_ids={:?}",
+        sync.host_channel_ids
+            .as_ref()
+            .map(|ids| ids.iter().map(|id| hex(id)).collect::<Vec<_>>())
+    );
+    println!(
+        "  host_peer_keys={:?}",
+        sync.host_peer_keys.as_ref().map(|keys| keys
+            .iter()
+            .map(|key| PublicKey(*key).to_string())
+            .collect::<Vec<_>>())
+    );
     println!("  auto_ack={:?}", sync.auto_ack);
-    println!("  dev_key={:?}", sync.dev_key.map(|key| PublicKey(key).to_string()));
+    println!(
+        "  dev_key={:?}",
+        sync.dev_key.map(|key| PublicKey(key).to_string())
+    );
 }
 
 fn expect(condition: bool, what: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -123,11 +145,21 @@ async fn configure_phy<L: FrameLink>(
     radio: &mut CompanionRadio<L>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = config();
-    radio.set_prop(prop::PHY_FREQ, &config.freq_khz.to_le_bytes()).await?;
-    radio.set_prop(prop::PHY_LORA_BW, &config.bandwidth_hz.to_le_bytes()).await?;
-    radio.set_prop(prop::PHY_LORA_SF, &[config.spreading_factor]).await?;
-    radio.set_prop(prop::PHY_LORA_CR, &[config.coding_rate_denom]).await?;
-    radio.set_prop(prop::PHY_TX_POWER, &[config.tx_power_dbm as u8]).await?;
+    radio
+        .set_prop(prop::PHY_FREQ, &config.freq_khz.to_le_bytes())
+        .await?;
+    radio
+        .set_prop(prop::PHY_LORA_BW, &config.bandwidth_hz.to_le_bytes())
+        .await?;
+    radio
+        .set_prop(prop::PHY_LORA_SF, &[config.spreading_factor])
+        .await?;
+    radio
+        .set_prop(prop::PHY_LORA_CR, &[config.coding_rate_denom])
+        .await?;
+    radio
+        .set_prop(prop::PHY_TX_POWER, &[config.tx_power_dbm as u8])
+        .await?;
     radio.set_prop(prop::PHY_ENABLED, &[1]).await?;
     Ok(())
 }
@@ -144,14 +176,23 @@ async fn phase_a(port: &str) -> Result<(), Box<dyn std::error::Error>> {
         cap::SAVE,
         cap::DEV_IDENTITY,
     ] {
-        expect(sync.has_capability(capability), &format!("capability {capability} advertised"))?;
+        expect(
+            sync.has_capability(capability),
+            &format!("capability {capability} advertised"),
+        )?;
     }
     let capacity = radio.get_prop(prop::HOST_RX_QUEUE_CAPACITY).await?;
-    println!("queue capacity = {:?}", u16::from_le_bytes(capacity.as_slice().try_into()?));
+    println!(
+        "queue capacity = {:?}",
+        u16::from_le_bytes(capacity.as_slice().try_into()?)
+    );
 
     let dev_key = radio.ensure_device_identity().await?;
     let again = radio.ensure_device_identity().await?;
-    expect(dev_key == again, "device identity is stable across ensure calls")?;
+    expect(
+        dev_key == again,
+        "device identity is stable across ensure calls",
+    )?;
 
     let report = radio.provision(&desired_provisioning()).await?;
     println!("provision report: {report:?}");
@@ -173,12 +214,24 @@ async fn phase_b(port: &str, expected_dev_key: [u8; 32]) -> Result<(), Box<dyn s
     let mut radio = open(port).await?;
     let sync = radio.sync(Some(&HOST_KEY)).await?;
     print_sync(&sync);
-    expect(sync.reset_since_last_contact, "reset detected after power cycle")?;
-    expect(sync.ownership == HostOwnership::Ours, "ownership survives the power cycle")?;
+    expect(
+        sync.reset_since_last_contact,
+        "reset detected after power cycle",
+    )?;
+    expect(
+        sync.ownership == HostOwnership::Ours,
+        "ownership survives the power cycle",
+    )?;
     expect(sync.saved == Some(true), "snapshot still saved")?;
     expect(sync.phy_enabled, "boot restore re-enabled the PHY")?;
-    expect(sync.freq_khz == config().freq_khz, "boot restore applied the saved frequency")?;
-    expect(sync.auto_ack == Some(true), "auto-ack armed from the snapshot")?;
+    expect(
+        sync.freq_khz == config().freq_khz,
+        "boot restore applied the saved frequency",
+    )?;
+    expect(
+        sync.auto_ack == Some(true),
+        "auto-ack armed from the snapshot",
+    )?;
     expect(
         sync.dev_key == Some(expected_dev_key),
         "device identity survives the power cycle",
@@ -217,8 +270,14 @@ async fn phase_c(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     let sync = radio.sync(Some(&HOST_KEY)).await?;
     print_sync(&sync);
     expect(sync.saved == Some(false), "snapshot erased")?;
-    expect(sync.dev_key.is_some(), "live identity retained after CMD_CLEAR")?;
-    expect(sync.ownership == HostOwnership::Ours, "live host domain retained after CMD_CLEAR")?;
+    expect(
+        sync.dev_key.is_some(),
+        "live identity retained after CMD_CLEAR",
+    )?;
+    expect(
+        sync.ownership == HostOwnership::Ours,
+        "live host domain retained after CMD_CLEAR",
+    )?;
     println!("PHASE C OK — power-cycle (or DFU-reboot) the board, then run phase-d");
     Ok(())
 }
@@ -227,7 +286,10 @@ async fn phase_d(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut radio = open(port).await?;
     let sync = radio.sync(Some(&HOST_KEY)).await?;
     print_sync(&sync);
-    expect(sync.ownership == HostOwnership::Unclaimed, "factory: no host identity")?;
+    expect(
+        sync.ownership == HostOwnership::Unclaimed,
+        "factory: no host identity",
+    )?;
     expect(sync.saved == Some(false), "factory: nothing saved")?;
     expect(sync.dev_key.is_none(), "factory: device identity erased")?;
     expect(!sync.phy_enabled, "factory: PHY disabled")?;
@@ -295,7 +357,10 @@ async fn expect_air_ack<L: FrameLink>(
     what: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_secs(4);
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+    while let Some(remaining) = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+    {
         let Some((frame, rssi)) = recv_frame(radio, remaining).await else {
             break;
         };
@@ -314,9 +379,15 @@ async fn transmit<L: FrameLink>(
     radio: &mut CompanionRadio<L>,
     data: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    Radio::transmit(radio, data, TxOptions { cad: CadPolicy::Skip })
-        .await
-        .map_err(|error| format!("transmit failed: {error:?}").into())
+    Radio::transmit(
+        radio,
+        data,
+        TxOptions {
+            cad: CadPolicy::Skip,
+        },
+    )
+    .await
+    .map_err(|error| format!("transmit failed: {error:?}").into())
 }
 
 /// Drive the T-Echo as the RF peer while the T-1000E sits detached:
@@ -346,7 +417,10 @@ async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>
     let unrelated = sealed_unicast(
         base,
         true,
-        &PairwiseKeys { k_enc: [0x11; 16], k_mic: [0x22; 16] },
+        &PairwiseKeys {
+            k_enc: [0x11; 16],
+            k_mic: [0x22; 16],
+        },
         [0x99, 0x99, 0x99],
     );
     transmit(&mut radio, &unrelated).await?;
@@ -384,7 +458,10 @@ async fn rf_dev_multicast(
     // The peer radio is disposable: the resetting attach configures its
     // PHY to the fixture parameters the T-1000E saved.
     let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
-    println!("peer ncp={} base counter={base} count={count}", radio.ncp_version());
+    println!(
+        "peer ncp={} base counter={base} count={count}",
+        radio.ncp_version()
+    );
 
     let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
     let derived = crypto.derive_channel_keys(&umsh::core::ChannelKey(channel_key));
@@ -441,7 +518,10 @@ async fn rf_dev_unicast(
     use umsh::crypto::NodeIdentity as _;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
     let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
-    println!("peer ncp={} base counter={base} count={count}", radio.ncp_version());
+    println!(
+        "peer ncp={} base counter={base} count={count}",
+        radio.ncp_version()
+    );
 
     let peer = umsh::crypto::software::SoftwareIdentity::from_secret_bytes(&PEER_NODE_SECRET);
     let peer_pub = *peer.public_key();
@@ -481,6 +561,102 @@ async fn rf_dev_unicast(
     Ok(())
 }
 
+/// Drive the T-Echo as an RF peer soliciting an advertisement from the
+/// device identity (device-node plan increment 5): send an
+/// Advertisement Request MAC command as pairwise-sealed unicast, then
+/// expect a broadcast advertisement — a NodeIdentity payload carrying
+/// the echoed nonce, the device name, and the standalone signature.
+async fn rf_advert_request(
+    port: &str,
+    dev_key: [u8; 32],
+    counter: u32,
+    nonce: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio_serial::SerialPortBuilderExt;
+    use umsh::crypto::NodeIdentity as _;
+    let stream = tokio_serial::new(port, 115_200).open_native_async()?;
+    let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
+    println!(
+        "peer ncp={} counter={counter} nonce={nonce:?}",
+        radio.ncp_version()
+    );
+
+    let peer = umsh::crypto::software::SoftwareIdentity::from_secret_bytes(&PEER_NODE_SECRET);
+    let peer_pub = *peer.public_key();
+    println!("peer node pk {peer_pub} (must be in dev-peer list)");
+    let shared = peer
+        .shared_secret_with(&PublicKey(dev_key))
+        .map_err(|error| format!("pairwise derivation failed: {error:?}"))?;
+    let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+    let keys = crypto.derive_pairwise_keys(&shared);
+
+    // Typed MAC-command payload: Advertisement Request (id 0).
+    let mut command = [0u8; 8];
+    command[0] = umsh::core::PayloadType::MacCommand as u8;
+    let command_len = 1 + umsh::node::mac_command::encode(
+        &umsh::node::MacCommand::AdvertisementRequest { nonce },
+        &mut command[1..],
+    )
+    .map_err(|error| format!("command encode failed: {error:?}"))?;
+
+    let mut buf = [0u8; 96];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(PublicKey(dev_key).hint())
+        .source_hint(peer_pub.hint())
+        .frame_counter(counter)
+        .mic_size(MicSize::Mic8)
+        .payload(&command[..command_len])
+        .build()
+        .unwrap();
+    crypto.seal_packet(&mut packet, &keys).unwrap();
+    transmit(&mut radio, packet.as_bytes()).await?;
+    println!("  advertisement request on the air");
+
+    // The advertisement: a broadcast whose payload parses as a
+    // NodeIdentity payload. Skip unrelated receptions (e.g. our own
+    // request's processing artifacts) within the window.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some(remaining) = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+    {
+        let Some((frame, rssi)) = recv_frame(&mut radio, remaining).await else {
+            break;
+        };
+        let Ok(header) = PacketHeader::parse(&frame) else {
+            continue;
+        };
+        if header.fcf.packet_type() != PacketType::Broadcast {
+            continue;
+        }
+        let Some(payload) = frame.get(header.body_range.clone()) else {
+            continue;
+        };
+        let Ok((payload_type, body)) = umsh::node::split_payload_type(payload) else {
+            continue;
+        };
+        if payload_type != umsh::core::PayloadType::NodeIdentity {
+            continue;
+        }
+        let advert = umsh::node::NodeIdentityPayload::from_bytes(body)
+            .map_err(|error| format!("advertisement failed to parse: {error:?}"))?;
+        println!(
+            "  advertisement ({} bytes, rssi {rssi} dBm): role={:?} name={:?} nonce={:?} signed={}",
+            frame.len(),
+            advert.role,
+            advert.name,
+            advert.nonce,
+            advert.signature.is_some(),
+        );
+        expect(advert.nonce == nonce, "nonce echoed verbatim")?;
+        expect(advert.signature.is_some(), "advertisement is signed")?;
+        expect(advert.name.is_some(), "advertisement carries the name")?;
+        println!("RF ADVERT REQUEST OK");
+        return Ok(());
+    }
+    expect(false, "advertisement received")
+}
+
 /// Reattach the T-1000E after the RF pass and verify what autonomous
 /// operation left behind.
 async fn phase_e(
@@ -496,11 +672,17 @@ async fn phase_e(
     expect(sync.ownership == HostOwnership::Ours, "ownership intact")?;
     expect(
         sync.queue_count == Some(expected_count),
-        &format!("queue holds {expected_count} frames (got {:?})", sync.queue_count),
+        &format!(
+            "queue holds {expected_count} frames (got {:?})",
+            sync.queue_count
+        ),
     )?;
     expect(
         sync.queue_dropped == Some(expected_dropped),
-        &format!("{expected_dropped} evictions counted (got {:?})", sync.queue_dropped),
+        &format!(
+            "{expected_dropped} evictions counted (got {:?})",
+            sync.queue_dropped
+        ),
     )?;
 
     let mut drained: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
@@ -509,8 +691,8 @@ async fn phase_e(
         .await?;
     let mut acked = 0usize;
     for (data, meta) in &drained {
-        let meta = BufferedRxMeta::decode(meta)
-            .map_err(|_| "drained frame without buffered metadata")?;
+        let meta =
+            BufferedRxMeta::decode(meta).map_err(|_| "drained frame without buffered metadata")?;
         let header = PacketHeader::parse(data).map_err(|error| format!("{error:?}"))?;
         println!(
             "  drained {:?} {} bytes flags={:#04x} age={}s rssi={:?}",
@@ -524,7 +706,10 @@ async fn phase_e(
             acked += 1;
         }
     }
-    expect(drained.len() == usize::from(expected_count), "drain delivered every queued frame")?;
+    expect(
+        drained.len() == usize::from(expected_count),
+        "drain delivered every queued frame",
+    )?;
     expect(
         acked == expected_acked,
         &format!("exactly {expected_acked} drained frame(s) marked acknowledged (got {acked})"),
@@ -552,8 +737,14 @@ async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
     let sync = radio.sync(Some(&HOST_KEY)).await?;
     print_sync(&sync);
-    expect(sync.ownership == HostOwnership::Ours, "ownership verified over BLE")?;
-    expect(sync.saved == Some(true), "saved provisioning visible over BLE")?;
+    expect(
+        sync.ownership == HostOwnership::Ours,
+        "ownership verified over BLE",
+    )?;
+    expect(
+        sync.saved == Some(true),
+        "saved provisioning visible over BLE",
+    )?;
     expect(sync.dev_key.is_some(), "device identity visible over BLE")?;
 
     let mut samples = Vec::new();
@@ -633,18 +824,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("phase-d") if args.len() == 3 => phase_d(&args[2]).await,
         Some("rf-peer") if args.len() == 4 => rf_peer(&args[2], args[3].parse()?).await,
         Some("rf-dev-multicast") if (5..=6).contains(&args.len()) => {
-            let count = args.get(5).map(|text| text.parse()).transpose()?.unwrap_or(3);
+            let count = args
+                .get(5)
+                .map(|text| text.parse())
+                .transpose()?
+                .unwrap_or(3);
             rf_dev_multicast(&args[2], parse_key32(&args[3])?, args[4].parse()?, count).await
         }
+        Some("rf-advert-request") if (5..=6).contains(&args.len()) => {
+            let nonce = args
+                .get(5)
+                .map(|text| u32::from_str_radix(text.trim_start_matches("0x"), 16))
+                .transpose()?;
+            rf_advert_request(&args[2], parse_key32(&args[3])?, args[4].parse()?, nonce).await
+        }
         Some("rf-dev-unicast") if (5..=7).contains(&args.len()) => {
-            let count = args.get(5).map(|text| text.parse()).transpose()?.unwrap_or(1);
+            let count = args
+                .get(5)
+                .map(|text| text.parse())
+                .transpose()?
+                .unwrap_or(1);
             let expect_ack = match args.get(6).map(String::as_str) {
                 None | Some("ack") => true,
                 Some("silence") => false,
                 Some(other) => return Err(format!("expected ack|silence, got {other}").into()),
             };
-            rf_dev_unicast(&args[2], parse_key32(&args[3])?, args[4].parse()?, count, expect_ack)
-                .await
+            rf_dev_unicast(
+                &args[2],
+                parse_key32(&args[3])?,
+                args[4].parse()?,
+                count,
+                expect_ack,
+            )
+            .await
         }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
         #[cfg(feature = "ble-radio")]
@@ -659,11 +871,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info_ble(&args[2], expected).await
         }
         Some("phase-e") if args.len() == 6 => {
-            phase_e(&args[2], args[3].parse()?, args[4].parse()?, args[5].parse()?).await
+            phase_e(
+                &args[2],
+                args[3].parse()?,
+                args[4].parse()?,
+                args[5].parse()?,
+            )
+            .await
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate probe-restore <port>"
             );
             std::process::exit(2);
         }

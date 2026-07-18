@@ -67,6 +67,7 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | 2 | Altitude in Meters | The altitude in meters. | 
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
 | 4 | Supported Regions | one or more concatenated 2-byte region codes |
+| 5 | Nonce | 4 bytes, echoed from a soliciting Advertisement Request |
 
 ### Node Name (option 0)
 A UTF-8 display name for the node, typically shown in user interfaces. Max length: 24 bytes.
@@ -82,6 +83,9 @@ Seconds since the Unix epoch indicating when this identity payload was generated
 
 ### Supported Regions (option 4)
 For repeaters, the list of [region codes](packet-options.md#region-code-encoding) the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.
+
+### Nonce (option 5)
+Copied verbatim from the [Advertisement Request](mac-commands.md#advertisement-request-0) that solicited this [advertisement](beacons.md#advertisements), letting the requester match the response to its request. Present only in solicited advertisements whose request carried a nonce. Length: 4 bytes.
 
 ### Variable-Precision Location Format
 

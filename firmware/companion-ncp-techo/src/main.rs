@@ -67,6 +67,11 @@ fn main() {
     // Host placeholder. This binary only runs on the embedded target.
 }
 
+// The device node's advertisement payloads use umsh-node's alloc-backed
+// types (they draw from the same 8 KiB heap the node stack already
+// uses).
+extern crate alloc;
+
 // Global heap allocator. The device node (umsh-sync's AsyncRefCell plus
 // umsh-node's Rc-based plumbing) allocates a small bounded amount at
 // bring-up; the companion session remains allocation-free. Initialized
@@ -170,10 +175,10 @@ mod firmware {
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     use umsh_bsp_nrf52840::system_off::Port;
-    #[cfg(not(feature = "t1000e"))]
-    use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(feature = "t1000e")]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
+    #[cfg(not(feature = "t1000e"))]
+    use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
     #[cfg(not(feature = "t1000e"))]
@@ -753,7 +758,8 @@ mod firmware {
         let proto_store::Record::Snapshot(payload) = stored.record else {
             return None;
         };
-        let mut preferences = umsh_ux_tracker::state::UserPreferences::try_decode(*payload.first()?)?;
+        let mut preferences =
+            umsh_ux_tracker::state::UserPreferences::try_decode(*payload.first()?)?;
         // Critical shutdown is a live protective condition mirrored in the
         // retained register, not a durable user preference.
         preferences.battery_critical = false;
@@ -827,7 +833,10 @@ mod firmware {
 
     /// Mount the counter journal and load the persisted map.
     #[cfg(not(feature = "no-ble"))]
-    async fn mount_node_counters(counters: &'static NodeCountersMutex, flash: &'static SharedFlash) {
+    async fn mount_node_counters(
+        counters: &'static NodeCountersMutex,
+        flash: &'static SharedFlash,
+    ) {
         let (journal, payload) = ProtoStore::mount(flash, proto_store::COUNTER_PAGE0).await;
         let map = payload
             .as_deref()
@@ -998,6 +1007,20 @@ mod firmware {
 
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
+
+    /// Snapshot the live device name for the device node's
+    /// advertisements. Falls back to the (FICR-suffixed) default until
+    /// the session publishes a name at boot.
+    pub(crate) async fn device_name_snapshot() -> DeviceName {
+        let current = DEVICE_NAME.lock().await;
+        if current.is_empty() {
+            let mut name = DeviceName::new();
+            let _ = name.extend_from_slice(default_device_name().as_bytes());
+            name
+        } else {
+            current.clone()
+        }
+    }
     static DEVICE_NAME_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Published session epoch, checked by each transport at framing edges.
@@ -1525,8 +1548,7 @@ mod firmware {
         let name = {
             let configured = DEVICE_NAME.lock().await;
             if configured.is_empty() {
-                DeviceName::from_slice(default_device_name().as_bytes())
-                    .expect("default name fits")
+                DeviceName::from_slice(default_device_name().as_bytes()).expect("default name fits")
             } else {
                 configured.clone()
             }
@@ -2897,9 +2919,7 @@ mod firmware {
                     // when the MAC accepts the send; with no identity the
                     // node is dormant and the slot stays inert, with no
                     // false confirmation.
-                    super::device_node::request_beacon(
-                        super::device_node::BeaconTrigger::Button,
-                    );
+                    super::device_node::request_beacon(super::device_node::BeaconTrigger::Button);
                 }
                 Some(ButtonEvent::Double) => {
                     let preferences = umsh_bsp_t1000e::preferences::toggle_silent();
@@ -3051,8 +3071,8 @@ mod firmware {
         #[cfg(feature = "t1000e")]
         let t1000e_gpregret_state = umsh_bsp_t1000e::preferences::load_retained();
         #[cfg(feature = "t1000e")]
-        let t1000e_retained_critical = t1000e_gpregret_state
-            .is_some_and(|preferences| preferences.battery_critical);
+        let t1000e_retained_critical =
+            t1000e_gpregret_state.is_some_and(|preferences| preferences.battery_critical);
         #[cfg(feature = "t1000e")]
         let mut t1000e_retained_state = mapped_ux_preferences().unwrap_or_default();
         #[cfg(feature = "t1000e")]
@@ -3283,7 +3303,11 @@ mod firmware {
                 let _ = write!(text, "\r\n=== PANIC (previous boot) ===\r\n");
                 for byte in message.iter().take(1000) {
                     let c = *byte as char;
-                    let _ = text.push(if c.is_ascii_graphic() || c == ' ' { c } else { '.' });
+                    let _ = text.push(if c.is_ascii_graphic() || c == ' ' {
+                        c
+                    } else {
+                        '.'
+                    });
                 }
                 let _ = write!(text, "\r\n=== END PANIC ===\r\n");
                 panic_report = Some(text.as_str());
@@ -3453,11 +3477,8 @@ mod firmware {
             let mut ux_store = ux_store;
             #[cfg(feature = "t1000e")]
             if t1000e_wake_cleared_sleep {
-                let _ = persist_ux_preferences(
-                    &mut ux_store,
-                    umsh_bsp_t1000e::preferences::load(),
-                )
-                .await;
+                let _ = persist_ux_preferences(&mut ux_store, umsh_bsp_t1000e::preferences::load())
+                    .await;
             }
             // Both halves of the persisted keypair: the public key seeds
             // the session's PROP_DEV_KEY surface, the secret brings up

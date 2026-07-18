@@ -8,7 +8,7 @@ use crate::{AppEncodeError, AppParseError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CommandId {
-    BeaconRequest = 0,
+    AdvertisementRequest = 0,
     IdentityRequest = 1,
     SignalReportRequest = 2,
     SignalReportResponse = 3,
@@ -21,7 +21,7 @@ pub enum CommandId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacCommand<'a> {
-    BeaconRequest {
+    AdvertisementRequest {
         nonce: Option<u32>,
     },
     IdentityRequest,
@@ -54,8 +54,8 @@ pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
 
     match command_id {
         0 => match body {
-            [] => Ok(MacCommand::BeaconRequest { nonce: None }),
-            [a, b, c, d] => Ok(MacCommand::BeaconRequest {
+            [] => Ok(MacCommand::AdvertisementRequest { nonce: None }),
+            [a, b, c, d] => Ok(MacCommand::AdvertisementRequest {
                 nonce: Some(u32::from_be_bytes([*a, *b, *c, *d])),
             }),
             _ => Err(AppParseError::InvalidLength {
@@ -126,7 +126,7 @@ fn parse_pfs(payload: &[u8], request: bool) -> Result<MacCommand<'_>, AppParseEr
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OwnedMacCommand {
-    BeaconRequest {
+    AdvertisementRequest {
         nonce: Option<u32>,
     },
     IdentityRequest,
@@ -155,7 +155,7 @@ pub enum OwnedMacCommand {
 impl From<MacCommand<'_>> for OwnedMacCommand {
     fn from(value: MacCommand<'_>) -> Self {
         match value {
-            MacCommand::BeaconRequest { nonce } => Self::BeaconRequest { nonce },
+            MacCommand::AdvertisementRequest { nonce } => Self::AdvertisementRequest { nonce },
             MacCommand::IdentityRequest => Self::IdentityRequest,
             MacCommand::SignalReportRequest => Self::SignalReportRequest,
             MacCommand::SignalReportResponse { rssi, snr } => {
@@ -189,8 +189,8 @@ impl From<MacCommand<'_>> for OwnedMacCommand {
 pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeError> {
     let mut pos = 0usize;
     match cmd {
-        MacCommand::BeaconRequest { nonce } => {
-            push_byte(buf, &mut pos, CommandId::BeaconRequest as u8)?;
+        MacCommand::AdvertisementRequest { nonce } => {
+            push_byte(buf, &mut pos, CommandId::AdvertisementRequest as u8)?;
             if let Some(nonce) = nonce {
                 copy_into(buf, &mut pos, &nonce.to_be_bytes())?;
             }
@@ -247,16 +247,16 @@ mod tests {
     // --- round-trips ---
 
     #[test]
-    fn beacon_request_no_nonce() {
-        encode_decode(MacCommand::BeaconRequest { nonce: None });
+    fn advertisement_request_no_nonce() {
+        encode_decode(MacCommand::AdvertisementRequest { nonce: None });
         let mut buf = [0u8; 4];
-        let len = encode(&MacCommand::BeaconRequest { nonce: None }, &mut buf).unwrap();
+        let len = encode(&MacCommand::AdvertisementRequest { nonce: None }, &mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x00]);
     }
 
     #[test]
-    fn beacon_request_with_nonce() {
-        let cmd = MacCommand::BeaconRequest {
+    fn advertisement_request_with_nonce() {
+        let cmd = MacCommand::AdvertisementRequest {
             nonce: Some(0x12345678),
         };
         encode_decode(cmd);
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_beacon_request_wrong_body_length() {
+    fn parse_advertisement_request_wrong_body_length() {
         assert!(parse(&[0x00, 0x01, 0x02]).is_err()); // 3-byte body, not 0 or 4
     }
 

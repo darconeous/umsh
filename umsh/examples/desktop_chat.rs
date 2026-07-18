@@ -724,9 +724,9 @@ fn full_key(key: &PublicKey) -> String {
 
 fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
     match command {
-        umsh::node::OwnedMacCommand::BeaconRequest { nonce } => match nonce {
-            Some(nonce) => format!("BeaconRequest nonce=0x{nonce:08x}"),
-            None => String::from("BeaconRequest"),
+        umsh::node::OwnedMacCommand::AdvertisementRequest { nonce } => match nonce {
+            Some(nonce) => format!("AdvertisementRequest nonce=0x{nonce:08x}"),
+            None => String::from("AdvertisementRequest"),
         },
         umsh::node::OwnedMacCommand::IdentityRequest => String::from("IdentityRequest"),
         umsh::node::OwnedMacCommand::SignalReportRequest => String::from("SignalReportRequest"),
