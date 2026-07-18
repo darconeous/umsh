@@ -14,6 +14,7 @@ mod opt {
     pub const ALTITUDE: u16 = 2;
     pub const TIMESTAMP: u16 = 3;
     pub const SUPPORTED_REGIONS: u16 = 4;
+    pub const NONCE: u16 = 5;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +87,9 @@ pub struct NodeIdentityPayload {
     pub timestamp: Option<u32>,
     /// Option 4 — concatenated 2-byte region codes this repeater serves.
     pub supported_regions: Option<Vec<u8>>,
+    /// Option 5 — nonce echoed from a soliciting Advertisement Request.
+    /// Present only in solicited advertisements whose request carried one.
+    pub nonce: Option<u32>,
     /// EdDSA signature over ROLE..=0xFF, present when the identity stands alone.
     ///
     /// TODO: signing and verification belong outside `NodeIdentityPayload`
@@ -112,6 +116,7 @@ impl NodeIdentityPayload {
         let mut altitude_m = None;
         let mut timestamp = None;
         let mut supported_regions = None;
+        let mut nonce = None;
 
         let mut decoder = OptionDecoder::new(remaining);
         for result in decoder.by_ref() {
@@ -129,6 +134,14 @@ impl NodeIdentityPayload {
                         return Err(AppParseError::InvalidOptionValue);
                     }
                     supported_regions = Some(Vec::from(value));
+                }
+                opt::NONCE => {
+                    // A verbatim copy of the request's 4-byte field —
+                    // fixed-width, unlike the minimally encoded integers.
+                    let bytes: [u8; 4] = value
+                        .try_into()
+                        .map_err(|_| AppParseError::InvalidOptionValue)?;
+                    nonce = Some(u32::from_be_bytes(bytes));
                 }
                 _ => {} // unknown options are silently skipped
             }
@@ -161,6 +174,7 @@ impl NodeIdentityPayload {
             altitude_m,
             timestamp,
             supported_regions,
+            nonce,
             signature,
         })
     }
@@ -190,6 +204,9 @@ impl NodeIdentityPayload {
             if let Some(regions) = self.supported_regions.as_deref() {
                 enc.put(opt::SUPPORTED_REGIONS, regions)?;
             }
+            if let Some(nonce) = self.nonce {
+                enc.put(opt::NONCE, &nonce.to_be_bytes())?;
+            }
             if self.signature.is_some() {
                 enc.end_marker()?;
             }
@@ -204,6 +221,30 @@ impl NodeIdentityPayload {
             pos += 64;
         }
 
+        Ok(pos)
+    }
+
+    /// Encode the signed byte range — `ROLE` through the `0xFF`
+    /// options terminator, inclusive — for a detached signing step.
+    /// `self.signature` is ignored; the caller signs exactly the
+    /// returned bytes and appends the 64-byte signature to produce the
+    /// standalone (signed) wire form:
+    ///
+    /// ```ignore
+    /// let len = payload.encode_for_signing(&mut buf)?;
+    /// let signature = identity.sign(&buf[..len]).await?;
+    /// buf[len..len + 64].copy_from_slice(&signature);
+    /// // buf[..len + 64] now parses with `signature: Some(..)`.
+    /// ```
+    pub fn encode_for_signing(&self, buf: &mut [u8]) -> Result<usize, AppEncodeError> {
+        let unsigned = Self {
+            signature: None,
+            ..self.clone()
+        };
+        let mut pos = unsigned.encode(buf)?;
+        let mut enc = OptionEncoder::new(&mut buf[pos..]);
+        enc.end_marker()?;
+        pos += enc.finish();
         Ok(pos)
     }
 }
@@ -229,6 +270,7 @@ mod tests {
             altitude_m: None,
             timestamp: None,
             supported_regions: None,
+            nonce: None,
             signature: None,
         };
         let mut buf = [0u8; 16];
@@ -249,6 +291,7 @@ mod tests {
             altitude_m: None,
             timestamp: None,
             supported_regions: None,
+            nonce: None,
             signature: None,
         };
         assert!(round_trip(&id));
@@ -265,6 +308,7 @@ mod tests {
             altitude_m: Some(1500),
             timestamp: Some(1_700_000_000),
             supported_regions: Some(vec![0x00, 0x01, 0x00, 0x02]),
+            nonce: None,
             signature: None,
         };
         assert!(round_trip(&id));
@@ -280,6 +324,7 @@ mod tests {
             altitude_m: Some(-430), // Dead Sea
             timestamp: None,
             supported_regions: None,
+            nonce: None,
             signature: None,
         };
         assert!(round_trip(&id));
@@ -295,9 +340,75 @@ mod tests {
             altitude_m: Some(0),
             timestamp: None,
             supported_regions: None,
+            nonce: None,
             signature: None,
         };
         assert!(round_trip(&id));
+    }
+
+    #[test]
+    fn nonce_round_trips_as_fixed_four_bytes() {
+        let id = NodeIdentityPayload {
+            role: NodeRole::Tracker,
+            capabilities: NodeCapabilities::MOBILE,
+            name: Some("UMSH TRACKER 1".into()),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: None,
+            nonce: Some(0x0000_0042), // leading zeros must survive
+            signature: None,
+        };
+        assert!(round_trip(&id));
+        // The wire form carries all four bytes even with leading zeros.
+        let mut buf = [0u8; 64];
+        let len = id.encode(&mut buf).unwrap();
+        let window = &buf[..len];
+        assert!(
+            window
+                .windows(4)
+                .any(|w| w == [0x00, 0x00, 0x00, 0x42]),
+            "nonce not fixed-width on the wire"
+        );
+        // A truncated nonce option is rejected, not minimally decoded.
+        let mut manual = [0u8; 8];
+        manual[0] = 0; // role
+        manual[1] = 0; // caps
+        // option 5, length 2 (invalid): delta 5 -> nibble 0x5, len 0x2
+        manual[2] = 0x52;
+        manual[3] = 0xAA;
+        manual[4] = 0xBB;
+        assert!(NodeIdentityPayload::from_bytes(&manual[..5]).is_err());
+    }
+
+    #[test]
+    fn encode_for_signing_matches_signed_wire_form() {
+        let id = NodeIdentityPayload {
+            role: NodeRole::Tracker,
+            capabilities: NodeCapabilities::empty(),
+            name: Some("advert".into()),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: None,
+            nonce: Some(0xDEAD_BEEF),
+            signature: None,
+        };
+        let mut buf = [0u8; 256];
+        let len = id.encode_for_signing(&mut buf).unwrap();
+        // The signed range ends with the options terminator.
+        assert_eq!(buf[len - 1], 0xFF);
+        // Appending a signature yields exactly the wire form `encode`
+        // produces for the same payload with `signature: Some(..)`.
+        buf[len..len + 64].copy_from_slice(&[0xA5; 64]);
+        let mut reference = [0u8; 256];
+        let mut signed = id.clone();
+        signed.signature = Some([0xA5; 64]);
+        let ref_len = signed.encode(&mut reference).unwrap();
+        assert_eq!(&buf[..len + 64], &reference[..ref_len]);
+        // And the composite parses back with the signature attached.
+        let parsed = NodeIdentityPayload::from_bytes(&buf[..len + 64]).unwrap();
+        assert_eq!(parsed, signed);
     }
 
     #[test]
@@ -310,6 +421,7 @@ mod tests {
             altitude_m: None,
             timestamp: Some(1_700_000_000),
             supported_regions: None,
+            nonce: None,
             signature: Some([0xAAu8; 64]),
         };
         assert!(round_trip(&id));

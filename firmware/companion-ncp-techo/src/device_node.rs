@@ -200,7 +200,10 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
             if applied.contains(key) {
                 continue;
             }
-            match node.join(&umsh_node::Channel::private(ChannelKey(*key), "")).await {
+            match node
+                .join(&umsh_node::Channel::private(ChannelKey(*key), ""))
+                .await
+            {
                 Ok(_) => {
                     let _ = applied.push(*key);
                     crate::firmware::debug_log(format_args!(
@@ -244,14 +247,16 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
 /// Why a beacon was requested. Carried through [`BEACON_TRIGGER`] so the
 /// send path never assumes a button: beacon-at-wake and periodic beacons
 /// (device-domain advertisement policy) are planned triggers.
-///
-/// Only the T-1000E wires a trigger source today; the T-Echo image
-/// carries the input surface unused.
 #[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "t1000e"), allow(dead_code))]
 pub enum BeaconTrigger {
-    /// The board's primary-action button slot.
+    /// The board's primary-action button slot (T-1000E only; the
+    /// T-Echo image carries the variant unused).
+    #[cfg_attr(not(feature = "t1000e"), allow(dead_code))]
     Button,
+    /// A peer's Advertisement Request MAC command. The response is a
+    /// solicited advertisement — a broadcast carrying the signed node
+    /// identity payload — echoing `nonce` when the request carried one.
+    Advertise { nonce: Option<u32> },
 }
 
 /// Beacon requests into the node. With the node dormant the queue is
@@ -260,9 +265,9 @@ pub enum BeaconTrigger {
 /// require for an unprovisioned device.
 pub static BEACON_TRIGGER: Channel<ThreadModeRawMutex, BeaconTrigger, 2> = Channel::new();
 
-/// Fire-and-forget beacon request. A full queue means a beacon is
-/// already pending, so dropping the extra request loses nothing.
-#[cfg_attr(not(feature = "t1000e"), allow(dead_code))]
+/// Fire-and-forget beacon request. A full queue means a beacon (or
+/// advertisement) is already pending, so dropping the extra request
+/// loses nothing — bursts of Advertisement Requests coalesce here.
 pub fn request_beacon(trigger: BeaconTrigger) {
     let _ = BEACON_TRIGGER.try_send(trigger);
 }
@@ -280,30 +285,102 @@ async fn node_pump_task(mut host: NcpNodeHost) {
     panic!("device node host exited");
 }
 
-/// Turns beacon triggers into `send_all` calls on the device identity.
-/// Confirmation feedback fires only when the MAC *accepts* the send —
-/// a refusal (queue full, future duty limiting) leaves the slot silent.
+/// Turns beacon triggers into node sends on the device identity: a
+/// plain beacon for the button slot, a signed solicited advertisement
+/// for an Advertisement Request. Confirmation feedback (button only)
+/// fires when the MAC *accepts* the send — a refusal (queue full, duty
+/// limiting) leaves the slot silent.
 #[embassy_executor::task]
-async fn node_beacon_task(node: NcpNode) {
+async fn node_beacon_task(node: NcpNode, identity: SoftwareIdentity) {
     use umsh_node::Transport as _;
     loop {
-        let _trigger = BEACON_TRIGGER.receive().await;
+        let trigger = BEACON_TRIGGER.receive().await;
         // A factory-cleared identity leaves the slot inert, exactly
         // like an unprovisioned one.
         if !NODE_ACTIVE.load(Ordering::Relaxed) {
             continue;
         }
-        let accepted = node.send_all(&[], &SendOptions::default()).await.is_ok();
-        #[cfg(feature = "t1000e")]
-        if accepted {
-            umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
-                .signal(umsh_ux_tracker::led::LedSequence::ActionConfirm);
-            umsh_bsp_t1000e::BUZZER_SIGNAL
-                .signal(&umsh_ux_tracker::buzzer::melodies::BEACON_ACK);
+        match trigger {
+            BeaconTrigger::Button => {
+                let accepted = node.send_all(&[], &SendOptions::default()).await.is_ok();
+                #[cfg(feature = "t1000e")]
+                if accepted {
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
+                        .signal(umsh_ux_tracker::led::LedSequence::ActionConfirm);
+                    umsh_bsp_t1000e::BUZZER_SIGNAL
+                        .signal(&umsh_ux_tracker::buzzer::melodies::BEACON_ACK);
+                }
+                #[cfg(not(feature = "t1000e"))]
+                let _ = accepted;
+            }
+            BeaconTrigger::Advertise { nonce } => {
+                let accepted = send_advertisement(&node, &identity, nonce).await;
+                crate::firmware::debug_log(format_args!(
+                    "node advert: nonce={nonce:?} accepted={accepted}"
+                ));
+            }
         }
-        #[cfg(not(feature = "t1000e"))]
-        let _ = accepted;
     }
+}
+
+/// Build, sign, and broadcast a solicited advertisement: the node
+/// identity payload (role, live device name, echoed nonce) with the
+/// standalone EdDSA signature the spec prefers for broadcasts, typed as
+/// a NodeIdentity payload.
+async fn send_advertisement(node: &NcpNode, identity: &SoftwareIdentity, nonce: Option<u32>) -> bool {
+    use umsh_crypto::NodeIdentity as _;
+    use umsh_node::Transport as _;
+    let name_bytes = crate::firmware::device_name_snapshot().await;
+    // Spec caps the Node Name identity option at 24 bytes.
+    let name = core::str::from_utf8(&name_bytes)
+        .ok()
+        .map(|name| truncate_utf8(name, 24))
+        .filter(|name| !name.is_empty())
+        .map(alloc::string::String::from);
+    let payload = umsh_node::NodeIdentityPayload {
+        role: umsh_node::NodeRole::Tracker,
+        capabilities: umsh_node::NodeCapabilities::empty(),
+        name,
+        location: None,
+        altitude_m: None,
+        timestamp: None,
+        supported_regions: None,
+        nonce,
+        signature: None,
+    };
+    // Payload-type byte + role/caps + name (≤26) + nonce (6) + 0xFF +
+    // 64-byte signature — 128 covers it with headroom.
+    let mut buf = [0u8; 128];
+    buf[0] = umsh_core::PayloadType::NodeIdentity as u8;
+    let Ok(body_len) = payload.encode_for_signing(&mut buf[1..]) else {
+        return false;
+    };
+    let mut len = 1 + body_len;
+    // The signature covers ROLE through the 0xFF terminator — the
+    // payload-type byte stays outside the signed range.
+    let Ok(signature) = identity.sign(&buf[1..len]).await else {
+        return false;
+    };
+    if buf.len() < len + 64 {
+        return false;
+    }
+    buf[len..len + 64].copy_from_slice(&signature);
+    len += 64;
+    node.send_all(&buf[..len], &SendOptions::default())
+        .await
+        .is_ok()
+}
+
+/// Trim to at most `max` bytes without splitting a UTF-8 sequence.
+fn truncate_utf8(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
@@ -352,7 +429,10 @@ pub async fn bring_up(
     // Seed the identity's TX frame counter from the persisted boundary
     // so secured sends can never reuse counter space from a previous
     // boot. With nothing persisted the random initial counter stands.
-    match MacHandle::new(mac_cell).load_persisted_counter(identity_id).await {
+    match MacHandle::new(mac_cell)
+        .load_persisted_counter(identity_id)
+        .await
+    {
         Ok(counter) => {
             crate::firmware::debug_log(format_args!("node bring-up: tx counter {counter}"))
         }
@@ -380,8 +460,25 @@ pub async fn bring_up(
         ));
         false
     }));
+    // Advertisement Request responder: the MAC command becomes a
+    // beacon-trigger input answered by the beacon task as a solicited
+    // advertisement. `try_send` (inside request_beacon) respects the
+    // no-MAC-reentry rule for pump callbacks; a full trigger queue
+    // coalesces request bursts, and the duty ledger bounds the airtime
+    // an abusive requester can extract.
+    core::mem::forget(node.on_mac_command(|from, command| {
+        if let umsh_node::OwnedMacCommand::AdvertisementRequest { nonce } = command {
+            crate::firmware::debug_log(format_args!(
+                "node advert-request: from {:02x}{:02x}.. nonce={:?}",
+                from.0[0], from.0[1], nonce
+            ));
+            request_beacon(BeaconTrigger::Advertise { nonce: *nonce });
+        }
+    }));
     crate::firmware::debug_log(format_args!("node bring-up: host ready"));
     spawner.spawn(node_pump_task(host).unwrap());
     spawner.spawn(node_dev_sync_task(node.clone(), MacHandle::new(mac_cell)).unwrap());
-    spawner.spawn(node_beacon_task(node).unwrap());
+    spawner.spawn(
+        node_beacon_task(node, SoftwareIdentity::from_secret_bytes(identity_secret)).unwrap(),
+    );
 }

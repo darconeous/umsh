@@ -11,7 +11,7 @@ Support for MAC commands is optional.
 
 | Value | Command | Direction |
 |---:|---|---|
-| 0 | Beacon Request | Request |
+| 0 | Advertisement Request | Request |
 | 1 | Identity Request | Request |
 | 2 | Signal Report Request | Request |
 | 3 | Signal Report Response | Response |
@@ -22,18 +22,21 @@ Support for MAC commands is optional.
 | 8 | End PFS Session | Either |
 | 9 | No-op | Request | 
 
-## Beacon Request (0)
+## Advertisement Request (0)
 
-Requests that the destination send back a beacon.
+Requests that the destination advertise itself. The response is an
+[advertisement](beacons.md#advertisements): a broadcast carrying the
+responder's [node identity](node-identity.md) payload.
 
 | Field | Size | Description |
 |---|---:|---|
-| Nonce | 0 or 4 bytes | If present, must be copied into the response beacon |
+| Nonce | 0 or 4 bytes | If present, MUST be copied into the response's [Nonce option](node-identity.md#nonce-option-5) |
 
-Beacon requests may be used for:
+Advertisement requests may be used for:
 
 - presence detection
-- frame-counter synchronization
+- identity and capability discovery
+- frame-counter synchronization (by observing the frame counter in a secured response, or by matching the nonce)
 
 ## Identity Request (1)
 

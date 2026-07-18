@@ -16,6 +16,17 @@ A beacon with a trace-route option can inform listeners of both:
 
 This is particularly useful when a receiver already knows the node's identity information.
 
+## Advertisements
+
+An **advertisement** is a broadcast or multicast packet whose payload is a
+[node identity](node-identity.md) payload — a beacon that additionally
+identifies and describes its sender. Advertisements may be sent
+unsolicited (announcing presence, name, role, and capabilities) or in
+response to an [Advertisement Request](mac-commands.md#advertisement-request-0)
+MAC command; a solicited advertisement echoes the request's nonce, when
+present, in the identity payload's
+[Nonce option](node-identity.md#nonce-option-5).
+
 ## Path Discovery
 
 UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:
