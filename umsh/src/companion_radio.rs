@@ -22,8 +22,9 @@ use tokio::time::Instant;
 use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
 use umsh_companion::battery::BatteryStatus;
-use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
+use umsh_companion::frame::{self, Cmd, Frame, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::hdlc;
+use umsh_companion::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
 use umsh_companion::ids::{self, cap, prop, stream};
 use umsh_companion::items;
 use umsh_companion::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
@@ -147,15 +148,7 @@ struct RxPacket {
 }
 
 /// Which NCP-to-host property command carried a payload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResponseKind {
-    /// `CMD_PROP_IS`
-    Is,
-    /// `CMD_PROP_INSERTED`
-    Inserted,
-    /// `CMD_PROP_REMOVED`
-    Removed,
-}
+type ResponseKind = PropertyNotificationKind;
 
 /// A property notification received with a non-zero TID (a command
 /// response).
@@ -873,7 +866,7 @@ pub struct CompanionRadio<L> {
     ncp_version: String,
     /// Hardware reset cause retained by the NCP before our protocol reset.
     boot_status: Status,
-    next_tid: u8,
+    tids: TidAllocator,
     /// Optional per-frame trace sink for both directions.
     trace: Option<FrameTrace>,
 }
@@ -894,7 +887,7 @@ where
             t_frame_ms: 0,
             ncp_version: String::new(),
             boot_status: Status::RESET_UNKNOWN,
-            next_tid: 1,
+            tids: TidAllocator::new(),
             trace: None,
         }
     }
@@ -1686,9 +1679,7 @@ where
     }
 
     fn alloc_tid(&mut self) -> u8 {
-        let tid = self.next_tid;
-        self.next_tid = if tid >= frame::TID_MAX { 1 } else { tid + 1 };
-        tid
+        self.tids.allocate()
     }
 
     /// Sort a complete companion frame into the receive queue, response queue,
@@ -1732,10 +1723,15 @@ where
     }
 
     fn ingest_prop_notification(&mut self, kind: ResponseKind, frame: &Frame<'_>) {
-        let Ok(payload) = PropPayload::parse(frame.payload) else {
+        let Ok(notification) = PropertyNotification::from_frame(frame) else {
             return;
         };
-        let tid = frame.header.tid();
+        // The caller dispatches from the parsed command; keep that assertion
+        // explicit so future command additions cannot be misclassified.
+        if notification.kind != kind {
+            return;
+        }
+        let tid = notification.tid;
         if tid != TID_UNSOLICITED {
             if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
                 self.responses.pop_front();
@@ -1743,15 +1739,15 @@ where
             self.responses.push_back(Response {
                 tid,
                 kind,
-                key: payload.key,
-                value: payload.value.to_vec(),
+                key: notification.key,
+                value: notification.value.to_vec(),
             });
             return;
         }
         // Unsolicited `PROP_LAST_STATUS` is a reset notice or an
         // operation status, not a property update to retain.
-        if kind == ResponseKind::Is && payload.key == prop::LAST_STATUS {
-            let status = decode_status(payload.value);
+        if kind == ResponseKind::Is && notification.key == prop::LAST_STATUS {
+            let status = decode_status(notification.value);
             if status.is_reset() {
                 self.seen_reset = Some(status);
             }
@@ -1759,16 +1755,16 @@ where
         }
         let event = match kind {
             ResponseKind::Is => PropEvent::Is {
-                key: payload.key,
-                value: payload.value.to_vec(),
+                key: notification.key,
+                value: notification.value.to_vec(),
             },
             ResponseKind::Inserted => PropEvent::Inserted {
-                key: payload.key,
-                digest: payload.value.to_vec(),
+                key: notification.key,
+                digest: notification.value.to_vec(),
             },
             ResponseKind::Removed => PropEvent::Removed {
-                key: payload.key,
-                digest: payload.value.to_vec(),
+                key: notification.key,
+                digest: notification.value.to_vec(),
             },
         };
         if self.prop_events.len() >= PROP_EVENT_DEPTH {
@@ -2070,6 +2066,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use tokio::io::{AsyncReadExt, DuplexStream};
+    use umsh_companion::PropPayload;
     use umsh_companion::meta::{BufferedRxMeta, RX_FLAG_BUFFERED};
 
     /// Payload that makes the fake NCP report a CCA failure.

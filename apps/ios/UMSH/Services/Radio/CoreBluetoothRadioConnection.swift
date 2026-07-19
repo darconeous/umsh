@@ -28,6 +28,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var frameOut: CBCharacteristic?
     private var snapshot = RadioSnapshot.idle
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
+    private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var scanRequested = false
     private var scanAttempt = UUID()
     private var autoConnectRequested = false
@@ -57,6 +58,23 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     continuation.onTermination = { [weak self] _ in
                         self?.bluetoothQueue.async { [weak self] in
                             self?.continuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func receivedFrames() async -> AsyncStream<RadioReceivedFrame> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                let stream = AsyncStream { continuation in
+                    let id = UUID()
+                    frameContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.frameContinuations[id] = nil
                         }
                     }
                 }
@@ -433,6 +451,21 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             )
         }
         snapshot.problemDescription = nil
+
+        for received in update.receivedFrames {
+            let frame = RadioReceivedFrame(
+                data: received.data,
+                rssiDBm: received.rssiDbm.map(Int.init),
+                linkQuality: received.lqi,
+                signalToNoiseCentibels: received.snrCb.map(Int.init),
+                wasBuffered: received.wasBuffered,
+                wasAcknowledgedByRadio: received.wasAcknowledged,
+                ageSeconds: received.ageSeconds
+            )
+            for continuation in frameContinuations.values {
+                continuation.yield(frame)
+            }
+        }
 
         for frame in update.outboundFrames {
             try enqueue(frame: frame, on: peripheral)

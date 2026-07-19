@@ -16,8 +16,10 @@ capability-gated reads, host ownership, claim/save choreography, companion
 frame encoding and validation, GATT SAR segmentation and bounded reassembly,
 raw device-key canonicalization, and battery-value decoding. Swift passes
 complete ATT values into one opaque session object and receives outbound frames
-plus immutable typed snapshots; feature views never retain CoreBluetooth or
-generated types.
+plus immutable typed snapshots and validated raw receive events; feature views
+never retain CoreBluetooth or generated types. The desktop and mobile hosts use
+the same `umsh-companion` transaction-ID allocator and property-notification
+classifier even though their transport orchestration remains platform-specific.
 
 CoreBluetooth runs on a dedicated serial queue. Only immutable
 `RadioSnapshot` values cross back to the main actor, so GATT notification
@@ -55,9 +57,12 @@ advertising data or a preview fixture.
    exposes radio-held channel or peer key material.
 
 The attached state means transport, ownership, and read-only state inspection
-are complete. It does not yet mean mesh message ingestion is active. In
-particular, the app reports queue depth but deliberately does not drain queued
-traffic until persistent inbound-message ingestion is implemented.
+are complete. Live `STR_PHY_RAW` receive frames are validated in Rust and
+published through a dedicated Swift `AsyncStream`, including radio metadata,
+buffered-delivery age, and delegated-ack state. Mesh authentication, text
+reassembly, and persistent inbound-message ingestion are not yet connected to
+that stream. The app reports offline queue depth but deliberately does not drain
+queued traffic until those fail-closed consumers are implemented.
 
 ## Remaining evidence gate
 

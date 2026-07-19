@@ -17,10 +17,10 @@ mod counter_store;
 
 pub use companion::{
     CompanionBatteryRecord, CompanionHostOwnership, CompanionPropertyFrameRecord,
-    CompanionSessionPhase, CompanionSessionSnapshotRecord, CompanionSessionUpdateRecord,
-    CompanionSyncRecord, GattSegmentRecord, MobileCompanionSession, MobileGattReassembler,
-    companion_gatt_segments, companion_inspection_properties, companion_prop_get,
-    companion_prop_set, companion_save, inspect_companion_battery,
+    CompanionReceivedFrameRecord, CompanionSessionPhase, CompanionSessionSnapshotRecord,
+    CompanionSessionUpdateRecord, CompanionSyncRecord, GattSegmentRecord, MobileCompanionSession,
+    MobileGattReassembler, companion_gatt_segments, companion_inspection_properties,
+    companion_prop_get, companion_prop_set, companion_save, inspect_companion_battery,
     inspect_companion_property_frame, inspect_companion_status, inspect_companion_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
@@ -31,7 +31,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 8;
+pub const MOBILE_API_VERSION: u16 = 9;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
