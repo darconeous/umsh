@@ -143,6 +143,10 @@ struct RadioDetailView: View {
                     Text("Radio state inspection is complete. Queued traffic has not been drained because message ingestion is not implemented yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if snapshot.linkState == .configuring {
+                    Text("Applying radio settings, verifying the echoed values, and saving them on the radio.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else if snapshot.hostState == .localIdentityUnavailable {
                     Text("Create or unlock the phone identity before configuring this radio.")
                         .font(.caption)
@@ -150,6 +154,25 @@ struct RadioDetailView: View {
                 } else if snapshot.hostState == .belongsToAnotherIdentity {
                     Text("This radio belongs to another host. Replacing it clears that host's keys, filters, queued traffic, and saved host provisioning.")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("Configuration") {
+                if let provisioning = snapshot.provisioning, canEditConfiguration {
+                    NavigationLink {
+                        RadioSettingsEditor(
+                            radioName: snapshot.name,
+                            provisioning: provisioning,
+                            configure: configure
+                        )
+                    } label: {
+                        Label("Edit Device & PHY Settings", systemImage: "slider.horizontal.3")
+                    }
+                    Text("Device name, frequency, transmit power, bandwidth, spreading factor, and coding rate are shown when supported by this radio.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label(configurationUnavailableReason, systemImage: "lock")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -184,14 +207,6 @@ struct RadioDetailView: View {
                     if let saved = provisioning.saved {
                         LabeledContent("Saved for restart", value: saved ? "Yes" : "No")
                     }
-                    NavigationLink("Edit radio settings") {
-                        RadioSettingsEditor(
-                            radioName: snapshot.name,
-                            provisioning: provisioning,
-                            configure: configure
-                        )
-                    }
-                    .disabled(snapshot.linkState != .attached && snapshot.linkState != .ready)
                 }
 
                 if provisioning.hasHostFiltering {
@@ -259,6 +274,24 @@ struct RadioDetailView: View {
         } message: {
             Text("The previous host's keys, filters, queued traffic, and saved host provisioning will be permanently erased. The radio's own identity and device settings remain unchanged.")
         }
+    }
+
+    private var canEditConfiguration: Bool {
+        (snapshot.linkState == .attached || snapshot.linkState == .ready)
+            && (snapshot.hostState == .matchesCurrentIdentity || snapshot.hostState == .unsupported)
+    }
+
+    private var configurationUnavailableReason: String {
+        if snapshot.linkState == .configuring {
+            return "Radio settings are currently being applied"
+        }
+        if snapshot.hostState == .unclaimed || snapshot.hostState == .belongsToAnotherIdentity {
+            return "Set up this radio for the current phone before editing settings"
+        }
+        if snapshot.provisioning == nil {
+            return "Finish connecting and reading the radio's current settings first"
+        }
+        return "Connect the companion radio to edit its settings"
     }
 
     @ViewBuilder
