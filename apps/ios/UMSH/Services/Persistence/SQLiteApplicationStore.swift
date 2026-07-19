@@ -16,6 +16,7 @@ struct StoredNode: Equatable, Sendable {
     let advertisedName: String?
     let isContact: Bool
     let systemRole: String?
+    let nodeKind: String?
 }
 
 struct NewStoredNode: Equatable, Sendable {
@@ -34,7 +35,7 @@ struct StoredDirectConversation: Equatable, Sendable {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 2
+    static let currentSchemaVersion: Int32 = 3
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -175,6 +176,7 @@ actor SQLiteApplicationStore {
         alias: String?,
         advertisedName: String? = nil,
         isContact: Bool,
+        nodeKind: String? = nil,
         systemRole: String? = nil,
         radioIdentifier: String? = nil
     ) throws {
@@ -182,8 +184,8 @@ actor SQLiteApplicationStore {
             """
             INSERT INTO node (
                 owner_identity_id, public_address, alias, alias_search,
-                advertised_name, is_contact, system_role, radio_identifier
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                advertised_name, is_contact, system_role, radio_identifier, node_kind
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
                 alias = COALESCE(excluded.alias, node.alias),
                 alias_search = CASE WHEN excluded.alias IS NULL
@@ -191,7 +193,8 @@ actor SQLiteApplicationStore {
                 advertised_name = COALESCE(excluded.advertised_name, node.advertised_name),
                 is_contact = MAX(node.is_contact, excluded.is_contact),
                 system_role = COALESCE(excluded.system_role, node.system_role),
-                radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier)
+                radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier),
+                node_kind = COALESCE(excluded.node_kind, node.node_kind)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -203,6 +206,7 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int(statement, 6, isContact ? 1 : 0))
         try bindOptional(systemRole, to: statement, at: 7)
         try bindOptional(radioIdentifier, to: statement, at: 8)
+        try bindOptional(nodeKind, to: statement, at: 9)
         try stepDone(statement)
     }
 
@@ -240,7 +244,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role
+                   is_contact, system_role, node_kind
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
                      alias_search, id
@@ -288,7 +292,8 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
-                   n.advertised_name, n.is_contact, n.system_role, c.draft_text
+                   n.advertised_name, n.is_contact, n.system_role, n.node_kind,
+                   c.draft_text
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
@@ -303,7 +308,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 8)
+                        draftText: Self.stringColumn(statement, at: 9)
                     )
                 )
             case SQLITE_DONE:
@@ -342,7 +347,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role
+                   is_contact, system_role, node_kind
             FROM node
             WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
             ORDER BY alias_search, id
@@ -423,7 +428,8 @@ actor SQLiteApplicationStore {
             alias: Self.optionalStringColumn(statement, at: offset + 3),
             advertisedName: Self.optionalStringColumn(statement, at: offset + 4),
             isContact: sqlite3_column_int(statement, offset + 5) != 0,
-            systemRole: Self.optionalStringColumn(statement, at: offset + 6)
+            systemRole: Self.optionalStringColumn(statement, at: offset + 6),
+            nodeKind: Self.optionalStringColumn(statement, at: offset + 7)
         )
     }
 
@@ -542,6 +548,24 @@ actor SQLiteApplicationStore {
                     );
 
                     PRAGMA user_version = 2;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+
+        if version < 3 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node ADD COLUMN node_kind TEXT;
+                    PRAGMA user_version = 3;
                     """
                 )
                 try execute(database, sql: "COMMIT")

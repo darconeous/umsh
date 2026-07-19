@@ -26,7 +26,7 @@ struct AppRootView: View {
                 ConversationsView(
                     conversations: conversations,
                     radioSnapshot: radioSnapshot,
-                    inspectNodeURI: inspectNodeURI,
+                    inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
                     updateDraft: updateDraft
                 )
@@ -40,7 +40,14 @@ struct AppRootView: View {
             .tag(AppTab.conversations)
 
             NavigationStack {
-                NetworkView(radioSnapshot: $radioSnapshot, peers: peers)
+                NetworkView(
+                    radioSnapshot: $radioSnapshot,
+                    peers: peers,
+                    inspectPeerIdentity: inspectPeerIdentity,
+                    savePeer: { identity, details in
+                        _ = await savePeer(identity, details: details, startConversation: false)
+                    }
+                )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
                     }
@@ -59,6 +66,7 @@ struct AppRootView: View {
                     radioSnapshot: $radioSnapshot,
                     connectRadio: connectRadio,
                     claimRadio: claimRadio,
+                    configureRadio: configureRadio,
                     disconnectRadio: disconnectRadio
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -76,6 +84,7 @@ struct AppRootView: View {
                     snapshot: $radioSnapshot,
                     connect: connectRadio,
                     claim: claimRadio,
+                    configure: configureRadio,
                     disconnect: disconnectRadio
                 )
             }
@@ -148,9 +157,13 @@ struct AppRootView: View {
         }
     }
 
-    private func inspectNodeURI(_ uri: String) async -> Result<MeshNodeURIPreview, MeshEngineError> {
+    private func configureRadio(_ settings: RadioSettings) async throws {
+        try await radioConnection.configure(settings)
+    }
+
+    private func inspectPeerIdentity(_ input: String) async -> Result<MeshNodeURIPreview, MeshEngineError> {
         do {
-            return .success(try await peerMeshEngine.inspectNodeURI(uri))
+            return .success(try await peerMeshEngine.inspectPeerIdentity(input))
         } catch let error as MeshEngineError {
             return .failure(error)
         } catch {
@@ -160,6 +173,7 @@ struct AppRootView: View {
 
     private func savePeer(
         _ identity: MeshPublicIdentity,
+        details: PeerImportDetails,
         startConversation: Bool
     ) async -> DirectConversationSummary? {
         guard let applicationStore, let localIdentity else { return nil }
@@ -167,8 +181,9 @@ struct AppRootView: View {
             try await applicationStore.upsertPeer(
                 ownerIdentityID: localIdentity.id,
                 publicAddress: identity.canonicalAddress,
-                alias: nil,
-                isContact: !startConversation
+                alias: details.alias,
+                isContact: details.isContact,
+                nodeKind: details.kind.rawValue
             )
             if startConversation {
                 _ = try await applicationStore.ensureDirectConversation(
@@ -251,7 +266,8 @@ struct AppRootView: View {
                     alias: stored.alias,
                     advertisedName: stored.advertisedName,
                     isContact: stored.isContact,
-                    systemRole: stored.systemRole
+                    systemRole: stored.systemRole,
+                    kind: stored.nodeKind.flatMap(PeerKind.init(rawValue:)) ?? .unknown
                 )
             }
             let storedConversations = try await applicationStore.listDirectConversations(

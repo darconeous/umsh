@@ -702,9 +702,12 @@ must not change the avatar fill or place a badge over the hint characters.
 
 ### Direct messaging and peers
 
-- node URI scan/paste/open/share;
+- node URI scan/paste/open/share, plus canonical Base58 and 32-byte hexadecimal
+  public-key paste; all forms canonicalize in Rust before local metadata is
+  saved;
 - contact and observed-node storage;
-- deterministic avatars and mnemonic aliases;
+- deterministic avatars, mnemonic aliases, and explicitly local node-kind
+  classification;
 - Message Requests for unknown authenticated senders;
 - direct transcript, drafts, immediate send with manual retry, fragmentation,
   reply/reaction/edit, and honest acknowledgement state;

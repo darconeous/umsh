@@ -49,12 +49,18 @@ advertising data or a preview fixture.
    state the protocol atomically erases. The echoed `PROP_HOST_KEY` must exactly
    match the requested key before replacement is accepted as successful.
 8. Derive the post-attach read set from the validated capability list. Always
-   inspect interface type, PHY enabled state, and frequency; inspect saved state,
+   inspect interface type, PHY enabled state, frequency, and transmit power;
+   inspect LoRa bandwidth, spreading factor, and coding rate when advertised;
+   inspect saved state,
    host filters, host key digests, offline-queue counters, and delegated ACK state
    only when their capability dependencies are present.
 9. Reduce the complete response set in Rust before publishing **attached**. The
    Swift snapshot contains only operational values and digest counts; it never
    exposes radio-held channel or peer key material.
+10. Apply operator-edited device name and PHY settings through the same Rust
+    session. Each `PROP_SET` must receive an exact authoritative echo; when
+    `CAP_SAVE` is present, the session returns to **attached** only after
+    `CMD_SAVE` succeeds.
 
 The attached state means transport, ownership, and read-only state inspection
 are complete. Live `STR_PHY_RAW` receive frames are validated in Rust and

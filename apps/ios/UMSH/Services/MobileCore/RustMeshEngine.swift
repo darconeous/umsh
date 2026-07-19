@@ -45,6 +45,23 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
+        do {
+            let record = try UMSHMobileCore.inspectPeerIdentity(input: input)
+            return MeshNodeURIPreview(
+                publicIdentity: MeshPublicIdentity(
+                    canonicalAddress: record.canonicalAddress,
+                    hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
+                ),
+                hasIdentityData: record.hasIdentityData
+            )
+        } catch is MobileError {
+            throw MeshEngineError.invalidAddress
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity {
         do {
             let identity = try MobileIdentity.unlock(secretKey: secretKey)

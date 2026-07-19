@@ -25,5 +25,6 @@ protocol MeshEngine: Actor {
     func renderNodeHint(_ bytes: Data) throws -> MeshNodeHint
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity
     func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview
+    func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity
 }

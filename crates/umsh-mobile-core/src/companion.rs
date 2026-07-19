@@ -45,8 +45,14 @@ pub struct CompanionSyncRecord {
     pub has_host_filtering: bool,
     pub supports_offline_queue: bool,
     pub supports_delegated_ack: bool,
+    pub supports_device_name: bool,
+    pub supports_lora: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
+    pub transmit_power_dbm: i8,
+    pub bandwidth_hz: Option<u32>,
+    pub spreading_factor: Option<u8>,
+    pub coding_rate_denom: Option<u8>,
     pub saved: Option<bool>,
     pub queued_frames: Option<u16>,
     pub dropped_frames: Option<u32>,
@@ -64,7 +70,20 @@ pub enum CompanionSessionPhase {
     Synchronizing,
     AwaitingHost,
     Claiming,
+    Configuring,
     Attached,
+}
+
+/// Complete desired live radio configuration. Capability-gated fields must be
+/// omitted when the companion does not advertise their associated capability.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionRadioSettingsRecord {
+    pub device_name: Option<String>,
+    pub frequency_khz: u32,
+    pub transmit_power_dbm: i8,
+    pub bandwidth_hz: Option<u32>,
+    pub spreading_factor: Option<u8>,
+    pub coding_rate_denom: Option<u8>,
 }
 
 /// Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
@@ -120,15 +139,19 @@ enum SessionStage {
     Inspection,
     Claiming,
     Saving,
+    Configuring,
+    SavingConfiguration,
     AwaitingHost,
     Attached,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ExpectedResponse {
     Property(u32),
     Claim,
     Save,
+    ConfigurationProperty(u32, Vec<u8>),
+    SaveConfiguration,
 }
 
 struct CompanionSessionState {
@@ -245,6 +268,54 @@ impl MobileCompanionSession {
         Ok(state.update(vec![frame]))
     }
 
+    /// Apply, verify, and persist a complete radio-settings snapshot.
+    pub fn configure(
+        &self,
+        settings: CompanionRadioSettingsRecord,
+    ) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        if state.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidCompanionFrame);
+        }
+        validate_radio_settings(&settings, &state)?;
+
+        state.stage = SessionStage::Configuring;
+        state.expected.clear();
+        let mut values = Vec::new();
+        if let Some(name) = settings.device_name {
+            values.push((prop::DEV_NAME, name.into_bytes()));
+        }
+        values.extend([
+            (
+                prop::PHY_FREQ,
+                settings.frequency_khz.to_le_bytes().to_vec(),
+            ),
+            (prop::PHY_TX_POWER, vec![settings.transmit_power_dbm as u8]),
+        ]);
+        if let (Some(bandwidth), Some(sf), Some(cr)) = (
+            settings.bandwidth_hz,
+            settings.spreading_factor,
+            settings.coding_rate_denom,
+        ) {
+            values.extend([
+                (prop::PHY_LORA_BW, bandwidth.to_le_bytes().to_vec()),
+                (prop::PHY_LORA_SF, vec![sf]),
+                (prop::PHY_LORA_CR, vec![cr]),
+            ]);
+        }
+
+        let mut outbound = Vec::with_capacity(values.len());
+        for (property, value) in values {
+            let tid = state.allocate_tid();
+            state.expected.insert(
+                tid,
+                ExpectedResponse::ConfigurationProperty(property, value.clone()),
+            );
+            outbound.push(companion_prop_set(tid, property, value)?);
+        }
+        Ok(state.update(outbound))
+    }
+
     /// Consume one complete companion frame and advance the session reducer.
     pub fn consume(&self, frame: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
         let parsed = Frame::parse(&frame).map_err(|_| MobileError::InvalidCompanionFrame)?;
@@ -346,6 +417,25 @@ impl MobileCompanionSession {
                 }
                 state.start_inspection(&mut outbound)?;
             }
+            ExpectedResponse::ConfigurationProperty(property, expected_value) => {
+                if response.property_id != property
+                    || response.command != Cmd::PropIs as u8
+                    || response.value != expected_value
+                {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                state.responses.insert(property, response.clone());
+                state.apply_property(&response)?;
+            }
+            ExpectedResponse::SaveConfiguration => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                    || inspect_companion_status(response.value)? != 0
+                {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                state.finish_configuration()?;
+            }
         }
 
         if state.expected.is_empty() {
@@ -386,6 +476,9 @@ impl CompanionSessionState {
             }
             SessionStage::AwaitingHost => CompanionSessionPhase::AwaitingHost,
             SessionStage::Claiming => CompanionSessionPhase::Claiming,
+            SessionStage::Configuring | SessionStage::SavingConfiguration => {
+                CompanionSessionPhase::Configuring
+            }
             SessionStage::Attached => CompanionSessionPhase::Attached,
         }
     }
@@ -513,12 +606,31 @@ impl CompanionSessionState {
                 }
             }
             SessionStage::Inspection => self.start_inspection(outbound)?,
+            SessionStage::Configuring => {
+                if self.has_capability(cap::SAVE)? {
+                    self.stage = SessionStage::SavingConfiguration;
+                    let tid = self.allocate_tid();
+                    self.expected
+                        .insert(tid, ExpectedResponse::SaveConfiguration);
+                    outbound.push(companion_save(tid)?);
+                } else {
+                    self.finish_configuration()?;
+                }
+            }
             SessionStage::Claiming
             | SessionStage::Saving
             | SessionStage::AwaitingHost
             | SessionStage::Attached
+            | SessionStage::SavingConfiguration
             | SessionStage::Idle => {}
         }
+        Ok(())
+    }
+
+    fn finish_configuration(&mut self) -> Result<(), MobileError> {
+        let responses = self.responses.values().cloned().collect();
+        self.provisioning = Some(inspect_companion_sync(responses)?);
+        self.stage = SessionStage::Attached;
         Ok(())
     }
 
@@ -563,7 +675,15 @@ pub fn companion_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>
     validate_capability_dependencies(&capabilities)?;
     let has = |capability| capabilities.contains(&capability);
 
-    let mut properties = vec![prop::INTERFACE_TYPE, prop::PHY_ENABLED, prop::PHY_FREQ];
+    let mut properties = vec![
+        prop::INTERFACE_TYPE,
+        prop::PHY_ENABLED,
+        prop::PHY_FREQ,
+        prop::PHY_TX_POWER,
+    ];
+    if has(cap::PHY_LORA) {
+        properties.extend([prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR]);
+    }
     if has(cap::SAVE) {
         properties.push(prop::SAVED);
     }
@@ -599,6 +719,16 @@ pub fn inspect_companion_sync(
     }
     let phy_enabled = decode_bool(value(prop::PHY_ENABLED)?)?;
     let frequency_khz = decode_u32(value(prop::PHY_FREQ)?)?;
+    let transmit_power_dbm = decode_i8(value(prop::PHY_TX_POWER)?)?;
+    let bandwidth_hz = has(cap::PHY_LORA)
+        .then(|| decode_u32(value(prop::PHY_LORA_BW)?))
+        .transpose()?;
+    let spreading_factor = has(cap::PHY_LORA)
+        .then(|| decode_u8(value(prop::PHY_LORA_SF)?))
+        .transpose()?;
+    let coding_rate_denom = has(cap::PHY_LORA)
+        .then(|| decode_u8(value(prop::PHY_LORA_CR)?))
+        .transpose()?;
     let saved = has(cap::SAVE)
         .then(|| decode_bool(value(prop::SAVED)?))
         .transpose()?;
@@ -629,8 +759,14 @@ pub fn inspect_companion_sync(
         has_host_filtering: has(cap::HOST_FILTER),
         supports_offline_queue: has(cap::HOST_RX_QUEUE),
         supports_delegated_ack: has(cap::HOST_AUTO_ACK),
+        supports_device_name: has(cap::DEV_NAME),
+        supports_lora: has(cap::PHY_LORA),
         phy_enabled,
         frequency_khz,
+        transmit_power_dbm,
+        bandwidth_hz,
+        spreading_factor,
+        coding_rate_denom,
         saved,
         queued_frames,
         dropped_frames,
@@ -701,6 +837,51 @@ fn decode_u16(value: &[u8]) -> Result<u16, MobileError> {
         .try_into()
         .map(u16::from_le_bytes)
         .map_err(|_| MobileError::InvalidCompanionFrame)
+}
+
+fn decode_u8(value: &[u8]) -> Result<u8, MobileError> {
+    value
+        .first()
+        .copied()
+        .filter(|_| value.len() == 1)
+        .ok_or(MobileError::InvalidCompanionFrame)
+}
+
+fn decode_i8(value: &[u8]) -> Result<i8, MobileError> {
+    decode_u8(value).map(|value| value as i8)
+}
+
+fn validate_radio_settings(
+    settings: &CompanionRadioSettingsRecord,
+    state: &CompanionSessionState,
+) -> Result<(), MobileError> {
+    if settings.frequency_khz == 0 {
+        return Err(MobileError::InvalidCompanionFrame);
+    }
+    if let Some(name) = &settings.device_name {
+        if !state.has_capability(cap::DEV_NAME)?
+            || name.is_empty()
+            || name.len() > 64
+            || name.as_bytes().contains(&0)
+        {
+            return Err(MobileError::InvalidCompanionFrame);
+        }
+    }
+    let lora = (
+        settings.bandwidth_hz,
+        settings.spreading_factor,
+        settings.coding_rate_denom,
+    );
+    match lora {
+        (None, None, None) if !state.has_capability(cap::PHY_LORA)? => {}
+        (Some(bandwidth), Some(sf), Some(cr))
+            if state.has_capability(cap::PHY_LORA)?
+                && bandwidth > 0
+                && (5..=12).contains(&sf)
+                && (5..=8).contains(&cr) => {}
+        _ => return Err(MobileError::InvalidCompanionFrame),
+    }
+    Ok(())
 }
 
 fn decode_u32(value: &[u8]) -> Result<u32, MobileError> {
@@ -882,6 +1063,16 @@ mod tests {
         }
     }
 
+    fn encoded_capabilities(values: &[u32]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        for value in values {
+            let mut bytes = [0; pui::MAX_LEN];
+            let len = pui::encode(*value, &mut bytes).unwrap();
+            encoded.extend_from_slice(&bytes[..len]);
+        }
+        encoded
+    }
+
     fn property_request(bytes: &[u8]) -> (u8, u32) {
         let parsed = Frame::parse(bytes).unwrap();
         assert_eq!(parsed.command(), Some(Cmd::PropGet));
@@ -1008,17 +1199,24 @@ mod tests {
     fn minimal_inspection_is_small_and_validated() {
         assert_eq!(
             companion_inspection_properties(vec![cap::WRITABLE_RAW_STREAM as u8]).unwrap(),
-            [prop::INTERFACE_TYPE, prop::PHY_ENABLED, prop::PHY_FREQ]
+            [
+                prop::INTERFACE_TYPE,
+                prop::PHY_ENABLED,
+                prop::PHY_FREQ,
+                prop::PHY_TX_POWER,
+            ]
         );
         let sync = inspect_companion_sync(vec![
             response(prop::CAPS, &[cap::WRITABLE_RAW_STREAM as u8]),
             response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
             response(prop::PHY_ENABLED, &[1]),
             response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[14]),
         ])
         .unwrap();
         assert!(sync.phy_enabled);
         assert_eq!(sync.frequency_khz, 915_000);
+        assert_eq!(sync.transmit_power_dbm, 14);
         assert!(!sync.has_host_filtering);
         assert_eq!(sync.queued_frames, None);
     }
@@ -1038,6 +1236,7 @@ mod tests {
             response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
             response(prop::PHY_ENABLED, &[1]),
             response(prop::PHY_FREQ, &868_100u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[22]),
             response(prop::SAVED, &[1]),
             response(prop::HOST_RX_FILTERS, &[]),
             response(prop::HOST_CHANNEL_KEYS, &[1, 2, 3, 4]),
@@ -1099,7 +1298,7 @@ mod tests {
                 prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
                 _ => unreachable!(),
             });
-        assert_eq!(inspection.outbound_frames.len(), 3);
+        assert_eq!(inspection.outbound_frames.len(), 4);
         assert_eq!(
             inspection.snapshot.host_ownership,
             CompanionHostOwnership::Unsupported
@@ -1113,6 +1312,7 @@ mod tests {
                     prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
                     _ => unreachable!(),
                 },
             );
@@ -1175,7 +1375,7 @@ mod tests {
                 &[0],
             ))
             .unwrap();
-        assert_eq!(inspection.outbound_frames.len(), 5);
+        assert_eq!(inspection.outbound_frames.len(), 6);
         let attached =
             answer_requests(
                 &session,
@@ -1184,6 +1384,7 @@ mod tests {
                     prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 868_100u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
                     prop::SAVED => (property, vec![1]),
                     prop::HOST_RX_FILTERS => (property, Vec::new()),
                     _ => unreachable!(),
@@ -1266,5 +1467,101 @@ mod tests {
         );
         assert!(update.outbound_frames.is_empty());
         assert!(update.waiting_for_responses);
+    }
+
+    #[test]
+    fn mobile_session_verifies_radio_configuration_then_saves() {
+        let session = MobileCompanionSession::new();
+        let begin = session.begin(None).unwrap();
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (
+                    property,
+                    encoded_capabilities(&[cap::SAVE, cap::DEV_NAME, cap::PHY_LORA]),
+                ),
+                prop::DEV_NAME => (property, b"Old name".to_vec()),
+                prop::DEV_KEY | prop::BATTERY => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        let partial =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_LORA_BW => (property, 125_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_LORA_SF => (property, vec![9]),
+                    prop::PHY_LORA_CR => (property, vec![5]),
+                    _ => unreachable!(),
+                },
+            );
+        let attached = answer_requests(
+            &session,
+            partial.outbound_frames,
+            |property| match property {
+                prop::SAVED => (property, vec![1]),
+                _ => unreachable!(),
+            },
+        );
+        assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
+
+        let configured = session
+            .configure(CompanionRadioSettingsRecord {
+                device_name: Some("Trail radio".into()),
+                frequency_khz: 868_100,
+                transmit_power_dbm: 20,
+                bandwidth_hz: Some(250_000),
+                spreading_factor: Some(10),
+                coding_rate_denom: Some(6),
+            })
+            .unwrap();
+        assert_eq!(
+            configured.snapshot.phase,
+            CompanionSessionPhase::Configuring
+        );
+
+        let mut saving = None;
+        for request in configured.outbound_frames {
+            let parsed = Frame::parse(&request).unwrap();
+            assert_eq!(parsed.command(), Some(Cmd::PropSet));
+            let payload = PropPayload::parse(parsed.payload).unwrap();
+            saving = Some(
+                session
+                    .consume(property_response(
+                        parsed.header.tid(),
+                        payload.key,
+                        payload.value,
+                    ))
+                    .unwrap(),
+            );
+        }
+        let saving = saving.unwrap();
+        assert_eq!(saving.outbound_frames.len(), 1);
+        let save = Frame::parse(&saving.outbound_frames[0]).unwrap();
+        assert_eq!(save.command(), Some(Cmd::Save));
+        let attached = session
+            .consume(property_response(
+                save.header.tid(),
+                prop::LAST_STATUS,
+                &[0],
+            ))
+            .unwrap();
+        assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.device_name.as_deref(),
+            Some("Trail radio")
+        );
+        let provisioning = attached.snapshot.provisioning.unwrap();
+        assert_eq!(provisioning.frequency_khz, 868_100);
+        assert_eq!(provisioning.transmit_power_dbm, 20);
+        assert_eq!(provisioning.bandwidth_hz, Some(250_000));
+        assert_eq!(provisioning.spreading_factor, Some(10));
+        assert_eq!(provisioning.coding_rate_denom, Some(6));
     }
 }
