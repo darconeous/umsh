@@ -195,6 +195,20 @@ impl<M: MacBackend> Host<M> {
             self.handle_pfs_command(identity_id, from, command).await;
         }
 
+        self.service_protocol_timeouts().await;
+
+        Ok(())
+    }
+
+    /// Service node-layer deadlines independently of MAC/radio wake events.
+    ///
+    /// A quiet radio is not a MAC wake source, so applications that multiplex
+    /// [`pump_once`](Self::pump_once) with other work must also call this from
+    /// their own timer. In particular, ping and PFS request timeouts must fire
+    /// even when the remote peer sends no response at all.
+    pub async fn service_protocol_timeouts(&mut self) {
+        let now_ms = self.mac.now_ms().await;
+
         #[cfg(feature = "software-crypto")]
         for (_, node) in &self.nodes {
             if let Ok(expired) = node.expire_pfs_sessions().await {
@@ -212,8 +226,6 @@ impl<M: MacBackend> Host<M> {
         for (_, node) in &self.nodes {
             node.expire_pings(now_ms);
         }
-
-        Ok(())
     }
 
     /// Run the shared MAC/Host loop forever.
