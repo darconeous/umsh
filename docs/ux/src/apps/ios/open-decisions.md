@@ -23,22 +23,25 @@ design than implicit synchronization with undefined concurrency.
 
 ## Identity export and restore format
 
-The onboarding restore path and the recovery export both depend on a defined
-protected identity export artifact. Define:
+The onboarding restore path and the recovery export depend on the protected
+identity export artifact drafted in the protocol specification's Identity
+Export Format appendix (`docs/protocol/src/identity-export.md`). The draft
+defines the envelope, passphrase key derivation, payload sections, the
+counter advance rule, and QR part framing. Remaining product decisions:
 
-- its contents: private key, display metadata, creation record, and whatever
-  counter high-water or epoch information restore requires;
-- its protection: passphrase-derived wrapping with an explicit work factor,
-  and whether anything weaker than a passphrase is ever acceptable;
-- its representation: file, multi-part QR set, or both, and how partial or
-  corrupted artifacts fail;
-- the restore-epoch rule: how a restored identity provably advances its frame
-  counters past any value the exporting installation could have used; and
-- where the artifact may live (Files, iCloud Drive, printed QR) and what the
-  UX must say about each location's safety.
+- adopt the draft (or amend it) and validate it with cross-platform test
+  vectors before any entry becomes visible;
+- passphrase UX policy: strength guidance, whether to refuse weak
+  passphrases outright, and how the "passphrase is the floor" warning is
+  worded;
+- which storage destinations the export flow presents (Files, iCloud Drive,
+  printed QR) and what the UX says about each location's safety; and
+- when and how the app encourages a fresh export after restore, given that
+  old artifacts remain valid but stale.
 
-Until this format exists, onboarding and Identity settings hide the export
-and restore entries entirely and the UX claims device-only storage.
+Until the format is adopted and implemented, onboarding and Identity
+settings hide the export and restore entries entirely and the UX claims
+device-only storage.
 
 ## Multiple local identities
 

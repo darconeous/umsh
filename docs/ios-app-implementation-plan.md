@@ -319,9 +319,9 @@ transfer flow can be designed separately without making simultaneous use safe.
 
 The Secure Enclave–wrapped blob cannot serve as a cloud backup: its wrapping
 key never leaves the original device. A recovery-after-loss design would store
-a second copy of the key in iCloud wrapped under user-held material (for
-example, a passphrase- or recovery-code-derived key), alongside non-secret
-identity metadata. Its security then rests on that material and the iCloud
+a second copy of the key in iCloud wrapped under user-held material — the
+[identity export artifact](protocol/src/identity-export.md) is exactly this
+shape — alongside non-secret identity metadata. Its security then rests on that material and the iCloud
 account rather than the enclave, and restoring it must advance the frame
 counters past any value the lost device could have used — the reservation-block
 skip generalizes to a restore epoch — before the restored identity sends
@@ -879,7 +879,7 @@ The implementation sequence needs these resolution points:
 | Key unlock policy, iCloud recovery escrow, transfer, and device policy | Phase 0 | Enclave-wrapped device-only identity; no cloud escrow or synchronization |
 | Crash-safe frame-counter allocation | Phase 0 | Do not send authenticated production traffic |
 | UniFFI or C ABI and concurrency contract | Phase 0 | Prototype only |
-| Identity export/restore format and restore epoch | Phase 1 | Create-only onboarding; restore and export entries hidden |
+| Identity export format adoption ([drafted](protocol/src/identity-export.md)) | Phase 1 | Create-only onboarding; restore and export entries hidden |
 | Minimum OS, database, and migration strategy | Phase 0 | No durable feature schema |
 | Local outbox default and expiry | Phase 2 | Preserve draft; require explicit queue confirmation in prototype |
 | Direct routing/flood defaults | Phase 2 | Named conservative preset with visible diagnostics |
