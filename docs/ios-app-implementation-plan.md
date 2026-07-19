@@ -442,9 +442,11 @@ suggested conceptual model includes:
 - `LocalIdentity`: public key, protected-key reference, display metadata,
   creation/version state, and counter-store reference;
 - `RadioRecord`: peripheral identity, trust/bond metadata, last capabilities,
-  last battery reading, and provisioning state;
+  last battery reading, provisioning state, and an optional link to the
+  radio-owned `NodeRecord` exposed by the companion protocol;
 - `NodeRecord`: complete public key when known, canonical hint, advertised
-  metadata and signature state, capabilities, observations, and local alias;
+  metadata and signature state, capabilities, observations, local alias, and
+  optional system-managed radio provenance;
 - `Observation`: time, source, link/radio metrics, region, reported location,
   and precision;
 - `Conversation`: direct, channel, or room kind plus local presentation state;
@@ -469,6 +471,15 @@ matching. A local mnemonic alias overrides the advertised name for display but
 never overwrites it. Identity-scoped records carry their owning
 `LocalIdentity` reference from the first schema version (see Multiple
 identities).
+
+When a saved `RadioRecord` exposes a radio-owned public key, upsert exactly one
+`NodeRecord` for that key and mark its association as system-managed. It must be
+visible through the ordinary Network and Peer Detail surfaces, but ordinary
+peer/contact deletion cannot remove it while the radio remains saved. Forgetting
+the radio clears the association and protection rather than cascading into
+conversation or protocol-evidence deletion. If no durable references remain,
+normal storage cleanup may later remove the now-unassociated node. Radios that
+do not expose a device identity do not receive a synthetic node.
 
 ### Persistence choice
 
@@ -690,6 +701,8 @@ must not change the avatar fill or place a badge over the hint characters.
 - direct transcript, drafts, immediate send with manual retry, fragmentation,
   reply/reaction/edit, and honest acknowledgement state;
 - Peer Detail, QR/share, ping, and PFS lifecycle; and
+- system-managed companion-radio peers, protected from ordinary removal while
+  their radio remains saved; and
 - message and peer search.
 
 ### Channels

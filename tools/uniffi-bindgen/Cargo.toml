@@ -1,0 +1,10 @@
+[package]
+name = "umsh-uniffi-bindgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+uniffi = { version = "=0.32.0", features = ["cli"] }

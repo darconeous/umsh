@@ -371,6 +371,19 @@ Peer Detail is reached by tapping a direct-chat title/avatar, a peer row in
 Network or discovery, or a sender identity in a channel transcript. Returning
 to chat preserves the draft and transcript position.
 
+When a saved companion radio exposes its own UMSH public identity, that
+identity is also represented by exactly one `NodeRecord` and appears in the
+Network list as a peer. Peer Detail labels it **Companion radio identity** and
+links to Radio Detail. The record is system-managed: ordinary contact or peer
+removal is unavailable while the associated radio remains saved. This does not
+make the radio identity the phone's identity or grant infrastructure-management
+authority.
+
+Forgetting the radio removes the association and its system-managed protection,
+not message history. If the node is still referenced by a conversation or other
+durable evidence, it remains as an ordinary peer record. A transparent radio
+that does not expose a device identity does not create a synthetic peer.
+
 ### General node detail
 
 The header shows local mnemonic alias, advertised name, role, and capabilities. The
