@@ -267,7 +267,7 @@ struct PeerDetailView: View {
     }
 
     private static func decibels(_ centibels: Int16) -> String {
-        String(format: "%.2f dB", Double(centibels) / 100)
+        String(format: "%.1f dB", Double(centibels) / 10)
     }
 }
 
