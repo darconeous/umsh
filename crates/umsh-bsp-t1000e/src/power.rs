@@ -8,7 +8,7 @@
 //! board-specific teardown sequence lives in [`crate::shutdown::run`],
 //! which awaits [`SHUTDOWN_SIGNAL`].
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use embassy_futures::select::{Either4, select4};
 use embassy_nrf::gpio::{Input, Output};
@@ -17,7 +17,9 @@ use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use umsh_ux_tracker::battery::{BatteryState, BatteryThresholds, classify};
+use umsh_ux_tracker::battery::{
+    BatteryState, BatteryThresholds, LevelEstimator, LevelSample, classify,
+};
 
 /// Single-consumer shutdown trigger. Fired by [`PowerSignaler::request_power_off`]
 /// (via the CLI `/poweroff` command) and by any firmware-local source that wants
@@ -51,12 +53,30 @@ fn publish_battery_state(state: BatteryState) {
     }
 }
 
-/// One serviced battery measurement: the raw millivolt reading and the
-/// five-way UX classification derived from it in the same iteration.
+/// One serviced battery measurement: the raw millivolt reading, the
+/// five-way UX classification derived from it in the same iteration,
+/// and the level estimator's current state of charge.
 #[derive(Clone, Copy, Debug)]
 pub struct BatterySample {
     pub battery_mv: u16,
     pub state: BatteryState,
+    /// `Some` from the monitor's first sample onward.
+    pub level_percent: Option<u8>,
+}
+
+/// Millisecond timestamp of the most recent externally reported load
+/// (see [`note_external_load`]); `u32::MAX` sentinel = never.
+static LAST_LOAD_MS: AtomicU32 = AtomicU32::new(u32::MAX);
+
+/// Tell the battery monitor a significant transient load just ran (a
+/// radio transmission is the canonical case), so nearby voltage
+/// samples are treated as sagged rather than as resting OCV by the
+/// level estimator. Cheap; call per event.
+pub fn note_external_load() {
+    LAST_LOAD_MS.store(
+        embassy_time::Instant::now().as_millis() as u32,
+        Ordering::Release,
+    );
 }
 
 /// Wakes the monitor to take a measurement now (see [`sample_battery`]).
@@ -125,6 +145,8 @@ pub async fn run_battery_monitor(
 
     let mut low_count: u8 = 0;
     let mut reply_pending = false;
+    let mut estimator = LevelEstimator::new();
+    let mut previous_sample_ms = embassy_time::Instant::now().as_millis() as u32;
 
     loop {
         // Gate the sensor rail, settle, sample, then drop the rail.
@@ -144,12 +166,30 @@ pub async fn run_battery_monitor(
         );
         publish_battery_state(state);
 
+        // Feed the level estimator. A reported load since the previous
+        // iteration marks this voltage as potentially sagged.
+        let now_ms = embassy_time::Instant::now().as_millis() as u32;
+        let load_ms = LAST_LOAD_MS.load(Ordering::Acquire);
+        let load_since_last =
+            load_ms != u32::MAX && load_ms.wrapping_sub(previous_sample_ms) < u32::MAX / 2;
+        previous_sample_ms = now_ms;
+        estimator.sample(LevelSample {
+            battery_mv,
+            state,
+            load_since_last,
+            now_ms,
+        });
+
         // Service an on-demand measurement request with this iteration's
         // sample. A request landing mid-iteration shares the sample that
         // was just taken rather than queueing a second rail cycle.
         if reply_pending || BATTERY_SAMPLE_REQUEST.try_take().is_some() {
             reply_pending = false;
-            BATTERY_SAMPLE_REPLY.signal(BatterySample { battery_mv, state });
+            BATTERY_SAMPLE_REPLY.signal(BatterySample {
+                battery_mv,
+                state,
+                level_percent: estimator.level(),
+            });
         }
 
         if matches!(

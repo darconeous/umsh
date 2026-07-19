@@ -1310,9 +1310,7 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
                         format!("{percent}%")
                     });
                 let state = match status.charge_state {
-                    Some(umsh_companion::battery::BatteryChargeState::Discharging) => {
-                        "discharging"
-                    }
+                    Some(umsh_companion::battery::BatteryChargeState::Discharging) => "discharging",
                     Some(umsh_companion::battery::BatteryChargeState::Charging) => "charging",
                     Some(umsh_companion::battery::BatteryChargeState::Charged) => "charged",
                     None => "charge state unsupported",
@@ -2083,6 +2081,14 @@ mod tests {
                 decoded: Some(_),
                 ..
             }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Property {
+                key: prop::BATTERY,
+                decoded: Some(DecodedValue { kind: "battery", display, .. }),
+                ..
+            } if display == "4111 mV, 87%, charging"
         )));
         assert!(
             events

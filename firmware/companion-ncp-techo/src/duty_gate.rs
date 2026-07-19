@@ -55,6 +55,10 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
         // session's on_tx_result accounting. Refusals and failed
         // transmits consume no budget.
         self.ledger.record(self.clock.now_ms(), airtime_ms);
+        // Mark the load for the battery level estimator: voltage
+        // sampled near a transmission is sagged, not resting OCV.
+        #[cfg(feature = "t1000e")]
+        umsh_bsp_t1000e::power::note_external_load();
         Ok(())
     }
 

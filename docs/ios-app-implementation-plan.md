@@ -17,8 +17,7 @@ diagnostic features are added.
 
 A release candidate is complete when a user can:
 
-1. create and protect a phone-owned UMSH identity, or restore one from a
-   previously exported protected copy once the export format is defined;
+1. create and protect a phone-owned UMSH identity;
 2. securely pair and attach a supported companion radio;
 3. see the radio connection and battery state in the same compact toolbar
    position throughout the application;
@@ -48,6 +47,9 @@ The first release should not promise:
   key;
 - discovery of every nearby or reachable node;
 - continuous online presence or reliable distance estimates from RSSI;
+- a durable application outbox that defers a user's send until some future
+  radio connection or duty-limit window: an eligible send starts immediately,
+  while an ineligible send is blocked with an explanation and remains a draft;
 - room administration while its commands and authorization model remain
   unspecified;
 - arbitrary sensor dashboards inferred from unknown payloads;
@@ -56,9 +58,8 @@ The first release should not promise:
 - managing multiple local identities in the UI, although schema and services
   must be identity-scoped from the start so adding them later is not a
   rewrite;
-- Secure Enclave signing custody: the enclave cannot perform the required
-  Ed25519/X25519 operations, so the private key is enclave-wrapped at rest but
-  exists in application memory while the engine is unlocked;
+- identity export or restore, which may be added after the protected export
+  format and recovery UX are implemented and tested;
 - companion-radio firmware update from the phone, although Radio Detail must
   not preclude adding it later; or
 - a custom visual system that imitates one iOS version instead of using current
@@ -229,7 +230,10 @@ Use Swift actors to define ownership:
   state, negotiated MTU, and transport writes;
 - `MeshEngine` serializes calls into the Rust session and drains core events;
 - `IdentityVault` serializes protected key access and identity transitions;
-- `OutboxCoordinator` owns retry ordering and resume policy; and
+- `SendCoordinator` owns active send operations, their ordering, and the
+  identity/radio/channel guards checked at send time — there is no durable
+  application queue to resume, although the MAC may schedule, back off, and
+  retransmit while completing an active send; and
 - the persistence layer serializes transactional changes that couple messages,
   counters, and protocol state.
 
@@ -244,23 +248,23 @@ The phone owns the user's long-term UMSH identity. The companion radio does not
 receive that private key. In the first implementation:
 
 1. generate the private key using cryptographically secure randomness;
-2. wrap it with a non-exportable Secure Enclave key and store only the wrapped
-   blob; the plaintext key is never written to any storage, including the
-   Keychain;
-3. unwrap it only after protected data is available, under the chosen unlock
-   policy (device unlock alone or biometry per unwrap);
+2. store the private key directly as Keychain secret data with
+   `kSecAttrSynchronizable` disabled and a `ThisDeviceOnly` accessibility class
+   appropriate to the measured foreground and background requirements;
+3. load it only after the selected Keychain protection policy permits access;
 4. transfer it through one controlled adapter call into the Rust engine;
 5. keep cryptographic operations inside Rust while the engine is unlocked; and
 6. zeroize replaceable key buffers and tear down the engine when the identity
    locks, changes, or the process ends.
 
-Secure Enclave wrapping protects the key at rest, not at runtime: the enclave
-cannot sign for UMSH, so the unwrapped key lives in engine memory while the
-engine is unlocked. Wrapping also binds the stored key to the physical device —
-the wrapping key is non-exportable, so a backup or Keychain restore onto
-another phone cannot recover the identity. Any recovery promise therefore
-requires a separately wrapped copy (see iCloud below) or the deliberate
-transfer flow; neither is optional polish if identity loss matters.
+The first release does not add a custom Secure Enclave wrapping construction.
+Secure Enclave keys cannot perform UMSH's required Ed25519/X25519 operations,
+and direct Keychain storage already provides platform encryption and access
+control for secret data. The selected Keychain item must be non-synchronizing
+and device-only. No unencrypted private-key bytes may be written to the
+application database, files, preferences, logs, backups, or diagnostics. The
+key necessarily exists in application memory while Rust performs UMSH
+operations; minimize that lifetime and keep it out of ordinary Swift models.
 
 Private keys must never appear in logs, diagnostics, QR codes, pasteboard
 items, crash metadata, or SwiftUI state. Public identity sharing uses a
@@ -273,12 +277,12 @@ architecture must not assume a singleton, so that account-style multiple
 identities — as in a mail client — can arrive later without a schema or
 service rewrite. Concretely:
 
-- every identity-scoped record — conversations, messages, outbox items,
+- every identity-scoped record — conversations, messages, send attempts,
   channel keys, PFS relationships, counter and replay stores, and radio
   provisioning state — references its owning `LocalIdentity` from the first
   schema version, even while only one row exists;
 - counter and replay storage is keyed per identity, never global;
-- wrapped-key and Keychain items are stored per identity;
+- Keychain items are stored per identity;
 - the Rust engine session is constructed for one identity and is torn down
   and rebuilt on identity change rather than mutated in place;
 - feature code receives the active identity through its context instead of
@@ -298,10 +302,18 @@ with reservation blocks whose unused values are skipped rather than
 reclaimed — instead of defining a mobile-specific allocation protocol. Other
 platforms already depend on that contract, and it must not be reshaped around
 iOS. The iOS contribution is a storage implementation with an appropriate
-protection class and defined failure behavior: when protected storage is
-unavailable or a write fails, allocation fails closed and no authenticated
-frame is prepared. The result must prevent counter reuse after a crash,
-restore, migration, or interrupted write.
+protection class and defined failure behavior.
+
+The existing MAC may construct or queue a frame and schedule a future counter
+reservation before that reservation has been flushed. That is safe only while
+the frame remains inside the engine: the security requirement is that its
+counter is covered by a successfully persisted reservation before the frame is
+used on air. The mobile facade must therefore service pending counter
+persistence before releasing a not-yet-covered frame to `RadioConnection`.
+When protected storage is unavailable or the flush fails, transmission fails
+closed; the prepared frame remains internal or is discarded, and the user sees
+a storage/preparation failure rather than a radio send. A failed flush does not
+roll the counter backward or reclaim its value.
 
 Replay windows, identity metadata versions, message sequence-reset state, and
 outbound logical-message identity also need explicit persistence contracts.
@@ -317,16 +329,17 @@ allocation, simultaneous radio use, message-sequence ownership, conflict
 resolution, revocation, and PFS locality. A deliberate device-to-device
 transfer flow can be designed separately without making simultaneous use safe.
 
-The Secure Enclave–wrapped blob cannot serve as a cloud backup: its wrapping
-key never leaves the original device. A recovery-after-loss design would store
-a second copy of the key in iCloud wrapped under user-held material — the
-[identity export artifact](protocol/src/identity-export.md) is exactly this
-shape — alongside non-secret identity metadata. Its security then rests on that material and the iCloud
-account rather than the enclave, and restoring it must advance the frame
-counters past any value the lost device could have used — the reservation-block
-skip generalizes to a restore epoch — before the restored identity sends
-authenticated traffic. This remains one identity active at a time; it is
-recovery, not multi-device use.
+Direct device-only Keychain storage does not provide a portable identity
+backup. A future recovery design can use the separately encrypted
+[identity export artifact](protocol/src/identity-export.md), protected by
+user-held material and optionally stored in Files or iCloud Drive. Restore is
+not a version-one requirement. When implemented, it discards local transmit and
+receive counter state, advances the restored outbound counter according to the
+export format, and relies on the protocol's authenticated counter
+resynchronization when a peer sees the new value outside its window. The user
+is warned that the exporting/original installation must stop using the
+identity and that the app cannot verify remote erasure; simultaneous use
+remains unsupported.
 
 ### Channel keys and delegated material
 
@@ -407,8 +420,10 @@ trust event requiring full resynchronization, not a silent re-sync.
 
 Host replacement requires the takeover confirmation specified in the mockups.
 After replacement, synchronize properties from authoritative snapshots, clear
-stale inbound/outbound assumptions, and resume the local outbox only after its
-identity and configuration guards pass.
+stale inbound/outbound assumptions. There is no durable application queue to
+resume; any send in flight during the replacement fails with a reason, and
+unconfirmed messages keep the evidence recorded under the identity that sent
+them.
 
 ### Background behavior
 
@@ -435,8 +450,10 @@ suggested conceptual model includes:
 - `Conversation`: direct, channel, or room kind plus local presentation state;
 - `Message`: durable logical ID, wire references, sender/destination, content,
   fragment state, protocol evidence, edits, and timestamps with provenance;
-- `OutboxItem`: immutable send context, current attempt, retry policy, and
-  identity/radio/channel guards;
+- `SendAttempt`: immutable send context and identity/radio/channel guards for
+  one attempt of a logical message; a manual retry creates a new attempt tied
+  to the same durable message identity and text-protocol Message Sequence ID,
+  while using fresh packet counters for the new transmission;
 - `ChannelRecord`: channel-key reference, direct-key/named/special type, local
   name, routing defaults, and notification policy;
 - `RoomState`: room node, login state, handle, canonical history cursor, and
@@ -481,16 +498,17 @@ module boundaries. Candidate operations include:
 - query or change PFS state for a stable peer;
 - construct an echo request and correlate an echo response;
 - fragment/reassemble text messages and produce missing-fragment state;
-- commit counter and replay state through the platform storage contract before
-  releasing prepared frames; and
+- expose pending counter-persistence work and release only frames covered by a
+  durable reservation; and
 - acknowledge that a prepared operation was committed, transmitted, failed, or
   cancelled.
 
-Every prepared send should return a stable logical operation ID, an outbound
-frame set whose security state is already committed, and the evidence expected
-for completion. That
-allows Swift to display one message while the protocol may transmit several
-frames.
+Every prepared send should return a stable logical operation ID and the
+evidence expected for completion. A frame set may exist internally before its
+next reservation flush completes, but the mobile facade must not expose it as
+transmit-ready until the persisted boundary covers every frame. This allows
+Swift to display one logical message while the protocol may transmit several
+frames without turning every preparation into a separate storage write.
 
 Errors should carry a stable machine category, safe user-facing summary key,
 and redacted diagnostic detail. Feature code maps categories to localized UI;
@@ -520,24 +538,51 @@ create a contact, transcript bubble, urgent notification, or trusted metadata.
 
 ### Send
 
-1. A feature model records the user's intent and validates local UI input.
+1. A feature model records the user's intent and validates local UI input. If
+   a connected, configured radio can accept the message now, activating Send
+   starts the send pipeline immediately. Otherwise Send has a visibly blocked
+   state; activating it sends nothing, explains the reason, and preserves the
+   draft.
 2. Persistence creates one optimistic logical message or operation.
-3. `OutboxCoordinator` snapshots identity, destination, channel, and routing
+3. `SendCoordinator` snapshots identity, destination, channel, and routing
    guards.
 4. Rust allocates required wire identifiers/counters through the existing MAC
-   persistence contract, committing security state before it returns prepared
-   frames, then encodes, signs or encrypts, and fragments if necessary.
-5. If security-state storage is unavailable or the commit fails, preparation
-   fails closed and the item remains Waiting.
-6. `RadioConnection` sends companion commands/frames and reports local
+   persistence contract, encodes, signs or encrypts, fragments if necessary,
+   and schedules a future reservation when required.
+5. Before a frame not already covered by the persisted boundary can leave the
+   engine, the mobile facade flushes the scheduled reservation. If the store is
+   unavailable or the flush fails, transmission fails closed; no such frame is
+   handed to the radio and used counter values are not reclaimed.
+6. `RadioConnection` sends only transmit-ready companion commands/frames and
+   reports local
    transport and radio results.
-7. The logical item advances through Waiting, Preparing, Sending, Sent over
-   radio, Delivered to node, Accepted by room, Partially sent, Deferred by
-   airtime limit, or Failed using only evidence appropriate to its conversation
-   kind. A duty-cycle rejection from the radio is a deferral with automatic
-   retry, not a failure, and needs its own honest label in the mockups.
-8. A direct acknowledgement or room echo correlates to the existing optimistic
-   item rather than creating a duplicate.
+7. Once submitted, the active send may remain in the MAC's bounded scheduling,
+   contention, fragmentation, acknowledgement, and retransmission machinery.
+   These operations are part of the send that started immediately; they are
+   not an application outbox or a promise to begin transmitting minutes later.
+8. The logical item advances through Preparing, Sending, Sent over radio,
+   Delivered to node, Accepted by room, Partially sent, or Failed using only
+   evidence appropriate to its conversation kind. There is no queued Waiting
+   state: a send that cannot complete — the link drops mid-send, the radio
+   rejects it, or an error occurs — becomes Failed with a reason, and retry is
+   only ever an explicit user action on the failed message. The composer
+   prevents a send when current radio duty limits are known to reject it and
+   explains when the radio is expected to become eligible; if the radio
+   nevertheless returns `STATUS_DUTY_LIMIT`, the attempt becomes Failed with
+   that reason and an earliest known retry time.
+9. A direct acknowledgement or room echo correlates to the existing optimistic
+   item rather than creating a duplicate. Awaiting that evidence after Sent
+   over radio is not queueing. If the active send ends without the expected
+   evidence, including because the radio disconnects, **Delivery unconfirmed**
+   is an effectively terminal result: the UI stops showing progress and does
+   not promise that reconnection will resolve it. If valid late evidence does
+   arrive, it may upgrade the recorded result without treating the message as
+   pending in the meantime.
+10. Every outbound chat message includes the text protocol's Message Sequence
+   option. Manual Retry re-encodes the same logical message with the same
+   Message Sequence ID but allocates fresh packet counters. A receiver that
+   already accepted that sender/message-ID pair reconciles the resend instead
+   of displaying a second chat message.
 
 ### URI import
 
@@ -617,10 +662,10 @@ must not change the avatar fill or place a badge over the hint characters.
 - project, targets, signing placeholders, dependency assembly, and CI;
 - binding/build spike and mobile-core facade skeleton;
 - persistence and migration harness;
-- identity creation, Secure Enclave–wrapped key custody, protected-data lock
+- identity creation, direct Keychain custody, protected-data lock
   behavior, and canonical public identity display;
-- resumable Welcome, Identity (create or restore), Radio, Preset, and Ready
-  flow per the onboarding mockups; and
+- resumable Welcome, Identity creation, Radio, Preset, and Ready flow per the
+  onboarding mockups; future restore UI remains hidden until implemented; and
 - native application shell, app-wide radio toolbar placement, Dynamic Type,
   VoiceOver, light/dark mode, and iPhone/iPad navigation tests.
 
@@ -643,8 +688,8 @@ must not change the avatar fill or place a badge over the hint characters.
 - contact and observed-node storage;
 - deterministic avatars and mnemonic aliases;
 - Message Requests for unknown authenticated senders;
-- direct transcript, drafts, local outbox, fragmentation, reply/reaction/edit,
-  and honest acknowledgement state;
+- direct transcript, drafts, immediate send with manual retry, fragmentation,
+  reply/reaction/edit, and honest acknowledgement state;
 - Peer Detail, QR/share, ping, and PFS lifecycle; and
 - message and peer search.
 
@@ -699,7 +744,7 @@ Deliver first, because every workstream depends on them:
 - device and simulator Rust build packaged as an XCFramework;
 - one Swift call that renders reference NodeHints and one Rust error round trip;
 - persistence transaction and migration prototype; and
-- key-custody (Secure Enclave wrapping) and frame-counter crash-safety design.
+- Keychain protection-class and frame-counter crash-safety design.
 
 Deliver before Phase 2, because they depend on hardware availability rather
 than blocking every workstream:
@@ -734,7 +779,8 @@ prepare in Rust → send through radio → receive acknowledgement →
 Delivered to node → inspect Peer Detail
 ```
 
-Include disconnection, outbox, retry, fragmentation, unknown senders, alias,
+Include disconnection (Send visibly blocked, terminal delivery unconfirmed),
+manual retry and receiver deduplication, fragmentation, unknown senders, alias,
 ping, and PFS states.
 
 Gate: two physical nodes can exchange test-vector-compatible messages across a
@@ -790,7 +836,10 @@ unbounded allocation from radio or URI input is a release blocker.
 
 - feature models against fake radio, fake mobile core, fake clock, and
   in-memory persistence;
-- outbox ordering and guards after identity, radio, and channel changes;
+- send-time guards and manual-retry behavior after identity, radio, and
+  channel changes;
+- active-send MAC scheduling/retransmission without an application outbox, and
+  manual resend with the same Message Sequence ID and fresh packet counters;
 - persistence uniqueness, migration, transaction rollback, and protected-data
   unavailability;
 - delivery-label mapping from evidence, including negative cases;
@@ -808,8 +857,8 @@ Exercise every screen in the mockup chapter at:
 - large accessibility Dynamic Type sizes;
 - VoiceOver traversal and action labels;
 - long localized strings and right-to-left layout readiness; and
-- connected, disconnected, stale battery, unavailable battery, waiting,
-  partial, failed, and empty states.
+- connected, disconnected, stale battery, unavailable battery,
+  send-unavailable, delivery-unconfirmed, partial, failed, and empty states.
 
 Snapshots are review aids, not substitutes for semantic accessibility tests.
 The NodeHint avatar needs pixel-level checks at every supported size because its
@@ -876,12 +925,11 @@ The implementation sequence needs these resolution points:
 
 | Decision | Required by | Safe interim behavior |
 |---|---|---|
-| Key unlock policy, iCloud recovery escrow, transfer, and device policy | Phase 0 | Enclave-wrapped device-only identity; no cloud escrow or synchronization |
+| Keychain accessibility/unlock and device policy | Phase 0 | Device-only, non-synchronizing Keychain item; no cloud escrow or synchronization |
 | Crash-safe frame-counter allocation | Phase 0 | Do not send authenticated production traffic |
 | UniFFI or C ABI and concurrency contract | Phase 0 | Prototype only |
-| Identity export format adoption ([drafted](protocol/src/identity-export.md)) | Phase 1 | Create-only onboarding; restore and export entries hidden |
+| Identity export format adoption ([drafted](protocol/src/identity-export.md)) | Future | Create-only onboarding; restore and export entries hidden |
 | Minimum OS, database, and migration strategy | Phase 0 | No durable feature schema |
-| Local outbox default and expiry | Phase 2 | Preserve draft; require explicit queue confirmation in prototype |
 | Direct routing/flood defaults | Phase 2 | Named conservative preset with visible diagnostics |
 | Discovery observation/retention policy | Phase 3 | Bounded explicit session; no background address harvest |
 | `public` and `EMERGENCY` default presence | Phase 3 | Available to join, not silently joined |
@@ -921,7 +969,8 @@ whose wire behavior is still undefined.
 ### Airtime and misleading familiarity
 
 A familiar chat interface can hide LoRa cost and evidence limits. Preserve
-familiar composition while showing fragmentation cost, queued state,
+familiar composition while showing fragmentation cost, blocked-send and
+unconfirmed-delivery state,
 conversation kind, multicast audience, and the precise meaning of success.
 
 ### Scope pressure
@@ -944,7 +993,8 @@ The first actionable backlog, after product approval of this plan, is:
 5. implement the three-tab adaptive shell and centered radio/battery control;
 6. build the deterministic avatar and canonical address components from Rust
    reference vectors;
-7. prototype identity creation/unlock and crash-safe counter reservation;
+7. prototype direct Keychain identity creation/unlock and crash-safe counter
+   reservation;
 8. attach to a real companion radio, negotiate capabilities, and read battery;
 9. implement the onboarding-to-ready vertical slice; and
 10. begin Phase 2 only after the secure-readiness gate passes.

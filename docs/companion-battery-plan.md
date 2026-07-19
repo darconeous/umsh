@@ -18,6 +18,23 @@ unsupported everywhere. Remaining: the charge-state transition
 observation (unplug/replug the T-1000E charger and watch
 Discharging/Charging/Charged follow), which needs an operator.**
 
+Same-day follow-up: the T-1000E now reports the **level** field (flags
+`0b111`), superseding this plan's "no level" decision. The estimator —
+`umsh_ux_tracker::battery::LevelEstimator` — is the deferred-follow-up
+minimal design: a generic Li-ion OCV table consulted only after three
+minutes of rest (no charger, no reported load), a median-of-five filter
+over the monitor's samples, a discharge-direction clamp (levels never
+rise between charge sessions), and 5 % output quantization. The
+`Charged` classification pins 100 %; charging holds the last value
+(charging voltage does not map through the discharge table); a
+provisional bootstrap from the first quiet sample means every monitor
+reply carries a level. The firmware marks radio transmissions via
+`umsh_bsp_t1000e::power::note_external_load()` (session path at
+`Effect::StartTransmit`, node path in the duty-gated radio) so sagged
+samples never anchor. Still deferred: energy integration between
+anchors using the duty ledger's airtime accounting, and fitting the
+OCV table against a bench discharge log.
+
 Same-day follow-up: the `no-ble` diagnostic build now has working
 persistence. MPSL, the shared flash driver, and every journal mount in
 both images (the flash driver needs only the MPSL timeslot scheduler,

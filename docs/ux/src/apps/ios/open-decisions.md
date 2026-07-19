@@ -111,16 +111,19 @@ default, or offered during onboarding. Emergency traffic has strict validation
 rules but the word **emergency** alone must not cause Critical Alerts or other
 urgent notification treatment.
 
-## Local outbox policy
+## Outbound send policy (resolved)
 
-Decide whether Send while disconnected:
-
-1. always creates a local waiting item;
-2. asks the first time and remembers the choice; or
-3. keeps the text as a draft until the radio reconnects.
-
-Also define expiry, ordering across conversations, resume-after-long-gap
-behavior, and how pending messages react to identity/radio/channel changes.
+Resolved: there is no deferred application outbox. An eligible logical send
+starts immediately; when the radio is disconnected or duty-limited, Send looks
+blocked and explains the reason while the text remains a draft. Once a send has
+started, MAC scheduling, backoff, acknowledgement handling, and retransmission
+remain part of that active send and are not UI-level deferral. A terminal
+failure offers an explicit manual Retry after re-validating identity, radio,
+and channel context. Retry reuses the chat Message Sequence ID while fresh
+packets receive fresh counters, allowing the receiver to reconcile a resend.
+If expected direct or room evidence is absent when the active send ends,
+**Delivery unconfirmed** is effectively terminal and is not presented as
+waiting for reconnection.
 
 ## Conversation retention and deletion
 
@@ -190,7 +193,7 @@ Test these labels with users:
 - **Radio** versus **Companion radio**;
 - **Delivered to node** versus **Received by device**;
 - **Private channel** versus **Shared-key channel**; and
-- **Waiting for radio** versus **Outbox**.
+- **Delivery unconfirmed** versus **Not confirmed** versus **Unconfirmed**.
 
 Prefer the shortest term that remains honest after the user reads its detail
 explanation.

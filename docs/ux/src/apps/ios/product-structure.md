@@ -110,9 +110,10 @@ address, not the name, is the identity.
 Restore accepts the export artifact (file or QR set; format specified in
 `docs/protocol/src/identity-export.md`) and its passphrase, shows
 a non-committing preview of the name and complete address, and commits only on
-an explicit confirmation. Restore marks a fresh counter epoch and states that
-the exporting device must stop using the identity. It never merges with an
-identity already on the phone.
+an explicit confirmation. Restore marks a fresh counter epoch and requires the
+app to warn that the exporting device must stop using the identity. The app
+does not ask the user to confirm an erasure it cannot verify. Restore never
+merges with an identity already on the phone.
 
 Do not promise iCloud synchronization until frame-counter, simultaneous-use,
 conflict, and recovery behavior are specified. Onboarding creates the app's
@@ -164,7 +165,7 @@ Primary action: **Open Conversations**. Secondary action: **Share my identity**.
 Navigation title: **Conversations**. Toolbar actions:
 
 - compose menu: **New message**, **Join channel**, **Join room**; and
-- more menu: **Scan UMSH code**, **Message requests**, **Outbox**.
+- more menu: **Scan UMSH code**, **Message requests**.
 
 Search filters by local mnemonic alias, advertised name, channel/room name, complete
 Base58 node address, and canonical rendered hint. It does not require network
@@ -178,8 +179,8 @@ Each row includes:
 - last-message preview or explicit empty-state text;
 - time of locally recorded activity;
 - unread count; and
-- one compact exceptional status such as **Waiting for radio**, **Failed**, or
-  **Logged out**.
+- one compact exceptional status such as **Delivery unconfirmed**, **Failed**,
+  or **Logged out**.
 
 The type marker also has a visible text equivalent. For example, a channel row
 shows **Private channel · Maya: Camp is set** rather than relying on a hash icon
@@ -198,8 +199,9 @@ choosing a text-capable node from Network, or joining a channel/room. Offer
 The navigation title uses the local mnemonic alias, falling back to advertised
 name or **Unnamed node**. The peer's deterministic NodeHint avatar appears in
 the header. The complete address or canonical rendered hint is available in
-Peer Detail. A subtitle/status can say **Direct**, **Waiting for radio**, or
-**Last seen 12 min ago**; it must not claim presence from stale traffic.
+Peer Detail. A subtitle/status can say **Direct** or **Last seen 12 min ago**;
+it must not claim presence from stale traffic, and radio connection state stays
+in the app-level toolbar control rather than the conversation subtitle.
 
 When PFS is establishing, active, ending, or failed, the avatar carries the
 corresponding outer-ring treatment and visible text beside the title states the exact
@@ -213,8 +215,24 @@ missing-fragment placeholders. Long-press/context-menu actions include Reply,
 React, Copy, Edit/Delete when permitted, Details, and Quote when a wire reply is
 no longer representable.
 
-The composer remains usable when the radio disconnects. Send commits to the
-local outbox and visibly changes the item to **Waiting for radio**.
+The composer remains usable for drafting when the radio disconnects. Send takes
+on a visibly blocked treatment; activating it sends nothing and explains that
+a connected radio is required. There is no deferred application outbox. An
+eligible logical send starts immediately, although the MAC may schedule and
+retransmit while that active send is in progress. A terminal failure stays in
+the transcript with an explicit Retry action. Retry sends the same logical chat
+message and Message Sequence ID in fresh packets with fresh counters. If a send
+ends without its expected acknowledgement, **delivery unconfirmed** is an
+effectively terminal state rather than a promise to finish after reconnection.
+Valid late evidence may still upgrade it without showing ongoing progress in
+the meantime.
+
+When current radio duty information proves the message cannot be transmitted,
+the composer preserves the draft and gives Send a visibly blocked treatment.
+Activating it explains the airtime limit and shows the earliest
+reliable retry time or estimate. No new application-level attempt is queued to
+start automatically. An unexpected `STATUS_DUTY_LIMIT` response becomes a
+failed attempt with an explicit manual retry after the stated time.
 
 ### Channel conversation
 
@@ -235,8 +253,9 @@ transcript link to Peer Detail without automatically saving contacts.
 
 Incoming messages show the sender's resolved name above the bubble because a
 channel contains multiple speakers. The user's own messages align and style
-consistently with direct messages. The composer remains available while the
-radio is disconnected and can create a **Waiting for radio** local-outbox item.
+consistently with direct messages. The composer remains available for drafting
+while the radio is disconnected; Send requires a connected radio, exactly as in
+direct conversations.
 
 Use a neutral iOS-adaptive bubble for all incoming participants rather than a
 different color per person. Pair the first bubble in each consecutive sender
@@ -264,8 +283,11 @@ only when requested by the room. After login, show the current handle and a
 members action. **Load earlier messages** requests bounded history; it is not an
 infinite-scroll illusion when the room cannot provide more.
 
-The room's echo reconciles an optimistic outgoing bubble. Until then, label it
-**Waiting for room**. Logout and Delete Local History are separate actions.
+The room's echo reconciles an optimistic outgoing bubble. Until the active send
+ends, label it **Waiting for room**. If it ends without the echo, including
+because the radio disconnects, **delivery unconfirmed** is effectively
+terminal. Valid late evidence may still reconcile it. Logout and Delete Local
+History are separate actions.
 
 ## Network tab
 

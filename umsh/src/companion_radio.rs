@@ -1019,9 +1019,7 @@ where
     /// cannot currently obtain surfaces as a command failure, never as
     /// `None` — battery is live telemetry, so this is deliberately not
     /// part of [`CompanionRadio::sync`].
-    pub async fn battery_status(
-        &mut self,
-    ) -> Result<Option<BatteryStatus>, CompanionRadioError> {
+    pub async fn battery_status(&mut self) -> Result<Option<BatteryStatus>, CompanionRadioError> {
         if !self.capabilities().await?.contains(&cap::BATTERY) {
             return Ok(None);
         }

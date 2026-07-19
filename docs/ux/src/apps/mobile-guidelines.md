@@ -172,10 +172,15 @@ Do not collapse these into one green or red dot. A disconnected radio is a
 clear, actionable app-wide condition. Lack of recent mesh traffic is weaker
 evidence and should be worded as such.
 
-When an action cannot proceed, keep the user's work. A message composed while
-the radio is disconnected may remain in a local outbox, clearly labeled
-**Waiting for radio**. The companion radio itself does not queue outbound
-traffic.
+When an action cannot proceed, keep the user's work. Sending requires a
+connected radio: a message composed while the radio is disconnected remains a
+draft. Send takes on a visibly blocked appearance, and activating it explains
+the reason without transmitting. There is no application outbox that starts a
+logical send later: an eligible user send starts immediately. Once started,
+the MAC may schedule, back off, fragment, or retransmit as required to complete
+that active send. If it ends without required confirmation, label it
+**delivery unconfirmed** as an effectively terminal result rather than leaving
+it looking pending or promising automatic resolution.
 
 ### Radio status always includes power state
 

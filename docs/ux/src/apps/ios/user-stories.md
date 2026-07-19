@@ -46,7 +46,8 @@ Acceptance criteria:
 - It distinguishes phone identity, messages/contacts, BLE bonds, and radio
   settings.
 - Cancel is the default action.
-- Waiting outbound messages cannot silently move to a replacement identity.
+- A failed or unconfirmed message can never silently re-send under a
+  replacement identity; retry re-validates the current identity first.
 
 ### IOS-ID-04: Export an identity for recovery
 
@@ -85,8 +86,9 @@ Acceptance criteria:
   installation could have used before sending authenticated traffic.
 - Restore never merges with an identity already on the phone; replacing one
   is a separate, explicitly destructive action.
-- The flow states that the exporting device must stop using this identity;
-  simultaneous use is unsupported.
+- The flow warns that the exporting device must stop using the identity, that
+  the app cannot verify remote erasure, and that simultaneous use is
+  unsupported. It does not require a false erasure confirmation.
 
 ## Radio setup and recovery
 
@@ -327,20 +329,30 @@ Acceptance criteria:
 - Pressing Send immediately creates one optimistic local message.
 - Local radio acceptance and remote MAC acknowledgement are distinct states.
 - **Delivered to node** appears only with valid end-to-end evidence.
-- Failure offers Retry and Details without duplicating the logical message.
+- Failure offers Retry and Details without duplicating the logical message;
+  retry is only ever a manual action on the failed message.
+- Retry reuses the logical message's text-protocol Message Sequence ID while
+  fresh packets receive fresh counters; a receiver that already accepted the
+  message reconciles the resend instead of displaying another bubble.
+- MAC scheduling, backoff, and retransmission may occur while the original
+  user-initiated send is active and do not constitute a deferred UI send.
 
 ### IOS-MSG-02: Compose while disconnected
 
-**As a user with a temporarily disconnected radio,** I want to keep writing and
-choose to send when the radio returns.
+**As a user with a disconnected radio,** I want to keep writing without losing
+my work and to understand that sending requires the radio.
 
 Acceptance criteria:
 
 - The draft survives navigation and app relaunch according to data settings.
-- Send can create a **Waiting for radio** outbox item.
-- The user can edit or cancel it before transmission.
-- The backlog does not send under a different identity or materially changed
-  channel context without confirmation.
+- Send has a visibly blocked treatment while no radio is connected; activating
+  it sends nothing and explains that a connected radio is required.
+- No outbox item is created; nothing transmits automatically on reconnection,
+  and reconnecting re-enables Send with the draft intact.
+- If a send ends at disconnection without its expected acknowledgement, it
+  shows terminal **Delivery unconfirmed** rather than waiting for reconnection.
+- Valid late evidence may upgrade that result, but the UI does not show it as
+  pending in the meantime.
 
 ### IOS-MSG-03: Send a fragmented message
 
@@ -377,6 +389,28 @@ Acceptance criteria:
 - The transcript shows the latest version and an **Edited** marker.
 - Delete sends the protocol's zero-length edit and renders a placeholder.
 - Subsequent references use the original stable message reference.
+
+### IOS-MSG-06: Understand a duty-limited send
+
+**As a user,** I want the composer to stop me before the radio rejects a
+message for exceeding its airtime limit and to tell me when I can try again.
+
+Acceptance criteria:
+
+- When current radio information proves the complete logical message would
+  exceed the configured duty limit, Send has a visibly blocked treatment;
+  activating it sends nothing and explains the limit.
+- The draft remains in the composer; no deferred application-send item is
+  created.
+- The explanation shows the earliest reliable retry time or an explicitly
+  labeled estimate. If the radio cannot provide enough information, it says
+  that an exact time is unavailable.
+- If the radio unexpectedly returns `STATUS_DUTY_LIMIT`, the attempt becomes
+  **Failed**, retains a manual Retry action, and never starts a new
+  application-level attempt automatically. This does not constrain MAC retries
+  within the original active attempt.
+- The same behavior applies to direct, channel, and room composers and accounts
+  for all fragments of a logical message when that estimate is available.
 
 ### IOS-CHN-01: Join a private channel from a QR code
 
@@ -561,7 +595,10 @@ Acceptance criteria:
 - A banner says **Radio disconnected** and offers Connect/Details.
 - The banner shows **Last battery N%, AGE** or **Battery unavailable**, never an
   unlabeled stale reading.
-- The current draft remains intact.
+- The current draft remains intact, and Send takes on a visibly blocked
+  treatment whose action explains the reason instead of queueing anything.
+- An active send that ends at the loss without its expected acknowledgement
+  shows terminal **Delivery unconfirmed** rather than waiting for reconnection.
 - Incoming-queue uncertainty is reconciled after identity/session checks.
 - Reconnection does not reopen pairing for a valid bond.
 

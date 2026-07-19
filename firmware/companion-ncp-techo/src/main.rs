@@ -321,13 +321,13 @@ mod firmware {
             default_duty_limit: umsh_companion::ids::DUTY_LIMIT_DISABLED,
             duty: &DUTY_LEDGER,
             // Both boards are battery powered. The T-1000E's power
-            // monitor reports voltage and charge state (no fuel gauge,
-            // so no level); the T-Echo reports nothing until its P0.04
-            // divider readings are hardware-validated.
+            // monitor reports voltage, charge state, and the rest-gated
+            // OCV level estimate; the T-Echo reports nothing until its
+            // P0.04 divider readings are hardware-validated.
             #[cfg(feature = "t1000e")]
             battery: Some(BatteryFields {
                 voltage: true,
-                level: false,
+                level: true,
                 charge_state: true,
             }),
             #[cfg(not(feature = "t1000e"))]
@@ -1020,9 +1020,15 @@ mod firmware {
             | BatteryState::BatteryLow
             | BatteryState::BatteryCritical => BatteryChargeState::Discharging,
         };
+        // The estimator seeds on the monitor's first sample, so a reply
+        // always carries a level; failing closed here keeps the
+        // advertised field flags stable if that invariant ever breaks.
+        let Some(level_percent) = sample.level_percent else {
+            return Err(());
+        };
         Ok(BatteryStatus {
             voltage_mv: Some(sample.battery_mv),
-            level_percent: None,
+            level_percent: Some(level_percent),
             charge_state: Some(charge_state),
         })
     }
@@ -1329,6 +1335,10 @@ mod firmware {
                     TxPower::Max => Some(i32::from(MAX_TX_POWER_DBM)),
                     TxPower::Dbm(dbm) => Some(i32::from(dbm)),
                 };
+                // Mark the load for the battery level estimator (the
+                // radio runner transmits within milliseconds of this).
+                #[cfg(feature = "t1000e")]
+                umsh_bsp_t1000e::power::note_external_load();
                 SESSION_CH.tx.send(TxRequest { data, power_dbm }).await;
             }
             Some(Effect::DeviceNameChanged) => publish_device_name(session).await,
