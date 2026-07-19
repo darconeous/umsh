@@ -62,6 +62,7 @@ impl std::error::Error for MobileMeshError {}
 pub enum MobileMeshPingOutcome {
     Reply,
     TimedOut,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -91,7 +92,6 @@ enum WorkerCommand {
         operation_id: u64,
         peer: PublicKey,
         timeout_ms: u64,
-        reply: std_mpsc::SyncSender<Result<(), MobileMeshError>>,
     },
     Receive(MobileMeshRxRecord),
     Shutdown,
@@ -351,18 +351,13 @@ impl MobileMeshSession {
             *next = next.wrapping_add(1).max(1);
             current
         };
-        let (reply, response) = std_mpsc::sync_channel(1);
         self.commands
             .send(WorkerCommand::Ping {
                 operation_id,
                 peer,
                 timeout_ms,
-                reply,
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        response
-            .recv()
-            .map_err(|_| MobileMeshError::SessionUnavailable)??;
         Ok(operation_id)
     }
 
@@ -468,9 +463,9 @@ async fn run_worker(
             biased;
             command = commands.recv() => {
                 match command {
-                    Some(WorkerCommand::Ping { operation_id, peer, timeout_ms, reply }) => {
+                    Some(WorkerCommand::Ping { operation_id, peer, timeout_ms }) => {
                         if pending.borrow().contains_key(&peer.0) {
-                            let _ = reply.send(Err(MobileMeshError::OperationInProgress));
+                            emit_ping_failure(&events, operation_id);
                             continue;
                         }
                         let result = match node.peer(peer).await {
@@ -487,11 +482,13 @@ async fn run_worker(
                             // deliberately not performed during startup. Do not move it
                             // into session construction: reboot loops must remain read-only.
                             if handle.service_counter_persistence().await.is_err() {
-                                let _ = reply.send(Err(MobileMeshError::CounterPersistenceFailed));
+                                emit_ping_failure(&events, operation_id);
                                 return;
                             }
                         }
-                        let _ = reply.send(result);
+                        if result.is_err() {
+                            emit_ping_failure(&events, operation_id);
+                        }
                     }
                     Some(WorkerCommand::Receive(record)) => {
                         let _ = inbound_tx.send(InboundFrame { record });
@@ -512,6 +509,14 @@ async fn run_worker(
 fn decode_peer(address: &str) -> Result<PublicKey, MobileError> {
     let bytes = umsh_core::base58::decode(address.as_bytes())?;
     Ok(PublicKey(bytes))
+}
+
+fn emit_ping_failure(events: &std_mpsc::Sender<MobileMeshPingEventRecord>, operation_id: u64) {
+    let _ = events.send(MobileMeshPingEventRecord {
+        operation_id,
+        outcome: MobileMeshPingOutcome::Failed,
+        round_trip_milliseconds: None,
+    });
 }
 
 #[cfg(test)]
@@ -555,12 +560,14 @@ mod tests {
         // through the same public Rust API without test-only MAC access.
         let operation = alice.ping(address(&bob_identity), 2_000).unwrap();
         let _ = bob.ping(address(&alice_identity), 2_000).unwrap();
-        assert!(alice_root.exists());
-        assert!(bob_root.exists());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let alice_update = alice.poll_update();
             for frame in alice_update.outbound_frames {
+                assert!(
+                    alice_root.exists(),
+                    "Alice released a frame before persisting its reservation"
+                );
                 bob.receive(MobileMeshRxRecord {
                     data: frame,
                     rssi_dbm: Some(-40),
@@ -578,6 +585,10 @@ mod tests {
 
             let bob_update = bob.poll_update();
             for frame in bob_update.outbound_frames {
+                assert!(
+                    bob_root.exists(),
+                    "Bob released a frame before persisting its reservation"
+                );
                 alice
                     .receive(MobileMeshRxRecord {
                         data: frame,
