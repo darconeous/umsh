@@ -554,8 +554,7 @@ create a contact, transcript bubble, urgent notification, or trusted metadata.
    unavailable or the flush fails, transmission fails closed; no such frame is
    handed to the radio and used counter values are not reclaimed.
 6. `RadioConnection` sends only transmit-ready companion commands/frames and
-   reports local
-   transport and radio results.
+   reports local transport and radio results.
 7. Once submitted, the active send may remain in the MAC's bounded scheduling,
    contention, fragmentation, acknowledgement, and retransmission machinery.
    These operations are part of the send that started immediately; they are
