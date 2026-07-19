@@ -1,4 +1,5 @@
 import Foundation
+import UMSHMobileCore
 
 actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
@@ -36,6 +37,8 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {}
+
+    func useMeshSession(_ session: MobileMeshSession?) async {}
 
     func autoConnect() async {}
 
@@ -78,6 +81,10 @@ actor FakeRadioConnection: RadioConnection {
             )
         }
         publish(updated)
+    }
+
+    func ping(peerAddress: String) async throws -> RadioPingResult {
+        .reply(roundTripMilliseconds: 42)
     }
 
     func disconnect() async {

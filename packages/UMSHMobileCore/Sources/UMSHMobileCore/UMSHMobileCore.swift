@@ -692,6 +692,15 @@ public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
      */
     func reset()  -> CompanionSessionUpdateRecord
 
+    /**
+     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
+     *
+     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
+     * Rust owns the companion command, stream identifier, metadata, TID, and
+     * confirmation matching.
+     */
+    func transmitRaw(data: Data) throws  -> CompanionSessionUpdateRecord
+
 }
 /**
  * Stateful mobile host session for the companion protocol.
@@ -837,6 +846,23 @@ open func reset() -> CompanionSessionUpdateRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_reset(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
+     *
+     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
+     * Rust owns the companion command, stream identifier, metadata, TID, and
+     * confirmation matching.
+     */
+open func transmitRaw(data: Data)throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_transmit_raw(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(data),uniffiCallStatus
     )
 })
 }
@@ -1323,6 +1349,171 @@ public func FfiConverterTypeMobileIdentity_lift(_ handle: UInt64) throws -> Mobi
 #endif
 public func FfiConverterTypeMobileIdentity_lower(_ value: MobileIdentity) -> UInt64 {
     return FfiConverterTypeMobileIdentity.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Long-lived Rust protocol engine used by the mobile app.
+ *
+ * `ping` is the only ping operation exposed to Swift. The existing Rust node
+ * layer owns its nonce, authenticated echo request, counter reservation,
+ * response matching, and timeout.
+ */
+public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
+
+    func ping(peerAddress: String, timeoutMs: UInt64) throws  -> UInt64
+
+    func pollUpdate()  -> MobileMeshSessionUpdateRecord
+
+    func receive(frame: MobileMeshRxRecord) throws
+
+}
+/**
+ * Long-lived Rust protocol engine used by the mobile app.
+ *
+ * `ping` is the only ping operation exposed to Swift. The existing Rust node
+ * layer owns its nonce, authenticated echo request, counter reservation,
+ * response matching, and timeout.
+ */
+open class MobileMeshSession: MobileMeshSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilemeshsession(self.handle, $0) }
+    }
+public convenience init(identity: MobileIdentity, counterStore: MobileCounterStore)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobilemeshsession_new(
+        FfiConverterTypeMobileIdentity_lower(identity),
+        FfiConverterTypeMobileCounterStore_lower(counterStore),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilemeshsession(handle, $0) }
+    }
+
+
+
+
+open func ping(peerAddress: String, timeoutMs: UInt64)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_ping(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterUInt64.lower(timeoutMs),uniffiCallStatus
+    )
+})
+}
+
+open func pollUpdate() -> MobileMeshSessionUpdateRecord  {
+    return try!  FfiConverterTypeMobileMeshSessionUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_poll_update(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func receive(frame: MobileMeshRxRecord)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_receive(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMeshRxRecord_lower(frame),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMeshSession
+
+    public static func lift(_ handle: UInt64) throws -> MobileMeshSession {
+        return MobileMeshSession(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileMeshSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMeshSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSession_lift(_ handle: UInt64) throws -> MobileMeshSession {
+    return try FfiConverterTypeMobileMeshSession.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSession_lower(_ value: MobileMeshSession) -> UInt64 {
+    return FfiConverterTypeMobileMeshSession.lower(value)
 }
 
 
@@ -1940,6 +2131,186 @@ public func FfiConverterTypeGattSegmentRecord_lower(_ value: GattSegmentRecord) 
 }
 
 
+public struct MobileMeshPingEventRecord: Equatable, Hashable {
+    public var operationId: UInt64
+    public var outcome: MobileMeshPingOutcome
+    public var roundTripMilliseconds: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operationId: UInt64, outcome: MobileMeshPingOutcome, roundTripMilliseconds: UInt64?) {
+        self.operationId = operationId
+        self.outcome = outcome
+        self.roundTripMilliseconds = roundTripMilliseconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPingEventRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPingEventRecord {
+        return
+            try MobileMeshPingEventRecord(
+                operationId: FfiConverterUInt64.read(from: &buf),
+                outcome: FfiConverterTypeMobileMeshPingOutcome.read(from: &buf),
+                roundTripMilliseconds: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshPingEventRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.operationId, into: &buf)
+        FfiConverterTypeMobileMeshPingOutcome.write(value.outcome, into: &buf)
+        FfiConverterOptionUInt64.write(value.roundTripMilliseconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPingEventRecord_lift(_ buf: RustBuffer) throws -> MobileMeshPingEventRecord {
+    return try FfiConverterTypeMobileMeshPingEventRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPingEventRecord_lower(_ value: MobileMeshPingEventRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPingEventRecord.lower(value)
+}
+
+
+public struct MobileMeshRxRecord: Equatable, Hashable {
+    public var data: Data
+    public var rssiDbm: Int16?
+    public var lqi: UInt8?
+    public var snrCb: Int16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?) {
+        self.data = data
+        self.rssiDbm = rssiDbm
+        self.lqi = lqi
+        self.snrCb = snrCb
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshRxRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshRxRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshRxRecord {
+        return
+            try MobileMeshRxRecord(
+                data: FfiConverterData.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                snrCb: FfiConverterOptionInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshRxRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.data, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCb, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRxRecord_lift(_ buf: RustBuffer) throws -> MobileMeshRxRecord {
+    return try FfiConverterTypeMobileMeshRxRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRxRecord_lower(_ value: MobileMeshRxRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshRxRecord.lower(value)
+}
+
+
+public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
+    /**
+     * Complete raw UMSH frames ready for the companion PHY transport.
+     */
+    public var outboundFrames: [Data]
+    public var pingEvents: [MobileMeshPingEventRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Complete raw UMSH frames ready for the companion PHY transport.
+         */outboundFrames: [Data], pingEvents: [MobileMeshPingEventRecord]) {
+        self.outboundFrames = outboundFrames
+        self.pingEvents = pingEvents
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshSessionUpdateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshSessionUpdateRecord {
+        return
+            try MobileMeshSessionUpdateRecord(
+                outboundFrames: FfiConverterSequenceData.read(from: &buf),
+                pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshSessionUpdateRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
+        FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSessionUpdateRecord_lift(_ buf: RustBuffer) throws -> MobileMeshSessionUpdateRecord {
+    return try FfiConverterTypeMobileMeshSessionUpdateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSessionUpdateRecord_lower(_ value: MobileMeshSessionUpdateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshSessionUpdateRecord.lower(value)
+}
+
+
 /**
  * Canonical rendering information for a three-byte node hint.
  */
@@ -2538,6 +2909,167 @@ public func FfiConverterTypeMobileError_lower(_ value: MobileError) -> RustBuffe
     return FfiConverterTypeMobileError.lower(value)
 }
 
+
+public
+enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case InvalidPeer
+    case SessionUnavailable
+    case OperationInProgress
+    case CounterPersistenceFailed
+    case SendFailed
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileMeshError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .InvalidPeer
+        case 2: return .SessionUnavailable
+        case 3: return .OperationInProgress
+        case 4: return .CounterPersistenceFailed
+        case 5: return .SendFailed
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .InvalidPeer:
+            writeInt(&buf, Int32(1))
+
+
+        case .SessionUnavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .OperationInProgress:
+            writeInt(&buf, Int32(3))
+
+
+        case .CounterPersistenceFailed:
+            writeInt(&buf, Int32(4))
+
+
+        case .SendFailed:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshError_lift(_ buf: RustBuffer) throws -> MobileMeshError {
+    return try FfiConverterTypeMobileMeshError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshError_lower(_ value: MobileMeshError) -> RustBuffer {
+    return FfiConverterTypeMobileMeshError.lower(value)
+}
+
+
+
+public enum MobileMeshPingOutcome: Equatable, Hashable {
+
+    case reply
+    case timedOut
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPingOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPingOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshPingOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPingOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .reply
+
+        case 2: return .timedOut
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshPingOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .reply:
+            writeInt(&buf, Int32(1))
+
+
+        case .timedOut:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPingOutcome_lift(_ buf: RustBuffer) throws -> MobileMeshPingOutcome {
+    return try FfiConverterTypeMobileMeshPingOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPingOutcome_lower(_ value: MobileMeshPingOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPingOutcome.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -2629,6 +3161,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -2874,6 +3430,31 @@ fileprivate struct FfiConverterSequenceTypeGattSegmentRecord: FfiConverterRustBu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeGattSegmentRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshPingEventRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshPingEventRecord]
+
+    public static func write(_ value: [MobileMeshPingEventRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshPingEventRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshPingEventRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshPingEventRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshPingEventRecord.read(from: &buf))
         }
         return seq
     }
@@ -3154,6 +3735,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_reset() != 64513) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_transmit_raw() != 47138) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 2566) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3166,6 +3750,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_load_boundary() != 19270) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 52427) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_poll_update() != 43386) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_receive() != 1961) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3176,6 +3769,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 51783) {
         return InitializationResult.apiChecksumMismatch
     }
 

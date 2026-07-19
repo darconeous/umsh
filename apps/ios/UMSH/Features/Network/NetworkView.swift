@@ -5,6 +5,9 @@ struct NetworkView: View {
     let peers: [PeerSummary]
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshPublicIdentity, PeerImportDetails) async -> Void
+    let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
+    let updateDraft: ((Int64, String) async -> Void)?
+    let pingPeer: ((PeerSummary) async -> PeerPingResult)?
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
 
@@ -89,7 +92,13 @@ struct NetworkView: View {
 
     private func peerLink(_ peer: PeerSummary) -> some View {
         NavigationLink {
-            PeerDetailView(peer: peer, radioSnapshot: $radioSnapshot)
+            PeerDetailView(
+                peer: peer,
+                radioSnapshot: $radioSnapshot,
+                startConversation: startConversation,
+                updateDraft: updateDraft,
+                pingPeer: pingPeer
+            )
         } label: {
             HStack(spacing: 12) {
                 PeerAvatar(hint: peer.identity.hint)
@@ -109,6 +118,30 @@ struct NetworkView: View {
 struct PeerDetailView: View {
     let peer: PeerSummary
     @Binding var radioSnapshot: RadioSnapshot
+    let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
+    let updateDraft: ((Int64, String) async -> Void)?
+    let pingPeer: ((PeerSummary) async -> PeerPingResult)?
+
+    @State private var openedConversation: DirectConversationSummary?
+    @State private var isOpeningConversation = false
+    @State private var isPinging = false
+    @State private var feedbackTitle = ""
+    @State private var feedbackMessage = ""
+    @State private var showsFeedback = false
+
+    init(
+        peer: PeerSummary,
+        radioSnapshot: Binding<RadioSnapshot>,
+        startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil,
+        updateDraft: ((Int64, String) async -> Void)? = nil,
+        pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil
+    ) {
+        self.peer = peer
+        _radioSnapshot = radioSnapshot
+        self.startConversation = startConversation
+        self.updateDraft = updateDraft
+        self.pingPeer = pingPeer
+    }
 
     var body: some View {
         List {
@@ -129,6 +162,30 @@ struct PeerDetailView: View {
                 CanonicalAddressView(address: peer.identity.canonicalAddress)
             }
 
+            if startConversation != nil, pingPeer != nil {
+                Section("Actions") {
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await openConversation() }
+                    } label: {
+                        Label("Message", systemImage: "message")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isOpeningConversation)
+
+                    Button {
+                        Task { await ping() }
+                    } label: {
+                        Label(isPinging ? "Pinging…" : "Ping", systemImage: "wave.3.right")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isPinging)
+                }
+            }
+            }
+
             if peer.isCompanionRadio {
                 Section {
                     Text("This peer is managed by the saved radio and cannot be removed separately.")
@@ -138,6 +195,51 @@ struct PeerDetailView: View {
             }
         }
         .navigationTitle(peer.displayName)
+        .navigationDestination(item: $openedConversation) { conversation in
+            DirectConversationView(
+                conversation: conversation,
+                radioSnapshot: radioSnapshot,
+                updateDraft: updateDraft ?? { _, _ in }
+            )
+        }
+        .alert(feedbackTitle, isPresented: $showsFeedback) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(feedbackMessage)
+        }
+    }
+
+    private func openConversation() async {
+        guard let startConversation else { return }
+        guard !isOpeningConversation else { return }
+        isOpeningConversation = true
+        defer { isOpeningConversation = false }
+        if let conversation = await startConversation(peer) {
+            openedConversation = conversation
+        } else {
+            feedbackTitle = "Conversation unavailable"
+            feedbackMessage = "The app could not create a direct conversation for this peer."
+            showsFeedback = true
+        }
+    }
+
+    private func ping() async {
+        guard let pingPeer else { return }
+        guard !isPinging else { return }
+        isPinging = true
+        defer { isPinging = false }
+        switch await pingPeer(peer) {
+        case let .reply(milliseconds):
+            feedbackTitle = "Ping reply"
+            feedbackMessage = "Round trip: \(milliseconds) ms"
+        case .timedOut:
+            feedbackTitle = "Ping timed out"
+            feedbackMessage = "No authenticated echo response arrived from this peer."
+        case let .unavailable(reason):
+            feedbackTitle = "Ping unavailable"
+            feedbackMessage = reason
+        }
+        showsFeedback = true
     }
 }
 

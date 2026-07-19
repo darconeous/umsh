@@ -3391,12 +3391,18 @@ dependencies = [
 name = "umsh-mobile-core"
 version = "0.1.0"
 dependencies = [
+ "embedded-hal-async",
  "lwuri",
+ "rand 0.10.1",
  "tempfile",
+ "tokio",
  "umsh-companion",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-sync",
  "umsh-uri",
  "uniffi",
  "zeroize",

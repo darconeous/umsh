@@ -1,15 +1,23 @@
 import Foundation
+import UMSHMobileCore
 
 protocol RadioConnection: AnyObject, Sendable {
     func snapshots() async -> AsyncStream<RadioSnapshot>
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame>
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
+    func useMeshSession(_ session: MobileMeshSession?) async
     func autoConnect() async
     func connect() async throws
     func claimForCurrentIdentity() async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
+    func ping(peerAddress: String) async throws -> RadioPingResult
     func disconnect() async
+}
+
+enum RadioPingResult: Equatable, Sendable {
+    case reply(roundTripMilliseconds: UInt64)
+    case timedOut
 }
 
 struct RadioReceivedFrame: Equatable, Sendable {

@@ -184,7 +184,7 @@ struct NodeImportView: View {
     }
 }
 
-private struct DirectConversationView: View {
+struct DirectConversationView: View {
     let conversation: DirectConversationSummary
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> Void

@@ -44,6 +44,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var refreshInProgress = false
     private var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
     private var configurationWaiter: CheckedContinuation<Void, any Error>?
+    private var meshSession: MobileMeshSession?
+    private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
+    private var meshPumpGeneration = UUID()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -151,6 +154,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func useMeshSession(_ session: MobileMeshSession?) async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                meshSession = session
+                meshPumpGeneration = UUID()
+                result.resume()
+            }
+        }
+    }
+
     func claimForCurrentIdentity() async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
@@ -212,6 +225,33 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     )
                 } catch {
                     finishConfiguration(throwing: error)
+                }
+            }
+        }
+    }
+
+    func ping(peerAddress: String) async throws -> RadioPingResult {
+        try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<RadioPingResult, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let meshSession,
+                      let peripheral,
+                      peripheral.state == .connected,
+                      snapshot.linkState == .attached,
+                      snapshot.hostState == .matchesCurrentIdentity
+                else {
+                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    return
+                }
+                do {
+                    let operation = try meshSession.ping(
+                        peerAddress: peerAddress,
+                        timeoutMs: 30_000
+                    )
+                    pingWaiters[operation] = result
+                    scheduleMeshPump(idlePolls: 0)
+                } catch {
+                    result.resume(throwing: error)
                 }
             }
         }
@@ -523,6 +563,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         snapshot.problemDescription = nil
 
         for received in update.receivedFrames {
+            if let meshSession {
+                try meshSession.receive(
+                    frame: MobileMeshRxRecord(
+                        data: received.data,
+                        rssiDbm: received.rssiDbm,
+                        lqi: received.lqi,
+                        snrCb: received.snrCb
+                    )
+                )
+                scheduleMeshPump(idlePolls: 40)
+            }
             let frame = RadioReceivedFrame(
                 data: received.data,
                 rssiDBm: received.rssiDbm.map(Int.init),
@@ -571,6 +622,55 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    private func scheduleMeshPump(idlePolls: Int) {
+        let generation = meshPumpGeneration
+        bluetoothQueue.asyncAfter(deadline: .now() + 0.025) { [weak self] in
+            guard let self, self.meshPumpGeneration == generation else { return }
+            self.pumpMeshSession(idlePolls: idlePolls)
+        }
+    }
+
+    private func pumpMeshSession(idlePolls: Int) {
+        guard let meshSession,
+              let peripheral,
+              peripheral.state == .connected,
+              snapshot.linkState == .attached
+        else { return }
+        do {
+            let update = meshSession.pollUpdate()
+            for frame in update.outboundFrames {
+                try applySessionUpdate(
+                    companionSession.transmitRaw(data: frame),
+                    from: peripheral
+                )
+            }
+            for event in update.pingEvents {
+                guard let waiter = pingWaiters.removeValue(forKey: event.operationId) else {
+                    continue
+                }
+                switch event.outcome {
+                case .reply:
+                    waiter.resume(
+                        returning: .reply(
+                            roundTripMilliseconds: event.roundTripMilliseconds ?? 0
+                        )
+                    )
+                case .timedOut:
+                    waiter.resume(returning: .timedOut)
+                }
+            }
+            if !pingWaiters.isEmpty || idlePolls > 0 {
+                scheduleMeshPump(idlePolls: max(0, idlePolls - 1))
+            }
+        } catch {
+            for waiter in pingWaiters.values {
+                waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
+            }
+            pingWaiters.removeAll()
+            publishFailure("The Rust mesh session could not use the companion radio", name: peripheral.name)
+        }
+    }
+
     private func publish(_ newSnapshot: RadioSnapshot) {
         snapshot = newSnapshot
         for continuation in continuations.values {
@@ -606,6 +706,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             finishRefresh(throwing: error)
         }
         finishConfiguration(throwing: error)
+        for waiter in pingWaiters.values {
+            waiter.resume(throwing: error)
+        }
+        pingWaiters.removeAll()
+        meshPumpGeneration = UUID()
     }
 
     private func clearPeripheral() {

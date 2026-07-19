@@ -4,7 +4,10 @@
 //! the internal protocol crate graph. Platform bindings should wrap this API;
 //! mobile feature code should not depend on `umsh-core` directly.
 
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 
 use lwuri::UriRef;
 use umsh_core::{AddressParseError, NodeHint, PublicKey};
@@ -14,6 +17,7 @@ use zeroize::Zeroize;
 
 mod companion;
 mod counter_store;
+mod mobile_mesh;
 
 pub use companion::{
     CompanionBatteryRecord, CompanionHostOwnership, CompanionPropertyFrameRecord,
@@ -25,6 +29,10 @@ pub use companion::{
     inspect_companion_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
+pub use mobile_mesh::{
+    MobileMeshError, MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRxRecord,
+    MobileMeshSession, MobileMeshSessionUpdateRecord,
+};
 
 uniffi::setup_scaffolding!();
 
@@ -32,7 +40,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 12;
+pub const MOBILE_API_VERSION: u16 = 13;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -238,7 +246,8 @@ pub fn inspect_public_identity_bytes(
 /// transfer. Swift receives only public identity records from this object.
 #[derive(uniffi::Object)]
 pub struct MobileIdentity {
-    identity: SoftwareIdentity,
+    identity: Mutex<Option<SoftwareIdentity>>,
+    public_identity: PublicIdentityRecord,
 }
 
 #[uniffi::export]
@@ -251,15 +260,29 @@ impl MobileIdentity {
                 .try_into()
                 .map_err(|_| MobileError::InvalidSecretKeyLength)?;
             let identity = SoftwareIdentity::from_secret_bytes(&bytes);
+            let public_identity = public_identity_record(identity.public_key());
             bytes.zeroize();
-            Ok(Arc::new(Self { identity }))
+            Ok(Arc::new(Self {
+                identity: Mutex::new(Some(identity)),
+                public_identity,
+            }))
         })();
         secret_key.zeroize();
         result
     }
 
     pub fn public_identity(&self) -> PublicIdentityRecord {
-        public_identity_record(self.identity.public_key())
+        self.public_identity.clone()
+    }
+}
+
+impl MobileIdentity {
+    fn take_for_session(&self) -> Result<SoftwareIdentity, MobileMeshError> {
+        self.identity
+            .lock()
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+            .take()
+            .ok_or(MobileMeshError::SessionUnavailable)
     }
 }
 
