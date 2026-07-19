@@ -157,6 +157,7 @@ enum ExpectedResponse {
     Save,
     ConfigurationProperty(u32, Vec<u8>),
     SaveConfiguration,
+    RawTransmit,
 }
 
 struct CompanionSessionState {
@@ -345,6 +346,35 @@ impl MobileCompanionSession {
         Ok(state.update(outbound))
     }
 
+    /// Queue one complete raw UMSH frame on `STR_PHY_RAW`.
+    ///
+    /// The platform adapter supplies only opaque bytes from `MobileMeshSession`;
+    /// Rust owns the companion command, stream identifier, metadata, TID, and
+    /// confirmation matching.
+    pub fn transmit_raw(&self, data: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        if state.stage != SessionStage::Attached || data.is_empty() {
+            return Err(MobileError::InvalidCompanionFrame);
+        }
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::RawTransmit);
+        let mut metadata = [0u8; umsh_companion::TxMeta::WIRE_LEN];
+        umsh_companion::TxMeta::default()
+            .encode(&mut metadata)
+            .map_err(|_| MobileError::InvalidCompanionFrame)?;
+        let mut frame = vec![0u8; data.len() + 16];
+        let len = umsh_companion::frame::str_send(
+            &mut frame,
+            tid,
+            umsh_companion::ids::stream::PHY_RAW,
+            &data,
+            &metadata,
+        )
+        .map_err(|_| MobileError::InvalidCompanionFrame)?;
+        frame.truncate(len);
+        Ok(state.update(vec![frame]))
+    }
+
     /// Consume one complete companion frame and advance the session reducer.
     pub fn consume(&self, frame: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
         let parsed = Frame::parse(&frame).map_err(|_| MobileError::InvalidCompanionFrame)?;
@@ -464,6 +494,14 @@ impl MobileCompanionSession {
                     return Err(MobileError::InvalidCompanionFrame);
                 }
                 state.finish_configuration()?;
+            }
+            ExpectedResponse::RawTransmit => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                    || inspect_companion_status(response.value)? != 0
+                {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
             }
         }
 

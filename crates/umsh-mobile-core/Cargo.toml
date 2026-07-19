@@ -15,7 +15,13 @@ umsh-crypto = { path = "../umsh-crypto" }
 umsh-hal = { path = "../umsh-hal" }
 umsh-companion = { path = "../umsh-companion" }
 umsh-uri = { path = "../umsh-uri" }
+umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
+umsh-node = { path = "../umsh-node", features = ["std", "software-crypto"] }
+umsh-sync = { path = "../umsh-sync" }
+embedded-hal-async.workspace = true
 lwuri.workspace = true
+rand = { workspace = true, features = ["std", "thread_rng", "sys_rng"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 uniffi = "=0.32.0"
 zeroize.workspace = true
 

@@ -49,3 +49,9 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     let peer: PeerSummary
     var draftText: String
 }
+
+enum PeerPingResult: Equatable, Sendable {
+    case reply(roundTripMilliseconds: UInt64)
+    case timedOut
+    case unavailable(reason: String)
+}

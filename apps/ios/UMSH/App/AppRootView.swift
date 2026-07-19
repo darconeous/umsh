@@ -11,12 +11,15 @@ struct AppRootView: View {
     @State private var peers: [PeerSummary] = []
     @State private var conversations: [DirectConversationSummary] = []
 
-    private let identityVault = KeychainIdentityVault(meshEngine: RustMeshEngine())
-    private let peerMeshEngine = RustMeshEngine()
+    private let meshEngine: RustMeshEngine
+    private let identityVault: KeychainIdentityVault
     private let applicationStore = try? SQLiteApplicationStore.applicationStore()
     private let radioConnection: any RadioConnection
 
     init(radioConnection: any RadioConnection = CoreBluetoothRadioConnection()) {
+        let meshEngine = RustMeshEngine()
+        self.meshEngine = meshEngine
+        identityVault = KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
     }
 
@@ -46,7 +49,10 @@ struct AppRootView: View {
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: { identity, details in
                         _ = await savePeer(identity, details: details, startConversation: false)
-                    }
+                    },
+                    startConversation: startConversation,
+                    updateDraft: updateDraft,
+                    pingPeer: pingPeer
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -109,6 +115,7 @@ struct AppRootView: View {
         do {
             localIdentity = try await identityVault.loadIdentity()
             try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
+            try await installMeshSession()
             await prepareApplicationState()
             if localIdentity != nil {
                 await radioConnection.autoConnect()
@@ -128,6 +135,7 @@ struct AppRootView: View {
         do {
             localIdentity = try await identityVault.createIdentity()
             try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
+            try await installMeshSession()
             await prepareApplicationState()
             identityError = nil
         } catch let error as IdentityVaultError {
@@ -171,7 +179,7 @@ struct AppRootView: View {
 
     private func inspectPeerIdentity(_ input: String) async -> Result<MeshNodeURIPreview, MeshEngineError> {
         do {
-            return .success(try await peerMeshEngine.inspectPeerIdentity(input))
+            return .success(try await meshEngine.inspectPeerIdentity(input))
         } catch let error as MeshEngineError {
             return .failure(error)
         } catch {
@@ -216,6 +224,48 @@ struct AppRootView: View {
         if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
             conversations[index].draftText = text
         }
+    }
+
+    private func startConversation(_ peer: PeerSummary) async -> DirectConversationSummary? {
+        guard let applicationStore, let localIdentity else { return nil }
+        do {
+            _ = try await applicationStore.ensureDirectConversation(
+                ownerIdentityID: localIdentity.id,
+                peerAddress: peer.identity.canonicalAddress
+            )
+            await reloadApplicationState()
+            return conversations.first {
+                $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func pingPeer(_ peer: PeerSummary) async -> PeerPingResult {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
+            return .unavailable(reason: "Connect a configured companion radio to ping this peer.")
+        }
+        guard radioSnapshot.hostState == .matchesCurrentIdentity else {
+            return .unavailable(reason: "Set up this radio for the current phone identity before pinging peers.")
+        }
+        do {
+            switch try await radioConnection.ping(
+                peerAddress: peer.identity.canonicalAddress
+            ) {
+            case let .reply(milliseconds):
+                return .reply(roundTripMilliseconds: milliseconds)
+            case .timedOut:
+                return .timedOut
+            }
+        } catch {
+            return .unavailable(reason: "The Rust mesh session could not send this ping.")
+        }
+    }
+
+    private func installMeshSession() async throws {
+        let session = try await meshEngine.meshSession()
+        await radioConnection.useMeshSession(session)
     }
 
     private func prepareApplicationState() async {
@@ -265,7 +315,7 @@ struct AppRootView: View {
             let storedPeers = try await applicationStore.listNodes(ownerIdentityID: localIdentity.id)
             var mappedPeers: [Int64: PeerSummary] = [:]
             for stored in storedPeers {
-                guard let identity = try? await peerMeshEngine.inspectPublicIdentity(stored.publicAddress) else {
+                guard let identity = try? await meshEngine.inspectPublicIdentity(stored.publicAddress) else {
                     continue
                 }
                 mappedPeers[stored.id] = PeerSummary(
