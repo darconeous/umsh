@@ -17,11 +17,12 @@ mod counter_store;
 
 pub use companion::{
     CompanionBatteryRecord, CompanionHostOwnership, CompanionPropertyFrameRecord,
-    CompanionReceivedFrameRecord, CompanionSessionPhase, CompanionSessionSnapshotRecord,
-    CompanionSessionUpdateRecord, CompanionSyncRecord, GattSegmentRecord, MobileCompanionSession,
-    MobileGattReassembler, companion_gatt_segments, companion_inspection_properties,
-    companion_prop_get, companion_prop_set, companion_save, inspect_companion_battery,
-    inspect_companion_property_frame, inspect_companion_status, inspect_companion_sync,
+    CompanionRadioSettingsRecord, CompanionReceivedFrameRecord, CompanionSessionPhase,
+    CompanionSessionSnapshotRecord, CompanionSessionUpdateRecord, CompanionSyncRecord,
+    GattSegmentRecord, MobileCompanionSession, MobileGattReassembler, companion_gatt_segments,
+    companion_inspection_properties, companion_prop_get, companion_prop_set, companion_save,
+    inspect_companion_battery, inspect_companion_property_frame, inspect_companion_status,
+    inspect_companion_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 
@@ -31,7 +32,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 9;
+pub const MOBILE_API_VERSION: u16 = 10;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -135,6 +136,50 @@ pub fn inspect_node_uri(uri: String) -> Result<NodeUriPreviewRecord, MobileError
         canonical_address: identity.canonical_address,
         hint: identity.hint,
         has_identity_data: node.identity_data.is_some(),
+    })
+}
+
+/// Inspect a pasted peer identity in any user-facing interchange form.
+///
+/// Accepted input is a node URI, the canonical fixed-width Base58 public
+/// address, or exactly 32 public-key bytes written as hexadecimal (with an
+/// optional `0x` prefix). The result always returns the canonical Base58 form.
+#[uniffi::export]
+pub fn inspect_peer_identity(input: String) -> Result<NodeUriPreviewRecord, MobileError> {
+    let input = input.trim();
+    if input.starts_with("umsh:") {
+        return inspect_node_uri(input.to_owned());
+    }
+
+    let hex_input = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+        .unwrap_or(input);
+    let hex = hex_input
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace() && !matches!(character, ':' | '-'))
+        .collect::<String>();
+    if hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let mut public_key = [0u8; 32];
+        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
+            let pair =
+                core::str::from_utf8(pair).map_err(|_| MobileError::InvalidAddressCharacter)?;
+            public_key[index] =
+                u8::from_str_radix(pair, 16).map_err(|_| MobileError::InvalidAddressCharacter)?;
+        }
+        let identity = public_identity_record(&PublicKey(public_key));
+        return Ok(NodeUriPreviewRecord {
+            canonical_address: identity.canonical_address,
+            hint: identity.hint,
+            has_identity_data: false,
+        });
+    }
+
+    let identity = inspect_public_identity(input.to_owned())?;
+    Ok(NodeUriPreviewRecord {
+        canonical_address: identity.canonical_address,
+        hint: identity.hint,
+        has_identity_data: false,
     })
 }
 
@@ -331,6 +376,36 @@ mod tests {
             public_identity_bytes(identity.canonical_address).unwrap(),
             bytes
         );
+    }
+
+    #[test]
+    fn peer_identity_accepts_uri_base58_and_hex() {
+        let key = [0xAB; 32];
+        let canonical = public_identity_record(&PublicKey(key)).canonical_address;
+        let hex = key
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let colon_hex = key
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(":");
+
+        for input in [
+            canonical.clone(),
+            format!("0x{hex}"),
+            colon_hex,
+            format!("umsh:n:{canonical}"),
+        ] {
+            let preview = inspect_peer_identity(input).unwrap();
+            assert_eq!(preview.canonical_address, canonical);
+        }
+    }
+
+    #[test]
+    fn peer_identity_rejects_wrong_length_hex() {
+        assert!(inspect_peer_identity("ab12".into()).is_err());
     }
 
     #[test]

@@ -28,6 +28,16 @@ actor FakeMeshEngine: MeshEngine {
         )
     }
 
+    func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
+        if input.hasPrefix("umsh:n:") {
+            return try inspectNodeURI(input)
+        }
+        return MeshNodeURIPreview(
+            publicIdentity: try inspectPublicIdentity(input),
+            hasIdentityData: false
+        )
+    }
+
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity {
         guard secretKey.count == 32 else {
             throw MeshEngineError.invalidAddress

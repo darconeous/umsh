@@ -481,6 +481,22 @@ fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt8: FfiConverterPrimitive {
+    typealias FfiType = Int8
+    typealias SwiftType = Int8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
     typealias FfiType = UInt16
     typealias SwiftType = UInt16
@@ -654,6 +670,11 @@ public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
     func claim(hostKey: Data) throws  -> CompanionSessionUpdateRecord
 
     /**
+     * Apply, verify, and persist a complete radio-settings snapshot.
+     */
+    func configure(settings: CompanionRadioSettingsRecord) throws  -> CompanionSessionUpdateRecord
+
+    /**
      * Consume one complete companion frame and advance the session reducer.
      */
     func consume(frame: Data) throws  -> CompanionSessionUpdateRecord
@@ -755,6 +776,19 @@ open func claim(hostKey: Data)throws  -> CompanionSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_claim(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(hostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply, verify, and persist a complete radio-settings snapshot.
+     */
+open func configure(settings: CompanionRadioSettingsRecord)throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_configure(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeCompanionRadioSettingsRecord_lower(settings),uniffiCallStatus
     )
 })
 }
@@ -1394,6 +1428,80 @@ public func FfiConverterTypeCompanionPropertyFrameRecord_lower(_ value: Companio
 
 
 /**
+ * Complete desired live radio configuration. Capability-gated fields must be
+ * omitted when the companion does not advertise their associated capability.
+ */
+public struct CompanionRadioSettingsRecord: Equatable, Hashable {
+    public var deviceName: String?
+    public var frequencyKhz: UInt32
+    public var transmitPowerDbm: Int8
+    public var bandwidthHz: UInt32?
+    public var spreadingFactor: UInt8?
+    public var codingRateDenom: UInt8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceName: String?, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?) {
+        self.deviceName = deviceName
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionRadioSettingsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRadioSettingsRecord {
+        return
+            try CompanionRadioSettingsRecord(
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                frequencyKhz: FfiConverterUInt32.read(from: &buf),
+                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
+                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionRadioSettingsRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRadioSettingsRecord_lift(_ buf: RustBuffer) throws -> CompanionRadioSettingsRecord {
+    return try FfiConverterTypeCompanionRadioSettingsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRadioSettingsRecord_lower(_ value: CompanionRadioSettingsRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionRadioSettingsRecord.lower(value)
+}
+
+
+/**
  * One validated raw mesh frame delivered by the companion radio.
  */
 public struct CompanionReceivedFrameRecord: Equatable, Hashable {
@@ -1623,8 +1731,14 @@ public struct CompanionSyncRecord: Equatable, Hashable {
     public var hasHostFiltering: Bool
     public var supportsOfflineQueue: Bool
     public var supportsDelegatedAck: Bool
+    public var supportsDeviceName: Bool
+    public var supportsLora: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
+    public var transmitPowerDbm: Int8
+    public var bandwidthHz: UInt32?
+    public var spreadingFactor: UInt8?
+    public var codingRateDenom: UInt8?
     public var saved: Bool?
     public var queuedFrames: UInt16?
     public var droppedFrames: UInt32?
@@ -1635,13 +1749,19 @@ public struct CompanionSyncRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, phyEnabled: Bool, frequencyKhz: UInt32, saved: Bool?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
+    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, saved: Bool?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
         self.supportsDelegatedAck = supportsDelegatedAck
+        self.supportsDeviceName = supportsDeviceName
+        self.supportsLora = supportsLora
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
         self.saved = saved
         self.queuedFrames = queuedFrames
         self.droppedFrames = droppedFrames
@@ -1671,8 +1791,14 @@ public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
                 hasHostFiltering: FfiConverterBool.read(from: &buf),
                 supportsOfflineQueue: FfiConverterBool.read(from: &buf),
                 supportsDelegatedAck: FfiConverterBool.read(from: &buf),
+                supportsDeviceName: FfiConverterBool.read(from: &buf),
+                supportsLora: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
+                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
+                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
                 saved: FfiConverterOptionBool.read(from: &buf),
                 queuedFrames: FfiConverterOptionUInt16.read(from: &buf),
                 droppedFrames: FfiConverterOptionUInt32.read(from: &buf),
@@ -1688,8 +1814,14 @@ public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.hasHostFiltering, into: &buf)
         FfiConverterBool.write(value.supportsOfflineQueue, into: &buf)
         FfiConverterBool.write(value.supportsDelegatedAck, into: &buf)
+        FfiConverterBool.write(value.supportsDeviceName, into: &buf)
+        FfiConverterBool.write(value.supportsLora, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
         FfiConverterOptionBool.write(value.saved, into: &buf)
         FfiConverterOptionUInt16.write(value.queuedFrames, into: &buf)
         FfiConverterOptionUInt32.write(value.droppedFrames, into: &buf)
@@ -2070,6 +2202,7 @@ public enum CompanionSessionPhase: Equatable, Hashable {
     case synchronizing
     case awaitingHost
     case claiming
+    case configuring
     case attached
 
 
@@ -2100,7 +2233,9 @@ public struct FfiConverterTypeCompanionSessionPhase: FfiConverterRustBuffer {
 
         case 4: return .claiming
 
-        case 5: return .attached
+        case 5: return .configuring
+
+        case 6: return .attached
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2126,8 +2261,12 @@ public struct FfiConverterTypeCompanionSessionPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .attached:
+        case .configuring:
             writeInt(&buf, Int32(5))
+
+
+        case .attached:
+            writeInt(&buf, Int32(6))
 
         }
     }
@@ -2712,6 +2851,21 @@ public func inspectNodeUri(uri: String)throws  -> NodeUriPreviewRecord  {
 })
 }
 /**
+ * Inspect a pasted peer identity in any user-facing interchange form.
+ *
+ * Accepted input is a node URI, the canonical fixed-width Base58 public
+ * address, or exactly 32 public-key bytes written as hexadecimal (with an
+ * optional `0x` prefix). The result always returns the canonical Base58 form.
+ */
+public func inspectPeerIdentity(input: String)throws  -> NodeUriPreviewRecord  {
+    return try  FfiConverterTypeNodeUriPreviewRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_peer_identity(
+        FfiConverterString.lower(input),uniffiCallStatus
+    )
+})
+}
+/**
  * Parse and canonicalize a complete public identity address.
  *
  * The returned record contains public information only. Invalid input is not
@@ -2895,6 +3049,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_node_uri() != 44840) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_peer_identity() != 17867) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_public_identity() != 3965) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2944,6 +3101,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_claim() != 57104) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_configure() != 41476) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_consume() != 8102) {

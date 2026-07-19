@@ -181,6 +181,33 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func configure(_ settings: RadioSettings) async throws {
+        try await withCheckedThrowingContinuation { result in
+            bluetoothQueue.async { [self] in
+                do {
+                    guard let peripheral, peripheral.state == .connected else {
+                        throw RadioConnectionError.companionNotFound
+                    }
+                    let record = CompanionRadioSettingsRecord(
+                        deviceName: settings.deviceName,
+                        frequencyKhz: settings.frequencyKHz,
+                        transmitPowerDbm: settings.transmitPowerDBm,
+                        bandwidthHz: settings.bandwidthHz,
+                        spreadingFactor: settings.spreadingFactor,
+                        codingRateDenom: settings.codingRateDenominator
+                    )
+                    try applySessionUpdate(
+                        companionSession.configure(settings: record),
+                        from: peripheral
+                    )
+                    result.resume()
+                } catch {
+                    result.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     func disconnect() async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
@@ -408,6 +435,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         case .synchronizing: .synchronizing
         case .awaitingHost: .awaitingHost
         case .claiming: .provisioning
+        case .configuring: .configuring
         case .attached: .attached
         }
         snapshot.hostState = switch update.snapshot.hostOwnership {
@@ -439,8 +467,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 hasHostFiltering: $0.hasHostFiltering,
                 supportsOfflineQueue: $0.supportsOfflineQueue,
                 supportsDelegatedAcknowledgements: $0.supportsDelegatedAck,
+                supportsDeviceName: $0.supportsDeviceName,
+                supportsLoRa: $0.supportsLora,
                 phyEnabled: $0.phyEnabled,
                 frequencyKHz: $0.frequencyKhz,
+                transmitPowerDBm: $0.transmitPowerDbm,
+                bandwidthHz: $0.bandwidthHz,
+                spreadingFactor: $0.spreadingFactor,
+                codingRateDenominator: $0.codingRateDenom,
                 saved: $0.saved,
                 queuedFrames: $0.queuedFrames.map(Int.init),
                 droppedFrames: $0.droppedFrames,

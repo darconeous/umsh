@@ -55,8 +55,14 @@ struct RadioSnapshot: Equatable, Sendable {
             hasHostFiltering: true,
             supportsOfflineQueue: true,
             supportsDelegatedAcknowledgements: false,
+            supportsDeviceName: true,
+            supportsLoRa: true,
             phyEnabled: true,
             frequencyKHz: 915_000,
+            transmitPowerDBm: 14,
+            bandwidthHz: 125_000,
+            spreadingFactor: 9,
+            codingRateDenominator: 5,
             saved: true,
             queuedFrames: 0,
             droppedFrames: 0,
@@ -96,6 +102,7 @@ enum RadioLinkState: String, Equatable, Sendable {
     case synchronizing
     case awaitingHost
     case provisioning
+    case configuring
     case attached
     case ready
     case disconnecting
@@ -113,6 +120,7 @@ enum RadioLinkState: String, Equatable, Sendable {
         case .synchronizing: "Radio synchronizing"
         case .awaitingHost: "Radio needs a host decision"
         case .provisioning: "Radio provisioning"
+        case .configuring: "Saving radio settings"
         case .attached: "Radio attached"
         case .ready: "Radio connected"
         case .disconnecting: "Radio disconnecting"
@@ -123,7 +131,7 @@ enum RadioLinkState: String, Equatable, Sendable {
     var symbolName: String {
         switch self {
         case .attached, .ready: "antenna.radiowaves.left.and.right"
-        case .scanning, .connecting, .pairing, .attaching, .synchronizing, .provisioning:
+        case .scanning, .connecting, .pairing, .attaching, .synchronizing, .provisioning, .configuring:
             "antenna.radiowaves.left.and.right.circle"
         case .failed: "exclamationmark.triangle.fill"
         default: "antenna.radiowaves.left.and.right.slash"
@@ -165,8 +173,14 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let hasHostFiltering: Bool
     let supportsOfflineQueue: Bool
     let supportsDelegatedAcknowledgements: Bool
+    let supportsDeviceName: Bool
+    let supportsLoRa: Bool
     let phyEnabled: Bool
     let frequencyKHz: UInt32
+    let transmitPowerDBm: Int8
+    let bandwidthHz: UInt32?
+    let spreadingFactor: UInt8?
+    let codingRateDenominator: UInt8?
     let saved: Bool?
     let queuedFrames: Int?
     let droppedFrames: UInt32?
@@ -174,4 +188,13 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let hostChannelCount: Int?
     let hostPeerCount: Int?
     let autoAcknowledgementEnabled: Bool?
+}
+
+struct RadioSettings: Equatable, Sendable {
+    let deviceName: String?
+    let frequencyKHz: UInt32
+    let transmitPowerDBm: Int8
+    let bandwidthHz: UInt32?
+    let spreadingFactor: UInt8?
+    let codingRateDenominator: UInt8?
 }

@@ -3,7 +3,10 @@ import SwiftUI
 struct NetworkView: View {
     @Binding var radioSnapshot: RadioSnapshot
     let peers: [PeerSummary]
+    let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
+    let savePeer: (MeshPublicIdentity, PeerImportDetails) async -> Void
     @State private var presentation: NetworkPresentation = .list
+    @State private var showsAddPeer = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +28,22 @@ struct NetworkView: View {
             }
         }
         .navigationTitle("Network")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Add peer", systemImage: "person.badge.plus") { showsAddPeer = true }
+            }
+        }
+        .sheet(isPresented: $showsAddPeer) {
+            NavigationStack {
+                NodeImportView(
+                    inspectPeerIdentity: inspectPeerIdentity,
+                    save: { identity, details, _ in
+                        await savePeer(identity, details)
+                        showsAddPeer = false
+                    }
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -102,7 +121,7 @@ struct PeerDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Type", value: peer.isCompanionRadio ? "Companion radio identity" : "Peer")
+                LabeledContent("Type", value: peer.isCompanionRadio ? "Companion radio identity" : peer.kind.label)
                 LabeledContent("Node hint", value: peer.identity.hint.text)
             }
 

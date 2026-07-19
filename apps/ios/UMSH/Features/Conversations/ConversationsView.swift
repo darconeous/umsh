@@ -3,8 +3,8 @@ import SwiftUI
 struct ConversationsView: View {
     let conversations: [DirectConversationSummary]
     let radioSnapshot: RadioSnapshot
-    let inspectNodeURI: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let savePeer: (MeshPublicIdentity, Bool) async -> DirectConversationSummary?
+    let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
+    let savePeer: (MeshPublicIdentity, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
 
     @State private var showsImport = false
@@ -54,9 +54,9 @@ struct ConversationsView: View {
         .sheet(isPresented: $showsImport) {
             NavigationStack {
                 NodeImportView(
-                    inspectNodeURI: inspectNodeURI,
-                    save: { identity, startConversation in
-                        let conversation = await savePeer(identity, startConversation)
+                    inspectPeerIdentity: inspectPeerIdentity,
+                    save: { identity, details, startConversation in
+                        let conversation = await savePeer(identity, details, startConversation)
                         showsImport = false
                         if startConversation {
                             openedConversation = conversation
@@ -85,24 +85,27 @@ private struct ConversationRow: View {
     }
 }
 
-private struct NodeImportView: View {
-    let inspectNodeURI: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let save: (MeshPublicIdentity, Bool) async -> Void
+struct NodeImportView: View {
+    let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
+    let save: (MeshPublicIdentity, PeerImportDetails, Bool) async -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
     @State private var preview: MeshNodeURIPreview?
     @State private var problem: String?
     @State private var isInspecting = false
+    @State private var name = ""
+    @State private var kind = PeerKind.person
+    @State private var isContact = true
 
     var body: some View {
         Form {
-            Section("Node URI") {
-                TextField("umsh:n:…", text: $input, axis: .vertical)
+            Section("Peer identity") {
+                TextField("UMSH URI, Base58 address, or 32-byte hex key", text: $input, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.system(.body, design: .monospaced))
-                Button("Preview identity") { Task { await inspect() } }
+                Button("Validate identity") { Task { await inspect() } }
                     .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isInspecting)
             }
 
@@ -122,13 +125,25 @@ private struct NodeImportView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Section("Local details") {
+                    TextField("Name (optional)", text: $name)
+                    Picker("Type", selection: $kind) {
+                        ForEach(PeerKind.allCases) { kind in
+                            Text(kind.label).tag(kind)
+                        }
+                    }
+                    Toggle("Save as contact", isOn: $isContact)
+                    Text("Name and type are stored only on this phone; they are not authenticated claims from the peer.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Section {
                     Button("Message") {
-                        Task { await save(preview.publicIdentity, true) }
+                        Task { await save(preview.publicIdentity, details, true) }
                     }
                     .buttonStyle(.borderedProminent)
-                    Button("Save Contact") {
-                        Task { await save(preview.publicIdentity, false) }
+                    Button(isContact ? "Save Contact" : "Save Peer") {
+                        Task { await save(preview.publicIdentity, details, false) }
                     }
                 }
             }
@@ -148,15 +163,24 @@ private struct NodeImportView: View {
     private func inspect() async {
         isInspecting = true
         defer { isInspecting = false }
-        let result = await inspectNodeURI(input.trimmingCharacters(in: .whitespacesAndNewlines))
+        let result = await inspectPeerIdentity(input.trimmingCharacters(in: .whitespacesAndNewlines))
         switch result {
         case let .success(value):
             preview = value
             problem = nil
         case .failure:
             preview = nil
-            problem = "This is not a valid UMSH node URI. Nothing was imported."
+            problem = "Enter a valid UMSH node URI, canonical Base58 address, or 64-digit hexadecimal public key. Nothing was imported."
         }
+    }
+
+    private var details: PeerImportDetails {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PeerImportDetails(
+            alias: trimmed.isEmpty ? nil : trimmed,
+            kind: kind,
+            isContact: isContact
+        )
     }
 }
 

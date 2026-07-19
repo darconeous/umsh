@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 9)
+        precondition(mobileApiVersion() == 10)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
@@ -50,7 +50,7 @@ struct MobileCoreSmokeTest {
         let inspectionProperties = try companionInspectionProperties(
             capabilities: Data([8])
         )
-        precondition(inspectionProperties == [3, 32, 35])
+        precondition(inspectionProperties == [3, 32, 35, 37])
         let frequency = withUnsafeBytes(of: UInt32(915_000).littleEndian) { Data($0) }
         let sync = try inspectCompanionSync(responses: [
             CompanionPropertyFrameRecord(
@@ -76,6 +76,12 @@ struct MobileCoreSmokeTest {
                 command: 6,
                 propertyId: 35,
                 value: frequency
+            ),
+            CompanionPropertyFrameRecord(
+                transactionId: 5,
+                command: 6,
+                propertyId: 37,
+                value: Data([14])
             ),
         ])
         precondition(sync.phyEnabled)

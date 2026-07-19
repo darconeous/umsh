@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
     let claimRadio: () async -> Void
+    let configureRadio: (RadioSettings) async throws -> Void
     let disconnectRadio: () async -> Void
 
     var body: some View {
@@ -53,6 +54,7 @@ struct SettingsView: View {
                         snapshot: $radioSnapshot,
                         connect: connectRadio,
                         claim: claimRadio,
+                        configure: configureRadio,
                         disconnect: disconnectRadio
                     )
                 }
@@ -104,6 +106,7 @@ struct RadioDetailView: View {
     @Binding var snapshot: RadioSnapshot
     let connect: () async -> Void
     let claim: () async -> Void
+    let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
@@ -168,9 +171,27 @@ struct RadioDetailView: View {
                     LabeledContent("Capabilities", value: "\(provisioning.capabilityCount)")
                     LabeledContent("Radio enabled", value: provisioning.phyEnabled ? "Yes" : "No")
                     LabeledContent("Frequency", value: "\(provisioning.frequencyKHz) kHz")
+                    LabeledContent("Transmit power", value: "\(provisioning.transmitPowerDBm) dBm")
+                    if let bandwidth = provisioning.bandwidthHz {
+                        LabeledContent("Bandwidth", value: "\(bandwidth / 1_000) kHz")
+                    }
+                    if let spreadingFactor = provisioning.spreadingFactor {
+                        LabeledContent("Spreading factor", value: "SF\(spreadingFactor)")
+                    }
+                    if let codingRate = provisioning.codingRateDenominator {
+                        LabeledContent("Coding rate", value: "4/\(codingRate)")
+                    }
                     if let saved = provisioning.saved {
                         LabeledContent("Saved for restart", value: saved ? "Yes" : "No")
                     }
+                    NavigationLink("Edit radio settings") {
+                        RadioSettingsEditor(
+                            radioName: snapshot.name,
+                            provisioning: provisioning,
+                            configure: configure
+                        )
+                    }
+                    .disabled(snapshot.linkState != .attached && snapshot.linkState != .ready)
                 }
 
                 if provisioning.hasHostFiltering {
@@ -206,7 +227,8 @@ struct RadioDetailView: View {
                                 alias: nil,
                                 advertisedName: snapshot.name,
                                 isContact: false,
-                                systemRole: "companion_radio"
+                                systemRole: "companion_radio",
+                                kind: .unknown
                             ),
                             radioSnapshot: $snapshot
                         )
@@ -242,7 +264,7 @@ struct RadioDetailView: View {
     @ViewBuilder
     private var connectionControl: some View {
         switch snapshot.linkState {
-        case .scanning, .connecting, .pairing, .provisioning, .disconnecting:
+        case .scanning, .connecting, .pairing, .provisioning, .configuring, .disconnecting:
             HStack {
                 ProgressView()
                 Text(snapshot.linkState.accessibilityLabel)
@@ -265,6 +287,119 @@ struct RadioDetailView: View {
             Button("Find companion radio") {
                 Task { await connect() }
             }
+        }
+    }
+}
+
+private struct RadioSettingsEditor: View {
+    let provisioning: RadioProvisioningSummary
+    let configure: (RadioSettings) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var deviceName: String
+    @State private var frequencyKHz: String
+    @State private var transmitPowerDBm: String
+    @State private var bandwidthHz: UInt32
+    @State private var spreadingFactor: UInt8
+    @State private var codingRate: UInt8
+    @State private var isSaving = false
+    @State private var problem: String?
+
+    init(
+        radioName: String?,
+        provisioning: RadioProvisioningSummary,
+        configure: @escaping (RadioSettings) async throws -> Void
+    ) {
+        self.provisioning = provisioning
+        self.configure = configure
+        _deviceName = State(initialValue: radioName ?? "")
+        _frequencyKHz = State(initialValue: String(provisioning.frequencyKHz))
+        _transmitPowerDBm = State(initialValue: String(provisioning.transmitPowerDBm))
+        _bandwidthHz = State(initialValue: provisioning.bandwidthHz ?? 125_000)
+        _spreadingFactor = State(initialValue: provisioning.spreadingFactor ?? 9)
+        _codingRate = State(initialValue: provisioning.codingRateDenominator ?? 5)
+    }
+
+    var body: some View {
+        Form {
+            if provisioning.supportsDeviceName {
+                Section("Device") {
+                    TextField("Device name", text: $deviceName)
+                    Text("The device name is public and may be visible in Bluetooth discovery.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                TextField("Frequency (kHz)", text: $frequencyKHz)
+                    .keyboardType(.numberPad)
+                TextField("Transmit power (dBm)", text: $transmitPowerDBm)
+                    .keyboardType(.numbersAndPunctuation)
+                if provisioning.supportsLoRa {
+                    Picker("Bandwidth", selection: $bandwidthHz) {
+                        Text("125 kHz").tag(UInt32(125_000))
+                        Text("250 kHz").tag(UInt32(250_000))
+                        Text("500 kHz").tag(UInt32(500_000))
+                    }
+                    Picker("Spreading factor", selection: $spreadingFactor) {
+                        ForEach(UInt8(5)...UInt8(12), id: \.self) { value in
+                            Text("SF\(value)").tag(value)
+                        }
+                    }
+                    Picker("Coding rate", selection: $codingRate) {
+                        ForEach(UInt8(5)...UInt8(8), id: \.self) { value in
+                            Text("4/\(value)").tag(value)
+                        }
+                    }
+                }
+            } header: {
+                Text("Radio")
+            } footer: {
+                Text("Changing PHY settings can make this radio unable to communicate with peers using a different configuration.")
+            }
+
+            if let problem {
+                Section { Text(problem).foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("Radio settings")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { Task { await save() } }
+                    .disabled(settings == nil || isSaving)
+            }
+        }
+    }
+
+    private var settings: RadioSettings? {
+        guard let frequency = UInt32(frequencyKHz), frequency > 0,
+              let power = Int8(transmitPowerDBm)
+        else { return nil }
+        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provisioning.supportsDeviceName,
+           trimmedName.isEmpty || trimmedName.utf8.count > 64 || trimmedName.contains("\0") {
+            return nil
+        }
+        return RadioSettings(
+            deviceName: provisioning.supportsDeviceName ? trimmedName : nil,
+            frequencyKHz: frequency,
+            transmitPowerDBm: power,
+            bandwidthHz: provisioning.supportsLoRa ? bandwidthHz : nil,
+            spreadingFactor: provisioning.supportsLoRa ? spreadingFactor : nil,
+            codingRateDenominator: provisioning.supportsLoRa ? codingRate : nil
+        )
+    }
+
+    private func save() async {
+        guard let settings else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            try await configure(settings)
+            dismiss()
+        } catch {
+            problem = "The radio rejected these settings. Its previous configuration remains authoritative."
         }
     }
 }

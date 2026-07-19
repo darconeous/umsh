@@ -11,7 +11,7 @@ struct PersistenceSmokeTest {
 
         let store = try SQLiteApplicationStore(path: databaseURL.path)
         let initialSchemaVersion = try await store.schemaVersion()
-        precondition(initialSchemaVersion == 2)
+        precondition(initialSchemaVersion == 3)
 
         try await store.insertIdentity(id: "alice", publicAddress: "alice-public")
         try await store.insertIdentity(id: "bob", publicAddress: "bob-public")
@@ -63,7 +63,7 @@ struct PersistenceSmokeTest {
 
         let reopened = try SQLiteApplicationStore(path: databaseURL.path)
         let reopenedSchemaVersion = try await reopened.schemaVersion()
-        precondition(reopenedSchemaVersion == 2)
+        precondition(reopenedSchemaVersion == 3)
         let persisted = try await reopened.searchNodes(ownerIdentityID: "alice", aliasPrefix: "river")
         precondition(persisted.map(\.publicAddress) == ["peer-two"])
 
@@ -71,7 +71,8 @@ struct PersistenceSmokeTest {
             ownerIdentityID: "alice",
             publicAddress: "peer-three",
             alias: "Hill Relay",
-            isContact: true
+            isContact: true,
+            nodeKind: "repeater"
         )
         let conversationID = try await reopened.ensureDirectConversation(
             ownerIdentityID: "alice",
@@ -85,6 +86,7 @@ struct PersistenceSmokeTest {
         let conversations = try await reopened.listDirectConversations(ownerIdentityID: "alice")
         precondition(conversations.count == 1)
         precondition(conversations[0].node.alias == "Hill Relay")
+        precondition(conversations[0].node.nodeKind == "repeater")
         precondition(conversations[0].draftText == "Draft survives relaunch")
 
         try await reopened.insertIdentity(id: "primary", publicAddress: "legacy-public")

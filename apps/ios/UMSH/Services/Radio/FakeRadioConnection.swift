@@ -43,6 +43,35 @@ actor FakeRadioConnection: RadioConnection {
         publish(.previewReady)
     }
 
+    func configure(_ settings: RadioSettings) async throws {
+        var updated = snapshot
+        updated.name = settings.deviceName ?? updated.name
+        if let provisioning = updated.provisioning {
+            updated.provisioning = RadioProvisioningSummary(
+                capabilityCount: provisioning.capabilityCount,
+                hasHostFiltering: provisioning.hasHostFiltering,
+                supportsOfflineQueue: provisioning.supportsOfflineQueue,
+                supportsDelegatedAcknowledgements: provisioning.supportsDelegatedAcknowledgements,
+                supportsDeviceName: provisioning.supportsDeviceName,
+                supportsLoRa: provisioning.supportsLoRa,
+                phyEnabled: provisioning.phyEnabled,
+                frequencyKHz: settings.frequencyKHz,
+                transmitPowerDBm: settings.transmitPowerDBm,
+                bandwidthHz: settings.bandwidthHz,
+                spreadingFactor: settings.spreadingFactor,
+                codingRateDenominator: settings.codingRateDenominator,
+                saved: true,
+                queuedFrames: provisioning.queuedFrames,
+                droppedFrames: provisioning.droppedFrames,
+                filterCount: provisioning.filterCount,
+                hostChannelCount: provisioning.hostChannelCount,
+                hostPeerCount: provisioning.hostPeerCount,
+                autoAcknowledgementEnabled: provisioning.autoAcknowledgementEnabled
+            )
+        }
+        publish(updated)
+    }
+
     func disconnect() async {
         publish(.disconnected)
     }
