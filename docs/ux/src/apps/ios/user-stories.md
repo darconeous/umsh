@@ -155,6 +155,24 @@ Acceptance criteria:
 - Unsaved edits do not masquerade as active radio state.
 - A failed apply leaves the last authoritative configuration visible.
 
+### IOS-RAD-04A: Recognize the radio as a peer
+
+**As a user with a radio-owned UMSH identity,** I want that identity to appear
+consistently in the peer model without being removable like an ordinary
+contact.
+
+Acceptance criteria:
+
+- When a saved radio exposes a complete device public key, Network contains
+  exactly one peer for that key.
+- The peer is labeled **Companion radio identity** and links to Radio Detail.
+- Ordinary peer/contact removal is unavailable while the radio remains saved.
+- The peer is distinct from the active phone identity and does not imply
+  management authorization.
+- Forgetting the radio removes the association and protection but does not
+  silently erase conversations or protocol evidence involving the identity.
+- A radio that exposes no device identity does not create a synthetic peer.
+
 ### IOS-RAD-05: Understand offline assistance
 
 **As a battery-conscious user,** I want to know what my radio can do when the

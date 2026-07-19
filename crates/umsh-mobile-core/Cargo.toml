@@ -1,0 +1,21 @@
+[package]
+name = "umsh-mobile-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Stable, value-oriented mobile facade for UMSH applications"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+umsh-core = { path = "../umsh-core" }
+umsh-crypto = { path = "../umsh-crypto" }
+umsh-hal = { path = "../umsh-hal" }
+umsh-companion = { path = "../umsh-companion" }
+uniffi = "=0.32.0"
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

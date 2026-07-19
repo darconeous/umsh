@@ -1,0 +1,316 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* UMSH/App/UMSHApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* UMSH/App/UMSHApp.swift */; };
+		100000000000000000000002 /* UMSH/App/AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* UMSH/App/AppRootView.swift */; };
+		100000000000000000000003 /* UMSH/Models/RadioSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* UMSH/Models/RadioSnapshot.swift */; };
+		100000000000000000000004 /* UMSH/Services/Radio/RadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* UMSH/Services/Radio/RadioConnection.swift */; };
+		100000000000000000000005 /* UMSH/Services/Radio/FakeRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* UMSH/Services/Radio/FakeRadioConnection.swift */; };
+		100000000000000000000006 /* UMSH/Services/MobileCore/MeshEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* UMSH/Services/MobileCore/MeshEngine.swift */; };
+		100000000000000000000007 /* UMSH/Services/MobileCore/RustMeshEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* UMSH/Services/MobileCore/RustMeshEngine.swift */; };
+		100000000000000000000008 /* UMSH/Services/MobileCore/FakeMeshEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* UMSH/Services/MobileCore/FakeMeshEngine.swift */; };
+		100000000000000000000009 /* UMSH/DesignSystem/CompanionToolbarItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* UMSH/DesignSystem/CompanionToolbarItem.swift */; };
+		10000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift */; };
+		10000000000000000000000B /* UMSH/Features/Network/NetworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* UMSH/Features/Network/NetworkView.swift */; };
+		10000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */; };
+		10000000000000000000000D /* UMSHMobileCore in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* UMSHMobileCore */; };
+		10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */; };
+		10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */; };
+		100000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */; };
+		100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */; };
+		100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */; };
+		100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* UMSH/App/UMSHApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/UMSHApp.swift; sourceTree = "<group>"; };
+		200000000000000000000002 /* UMSH/App/AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/AppRootView.swift; sourceTree = "<group>"; };
+		200000000000000000000003 /* UMSH/Models/RadioSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/RadioSnapshot.swift; sourceTree = "<group>"; };
+		200000000000000000000004 /* UMSH/Services/Radio/RadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000005 /* UMSH/Services/Radio/FakeRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/FakeRadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000006 /* UMSH/Services/MobileCore/MeshEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/MobileCore/MeshEngine.swift; sourceTree = "<group>"; };
+		200000000000000000000007 /* UMSH/Services/MobileCore/RustMeshEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/MobileCore/RustMeshEngine.swift; sourceTree = "<group>"; };
+		200000000000000000000008 /* UMSH/Services/MobileCore/FakeMeshEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/MobileCore/FakeMeshEngine.swift; sourceTree = "<group>"; };
+		200000000000000000000009 /* UMSH/DesignSystem/CompanionToolbarItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/CompanionToolbarItem.swift; sourceTree = "<group>"; };
+		20000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationsView.swift; sourceTree = "<group>"; };
+		20000000000000000000000B /* UMSH/Features/Network/NetworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Network/NetworkView.swift; sourceTree = "<group>"; };
+		20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/SettingsView.swift; sourceTree = "<group>"; };
+		20000000000000000000000D /* UMSH.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UMSH.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/PeerAvatar.swift; sourceTree = "<group>"; };
+		20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/CanonicalAddressView.swift; sourceTree = "<group>"; };
+		200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/IdentityVault.swift; sourceTree = "<group>"; };
+		200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/FrameCounterReservationStore.swift; sourceTree = "<group>"; };
+		200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Persistence/SQLiteApplicationStore.swift; sourceTree = "<group>"; };
+		200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/CoreBluetoothRadioConnection.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		300000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000D /* UMSHMobileCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		400000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				400000000000000000000002 /* Sources */,
+				400000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		400000000000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000001 /* UMSH/App/UMSHApp.swift */,
+				200000000000000000000002 /* UMSH/App/AppRootView.swift */,
+				200000000000000000000003 /* UMSH/Models/RadioSnapshot.swift */,
+				200000000000000000000004 /* UMSH/Services/Radio/RadioConnection.swift */,
+				200000000000000000000005 /* UMSH/Services/Radio/FakeRadioConnection.swift */,
+				200000000000000000000006 /* UMSH/Services/MobileCore/MeshEngine.swift */,
+				200000000000000000000007 /* UMSH/Services/MobileCore/RustMeshEngine.swift */,
+				200000000000000000000008 /* UMSH/Services/MobileCore/FakeMeshEngine.swift */,
+				200000000000000000000009 /* UMSH/DesignSystem/CompanionToolbarItem.swift */,
+				20000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift */,
+				20000000000000000000000B /* UMSH/Features/Network/NetworkView.swift */,
+				20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */,
+				20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */,
+				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
+				200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */,
+				200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */,
+				200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */,
+				200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */,
+			);
+			name = Sources;
+			sourceTree = "<group>";
+		};
+		400000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000D /* UMSH.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		500000000000000000000001 /* UMSH */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 800000000000000000000002 /* Build configuration list for PBXNativeTarget "UMSH" */;
+			buildPhases = (
+				600000000000000000000001 /* Sources */,
+				300000000000000000000001 /* Frameworks */,
+				600000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = UMSH;
+			packageProductDependencies = (
+				A00000000000000000000002 /* UMSHMobileCore */,
+			);
+			productName = UMSH;
+			productReference = 20000000000000000000000D /* UMSH.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		700000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					500000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = 800000000000000000000001 /* Build configuration list for PBXProject "UMSH" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 400000000000000000000001;
+			packageReferences = (
+				A00000000000000000000001 /* XCLocalSwiftPackageReference "../../packages/UMSHMobileCore" */,
+			);
+			productRefGroup = 400000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				500000000000000000000001 /* UMSH */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		600000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		600000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* UMSH/App/UMSHApp.swift in Sources */,
+				100000000000000000000002 /* UMSH/App/AppRootView.swift in Sources */,
+				100000000000000000000003 /* UMSH/Models/RadioSnapshot.swift in Sources */,
+				100000000000000000000004 /* UMSH/Services/Radio/RadioConnection.swift in Sources */,
+				100000000000000000000005 /* UMSH/Services/Radio/FakeRadioConnection.swift in Sources */,
+				100000000000000000000006 /* UMSH/Services/MobileCore/MeshEngine.swift in Sources */,
+				100000000000000000000007 /* UMSH/Services/MobileCore/RustMeshEngine.swift in Sources */,
+				100000000000000000000008 /* UMSH/Services/MobileCore/FakeMeshEngine.swift in Sources */,
+				100000000000000000000009 /* UMSH/DesignSystem/CompanionToolbarItem.swift in Sources */,
+				10000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift in Sources */,
+				10000000000000000000000B /* UMSH/Features/Network/NetworkView.swift in Sources */,
+				10000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift in Sources */,
+				10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */,
+				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,
+				100000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift in Sources */,
+				100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */,
+				100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */,
+				100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		900000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		900000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		900000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2ZEL2X74K7;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = UMSH;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "UMSH uses Bluetooth to connect to your companion radio.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		900000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2ZEL2X74K7;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = UMSH;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "UMSH uses Bluetooth to connect to your companion radio.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		800000000000000000000001 /* Build configuration list for PBXProject "UMSH" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				900000000000000000000001 /* Debug */,
+				900000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		800000000000000000000002 /* Build configuration list for PBXNativeTarget "UMSH" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				900000000000000000000003 /* Debug */,
+				900000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A00000000000000000000001 /* XCLocalSwiftPackageReference "../../packages/UMSHMobileCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../packages/UMSHMobileCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000002 /* UMSHMobileCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000001 /* XCLocalSwiftPackageReference "../../packages/UMSHMobileCore" */;
+			productName = UMSHMobileCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 700000000000000000000001 /* Project object */;
+}

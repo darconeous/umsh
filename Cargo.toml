@@ -9,6 +9,7 @@ members = [
     "crates/umsh-chat-room",
     "crates/umsh-text",
     "crates/umsh-mac",
+    "crates/umsh-mobile-core",
     "crates/umsh-node",
     "crates/umsh-sync",
     "crates/umsh-cli",
@@ -26,6 +27,7 @@ members = [
     "firmware/companion-ncp-techo",
     "firmware/ble-spike-techo",
     "tools/companion-web-debugger/engine",
+    "tools/uniffi-bindgen",
     "umsh",
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
@@ -42,6 +44,7 @@ default-members = [
     "crates/umsh-chat-room",
     "crates/umsh-text",
     "crates/umsh-mac",
+    "crates/umsh-mobile-core",
     "crates/umsh-node",
     "crates/umsh-sync",
     "crates/umsh-cli",

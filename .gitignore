@@ -1,4 +1,7 @@
 .DS_Store
+xcuserdata/
+*.xcuserstate
+.swiftpm/
 /old
 /target
 /docs/ux/book
