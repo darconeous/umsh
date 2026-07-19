@@ -194,7 +194,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         transmitPowerDbm: settings.transmitPowerDBm,
                         bandwidthHz: settings.bandwidthHz,
                         spreadingFactor: settings.spreadingFactor,
-                        codingRateDenom: settings.codingRateDenominator
+                        codingRateDenom: settings.codingRateDenominator,
+                        dutyCycleLimit: settings.dutyCycleLimit
                     )
                     try applySessionUpdate(
                         companionSession.configure(settings: record),
@@ -469,12 +470,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 supportsDelegatedAcknowledgements: $0.supportsDelegatedAck,
                 supportsDeviceName: $0.supportsDeviceName,
                 supportsLoRa: $0.supportsLora,
+                supportsDutyCycleLimit: $0.supportsDutyCycleLimit,
                 phyEnabled: $0.phyEnabled,
                 frequencyKHz: $0.frequencyKhz,
                 transmitPowerDBm: $0.transmitPowerDbm,
                 bandwidthHz: $0.bandwidthHz,
                 spreadingFactor: $0.spreadingFactor,
                 codingRateDenominator: $0.codingRateDenom,
+                dutyCycleNow: $0.dutyCycleNow,
+                dutyCycleLimit: $0.dutyCycleLimit,
                 saved: $0.saved,
                 queuedFrames: $0.queuedFrames.map(Int.init),
                 droppedFrames: $0.droppedFrames,

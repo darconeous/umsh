@@ -335,6 +335,7 @@ private struct RadioSettingsEditor: View {
     @State private var bandwidthHz: UInt32
     @State private var spreadingFactor: UInt8
     @State private var codingRate: UInt8
+    @State private var dutyCycleLimit: UInt16
     @State private var isSaving = false
     @State private var problem: String?
 
@@ -351,6 +352,7 @@ private struct RadioSettingsEditor: View {
         _bandwidthHz = State(initialValue: provisioning.bandwidthHz ?? 125_000)
         _spreadingFactor = State(initialValue: provisioning.spreadingFactor ?? 9)
         _codingRate = State(initialValue: provisioning.codingRateDenominator ?? 5)
+        _dutyCycleLimit = State(initialValue: provisioning.dutyCycleLimit ?? UInt16.max)
     }
 
     var body: some View {
@@ -364,13 +366,46 @@ private struct RadioSettingsEditor: View {
                 }
             }
 
+            Section("Preset") {
+                Picker("Radio profile", selection: presetSelection) {
+                    Text("Custom / manual").tag("custom")
+                    ForEach(RadioPreset.vetted) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+                Text("A preset changes all radio parameters below. Choose one used by your local mesh; every node must use matching PHY settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
-                TextField("Frequency (kHz)", text: $frequencyKHz)
-                    .keyboardType(.numberPad)
-                TextField("Transmit power (dBm)", text: $transmitPowerDBm)
-                    .keyboardType(.numbersAndPunctuation)
+                LabeledContent("Frequency") {
+                    HStack(spacing: 5) {
+                        TextField("Frequency", text: $frequencyKHz)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Frequency in kilohertz")
+                        Text("kHz").foregroundStyle(.secondary)
+                    }
+                }
+                LabeledContent("Transmit power") {
+                    HStack(spacing: 5) {
+                        TextField("Transmit power", text: $transmitPowerDBm)
+                            .keyboardType(.numbersAndPunctuation)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Transmit power in dBm")
+                        Text("dBm").foregroundStyle(.secondary)
+                    }
+                }
                 if provisioning.supportsLoRa {
                     Picker("Bandwidth", selection: $bandwidthHz) {
+                        Text("7.81 kHz").tag(UInt32(7_810))
+                        Text("10.42 kHz").tag(UInt32(10_420))
+                        Text("15.63 kHz").tag(UInt32(15_630))
+                        Text("20.83 kHz").tag(UInt32(20_830))
+                        Text("31.25 kHz").tag(UInt32(31_250))
+                        Text("41.67 kHz").tag(UInt32(41_670))
+                        Text("62.5 kHz").tag(UInt32(62_500))
                         Text("125 kHz").tag(UInt32(125_000))
                         Text("250 kHz").tag(UInt32(250_000))
                         Text("500 kHz").tag(UInt32(500_000))
@@ -390,6 +425,23 @@ private struct RadioSettingsEditor: View {
                 Text("Radio")
             } footer: {
                 Text("Changing PHY settings can make this radio unable to communicate with peers using a different configuration.")
+            }
+
+            if provisioning.supportsDutyCycleLimit {
+                Section {
+                    if let usage = provisioning.dutyCycleNow {
+                        LabeledContent("Past-hour usage", value: dutyPercentage(usage))
+                    }
+                    Picker("Transmit limit", selection: $dutyCycleLimit) {
+                        ForEach(dutyCycleOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                } header: {
+                    Text("Duty cycle")
+                } footer: {
+                    Text("The radio drops new transmissions that would exceed this rolling one-hour airtime limit. Disabling the limit does not disable usage measurement.")
+                }
             }
 
             if let problem {
@@ -420,8 +472,58 @@ private struct RadioSettingsEditor: View {
             transmitPowerDBm: power,
             bandwidthHz: provisioning.supportsLoRa ? bandwidthHz : nil,
             spreadingFactor: provisioning.supportsLoRa ? spreadingFactor : nil,
-            codingRateDenominator: provisioning.supportsLoRa ? codingRate : nil
+            codingRateDenominator: provisioning.supportsLoRa ? codingRate : nil,
+            dutyCycleLimit: provisioning.supportsDutyCycleLimit ? dutyCycleLimit : nil
         )
+    }
+
+    private var presetSelection: Binding<String> {
+        Binding(
+            get: {
+                RadioPreset.vetted.first(where: matches)?.id ?? "custom"
+            },
+            set: { identifier in
+                guard let preset = RadioPreset.vetted.first(where: { $0.id == identifier }) else {
+                    return
+                }
+                frequencyKHz = String(preset.frequencyKHz)
+                transmitPowerDBm = String(preset.transmitPowerDBm)
+                bandwidthHz = preset.bandwidthHz
+                spreadingFactor = preset.spreadingFactor
+                codingRate = preset.codingRate
+                dutyCycleLimit = preset.dutyCycleLimit
+            }
+        )
+    }
+
+    private func matches(_ preset: RadioPreset) -> Bool {
+        frequencyKHz == String(preset.frequencyKHz)
+            && transmitPowerDBm == String(preset.transmitPowerDBm)
+            && (!provisioning.supportsLoRa || (
+                bandwidthHz == preset.bandwidthHz
+                    && spreadingFactor == preset.spreadingFactor
+                    && codingRate == preset.codingRate
+            ))
+            && (!provisioning.supportsDutyCycleLimit || dutyCycleLimit == preset.dutyCycleLimit)
+    }
+
+    private var dutyCycleOptions: [(value: UInt16, label: String)] {
+        var options: [(UInt16, String)] = [
+            (UInt16.max, "Disabled"),
+            (13_107, "20%"),
+            (6_553, "10%"),
+            (655, "1%"),
+            (65, "0.1%"),
+        ]
+        if !options.contains(where: { $0.0 == dutyCycleLimit }) {
+            options.append((dutyCycleLimit, "Custom (\(dutyPercentage(dutyCycleLimit)))"))
+        }
+        return options
+    }
+
+    private func dutyPercentage(_ value: UInt16) -> String {
+        let percent = Double(value) * 100 / Double(UInt16.max)
+        return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
     }
 
     private func save() async {
@@ -435,4 +537,38 @@ private struct RadioSettingsEditor: View {
             problem = "The radio rejected these settings. Its previous configuration remains authoritative."
         }
     }
+}
+
+private struct RadioPreset: Identifiable {
+    let id: String
+    let name: String
+    let frequencyKHz: UInt32
+    let transmitPowerDBm: Int8
+    let bandwidthHz: UInt32
+    let spreadingFactor: UInt8
+    let codingRate: UInt8
+    let dutyCycleLimit: UInt16
+
+    static let vetted = [
+        RadioPreset(
+            id: "meshcore-us-canada",
+            name: "MeshCore USA/Canada (recommended)",
+            frequencyKHz: 910_525,
+            transmitPowerDBm: 20,
+            bandwidthHz: 62_500,
+            spreadingFactor: 7,
+            codingRate: 5,
+            dutyCycleLimit: UInt16.max
+        ),
+        RadioPreset(
+            id: "umsh-us-general",
+            name: "UMSH US general testing",
+            frequencyKHz: 915_000,
+            transmitPowerDBm: 14,
+            bandwidthHz: 125_000,
+            spreadingFactor: 7,
+            codingRate: 5,
+            dutyCycleLimit: UInt16.max
+        ),
+    ]
 }

@@ -47,12 +47,15 @@ pub struct CompanionSyncRecord {
     pub supports_delegated_ack: bool,
     pub supports_device_name: bool,
     pub supports_lora: bool,
+    pub supports_duty_cycle_limit: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
     pub bandwidth_hz: Option<u32>,
     pub spreading_factor: Option<u8>,
     pub coding_rate_denom: Option<u8>,
+    pub duty_cycle_now: Option<u16>,
+    pub duty_cycle_limit: Option<u16>,
     pub saved: Option<bool>,
     pub queued_frames: Option<u16>,
     pub dropped_frames: Option<u32>,
@@ -84,6 +87,7 @@ pub struct CompanionRadioSettingsRecord {
     pub bandwidth_hz: Option<u32>,
     pub spreading_factor: Option<u8>,
     pub coding_rate_denom: Option<u8>,
+    pub duty_cycle_limit: Option<u16>,
 }
 
 /// Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
@@ -302,6 +306,9 @@ impl MobileCompanionSession {
                 (prop::PHY_LORA_SF, vec![sf]),
                 (prop::PHY_LORA_CR, vec![cr]),
             ]);
+        }
+        if let Some(limit) = settings.duty_cycle_limit {
+            values.push((prop::PHY_DUTY_LIMIT, limit.to_le_bytes().to_vec()));
         }
 
         let mut outbound = Vec::with_capacity(values.len());
@@ -684,6 +691,9 @@ pub fn companion_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>
     if has(cap::PHY_LORA) {
         properties.extend([prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR]);
     }
+    if has(cap::PHY_DUTY_LIMIT) {
+        properties.extend([prop::PHY_DUTY_NOW, prop::PHY_DUTY_LIMIT]);
+    }
     if has(cap::SAVE) {
         properties.push(prop::SAVED);
     }
@@ -729,6 +739,12 @@ pub fn inspect_companion_sync(
     let coding_rate_denom = has(cap::PHY_LORA)
         .then(|| decode_u8(value(prop::PHY_LORA_CR)?))
         .transpose()?;
+    let duty_cycle_now = has(cap::PHY_DUTY_LIMIT)
+        .then(|| decode_u16(value(prop::PHY_DUTY_NOW)?))
+        .transpose()?;
+    let duty_cycle_limit = has(cap::PHY_DUTY_LIMIT)
+        .then(|| decode_u16(value(prop::PHY_DUTY_LIMIT)?))
+        .transpose()?;
     let saved = has(cap::SAVE)
         .then(|| decode_bool(value(prop::SAVED)?))
         .transpose()?;
@@ -761,12 +777,15 @@ pub fn inspect_companion_sync(
         supports_delegated_ack: has(cap::HOST_AUTO_ACK),
         supports_device_name: has(cap::DEV_NAME),
         supports_lora: has(cap::PHY_LORA),
+        supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
         bandwidth_hz,
         spreading_factor,
         coding_rate_denom,
+        duty_cycle_now,
+        duty_cycle_limit,
         saved,
         queued_frames,
         dropped_frames,
@@ -880,6 +899,9 @@ fn validate_radio_settings(
                 && (5..=12).contains(&sf)
                 && (5..=8).contains(&cr) => {}
         _ => return Err(MobileError::InvalidCompanionFrame),
+    }
+    if settings.duty_cycle_limit.is_some() != state.has_capability(cap::PHY_DUTY_LIMIT)? {
+        return Err(MobileError::InvalidCompanionFrame);
     }
     Ok(())
 }
@@ -1479,7 +1501,12 @@ mod tests {
                 prop::PROTOCOL_VERSION => (property, vec![6, 0]),
                 prop::CAPS => (
                     property,
-                    encoded_capabilities(&[cap::SAVE, cap::DEV_NAME, cap::PHY_LORA]),
+                    encoded_capabilities(&[
+                        cap::SAVE,
+                        cap::DEV_NAME,
+                        cap::PHY_LORA,
+                        cap::PHY_DUTY_LIMIT,
+                    ]),
                 ),
                 prop::DEV_NAME => (property, b"Old name".to_vec()),
                 prop::DEV_KEY | prop::BATTERY => (property, Vec::new()),
@@ -1505,6 +1532,8 @@ mod tests {
             &session,
             partial.outbound_frames,
             |property| match property {
+                prop::PHY_DUTY_NOW => (property, 65u16.to_le_bytes().to_vec()),
+                prop::PHY_DUTY_LIMIT => (property, 655u16.to_le_bytes().to_vec()),
                 prop::SAVED => (property, vec![1]),
                 _ => unreachable!(),
             },
@@ -1519,6 +1548,7 @@ mod tests {
                 bandwidth_hz: Some(250_000),
                 spreading_factor: Some(10),
                 coding_rate_denom: Some(6),
+                duty_cycle_limit: Some(6_553),
             })
             .unwrap();
         assert_eq!(
@@ -1563,5 +1593,7 @@ mod tests {
         assert_eq!(provisioning.bandwidth_hz, Some(250_000));
         assert_eq!(provisioning.spreading_factor, Some(10));
         assert_eq!(provisioning.coding_rate_denom, Some(6));
+        assert_eq!(provisioning.duty_cycle_now, Some(65));
+        assert_eq!(provisioning.duty_cycle_limit, Some(6_553));
     }
 }

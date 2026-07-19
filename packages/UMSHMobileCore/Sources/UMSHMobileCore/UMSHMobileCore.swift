@@ -1438,16 +1438,18 @@ public struct CompanionRadioSettingsRecord: Equatable, Hashable {
     public var bandwidthHz: UInt32?
     public var spreadingFactor: UInt8?
     public var codingRateDenom: UInt8?
+    public var dutyCycleLimit: UInt16?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceName: String?, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?) {
+    public init(deviceName: String?, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleLimit: UInt16?) {
         self.deviceName = deviceName
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
         self.bandwidthHz = bandwidthHz
         self.spreadingFactor = spreadingFactor
         self.codingRateDenom = codingRateDenom
+        self.dutyCycleLimit = dutyCycleLimit
     }
 
 
@@ -1471,7 +1473,8 @@ public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuff
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
                 bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
                 spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
-                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf)
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf)
         )
     }
 
@@ -1482,6 +1485,7 @@ public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuff
         FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
         FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
         FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
     }
 }
 
@@ -1733,12 +1737,15 @@ public struct CompanionSyncRecord: Equatable, Hashable {
     public var supportsDelegatedAck: Bool
     public var supportsDeviceName: Bool
     public var supportsLora: Bool
+    public var supportsDutyCycleLimit: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
     public var bandwidthHz: UInt32?
     public var spreadingFactor: UInt8?
     public var codingRateDenom: UInt8?
+    public var dutyCycleNow: UInt16?
+    public var dutyCycleLimit: UInt16?
     public var saved: Bool?
     public var queuedFrames: UInt16?
     public var droppedFrames: UInt32?
@@ -1749,19 +1756,22 @@ public struct CompanionSyncRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, saved: Bool?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
+    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: Bool?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
         self.supportsDelegatedAck = supportsDelegatedAck
         self.supportsDeviceName = supportsDeviceName
         self.supportsLora = supportsLora
+        self.supportsDutyCycleLimit = supportsDutyCycleLimit
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
         self.bandwidthHz = bandwidthHz
         self.spreadingFactor = spreadingFactor
         self.codingRateDenom = codingRateDenom
+        self.dutyCycleNow = dutyCycleNow
+        self.dutyCycleLimit = dutyCycleLimit
         self.saved = saved
         self.queuedFrames = queuedFrames
         self.droppedFrames = droppedFrames
@@ -1793,12 +1803,15 @@ public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
                 supportsDelegatedAck: FfiConverterBool.read(from: &buf),
                 supportsDeviceName: FfiConverterBool.read(from: &buf),
                 supportsLora: FfiConverterBool.read(from: &buf),
+                supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
                 bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
                 spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
                 codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
+                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
                 saved: FfiConverterOptionBool.read(from: &buf),
                 queuedFrames: FfiConverterOptionUInt16.read(from: &buf),
                 droppedFrames: FfiConverterOptionUInt32.read(from: &buf),
@@ -1816,12 +1829,15 @@ public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsDelegatedAck, into: &buf)
         FfiConverterBool.write(value.supportsDeviceName, into: &buf)
         FfiConverterBool.write(value.supportsLora, into: &buf)
+        FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
         FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
         FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
         FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
         FfiConverterOptionBool.write(value.saved, into: &buf)
         FfiConverterOptionUInt16.write(value.queuedFrames, into: &buf)
         FfiConverterOptionUInt32.write(value.droppedFrames, into: &buf)
