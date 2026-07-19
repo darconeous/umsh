@@ -1418,15 +1418,21 @@ open class MobileMeshSession: MobileMeshSessionProtocol, @unchecked Sendable {
     public func uniffiCloneHandle() -> UInt64 {
         return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilemeshsession(self.handle, $0) }
     }
-public convenience init(identity: MobileIdentity, counterStore: MobileCounterStore)throws  {
+public convenience init(identity: MobileIdentity, counterStore: MobileCounterStore)async throws  {
     let handle =
-        try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_constructor_mobilemeshsession_new(
-        FfiConverterTypeMobileIdentity_lower(identity),
-        FfiConverterTypeMobileCounterStore_lower(counterStore),uniffiCallStatus
-    )
-}
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_constructor_mobilemeshsession_new(FfiConverterTypeMobileIdentity_lower(identity),FfiConverterTypeMobileCounterStore_lower(counterStore)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_u64,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_u64,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_u64,
+            liftFunc: FfiConverterTypeMobileMeshSession_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+
+        .uniffiCloneHandle()
     self.init(unsafeFromHandle: handle)
 }
 
@@ -3508,6 +3514,54 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPingEventRecord: FfiConvert
         return seq
     }
 }
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
+
+fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UInt64,
+    pollFunc: (UInt64, @escaping UniffiRustFutureContinuationCallback, UInt64) -> (),
+    completeFunc: (UInt64, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UInt64) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Swift.Error)?
+) async throws -> T {
+    // Make sure to call the ensure init function since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureUmshMobileCoreInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(
+                rustFuture,
+                { handle, pollResult in
+                    uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
+                },
+                uniffiContinuationHandleMap.insert(obj: $0)
+            )
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
+}
+
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {
+    if let continuation = try? uniffiContinuationHandleMap.remove(handle: handle) {
+        continuation.resume(returning: pollResult)
+    } else {
+        print("uniffiFutureContinuationCallback invalid handle")
+    }
+}
 /**
  * Parse a node URI locally and return only validated public identity fields.
  */
@@ -3820,7 +3874,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 51783) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 47949) {
         return InitializationResult.apiChecksumMismatch
     }
 

@@ -19,7 +19,7 @@ use std::{
 };
 
 use embedded_hal_async::delay::DelayNs;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use umsh_core::PublicKey;
 use umsh_crypto::{
     CryptoEngine,
@@ -301,14 +301,14 @@ pub struct MobileMeshSession {
 #[uniffi::export]
 impl MobileMeshSession {
     #[uniffi::constructor]
-    pub fn new(
+    pub async fn new(
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
         let (commands, command_rx) = mpsc::unbounded_channel();
         let (outbound_tx, outbound) = std_mpsc::channel();
         let (event_tx, events) = std_mpsc::channel();
-        let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
+        let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
 
         std::thread::Builder::new()
@@ -340,7 +340,7 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
 
         ready_rx
-            .recv()
+            .await
             .map_err(|_| MobileMeshError::SessionUnavailable)??;
         Ok(Arc::new(Self {
             commands,
@@ -408,7 +408,7 @@ async fn run_worker(
     mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
     outbound: std_mpsc::Sender<Vec<u8>>,
     events: std_mpsc::Sender<MobileMeshPingEventRecord>,
-    ready: std_mpsc::SyncSender<Result<(), MobileMeshError>>,
+    ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
     let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
     let radio = BridgeRadio {
@@ -572,8 +572,8 @@ mod tests {
         identity.public_identity.canonical_address.clone()
     }
 
-    #[test]
-    fn two_rust_sessions_complete_an_authenticated_ping() {
+    #[tokio::test]
+    async fn two_rust_sessions_complete_an_authenticated_ping() {
         let directory = tempfile::tempdir().unwrap();
         let alice_identity = identity(7);
         let bob_identity = identity(9);
@@ -581,8 +581,12 @@ mod tests {
         let bob_root = directory.path().join("bob");
         let alice_store = MobileCounterStore::new(alice_root.display().to_string()).unwrap();
         let bob_store = MobileCounterStore::new(bob_root.display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store).unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
 
         // Constructing or repeatedly rebooting a session is read-only. The
         // first reservation write must be caused by an actual authenticated
@@ -643,14 +647,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn silent_peer_completes_with_timeout_event() {
+    #[tokio::test]
+    async fn silent_peer_completes_with_timeout_event() {
         let directory = tempfile::tempdir().unwrap();
         let local_identity = identity(11);
         let silent_peer = identity(13);
         let store =
             MobileCounterStore::new(directory.path().join("local").display().to_string()).unwrap();
-        let session = MobileMeshSession::new(local_identity, store).unwrap();
+        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
         let operation = session.ping(address(&silent_peer), 100).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
 
