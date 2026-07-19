@@ -314,7 +314,12 @@ pub fn prop_remove(
 
 /// Encode a `CMD_PROP_INSERTED` frame. `digest` is the inserted item in
 /// the property's digest form — never in a form containing key material.
-pub fn prop_inserted(buf: &mut [u8], tid: u8, key: u32, digest: &[u8]) -> Result<usize, WriteError> {
+pub fn prop_inserted(
+    buf: &mut [u8],
+    tid: u8,
+    key: u32,
+    digest: &[u8],
+) -> Result<usize, WriteError> {
     let mut writer = FrameWriter::new(buf, tid, Cmd::PropInserted)?;
     writer.write_pui(key)?;
     writer.write_bytes(digest)?;
@@ -611,8 +616,13 @@ mod tests {
         let payload = PropPayload::parse(frame.payload).unwrap();
         assert_eq!(payload.value, &digest);
 
-        let len = prop_removed(&mut buf, TID_UNSOLICITED, prop::HOST_CHANNEL_KEYS, &[0x12, 0x34])
-            .unwrap();
+        let len = prop_removed(
+            &mut buf,
+            TID_UNSOLICITED,
+            prop::HOST_CHANNEL_KEYS,
+            &[0x12, 0x34],
+        )
+        .unwrap();
         let frame = Frame::parse(&buf[..len]).unwrap();
         assert_eq!(frame.command(), Some(Cmd::PropRemoved));
         assert_eq!(frame.header.tid(), TID_UNSOLICITED);
@@ -625,7 +635,10 @@ mod tests {
     fn payloadless_full_commands() {
         let mut buf = [0u8; 4];
         for (encode, cmd) in [
-            (queue_drain as fn(&mut [u8], u8) -> Result<usize, WriteError>, Cmd::QueueDrain),
+            (
+                queue_drain as fn(&mut [u8], u8) -> Result<usize, WriteError>,
+                Cmd::QueueDrain,
+            ),
             (save, Cmd::Save),
             (clear, Cmd::Clear),
             (restore, Cmd::Restore),

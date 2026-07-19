@@ -54,6 +54,8 @@ pub mod prop {
     pub const DEV_PEERS: u32 = 67;
     /// Human-readable device name (`PROP_DEV_NAME`).
     pub const DEV_NAME: u32 = 68;
+    /// Battery status snapshot (`PROP_BATTERY`).
+    pub const BATTERY: u32 = 69;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -106,6 +108,8 @@ pub mod cap {
     pub const DEV_IDENTITY: u32 = 37;
     /// `CAP_DEV_NAME`
     pub const DEV_NAME: u32 = 38;
+    /// `CAP_BATTERY`
+    pub const BATTERY: u32 = 39;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

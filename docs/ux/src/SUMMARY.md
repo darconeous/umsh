@@ -12,6 +12,20 @@
 - [Pairing, Privacy, and Recovery](interaction-model/pairing-and-recovery.md)
 - [Power and Attention](interaction-model/power-and-attention.md)
 
+# Companion Applications
+
+- [Mobile Application Guidelines](apps/mobile-guidelines.md)
+- [Peer Identity, Avatars, and Secure Sessions](apps/peer-identity-and-sessions.md)
+- [Importing, Discovery, and Sharing](apps/import-discovery-sharing.md)
+- [Messaging and Delivery States](apps/messaging-and-delivery.md)
+
+# iOS Application
+
+- [Product Structure](apps/ios/product-structure.md)
+- [User Stories and Flows](apps/ios/user-stories.md)
+- [Screen Mockups](apps/ios/mockups.md)
+- [Open Product Decisions](apps/ios/open-decisions.md)
+
 # Device-Class Guidance
 
 - [Full Pagers](classes/full-pagers.md)

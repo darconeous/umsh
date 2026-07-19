@@ -27,6 +27,20 @@ Exact colors and pitches depend on hardware. Shape and cadence carry the
 meaning so the UI remains legible to users who cannot distinguish color or
 have disabled sound.
 
+## App-level infrastructure precedes content
+
+In companion applications, endpoint-wide infrastructure state must sit outside
+the hierarchy of the current conversation, peer, map, or settings screen. The
+companion-radio status therefore belongs in stable app-level chrome at the top
+of the app surface, not in screen content. A platform may integrate normal
+connected state into its top toolbar rather than dedicating a full-width row.
+An expanded attention/error banner occupies a reserved app-level position
+between that toolbar and the screen's title/content.
+
+Do not place radio state beneath a chat title, because that visually implies
+that the radio belongs to that conversation. Platform safe areas and operating
+system status chrome remain above the application-owned toolbar/status area.
+
 ## LEDs
 
 Keep the codebook small. A single LED should normally express power/liveness,

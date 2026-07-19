@@ -57,10 +57,7 @@ const BREADCRUMB_MAGIC: [u8; 4] = *b"UCRM";
 pub fn breadcrumb_take() -> (u8, u16) {
     let region = unsafe { BREADCRUMB_REGION.as_bytes_mut() };
     let (previous, beats) = if region[..4] == BREADCRUMB_MAGIC {
-        (
-            region[4],
-            u16::from_le_bytes([region[5], region[6]]),
-        )
+        (region[4], u16::from_le_bytes([region[5], region[6]]))
     } else {
         (0, 0)
     };
@@ -176,9 +173,8 @@ extern "C" fn wdt_timeout_capture(frame: *const u32, exc_return: u32) {
             0
         }
     };
-    let clock_register = |offset: u32| unsafe {
-        ((0x4000_0000u32 + offset) as *const u32).read_volatile()
-    };
+    let clock_register =
+        |offset: u32| unsafe { ((0x4000_0000u32 + offset) as *const u32).read_volatile() };
     let mut write = |index: usize, value: u32| {
         region[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     };

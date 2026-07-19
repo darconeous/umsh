@@ -10,7 +10,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_nrf::gpio::{Input, Output};
 use embassy_nrf::pac;
 use embassy_nrf::saadc::Saadc;
@@ -49,6 +49,32 @@ fn publish_battery_state(state: BatteryState) {
     if previous != state as u8 {
         BATTERY_STATE_CHANGED.signal(state);
     }
+}
+
+/// One serviced battery measurement: the raw millivolt reading and the
+/// five-way UX classification derived from it in the same iteration.
+#[derive(Clone, Copy, Debug)]
+pub struct BatterySample {
+    pub battery_mv: u16,
+    pub state: BatteryState,
+}
+
+/// Wakes the monitor to take a measurement now (see [`sample_battery`]).
+static BATTERY_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
+static BATTERY_SAMPLE_REPLY: Signal<ThreadModeRawMutex, BatterySample> = Signal::new();
+
+/// Ask [`run_battery_monitor`] — the sole SAADC and sensor-rail owner —
+/// for a fresh measurement and wait for it. The monitor services the
+/// request by running its normal gated sample/classify/publish iteration
+/// early, so protocol reads share the exact policy of the periodic scan.
+///
+/// Single-consumer, like the monitor itself. Never completes once the
+/// monitor has exited for critical-battery shutdown; callers that can
+/// outlive shutdown should apply their own timeout.
+pub async fn sample_battery() -> BatterySample {
+    BATTERY_SAMPLE_REPLY.reset();
+    BATTERY_SAMPLE_REQUEST.signal(());
+    BATTERY_SAMPLE_REPLY.wait().await
 }
 
 /// `umsh_hal::PowerControl` implementation for the T1000-E.
@@ -98,6 +124,7 @@ pub async fn run_battery_monitor(
     const EDGE_DEBOUNCE: Duration = Duration::from_millis(20);
 
     let mut low_count: u8 = 0;
+    let mut reply_pending = false;
 
     loop {
         // Gate the sensor rail, settle, sample, then drop the rail.
@@ -116,6 +143,14 @@ pub async fn run_battery_monitor(
             BatteryThresholds::default(),
         );
         publish_battery_state(state);
+
+        // Service an on-demand measurement request with this iteration's
+        // sample. A request landing mid-iteration shares the sample that
+        // was just taken rather than queueing a second rail cycle.
+        if reply_pending || BATTERY_SAMPLE_REQUEST.try_take().is_some() {
+            reply_pending = false;
+            BATTERY_SAMPLE_REPLY.signal(BatterySample { battery_mv, state });
+        }
 
         if matches!(
             state,
@@ -137,15 +172,19 @@ pub async fn run_battery_monitor(
             low_count = 0;
         }
 
-        match select3(
+        match select4(
             Timer::after(SAMPLE_INTERVAL),
             external_power.wait_for_any_edge(),
             charge_active.wait_for_any_edge(),
+            BATTERY_SAMPLE_REQUEST.wait(),
         )
         .await
         {
-            Either3::First(()) => {}
-            Either3::Second(()) | Either3::Third(()) => Timer::after(EDGE_DEBOUNCE).await,
+            Either4::First(()) => {}
+            Either4::Second(()) | Either4::Third(()) => Timer::after(EDGE_DEBOUNCE).await,
+            // An on-demand request: sample immediately and reply from
+            // the top of the loop.
+            Either4::Fourth(()) => reply_pending = true,
         }
     }
 }

@@ -710,16 +710,14 @@ fn print_classification(packet: &[u8]) {
 
     let src = match header.source {
         SourceAddrRef::Hint(hint) => format!("hint:{hint}"),
-        SourceAddrRef::FullKeyAt { offset } => packet
-            .get(offset..offset + 32)
-            .map_or_else(
-                || "<truncated>".to_owned(),
-                |bytes| {
-                    let mut key = [0u8; 32];
-                    key.copy_from_slice(bytes);
-                    PublicKey(key).to_string()
-                },
-            ),
+        SourceAddrRef::FullKeyAt { offset } => packet.get(offset..offset + 32).map_or_else(
+            || "<truncated>".to_owned(),
+            |bytes| {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(bytes);
+                PublicKey(key).to_string()
+            },
+        ),
         SourceAddrRef::Encrypted { .. } => "<encrypted>".to_owned(),
         SourceAddrRef::None => "-".to_owned(),
     };

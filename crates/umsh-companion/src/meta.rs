@@ -236,7 +236,10 @@ mod tests {
         assert_eq!(BufferedRxMeta::decode(&buf).unwrap(), meta);
 
         // Truncation at each legal field boundary: absent fields are zero.
-        assert_eq!(BufferedRxMeta::decode(&[]).unwrap(), BufferedRxMeta::default());
+        assert_eq!(
+            BufferedRxMeta::decode(&[]).unwrap(),
+            BufferedRxMeta::default()
+        );
         let base_only = BufferedRxMeta::decode(&buf[..RxMeta::WIRE_LEN]).unwrap();
         assert_eq!(base_only.rx, meta.rx);
         assert_eq!((base_only.flags, base_only.age_s), (0, 0));
@@ -246,7 +249,10 @@ mod tests {
 
         // Truncation mid-RX_AGE is malformed.
         for len in RxMeta::WIRE_LEN + 2..BufferedRxMeta::WIRE_LEN {
-            assert_eq!(BufferedRxMeta::decode(&buf[..len]), Err(MetaError::Truncated));
+            assert_eq!(
+                BufferedRxMeta::decode(&buf[..len]),
+                Err(MetaError::Truncated)
+            );
         }
     }
 
@@ -262,7 +268,14 @@ mod tests {
         let mut buf = [0u8; RxMeta::WIRE_LEN];
         rx.encode(&mut buf).unwrap();
         let buffered = BufferedRxMeta::decode(&buf).unwrap();
-        assert_eq!(buffered, BufferedRxMeta { rx, flags: 0, age_s: 0 });
+        assert_eq!(
+            buffered,
+            BufferedRxMeta {
+                rx,
+                flags: 0,
+                age_s: 0
+            }
+        );
     }
 
     #[test]

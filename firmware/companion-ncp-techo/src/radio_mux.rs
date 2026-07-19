@@ -206,7 +206,10 @@ mod tests {
             // granted first; B's stays held until A's completion.
             let granted = real.tx.receive().await;
             assert_eq!(granted.data.as_slice(), &[0xA1]);
-            assert!(real.tx.try_receive().is_err(), "B granted while A in flight");
+            assert!(
+                real.tx.try_receive().is_err(),
+                "B granted while A in flight"
+            );
 
             real.tx_done.signal(Err(RadioError::TransmitTimeout));
             assert!(a.tx_done.wait().await.is_err());

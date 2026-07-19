@@ -200,8 +200,8 @@ pub async fn write_record<W: RecordWriter>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ble_store::PageEraser;
+    use super::*;
     use core::future::Future;
     use core::task::{Context, Poll, Waker};
 
@@ -285,7 +285,8 @@ mod tests {
         type Error = ();
 
         async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
-            self.bytes.retain(|address, _| *address < start || *address >= end);
+            self.bytes
+                .retain(|address, _| *address < start || *address >= end);
             Ok(())
         }
     }
@@ -426,7 +427,12 @@ mod tests {
         assert_eq!(flash.mount().unwrap().1, tombstone(3));
 
         // Clearing again is idempotent, and a later save supersedes.
-        block_on(write_record(&mut flash, PAGE1 + SLOT_SIZE as u32, &tombstone(4))).unwrap();
+        block_on(write_record(
+            &mut flash,
+            PAGE1 + SLOT_SIZE as u32,
+            &tombstone(4),
+        ))
+        .unwrap();
         assert!(flash.mounted_snapshot().is_none());
         block_on(write_record(&mut flash, PAGE0, &record(5, 0xCC, 8))).unwrap();
         assert_eq!(flash.mounted_snapshot().unwrap(), record(5, 0xCC, 8));
@@ -481,11 +487,7 @@ mod tests {
             let mut flash = MockFlash::new();
             block_on(write_record(&mut flash, PAGE0, &old)).unwrap();
             flash.budget = Some(cut);
-            let result = block_on(write_record(
-                &mut flash,
-                PAGE0 + SLOT_SIZE as u32,
-                &new,
-            ));
+            let result = block_on(write_record(&mut flash, PAGE0 + SLOT_SIZE as u32, &new));
             assert!(result.is_err(), "cut at {cut} must fail the write");
             flash.budget = None;
             let (_, mounted) = flash.mount().expect("old record must survive");

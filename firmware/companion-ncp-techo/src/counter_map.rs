@@ -69,7 +69,9 @@ impl CounterMap {
             return Ok(true);
         }
         let key = heapless::Vec::from_slice(key).map_err(|_| MapFull)?;
-        self.entries.push(Entry { key, value }).map_err(|_| MapFull)?;
+        self.entries
+            .push(Entry { key, value })
+            .map_err(|_| MapFull)?;
         Ok(true)
     }
 

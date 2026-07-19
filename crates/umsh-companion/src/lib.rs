@@ -18,6 +18,8 @@
 //! written and decoders borrow from the input.
 
 pub mod airtime;
+pub mod battery;
+pub mod describe;
 pub mod frame;
 pub mod gatt;
 pub mod hdlc;
@@ -27,6 +29,8 @@ pub mod meta;
 pub mod pui;
 pub mod status;
 
+pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
+pub use describe::{FrameDescription, capability_name, property_name};
 pub use frame::{Cmd, Frame, FrameWriter, Header, PropPayload, StreamPayload};
 pub use meta::{BufferedRxMeta, RxMeta, TxMeta};
 pub use status::Status;

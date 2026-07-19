@@ -329,7 +329,7 @@ canonical fixture provisioning.
 The milestone is complete: the device node runs on both boards with
 the companion session fully functional beside it. Recorded follow-ups:
 management endpoints (application-layer), periodic/at-wake
-advertisement policy (device-domain properties 69–95), advertisement
+advertisement policy (device-domain properties 70–95), advertisement
 signature verification on receive, and the TX-counter-boundary
 hardware round trip (first secured node TX now exists via delegated
 acks; a dedicated check rides the next counter-block flush).
@@ -338,7 +338,7 @@ acks; a dedicated check rides the next counter-block flush).
 
 - Periodic automatic beacons and a beacon-at-wake option are **deferred but
   coming** (decided 2026-07-16): they will arrive as device-domain
-  advertisement policy in the reserved property range 69–95. Design the
+  advertisement policy in the reserved property range 70–95. Design the
   beacon path in increment 2 so the trigger (button, wake, timer) is an
   input, not baked in.
 - Whether `Host`/`LocalNode` is wanted for increment 2 or `MacHandle` alone

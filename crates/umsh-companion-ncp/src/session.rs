@@ -2,14 +2,13 @@
 
 use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
+use umsh_companion::battery::{self, BatteryStatus};
 use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::ids::{self, cap, prop, stream};
 use umsh_companion::items::{self, Filter, ItemError};
 use umsh_companion::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
 use umsh_companion::pui;
-use umsh_core::{
-    ChannelKey, NodeHint, PacketBuilder, PacketHeader, PacketType, SourceAddrRef,
-};
+use umsh_core::{ChannelKey, NodeHint, PacketBuilder, PacketHeader, PacketType, SourceAddrRef};
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 
@@ -56,6 +55,39 @@ pub enum TxPower {
     Dbm(i8),
 }
 
+/// Which battery measurements the platform reports through
+/// `PROP_BATTERY`. Fixed for the life of a session: these bits determine
+/// the field-flags octet of every snapshot, and a completed sample whose
+/// populated fields differ is refused (spec: the flags do not change
+/// while a session is attached).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatteryFields {
+    pub voltage: bool,
+    pub level: bool,
+    pub charge_state: bool,
+}
+
+impl BatteryFields {
+    /// Battery-powered operation with no reporting support: `CAP_BATTERY`
+    /// is advertised and `PROP_BATTERY` answers the empty value.
+    pub const NONE: Self = Self {
+        voltage: false,
+        level: false,
+        charge_state: false,
+    };
+
+    /// Whether any measurement is reported (a `GET` must sample).
+    pub const fn any(self) -> bool {
+        self.voltage || self.level || self.charge_state
+    }
+
+    fn matches(self, snapshot: &BatteryStatus) -> bool {
+        self.voltage == snapshot.voltage_mv.is_some()
+            && self.level == snapshot.level_percent.is_some()
+            && self.charge_state == snapshot.charge_state.is_some()
+    }
+}
+
 /// Fixed properties of the device this session runs on.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
@@ -87,6 +119,10 @@ pub struct SessionConfig {
     /// reports the combined figure and `PROP_PHY_DUTY_LIMIT` bounds the
     /// combined airtime.
     pub duty: &'static DutyLedger,
+    /// `None`: not battery powered; `CAP_BATTERY` is absent and
+    /// `PROP_BATTERY` is unknown. `Some`: the capability is advertised
+    /// and the fields say which measurements the platform reports.
+    pub battery: Option<BatteryFields>,
 }
 
 /// A radio side effect for the caller to execute.
@@ -103,6 +139,12 @@ pub enum Effect {
     /// for a `PROP_PHY_RSSI` get while the PHY is enabled, because the session
     /// itself has no live view of the radio.
     SampleRssi { tid: u8 },
+    /// Obtain a battery status snapshot from the platform's battery
+    /// source and feed it back with [`Session::respond_battery`], quoting
+    /// this `tid`. Emitted for a `PROP_BATTERY` get when at least one
+    /// measurement is reported; the session never caches readings, so
+    /// every get samples.
+    SampleBattery { tid: u8 },
     /// Apply and persist a new BLE pairing PIN, then complete the deferred
     /// property transaction with [`Session::respond_pin_set`].
     SetPairingPin { tid: u8, pin: Option<u32> },
@@ -550,9 +592,9 @@ struct ChannelKeyTable {
 
 impl ChannelKeyTable {
     fn iter(&self) -> impl Iterator<Item = &ChannelKeyEntry> {
-        self.entries[..self.len].iter().map(|entry| {
-            entry.as_ref().expect("entries below len are populated")
-        })
+        self.entries[..self.len]
+            .iter()
+            .map(|entry| entry.as_ref().expect("entries below len are populated"))
     }
 
     fn insert(&mut self, entry: ChannelKeyEntry) -> Result<(), Status> {
@@ -601,9 +643,9 @@ struct PeerKeyTable {
 
 impl PeerKeyTable {
     fn iter(&self) -> impl Iterator<Item = &PeerSlot> {
-        self.entries[..self.len].iter().map(|slot| {
-            slot.as_ref().expect("entries below len are populated")
-        })
+        self.entries[..self.len]
+            .iter()
+            .map(|slot| slot.as_ref().expect("entries below len are populated"))
     }
 
     /// Insert or replace (by public key). Replacement updates only the
@@ -724,8 +766,8 @@ impl DevPeerTable {
     /// into a complete replacement table; duplicate items collapse.
     fn parse_table(value: &[u8]) -> Result<Self, Status> {
         let mut table = Self::default();
-        for item in
-            items::fixed_items::<{ items::PUBLIC_KEY_LEN }>(value).map_err(|_| Status::INVALID_ARGUMENT)?
+        for item in items::fixed_items::<{ items::PUBLIC_KEY_LEN }>(value)
+            .map_err(|_| Status::INVALID_ARGUMENT)?
         {
             match table.insert(*item) {
                 Ok(()) | Err(Status::ALREADY) => {}
@@ -1009,7 +1051,9 @@ impl SavedState {
         }
         let mut peers = [None; MAX_PEER_KEYS];
         for slot in peers.iter_mut().take(peer_len) {
-            *slot = Some(items::PeerKeyEntry::decode(reader.slice(items::PeerKeyEntry::WIRE_LEN)?).ok()?);
+            *slot = Some(
+                items::PeerKeyEntry::decode(reader.slice(items::PeerKeyEntry::WIRE_LEN)?).ok()?,
+            );
         }
         let dev_channel_count = usize::from(reader.byte()?);
         if dev_channel_count > MAX_CHANNEL_KEYS {
@@ -1225,7 +1269,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
 
     /// Power selection for the pending transmit.
     pub fn tx_power(&self) -> TxPower {
-        self.session.pending
+        self.session
+            .pending
             .as_ref()
             .map(|pending| pending.power)
             .unwrap_or(TxPower::Default)
@@ -1261,9 +1306,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// The device identity's provisioned channel keys (raw symmetric
     /// keys, not the derived identifiers). The firmware joins each into
     /// the device node so it processes multicast on that channel.
-    pub fn dev_channel_keys(
-        &self,
-    ) -> impl Iterator<Item = [u8; items::CHANNEL_KEY_LEN]> + '_ {
+    pub fn dev_channel_keys(&self) -> impl Iterator<Item = [u8; items::CHANNEL_KEY_LEN]> + '_ {
         self.device.channel_keys.iter().map(|entry| entry.key)
     }
 
@@ -1531,8 +1574,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     // confirmed re-ack marks the original entry, which
                     // may still be queued unacked from a failed or
                     // refused earlier attempt.
-                    let original = identity
-                        .and_then(|identity| self.host.queue.seq_for_identity(&identity));
+                    let original =
+                        identity.and_then(|identity| self.host.queue.seq_for_identity(&identity));
                     ack.and_then(|plan| self.stage_ack(plan, original, now_ms))
                 }
                 verdict => {
@@ -1599,8 +1642,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 if header.dst != Some(host_hint) {
                     return SecureRx::Plain;
                 }
-                let Some(index) = self.host.peer_keys.resolve_source(&header.source, data)
-                else {
+                let Some(index) = self.host.peer_keys.resolve_source(&header.source, data) else {
                     return SecureRx::Plain;
                 };
                 let entry = &self.host.peer_keys.entries[index]
@@ -1653,7 +1695,10 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                     k_enc: entry.k_enc,
                     k_mic: entry.k_mic,
                 };
-                (self.engine.derive_blind_keys(&pairwise, &channel_keys), index)
+                (
+                    self.engine.derive_blind_keys(&pairwise, &channel_keys),
+                    index,
+                )
             }
             // Multicast the NCP holds the channel key for is
             // authenticated for queue-local duplicate coalescing only:
@@ -1870,6 +1915,19 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.complete(tid, Status::INVALID_STATE, emit);
             return None;
         }
+        // PROP_BATTERY is a measurement, not stored state: when any field
+        // is reported, defer to the platform's battery source so the
+        // response reflects a sample taken now. With no reported fields
+        // the empty (unsupported-reporting) value needs no sampling.
+        if key == prop::BATTERY
+            && let Some(fields) = self.config.battery
+        {
+            if fields.any() {
+                return Some(Effect::SampleBattery { tid });
+            }
+            self.send_prop_is(tid, prop::BATTERY, &[], emit);
+            return None;
+        }
         let mut value = [0u8; PROP_BUF];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
@@ -1889,6 +1947,33 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 self.send_prop_is(tid, prop::PHY_RSSI, &[clamped as u8], emit);
             }
             Err(()) => self.complete(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Complete a deferred `PROP_BATTERY` read requested via
+    /// [`Effect::SampleBattery`]. `sample` is the platform's snapshot, or
+    /// `Err` if the measurement failed. Quote the same `tid` the effect
+    /// carried.
+    ///
+    /// A snapshot whose populated fields do not exactly match the
+    /// configured [`BatteryFields`] is refused as `STATUS_FAILURE`: the
+    /// advertised field flags must never vary between reads.
+    pub fn respond_battery(
+        &mut self,
+        tid: u8,
+        sample: Result<BatteryStatus, ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let fields = self.config.battery.unwrap_or_default();
+        match sample {
+            Ok(snapshot) if fields.matches(&snapshot) => {
+                let mut value = [0u8; battery::MAX_ENCODED_LEN];
+                match snapshot.encode(&mut value) {
+                    Ok(len) => self.send_prop_is(tid, prop::BATTERY, &value[..len], emit),
+                    Err(_) => self.complete(tid, Status::FAILURE, emit),
+                }
+            }
+            Ok(_) | Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
 
@@ -2068,7 +2153,11 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         result: Result<(), ()>,
         emit: &mut impl FnMut(&[u8]),
     ) {
-        let Some(pending) = self.session.pending_host.take_if(|pending| pending.tid == tid) else {
+        let Some(pending) = self
+            .session
+            .pending_host
+            .take_if(|pending| pending.tid == tid)
+        else {
             return;
         };
         match result {
@@ -2302,8 +2391,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 for item in items::fixed_items::<{ items::PeerKeyEntry::WIRE_LEN }>(value)
                     .map_err(|_| Status::INVALID_ARGUMENT)?
                 {
-                    let entry = items::PeerKeyEntry::decode(item)
-                        .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    let entry =
+                        items::PeerKeyEntry::decode(item).map_err(|_| Status::INVALID_ARGUMENT)?;
                     // A repeated public key replaces the earlier entry.
                     table.insert(entry)?;
                 }
@@ -2349,6 +2438,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             | prop::HOST_RX_QUEUE_COUNT
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
+            prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -2383,8 +2473,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             }
             prop::HOST_PEER_KEYS => {
                 let result = self.require_secure_link().and_then(|()| {
-                    let entry = items::PeerKeyEntry::decode(item)
-                        .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    let entry =
+                        items::PeerKeyEntry::decode(item).map_err(|_| Status::INVALID_ARGUMENT)?;
                     // A matching public key replaces the stored key
                     // material (never STATUS_ALREADY).
                     self.host.peer_keys.insert(entry).map(|()| entry.public_key)
@@ -2593,6 +2683,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// write-only (`PROP_BLE_PAIRING_PIN`) and deferred-read
     /// (`PROP_PHY_RSSI`) properties that `encode_prop` cannot produce.
     fn known_prop(&self, key: u32) -> bool {
+        if key == prop::BATTERY {
+            return self.config.battery.is_some();
+        }
         matches!(
             key,
             prop::LAST_STATUS
@@ -2662,6 +2755,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.battery.is_some() {
+                    len += pui::encode(cap::BATTERY, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -2674,6 +2770,9 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 1
             }
             prop::PHY_RSSI => return PropValue::Unimplemented,
+            // Deferred-read like PHY_RSSI: prop_get intercepts and
+            // samples; this arm is only a fallback.
+            prop::BATTERY if self.config.battery.is_some() => return PropValue::Unimplemented,
             prop::PHY_LORA_BW => put(out, &self.device.settings.bw_hz.to_le_bytes()),
             prop::PHY_LORA_SF => {
                 out[0] = self.device.settings.sf;
@@ -2740,9 +2839,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
                 1
             }
             prop::HOST_RX_QUEUE_COUNT => put(out, &(self.host.queue.len as u16).to_le_bytes()),
-            prop::HOST_RX_QUEUE_CAPACITY => {
-                put(out, &(RX_QUEUE_CAPACITY as u16).to_le_bytes())
-            }
+            prop::HOST_RX_QUEUE_CAPACITY => put(out, &(RX_QUEUE_CAPACITY as u16).to_le_bytes()),
             prop::HOST_RX_QUEUE_DROPPED => put(out, &self.host.queue.dropped.to_le_bytes()),
             prop::HOST_RX_FILTERS => {
                 // Digest form equals item form; items carry PUI length
@@ -2780,7 +2877,13 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// as a correlated response (suppressed for TID 0; an unsolicited
     /// TID-0 `CMD_PROP_INSERTED` is reserved for changes the NCP makes
     /// for its own reasons, which none of these are).
-    fn send_prop_inserted(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+    fn send_prop_inserted(
+        &mut self,
+        tid: u8,
+        key: u32,
+        digest: &[u8],
+        emit: &mut impl FnMut(&[u8]),
+    ) {
         if tid == TID_UNSOLICITED {
             return;
         }
@@ -2792,7 +2895,13 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
 
     /// Emit `CMD_PROP_REMOVED` for `key` with the item's digest form,
     /// as a correlated response (suppressed for TID 0).
-    fn send_prop_removed(&mut self, tid: u8, key: u32, digest: &[u8], emit: &mut impl FnMut(&[u8])) {
+    fn send_prop_removed(
+        &mut self,
+        tid: u8,
+        key: u32,
+        digest: &[u8],
+        emit: &mut impl FnMut(&[u8]),
+    ) {
         if tid == TID_UNSOLICITED {
             return;
         }
@@ -2919,6 +3028,13 @@ mod tests {
             // Each test session gets its own leaked ledger so parallel
             // tests never share duty state.
             duty: Box::leak(Box::new(DutyLedger::new())),
+            // Mixed support matrix: voltage and charge state without a
+            // level, the same shape as the T-1000E profile.
+            battery: Some(BatteryFields {
+                voltage: true,
+                level: false,
+                charge_state: true,
+            }),
         }
     }
 
@@ -3056,7 +3172,8 @@ mod tests {
                 cap::HOST_KEYS,
                 cap::HOST_AUTO_ACK,
                 cap::SAVE,
-                cap::DEV_IDENTITY
+                cap::DEV_IDENTITY,
+                cap::BATTERY
             ]
         );
     }
@@ -3104,7 +3221,10 @@ mod tests {
         assert_eq!(session.settings(), settings_before);
         assert_eq!(get(&mut session, prop::PHY_ENABLED), [1]);
         assert_eq!(get(&mut session, prop::PHY_FREQ), 906_875u32.to_le_bytes());
-        assert_eq!(get(&mut session, prop::PHY_DUTY_LIMIT), 100u16.to_le_bytes());
+        assert_eq!(
+            get(&mut session, prop::PHY_DUTY_LIMIT),
+            100u16.to_le_bytes()
+        );
         assert_eq!(get(&mut session, prop::PHY_DUTY_NOW), duty_before);
     }
 
@@ -3262,6 +3382,141 @@ mod tests {
         let mut out = Vec::new();
         session.respond_rssi(4, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
         expect_status(&out[0], 4, Status::FAILURE);
+    }
+
+    #[test]
+    fn battery_get_samples_on_request() {
+        let mut session = test_session();
+
+        // A GET defers to the platform battery source; nothing is cached.
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 7, prop::BATTERY).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response until the battery is sampled");
+        assert_eq!(effect, Some(Effect::SampleBattery { tid: 7 }));
+
+        // The caller feeds the snapshot back; the session emits PROP_IS
+        // with the exact wire form: flags 0b101, voltage LE, state PUI.
+        let mut out = Vec::new();
+        session.respond_battery(
+            7,
+            Ok(BatteryStatus {
+                voltage_mv: Some(3987),
+                level_percent: None,
+                charge_state: Some(battery::BatteryChargeState::Charging),
+            }),
+            &mut |bytes: &[u8]| out.push(bytes.to_vec()),
+        );
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!(tid, 7);
+        assert_eq!(key, prop::BATTERY);
+        assert_eq!(value, [0b101, 0x93, 0x0F, 1]);
+
+        // A failed measurement surfaces as STATUS_FAILURE, never as an
+        // empty (unsupported-reporting) value.
+        let mut out = Vec::new();
+        session.respond_battery(6, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        expect_status(&out[0], 6, Status::FAILURE);
+    }
+
+    #[test]
+    fn battery_snapshot_must_match_configured_fields() {
+        let mut session = test_session();
+        // The test profile reports voltage + charge state; a source that
+        // suddenly includes a level would change the advertised flags, so
+        // the session refuses it.
+        let mut out = Vec::new();
+        session.respond_battery(
+            5,
+            Ok(BatteryStatus {
+                voltage_mv: Some(4200),
+                level_percent: Some(80),
+                charge_state: Some(battery::BatteryChargeState::Charged),
+            }),
+            &mut |bytes: &[u8]| out.push(bytes.to_vec()),
+        );
+        expect_status(&out[0], 5, Status::FAILURE);
+
+        // Same for a missing configured field.
+        let mut out = Vec::new();
+        session.respond_battery(
+            6,
+            Ok(BatteryStatus {
+                voltage_mv: Some(4200),
+                level_percent: None,
+                charge_state: None,
+            }),
+            &mut |bytes: &[u8]| out.push(bytes.to_vec()),
+        );
+        expect_status(&out[0], 6, Status::FAILURE);
+    }
+
+    #[test]
+    fn battery_without_capability_is_unknown() {
+        let mut config = test_config();
+        config.battery = None;
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        let raw = get(&mut session, prop::CAPS);
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            assert_ne!(value, cap::BATTERY);
+            offset += used;
+        }
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::BATTERY).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+
+        let (emitted, _) = set(&mut session, prop::BATTERY, &[0b001, 0, 0]);
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+    }
+
+    #[test]
+    fn battery_with_no_fields_answers_empty_without_sampling() {
+        let mut config = test_config();
+        config.battery = Some(BatteryFields::NONE);
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        // The empty (unsupported-reporting) value needs no measurement.
+        assert_eq!(get(&mut session, prop::BATTERY), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn battery_rejects_mutation() {
+        let mut session = test_session();
+        let (emitted, effect) = set(&mut session, prop::BATTERY, &[0b001, 0, 0]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_insert(&mut buf, 3, prop::BATTERY, &[0]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 3, Status::INVALID_ARGUMENT);
+
+        let len = frame::prop_remove(&mut buf, 4, prop::BATTERY, &[0]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 4, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn battery_reads_still_sample_after_reset() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+        let len = frame::reset(&mut buf, 0).unwrap();
+        dispatch(&mut session, &buf[..len], 0);
+
+        // No battery state exists to reset or restore: a GET after reset
+        // defers to a fresh sample exactly as before.
+        let len = frame::prop_get(&mut buf, 5, prop::BATTERY).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::SampleBattery { tid: 5 }));
     }
 
     #[test]
@@ -3494,9 +3749,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 69 is in the reserved
+        // An unknown property is not found; 70 is in the reserved
         // device-behavior range the spec has not assigned.
-        for unknown in [69, 1_234] {
+        for unknown in [70, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -3535,7 +3790,12 @@ mod tests {
     #[test]
     fn ncp_only_notifications_rejected_from_host() {
         let mut session = test_session();
-        for cmd in [Cmd::PropInserted, Cmd::PropRemoved, Cmd::PropIs, Cmd::StrRecv] {
+        for cmd in [
+            Cmd::PropInserted,
+            Cmd::PropRemoved,
+            Cmd::PropIs,
+            Cmd::StrRecv,
+        ] {
             let (emitted, effect) = dispatch(&mut session, &[0x81, cmd as u8], 0);
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_COMMAND);
@@ -3628,13 +3888,21 @@ mod tests {
         !emitted.is_empty()
     }
 
-    fn insert_item(session: &mut TestSession, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+    fn insert_item(
+        session: &mut TestSession,
+        key: u32,
+        item: &[u8],
+    ) -> (Vec<Vec<u8>>, Option<Effect>) {
         let mut buf = [0u8; 96];
         let len = frame::prop_insert(&mut buf, 5, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
     }
 
-    fn remove_item(session: &mut TestSession, key: u32, item: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
+    fn remove_item(
+        session: &mut TestSession,
+        key: u32,
+        item: &[u8],
+    ) -> (Vec<Vec<u8>>, Option<Effect>) {
         let mut buf = [0u8; 96];
         let len = frame::prop_remove(&mut buf, 6, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
@@ -3714,7 +3982,11 @@ mod tests {
 
         let host_key = [0xC4; 32];
         install_host_key(&mut session, &host_key);
-        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
 
         // Same key again: no wipe, and the filter table survives.
         let (emitted, effect) = set(&mut session, prop::HOST_KEY, &host_key);
@@ -3729,7 +4001,11 @@ mod tests {
     fn host_replacement_clears_host_domain_and_rolls_back_on_failure() {
         let mut session = test_session();
         install_host_key(&mut session, &[0xAA; 32]);
-        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
 
         // A failed durable wipe leaves the old host domain fully in
         // effect and the new key not installed.
@@ -3748,7 +4024,11 @@ mod tests {
         assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
 
         // Clearing the key (set to empty) is also a replacement.
-        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
         let (_, effect) = set(&mut session, prop::HOST_KEY, &[]);
         assert_eq!(effect, Some(Effect::WipeHostDomain { tid: 2 }));
         session.respond_host_wipe(2, Ok(()), &mut |_: &[u8]| {});
@@ -3780,7 +4060,11 @@ mod tests {
     fn cmd_rst_clears_host_domain() {
         let mut session = test_session();
         install_host_key(&mut session, &[0xAA; 32]);
-        insert_item(&mut session, prop::HOST_RX_FILTERS, &[items::FILTER_PKT_TYPE, 0]);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, 0],
+        );
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
         assert_eq!(get(&mut session, prop::HOST_KEY), Vec::<u8>::new());
         assert!(get(&mut session, prop::HOST_RX_FILTERS).is_empty());
@@ -4010,9 +4294,7 @@ mod tests {
         let mut steps = Vec::new();
         loop {
             let mut emitted = Vec::new();
-            let more = session.drain_step(now_ms, &mut |bytes: &[u8]| {
-                emitted.push(bytes.to_vec())
-            });
+            let more = session.drain_step(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
             assert_eq!(emitted.len(), 1, "each step emits exactly one frame");
             if !more {
                 expect_status(&emitted[0], 7, Status::OK);
@@ -4141,9 +4423,7 @@ mod tests {
         let mut frames = 0;
         loop {
             let mut emitted = Vec::new();
-            let more = session.drain_step(10_000, &mut |bytes: &[u8]| {
-                emitted.push(bytes.to_vec())
-            });
+            let more = session.drain_step(10_000, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
             if !more {
                 expect_status(&emitted[0], 7, Status::OK);
                 break;
@@ -4259,8 +4539,7 @@ mod tests {
         for seed in 0..MAX_CHANNEL_KEYS as u8 {
             install_channel_key(&mut session, &[seed; 32]);
         }
-        let (emitted, _) =
-            insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &[0xFF; 32]);
+        let (emitted, _) = insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &[0xFF; 32]);
         expect_status(&emitted[0], 5, Status::NOMEM);
     }
 
@@ -4514,7 +4793,11 @@ mod tests {
 
     /// Assert the staged transmit is a MAC ack to the test peer, and
     /// complete it.
-    fn expect_ack_transmit(session: &mut TestSession, effect: Option<Effect>, tag: Option<[u8; 8]>) {
+    fn expect_ack_transmit(
+        session: &mut TestSession,
+        effect: Option<Effect>,
+        tag: Option<[u8; 8]>,
+    ) {
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
@@ -4522,7 +4805,9 @@ mod tests {
         if let Some(tag) = tag {
             assert_eq!(session.tx_data()[header.mic_range.clone()], tag);
         }
-        session.on_tx_result(true, 0, &mut |_: &[u8]| panic!("autonomous ack must be silent"));
+        session.on_tx_result(true, 0, &mut |_: &[u8]| {
+            panic!("autonomous ack must be silent")
+        });
     }
 
     #[test]
@@ -4540,12 +4825,17 @@ mod tests {
         // reason must still reach the next host.
         session.attach(true);
         assert_eq!(
-            pui::decode(&get(&mut session, prop::LAST_STATUS)).unwrap().0,
+            pui::decode(&get(&mut session, prop::LAST_STATUS))
+                .unwrap()
+                .0,
             Status::RESET_POWER_ON.0
         );
         assert_eq!(queue_count(&mut session), 1);
         let drained = drain(&mut session, 1_000);
-        assert_eq!(drained[0].0, frame, "the queue holds the original wire bytes");
+        assert_eq!(
+            drained[0].0, frame,
+            "the queue holds the original wire bytes"
+        );
         assert_eq!(drained[0].1.flags, RX_FLAG_BUFFERED | RX_FLAG_ACKED);
     }
 
@@ -4942,7 +5232,11 @@ mod tests {
         install_host_key(&mut session, &[0xBB; 32]);
         assert_eq!(get(&mut session, prop::SAVED), [1]);
         session.detach();
-        assert!(!delivered_at(&mut session, &unicast_to([0xBB, 0xBB, 0xBB]), 0));
+        assert!(!delivered_at(
+            &mut session,
+            &unicast_to([0xBB, 0xBB, 0xBB]),
+            0
+        ));
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
 
@@ -4994,7 +5288,10 @@ mod tests {
 
     /// Drain and return each entry's RX_FLAGS.
     fn drained_flags(session: &mut TestSession) -> Vec<u8> {
-        drain(session, 0).into_iter().map(|(_, meta)| meta.flags).collect()
+        drain(session, 0)
+            .into_iter()
+            .map(|(_, meta)| meta.flags)
+            .collect()
     }
 
     #[test]
@@ -5012,7 +5309,11 @@ mod tests {
         // The sender retransmits; the duplicate re-ack completes, which
         // marks the original (still queued, still unacked) entry.
         let effect = rx_effect(&mut session, &frame, 10);
-        assert_eq!(effect, Some(Effect::StartTransmit), "re-ack after failed TX");
+        assert_eq!(
+            effect,
+            Some(Effect::StartTransmit),
+            "re-ack after failed TX"
+        );
         session.on_tx_result(true, 10, &mut |_: &[u8]| panic!("autonomous ack is silent"));
 
         session.attach(true);
@@ -5076,7 +5377,9 @@ mod tests {
             .unwrap();
         test_engine().seal_packet(&mut packet, keys).unwrap();
         let mut frame = packet.as_bytes().to_vec();
-        frame[1] = umsh_core::FloodHops::new(15 - accumulated, accumulated).unwrap().0;
+        frame[1] = umsh_core::FloodHops::new(15 - accumulated, accumulated)
+            .unwrap()
+            .0;
         frame
     }
 
@@ -5097,11 +5400,19 @@ mod tests {
         for (accumulated, expected_remaining) in [(3u8, 3u8), (0, 1), (15, 15)] {
             let frame = sealed_flooded_unar(u32::from(accumulated) + 10, &keys, accumulated);
             let effect = rx_effect(&mut session, &frame, 0);
-            assert_eq!(effect, Some(Effect::StartTransmit), "accumulated={accumulated}");
+            assert_eq!(
+                effect,
+                Some(Effect::StartTransmit),
+                "accumulated={accumulated}"
+            );
             let header = PacketHeader::parse(session.tx_data()).unwrap();
             assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
             let hops = header.flood_hops.expect("flood-return ack");
-            assert_eq!(hops.remaining(), expected_remaining, "accumulated={accumulated}");
+            assert_eq!(
+                hops.remaining(),
+                expected_remaining,
+                "accumulated={accumulated}"
+            );
             session.on_tx_result(true, 0, &mut |_: &[u8]| {});
         }
 
@@ -5113,7 +5424,10 @@ mod tests {
         let effect = rx_effect(&mut session, &retransmission, 5);
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
-        assert_eq!(header.flood_hops.expect("flood-return re-ack").remaining(), 7);
+        assert_eq!(
+            header.flood_hops.expect("flood-return re-ack").remaining(),
+            7
+        );
     }
 
     /// A sealed multicast frame on `channel_key` (channel keys act as
@@ -5199,7 +5513,10 @@ mod tests {
         let mut buf = [0u8; 64];
         let len = frame::prop_set(&mut buf, tid, prop::DEV_PRIVATE_KEY, secret).unwrap();
         let (emitted, effect) = dispatch(session, &buf[..len], 0);
-        assert!(emitted.is_empty(), "no response before the identity is stored");
+        assert!(
+            emitted.is_empty(),
+            "no response before the identity is stored"
+        );
         assert_eq!(effect, Some(Effect::ProvisionIdentity { tid }));
         let Some(IdentitySource::Install(staged)) = session.identity_request() else {
             panic!("staged request must carry the installed secret");
@@ -5261,7 +5578,10 @@ mod tests {
         let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[]);
         assert!(emitted.is_empty());
         assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 2 }));
-        assert!(matches!(session.identity_request(), Some(IdentitySource::Generate)));
+        assert!(matches!(
+            session.identity_request(),
+            Some(IdentitySource::Generate)
+        ));
 
         // A second write while the durable store is in flight is BUSY.
         let (emitted, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[0x33; 32]);
@@ -5289,9 +5609,7 @@ mod tests {
         let (_, effect) = set(&mut session, prop::DEV_PRIVATE_KEY, &[0x22; 32]);
         assert_eq!(effect, Some(Effect::ProvisionIdentity { tid: 2 }));
         let mut emitted = Vec::new();
-        session.respond_identity(2, Err(()), &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+        session.respond_identity(2, Err(()), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         expect_status(&emitted[0], 2, Status::FAILURE);
         assert_eq!(get(&mut session, prop::DEV_KEY), original);
         assert!(session.identity_request().is_none());
@@ -5382,7 +5700,10 @@ mod tests {
         let dev_channel = [0x66u8; 32];
         insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
         assert_eq!(session.dev_domain_version(), 1);
-        assert_eq!(session.dev_channel_keys().collect::<Vec<_>>(), [dev_channel]);
+        assert_eq!(
+            session.dev_channel_keys().collect::<Vec<_>>(),
+            [dev_channel]
+        );
         insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
         assert_eq!(session.dev_domain_version(), 2);
         assert_eq!(session.dev_peers().collect::<Vec<_>>(), [[0xD0; 32]]);
@@ -5556,16 +5877,24 @@ mod tests {
         let len = frame::save(&mut buf, 0).unwrap();
         let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
         assert_eq!(effect, Some(Effect::SaveSnapshot { tid: 0 }));
-        session.respond_save(0, Ok(()), &mut |_: &[u8]| panic!("tid-0 save must be silent"));
+        session.respond_save(0, Ok(()), &mut |_: &[u8]| {
+            panic!("tid-0 save must be silent")
+        });
         assert_eq!(get(&mut session, prop::SAVED), [1]);
 
         // A TID-zero failure is recorded silently.
         let len = frame::clear(&mut buf, 0).unwrap();
         let effect = dispatch_tid0_silent(&mut session, &buf[..len].to_vec());
         assert_eq!(effect, Some(Effect::ClearSaved { tid: 0 }));
-        session.respond_clear(0, Err(()), &mut |_: &[u8]| panic!("tid-0 clear must be silent"));
+        session.respond_clear(0, Err(()), &mut |_: &[u8]| {
+            panic!("tid-0 clear must be silent")
+        });
         assert_eq!(last_status_of(&mut session), Status::FAILURE.0);
-        assert_eq!(get(&mut session, prop::SAVED), [1], "failed clear rolls back nothing");
+        assert_eq!(
+            get(&mut session, prop::SAVED),
+            [1],
+            "failed clear rolls back nothing"
+        );
 
         // TID-zero SET and INSERT mutate state without a correlated
         // response.
@@ -5614,7 +5943,10 @@ mod tests {
         );
         let mut emitted = Vec::new();
         assert!(!session.drain_step(0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec())));
-        assert!(emitted.is_empty(), "TID-zero drain has no completion response");
+        assert!(
+            emitted.is_empty(),
+            "TID-zero drain has no completion response"
+        );
         assert_eq!(last_status_of(&mut session), Status::OK.0);
     }
 
