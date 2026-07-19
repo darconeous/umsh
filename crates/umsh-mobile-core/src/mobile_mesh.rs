@@ -460,6 +460,8 @@ async fn run_worker(
     });
     let _subscriptions = (pong_subscription, timeout_subscription);
     let _ = ready.send(Ok(()));
+    let mut protocol_timeout_tick = tokio::time::interval(Duration::from_millis(50));
+    protocol_timeout_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -499,6 +501,9 @@ async fn run_worker(
             }
             result = host.pump_once() => {
                 if result.is_err() { return; }
+            }
+            _ = protocol_timeout_tick.tick() => {
+                host.service_protocol_timeouts().await;
             }
         }
     }
@@ -584,6 +589,30 @@ mod tests {
             }
             assert!(Instant::now() < deadline, "ping did not complete");
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn silent_peer_completes_with_timeout_event() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(11);
+        let silent_peer = identity(13);
+        let store =
+            MobileCounterStore::new(directory.path().join("local").display().to_string()).unwrap();
+        let session = MobileMeshSession::new(local_identity, store).unwrap();
+        let operation = session.ping(address(&silent_peer), 100).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            let update = session.poll_update();
+            if let Some(event) = update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
+                assert_eq!(event.round_trip_milliseconds, None);
+                break;
+            }
+            assert!(Instant::now() < deadline, "silent ping never timed out");
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }

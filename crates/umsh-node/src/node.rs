@@ -705,7 +705,7 @@ impl<M: MacBackend> LocalNode<M> {
         }
     }
 
-    /// Called periodically (from Host::pump_once). Fires timeout handlers for expired pings.
+    /// Called periodically by the host timeout service. Fires timeout handlers for expired pings.
     pub(crate) fn expire_pings(&self, now_ms: u64) {
         let mut state = self.state.borrow_mut();
         let mut i = 0;
