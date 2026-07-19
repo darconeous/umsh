@@ -7,6 +7,10 @@ import UMSHMobileCore
 /// The adapter owns ATT/GATT lifecycle and write backpressure. Companion wire
 /// encoding, validation, segmentation, and reassembly remain in Rust.
 final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked Sendable {
+    /// Long enough for a several-hop LoRa round trip, but short enough that a
+    /// silent peer does not leave the peer page waiting for half a minute.
+    private static let peerPingTimeoutMilliseconds: UInt64 = 8_000
+
     private enum PreferenceKey {
         static let lastAttachedPeripheral = "radio.lastAttachedPeripheral"
     }
@@ -246,7 +250,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 do {
                     let operation = try meshSession.ping(
                         peerAddress: peerAddress,
-                        timeoutMs: 30_000
+                        timeoutMs: Self.peerPingTimeoutMilliseconds
                     )
                     pingWaiters[operation] = result
                     scheduleMeshPump(idlePolls: 0)
