@@ -287,12 +287,13 @@ mod firmware {
         frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
     }
 
-    /// `PROP_NCP_VERSION`: the board's firmware name and version,
-    /// nothing else. Boot diagnostics stay on the debug console.
+    /// `PROP_NCP_VERSION`: the board's firmware name and `git describe
+    /// --always` (from the build script), nothing else. Boot
+    /// diagnostics stay on the debug console.
     #[cfg(not(feature = "t1000e"))]
-    const NCP_VERSION: &str = concat!("umsh-ncp-techo ", env!("CARGO_PKG_VERSION"));
+    const NCP_VERSION: &str = concat!("umsh-ncp-techo ", env!("GIT_DESCRIBE"));
     #[cfg(feature = "t1000e")]
-    const NCP_VERSION: &str = concat!("umsh-ncp-t1000e ", env!("CARGO_PKG_VERSION"));
+    const NCP_VERSION: &str = concat!("umsh-ncp-t1000e ", env!("GIT_DESCRIBE"));
 
     fn session_config() -> SessionConfig {
         SessionConfig {
