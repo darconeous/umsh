@@ -17,7 +17,7 @@ The first byte of the payload identifies the action type.
 | 7 | Admin Commands | User → Room |
 | 8 | Room Update | Room → User |
 
-Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads (unicast to the room node), and the room distributes them to members the same way. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery.
+Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads by unicast, and the room distributes them to each member by separate unicast transmissions. Chat rooms do not use multicast. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery and is also delivered by unicast.
 
 ## Get Room Info / Room Info
 
@@ -49,7 +49,7 @@ The login payload is CoAP-option-encoded:
 
 All options are optional. Behavior details:
 
-- If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages can be retrieved with Fetch Messages.
+- If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages MAY be retrieved with Fetch Messages, if stored.
 - If the room is password-protected but already recognizes the user's public key, the password is ignored. A room may forget a public key after prolonged inactivity, requiring a password on the next login.
 - First-time logins must include the full 32-byte public key (S flag set).
 
@@ -63,7 +63,7 @@ If the user is currently logged in, the room sends a final text message to all m
 
 To send a message to a chat room, a user sends a standard [text message](app-text-messages.md) unicast to the room node. The Sender Handle option is ignored — the room fills it in from the sender's registered handle when distributing the message to members.
 
-The Message Sequence option SHOULD be included, using the sender's own per-sender message ID counter. The room uses this to detect duplicate submissions and to order rapid messages from the same user. The sender's per-sender ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.
+The Message Sequence option SHOULD be included, using the sender's own sequence for its conversation with this room. The room uses this to detect duplicate submissions and to order rapid messages from the same user. This sender-assigned ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.
 
 ## Fetch Messages
 
@@ -84,7 +84,7 @@ TBD.
 
 ## Message Distribution
 
-When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see [Regarding](app-text-messages.md#regarding)).
+When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a separate unicast text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see [Regarding](app-text-messages.md#regarding)).
 
 All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room's clock is synchronized.
 
@@ -99,7 +99,7 @@ To solve this, the room includes a Sender Sequence option on the echo it sends b
 | 12 | Timestamp Received | 4 bytes, UTC UNIX timestamp |
 | 13 | Sender Sequence | 1 byte — the sender's original Message Sequence ID |
 
-The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this against its pending outbound messages to identify the echo, then updates its local record to use the canonical room-assigned ID for future Regarding references.
+The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this value against its pending outbound messages to identify the echo. It then retains both wire identities on the same local message record: the sender-assigned ID and the canonical room-assigned Message Sequence ID carried by the echo. Room-wide Regarding references use the canonical room-assigned ID. When the original sender submits an edit or deletion of its own message to the room, its Editing option uses the original sender-assigned ID so that the room can correlate the update before redistributing it with the appropriate canonical reference.
 
 ### System Events
 
