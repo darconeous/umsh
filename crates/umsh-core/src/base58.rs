@@ -103,12 +103,21 @@ mod tests {
 
     #[test]
     fn encode_matches_reference_vectors() {
-        assert_eq!(&encode(&ZERO), b"11111111111111111111111111111111111111111111");
-        assert_eq!(&encode(&MAX), b"JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG");
+        assert_eq!(
+            &encode(&ZERO),
+            b"11111111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            &encode(&MAX),
+            b"JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG"
+        );
 
         let mut one = ZERO;
         one[31] = 1;
-        assert_eq!(&encode(&one), b"11111111111111111111111111111111111111111112");
+        assert_eq!(
+            &encode(&one),
+            b"11111111111111111111111111111111111111111112"
+        );
 
         assert_eq!(
             &encode(&leading_zero_key()),

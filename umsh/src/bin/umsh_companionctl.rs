@@ -12,6 +12,7 @@
     allow(unused_variables, dead_code)
 )]
 
+use umsh::companion::battery::{BatteryChargeState, BatteryStatus};
 use umsh::companion::ids::{DUTY_LIMIT_DISABLED, cap, prop};
 use umsh::companion::items::{Filter, PeerKeyEntry};
 use umsh::companion_radio::{
@@ -100,8 +101,13 @@ enum Transport {
 
 #[derive(Debug)]
 enum Command {
-    Info { expected: Option<[u8; 32]> },
-    Provision { desired: HostProvisioning, force: bool },
+    Info {
+        expected: Option<[u8; 32]>,
+    },
+    Provision {
+        desired: HostProvisioning,
+        force: bool,
+    },
     IdentityShow,
     IdentityGenerate,
     SetName(String),
@@ -314,7 +320,9 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
         };
         Transport::Ble(selector)
     } else if first.starts_with('-') {
-        return Err(format!("unrecognized option {first:?}; transport comes first"));
+        return Err(format!(
+            "unrecognized option {first:?}; transport comes first"
+        ));
     } else {
         Transport::Serial(first)
     };
@@ -457,8 +465,8 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
         "provision" => {
             no_positionals(&positionals)?;
             if let Some(path) = &file {
-                let text = std::fs::read_to_string(path)
-                    .map_err(|error| format!("{path}: {error}"))?;
+                let text =
+                    std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
                 parse_provision_file(&text, &mut prov)
                     .map_err(|error| format!("{path}: {error}"))?;
             }
@@ -541,7 +549,9 @@ fn parse_table_op(word: &str, positionals: &[String]) -> Result<TableOp, String>
         Some("remove") if positionals.len() == 2 => {
             Ok(TableOp::Remove(parse_key32(&positionals[1])?))
         }
-        _ => Err(format!("{word} takes `list`, `add <KEY>`, or `remove <KEY>`")),
+        _ => Err(format!(
+            "{word} takes `list`, `add <KEY>`, or `remove <KEY>`"
+        )),
     }
 }
 
@@ -567,8 +577,30 @@ fn cap_name(code: u32) -> String {
         cap::SAVE => "SAVE".into(),
         cap::DEV_IDENTITY => "DEV_IDENTITY".into(),
         cap::DEV_NAME => "DEV_NAME".into(),
+        cap::BATTERY => "BATTERY".into(),
         other => other.to_string(),
     }
+}
+
+fn battery_display(status: &BatteryStatus) -> String {
+    if status.is_empty() {
+        return "unsupported reporting".to_string();
+    }
+    let voltage = status
+        .voltage_mv
+        .map_or("voltage unsupported".to_string(), |mv| format!("{mv} mV"));
+    let level = status
+        .level_percent
+        .map_or("level unsupported".to_string(), |percent| {
+            format!("{percent}%")
+        });
+    let state = match status.charge_state {
+        Some(BatteryChargeState::Discharging) => "discharging",
+        Some(BatteryChargeState::Charging) => "charging",
+        Some(BatteryChargeState::Charged) => "charged",
+        None => "charge state unsupported",
+    };
+    format!("{voltage}, {level}, {state}")
 }
 
 fn filter_display(filter: &Filter) -> String {
@@ -637,7 +669,9 @@ async fn info<L: FrameLink>(
     ];
     if sync.has_capability(cap::PHY_LORA) {
         if let Some(bw) = radio.get_prop(prop::PHY_LORA_BW).await.ok().and_then(|v| {
-            <[u8; 4]>::try_from(v.as_slice()).ok().map(u32::from_le_bytes)
+            <[u8; 4]>::try_from(v.as_slice())
+                .ok()
+                .map(u32::from_le_bytes)
         }) {
             phy.push(format!("BW {bw} Hz"));
         }
@@ -699,12 +733,18 @@ async fn info<L: FrameLink>(
         });
         println!("{:<14}now {now}, limit {limit}", "duty:");
     }
+    if sync.has_capability(cap::BATTERY) {
+        // Live telemetry: each GET performs a measurement, so this is
+        // fetched here rather than inside sync, and a sampling failure
+        // must not abort the rest of the report.
+        match radio.battery_status().await {
+            Ok(Some(status)) => println!("{:<14}{}", "battery:", battery_display(&status)),
+            Ok(None) => {}
+            Err(err) => println!("{:<14}unavailable ({err})", "battery:"),
+        }
+    }
     if let Some(saved) = sync.saved {
-        println!(
-            "{:<14}{}",
-            "saved:",
-            if saved { "yes" } else { "no" }
-        );
+        println!("{:<14}{}", "saved:", if saved { "yes" } else { "no" });
     }
     if let (Some(count), Some(dropped)) = (sync.queue_count, sync.queue_dropped) {
         let capacity = radio
@@ -751,11 +791,7 @@ async fn info<L: FrameLink>(
         println!("{:<14}{} ({display})", "peer keys:", peers.len());
     }
     if let Some(auto_ack) = sync.auto_ack {
-        println!(
-            "{:<14}{}",
-            "auto-ack:",
-            if auto_ack { "on" } else { "off" }
-        );
+        println!("{:<14}{}", "auto-ack:", if auto_ack { "on" } else { "off" });
     }
     Ok(())
 }
@@ -912,9 +948,7 @@ async fn dispatch<L: FrameLink>(
         Command::FactoryReset => {
             radio.clear().await?;
             let status = radio.reset().await?;
-            println!(
-                "factory reset complete ({status:?}); BLE bonds and pairing PIN are retained"
-            );
+            println!("factory reset complete ({status:?}); BLE bonds and pairing PIN are retained");
             Ok(())
         }
         Command::Reset => {
@@ -934,9 +968,7 @@ async fn dispatch<L: FrameLink>(
         Command::DevChannel(op) => {
             dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
-        Command::DevPeer(op) => {
-            dev_table(&mut radio, prop::DEV_PEERS, "peer", op, no_save).await
-        }
+        Command::DevPeer(op) => dev_table(&mut radio, prop::DEV_PEERS, "peer", op, no_save).await,
         // --ble-scan never dispatches: it is handled before any link is
         // opened.
         Command::BleScan => unreachable!("scan handled in run()"),
@@ -969,7 +1001,9 @@ async fn duty<L: FrameLink>(
     no_save: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(limit) = limit {
-        let echoed = radio.set_prop(prop::PHY_DUTY_LIMIT, &limit.to_le_bytes()).await?;
+        let echoed = radio
+            .set_prop(prop::PHY_DUTY_LIMIT, &limit.to_le_bytes())
+            .await?;
         print_duty_limit(decode_u16(&echoed).ok_or("malformed PHY_DUTY_LIMIT echo")?);
         return persist_mutation(radio, no_save, true).await;
     }
@@ -1111,7 +1145,10 @@ mod tests {
             invocation.transport,
             Transport::Serial("/dev/cu.usbmodem101".into())
         );
-        assert!(matches!(invocation.command, Command::Info { expected: None }));
+        assert!(matches!(
+            invocation.command,
+            Command::Info { expected: None }
+        ));
         assert_eq!(invocation.baud, 115_200);
     }
 
@@ -1252,8 +1289,7 @@ mod tests {
     fn factory_reset_requires_confirmation() {
         let error = parse_invocation(&args(&["--ble", "factory-reset"])).unwrap_err();
         assert!(error.contains("--yes"), "{error}");
-        let confirmed =
-            parse_invocation(&args(&["--ble", "factory-reset", "--yes"])).unwrap();
+        let confirmed = parse_invocation(&args(&["--ble", "factory-reset", "--yes"])).unwrap();
         assert!(matches!(confirmed.command, Command::FactoryReset));
     }
 
@@ -1262,8 +1298,12 @@ mod tests {
         assert!(parse_invocation(&args(&["--ble", "info", "--force"])).is_err());
         assert!(parse_invocation(&args(&["--ble", "save", "--host-key", KEY_HEX])).is_err());
         assert!(
-            parse_invocation(&args(&["--ble", "info", &format!("--expect-host-key={KEY_HEX}")]))
-                .is_ok()
+            parse_invocation(&args(&[
+                "--ble",
+                "info",
+                &format!("--expect-host-key={KEY_HEX}")
+            ]))
+            .is_ok()
         );
     }
 }

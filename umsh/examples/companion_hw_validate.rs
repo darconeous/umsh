@@ -793,6 +793,7 @@ async fn info_serial(
     radio.set_frame_trace(None);
     let sync = radio.sync(expected.as_ref()).await?;
     print_sync(&sync);
+    print_battery(&mut radio).await;
     Ok(())
 }
 
@@ -812,6 +813,62 @@ async fn info_ble(
     );
     let sync = radio.sync(expected.as_ref()).await?;
     print_sync(&sync);
+    print_battery(&mut radio).await;
+    Ok(())
+}
+
+/// Live battery telemetry, deliberately outside `sync`: each read is a
+/// fresh measurement, and a sampling failure must not fail inspection.
+async fn print_battery<L: FrameLink>(radio: &mut CompanionRadio<L>) {
+    match radio.battery_status().await {
+        Ok(Some(status)) => println!("battery: {status:?}"),
+        Ok(None) => {}
+        Err(err) => println!("battery: unavailable ({err})"),
+    }
+}
+
+/// Focused battery validation: the capability gate, the snapshot's
+/// strict decode, field-set stability across reads, and a plausibility
+/// window on voltage. Charge-state transitions need an operator —
+/// plug/unplug the charger between runs and watch the state follow
+/// within one read (sampling is on demand, never cached).
+async fn battery_check(port: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    let Some(first) = radio.battery_status().await? else {
+        println!("CAP_BATTERY not advertised; nothing to validate");
+        return Ok(());
+    };
+    println!("battery: {first:?}");
+    if first.is_empty() {
+        println!("reporting unsupported (empty value) — the T-Echo profile");
+        println!("BATTERY OK");
+        return Ok(());
+    }
+    let second = radio
+        .battery_status()
+        .await?
+        .ok_or("capability vanished between reads")?;
+    println!("battery: {second:?}");
+    expect(
+        (
+            first.voltage_mv.is_some(),
+            first.level_percent.is_some(),
+            first.charge_state.is_some(),
+        ) == (
+            second.voltage_mv.is_some(),
+            second.level_percent.is_some(),
+            second.charge_state.is_some(),
+        ),
+        "field set stable across reads",
+    )?;
+    if let Some(mv) = first.voltage_mv {
+        expect(
+            (2_500..=5_500).contains(&mv),
+            &format!("voltage {mv} mV within a plausible single-cell window"),
+        )?;
+    }
+    println!("BATTERY OK");
     Ok(())
 }
 
@@ -884,6 +941,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             hold(&args[2], seconds).await
         }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
+        Some("battery") if args.len() == 3 => battery_check(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
         Some("info") if (3..=4).contains(&args.len()) => {
@@ -906,7 +964,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             eprintln!(
-                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate hold <port> [seconds]\n       companion_hw_validate probe-restore <port>"
+                "usage: companion_hw_validate phase-a|phase-c|phase-d <port>\n       companion_hw_validate phase-b <port> <dev-key>\n       companion_hw_validate rf-peer <peer-port> <base-counter>\n       companion_hw_validate rf-dev-multicast <peer-port> <channel-key> <base-counter> [count]\n       companion_hw_validate rf-dev-unicast <peer-port> <dev-key> <base-counter> [count] [ack|silence]\n       companion_hw_validate rf-advert-request <peer-port> <dev-key> <counter> [nonce-hex]\n       companion_hw_validate phase-e <port> <count> <dropped> <acked>\n       companion_hw_validate info <port> [expected-host-key]\n       companion_hw_validate info-ble <selector> [expected-host-key]\n       companion_hw_validate ble-sync <selector>\n       companion_hw_validate hold <port> [seconds]\n       companion_hw_validate probe-restore <port>\n       companion_hw_validate battery <port>"
             );
             std::process::exit(2);
         }

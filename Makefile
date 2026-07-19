@@ -1,4 +1,4 @@
-.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages \
+.PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
 	build-companion-cli-techo flash-companion-cli-techo \
 	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
@@ -66,6 +66,10 @@ flash-companion-ncp-t1000e-serial: build-companion-ncp-t1000e
 		$(TARGET_DIR)/firmware-companion-ncp-t1000e
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
+
+web-debugger:
+	wasm-pack build tools/companion-web-debugger/engine --target web \
+		--out-dir ../www/pkg --out-name umsh_companion_web_engine
 
 
 RUSTDOC_CRATES := \

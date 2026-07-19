@@ -21,6 +21,7 @@ use tokio::time::Instant;
 
 use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
+use umsh_companion::battery::BatteryStatus;
 use umsh_companion::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_companion::hdlc;
 use umsh_companion::ids::{self, cap, prop, stream};
@@ -1010,6 +1011,27 @@ where
         Ok(())
     }
 
+    /// Fetch a live battery status snapshot (`PROP_BATTERY`).
+    ///
+    /// `Ok(None)` means the NCP does not advertise `CAP_BATTERY` (not
+    /// battery powered). `Ok(Some(status))` with every field `None` means
+    /// battery powered with unsupported reporting. A measurement the NCP
+    /// cannot currently obtain surfaces as a command failure, never as
+    /// `None` — battery is live telemetry, so this is deliberately not
+    /// part of [`CompanionRadio::sync`].
+    pub async fn battery_status(
+        &mut self,
+    ) -> Result<Option<BatteryStatus>, CompanionRadioError> {
+        if !self.capabilities().await?.contains(&cap::BATTERY) {
+            return Ok(None);
+        }
+        let value = self.get_prop(prop::BATTERY).await?;
+        match BatteryStatus::decode(&value) {
+            Ok(status) => Ok(Some(status)),
+            Err(_) => Err(CompanionRadioError::Protocol("malformed PROP_BATTERY")),
+        }
+    }
+
     /// Reset cause reported by the NCP immediately after transport attach.
     pub fn boot_status(&self) -> Status {
         self.boot_status
@@ -1154,7 +1176,8 @@ where
     ) -> Result<(), CompanionRadioError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
-        let len = encode(&mut buf, tid).map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        let len =
+            encode(&mut buf, tid).map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
             .await
@@ -1210,7 +1233,10 @@ where
             // frame reports it immediately, so the callback cannot
             // miss frames the bounded receive buffer evicts mid-drain.
             if self.read_more(deadline).await? {
-                let packet = self.rx_queue.back().expect("read_more reported a queued frame");
+                let packet = self
+                    .rx_queue
+                    .back()
+                    .expect("read_more reported a queued frame");
                 on_frame(&packet.data, &packet.raw_meta);
             }
         }
@@ -2033,98 +2059,12 @@ fn same_set<T: PartialEq>(left: &[T], right: &[T]) -> bool {
     left.len() == right.len() && left.iter().all(|item| right.contains(item))
 }
 
-/// The spec mnemonic for a property identifier this module knows.
-fn prop_name(key: u32) -> Option<&'static str> {
-    Some(match key {
-        prop::LAST_STATUS => "PROP_LAST_STATUS",
-        prop::PROTOCOL_VERSION => "PROP_PROTOCOL_VERSION",
-        prop::NCP_VERSION => "PROP_NCP_VERSION",
-        prop::INTERFACE_TYPE => "PROP_INTERFACE_TYPE",
-        prop::CAPS => "PROP_CAPS",
-        prop::PHY_ENABLED => "PROP_PHY_ENABLED",
-        prop::PHY_FREQ => "PROP_PHY_FREQ",
-        prop::PHY_TX_POWER => "PROP_PHY_TX_POWER",
-        prop::PHY_RSSI => "PROP_PHY_RSSI",
-        prop::PHY_LORA_BW => "PROP_PHY_LORA_BW",
-        prop::PHY_LORA_SF => "PROP_PHY_LORA_SF",
-        prop::PHY_LORA_CR => "PROP_PHY_LORA_CR",
-        prop::PHY_MTU => "PROP_PHY_MTU",
-        prop::PHY_LORA_SW => "PROP_PHY_LORA_SW",
-        prop::MAC_PROMISCUOUS => "PROP_MAC_PROMISCUOUS",
-        prop::SAVED => "PROP_SAVED",
-        prop::DEV_KEY => "PROP_DEV_KEY",
-        prop::DEV_PRIVATE_KEY => "PROP_DEV_PRIVATE_KEY",
-        prop::DEV_CHANNEL_KEYS => "PROP_DEV_CHANNEL_KEYS",
-        prop::DEV_PEERS => "PROP_DEV_PEERS",
-        prop::DEV_NAME => "PROP_DEV_NAME",
-        prop::HOST_KEY => "PROP_HOST_KEY",
-        prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
-        prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
-        prop::HOST_RX_FILTERS => "PROP_HOST_RX_FILTERS",
-        prop::HOST_AUTO_ACK => "PROP_HOST_AUTO_ACK",
-        prop::HOST_RX_QUEUE_COUNT => "PROP_HOST_RX_QUEUE_COUNT",
-        prop::HOST_RX_QUEUE_CAPACITY => "PROP_HOST_RX_QUEUE_CAPACITY",
-        prop::HOST_RX_QUEUE_DROPPED => "PROP_HOST_RX_QUEUE_DROPPED",
-        prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
-        prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
-        prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
-        _ => return None,
-    })
-}
-
 /// Render one companion frame as a one-line human-readable summary:
 /// command, TID, property mnemonic, and the decoded status where the
 /// payload is a `PROP_LAST_STATUS` value. Values are summarized by
 /// length — never dumped — so traces cannot leak key material.
 pub fn describe_frame(bytes: &[u8]) -> String {
-    let Ok(frame) = Frame::parse(bytes) else {
-        return format!("malformed frame ({} bytes)", bytes.len());
-    };
-    let tid = frame.header.tid();
-    let Some(command) = frame.command() else {
-        return format!("unknown command tid={tid} ({} bytes)", bytes.len());
-    };
-    match command {
-        Cmd::Nop
-        | Cmd::Reset
-        | Cmd::QueueDrain
-        | Cmd::Save
-        | Cmd::Clear
-        | Cmd::Restore => format!("{command:?} tid={tid}"),
-        Cmd::PropGet
-        | Cmd::PropSet
-        | Cmd::PropIs
-        | Cmd::PropInsert
-        | Cmd::PropRemove
-        | Cmd::PropInserted
-        | Cmd::PropRemoved => {
-            let Ok(payload) = PropPayload::parse(frame.payload) else {
-                return format!("{command:?} tid={tid} (malformed payload)");
-            };
-            let key = prop_name(payload.key)
-                .map_or_else(|| format!("prop {}", payload.key), str::to_owned);
-            if payload.key == prop::LAST_STATUS && command == Cmd::PropIs {
-                format!(
-                    "{command:?} tid={tid} {key} = {:?}",
-                    decode_status(payload.value)
-                )
-            } else {
-                format!(
-                    "{command:?} tid={tid} {key} ({} value bytes)",
-                    payload.value.len()
-                )
-            }
-        }
-        Cmd::StrSend | Cmd::StrRecv => match StreamPayload::parse(frame.payload) {
-            Ok(payload) => format!(
-                "{command:?} tid={tid} stream={} ({} data bytes, {} meta bytes)",
-                payload.stream,
-                payload.data.len(),
-                payload.metadata.len()
-            ),
-            Err(_) => format!("{command:?} tid={tid} (malformed payload)"),
-        },
-    }
+    umsh_companion::FrameDescription(bytes).to_string()
 }
 
 #[cfg(test)]
@@ -2248,22 +2188,32 @@ mod tests {
                             stored.len()
                         };
                         let table = tables.entry(payload.key).or_default();
-                        let existing = table
-                            .iter_mut()
-                            .find(|item| item[..digest_len.min(item.len())] == stored[..digest_len]);
+                        let existing = table.iter_mut().find(|item| {
+                            item[..digest_len.min(item.len())] == stored[..digest_len]
+                        });
                         let len = match existing {
                             Some(_) if !replaces => {
                                 frame::last_status(&mut buf, tid, Status::ALREADY).unwrap()
                             }
                             Some(existing) => {
                                 *existing = stored.clone();
-                                frame::prop_inserted(&mut buf, tid, payload.key, &stored[..digest_len])
-                                    .unwrap()
+                                frame::prop_inserted(
+                                    &mut buf,
+                                    tid,
+                                    payload.key,
+                                    &stored[..digest_len],
+                                )
+                                .unwrap()
                             }
                             None => {
                                 table.push(stored.clone());
-                                frame::prop_inserted(&mut buf, tid, payload.key, &stored[..digest_len])
-                                    .unwrap()
+                                frame::prop_inserted(
+                                    &mut buf,
+                                    tid,
+                                    payload.key,
+                                    &stored[..digest_len],
+                                )
+                                .unwrap()
                             }
                         };
                         replies.push(buf[..len].to_vec());
@@ -2271,9 +2221,9 @@ mod tests {
                     Cmd::PropRemove => {
                         let payload = PropPayload::parse(frame.payload).unwrap();
                         let table = tables.entry(payload.key).or_default();
-                        let position = table
-                            .iter()
-                            .position(|item| item[..payload.value.len().min(item.len())] == *payload.value);
+                        let position = table.iter().position(|item| {
+                            item[..payload.value.len().min(item.len())] == *payload.value
+                        });
                         let len = match position {
                             Some(index) => {
                                 let removed = table.remove(index);
@@ -2314,7 +2264,10 @@ mod tests {
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::Restore => {
-                        if props.get(&RESTORE_RESET_FORM_KEY).is_some_and(|value| value == &[1]) {
+                        if props
+                            .get(&RESTORE_RESET_FORM_KEY)
+                            .is_some_and(|value| value == &[1])
+                        {
                             let len = frame::last_status(
                                 &mut buf,
                                 TID_UNSOLICITED,
@@ -2628,7 +2581,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(drained.len(), 2);
-        assert!(drained.iter().all(|(_, meta)| meta.flags & RX_FLAG_BUFFERED != 0));
+        assert!(
+            drained
+                .iter()
+                .all(|(_, meta)| meta.flags & RX_FLAG_BUFFERED != 0)
+        );
         assert_eq!((drained[0].1.age_s, drained[1].1.age_s), (5, 3));
 
         // The frames also surface through the ordinary receive path,
@@ -2683,13 +2640,16 @@ mod tests {
     async fn unsolicited_table_notifications_are_retained_events() {
         let mut radio = attached_radio().await;
         let mut buf = [0u8; 48];
-        let len =
-            frame::prop_inserted(&mut buf, TID_UNSOLICITED, prop::HOST_RX_FILTERS, &[2, 0])
-                .unwrap();
+        let len = frame::prop_inserted(&mut buf, TID_UNSOLICITED, prop::HOST_RX_FILTERS, &[2, 0])
+            .unwrap();
         radio.ingest_frame(&buf[..len]);
-        let len =
-            frame::prop_removed(&mut buf, TID_UNSOLICITED, prop::HOST_CHANNEL_KEYS, &[0x12, 0x34])
-                .unwrap();
+        let len = frame::prop_removed(
+            &mut buf,
+            TID_UNSOLICITED,
+            prop::HOST_CHANNEL_KEYS,
+            &[0x12, 0x34],
+        )
+        .unwrap();
         radio.ingest_frame(&buf[..len]);
 
         assert_eq!(

@@ -13,10 +13,13 @@ autonomously but is typically operated and configured through a phone. A
 keyboard is a strong pager signal because it makes direct messaging practical;
 a screen by itself does not make a device a pager.
 
-The intended reader is a developer bringing UMSH to a new board. Begin with
-[Device Classes](device-classes.md), inventory the board using [Capability
+The intended readers are developers bringing UMSH to new boards and product
+teams designing companion applications. For hardware, begin with [Device
+Classes](device-classes.md), inventory the board using [Capability
 Profiles](capability-profiles.md), and then map the common interaction model to
-the available controls and indicators.
+the available controls and indicators. For phone and tablet applications,
+begin with [Mobile Application Guidelines](apps/mobile-guidelines.md) and then
+use the relevant platform chapter.
 
 ## Scope and maturity
 
@@ -31,6 +34,6 @@ Examples must retain these labels until their behavior is verified on hardware.
 Normative words such as **must**, **should**, and **may** describe the target
 experience, not necessarily the state of every current firmware image.
 
-This guide covers product interaction. Electrical details, pin assignments, and
-firmware architecture belong in the board hardware references and
-`docs/firmware-architecture.md`.
+This guide covers product interaction. Electrical details, pin assignments,
+firmware architecture, application implementation architecture, and source-code
+structure belong elsewhere.

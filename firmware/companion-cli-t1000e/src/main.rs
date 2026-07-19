@@ -492,8 +492,8 @@ mod firmware {
         if retained_state.battery_critical && external_power_present {
             umsh_bsp_t1000e::preferences::set_battery_critical(false);
         }
-        let charging_sleep_wake_requested = reset_reasons.sreq()
-            && gpregret_state.is_some_and(|preferences| !preferences.asleep);
+        let charging_sleep_wake_requested =
+            reset_reasons.sreq() && gpregret_state.is_some_and(|preferences| !preferences.asleep);
         if woke_from_system_off || charging_sleep_wake_requested {
             let preferences = umsh_bsp_t1000e::preferences::set_asleep(false);
             let mut durable = preferences;

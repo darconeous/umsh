@@ -3024,6 +3024,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-companion-web-engine"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "serde",
+ "serde_json",
+ "umsh-companion",
+ "umsh-companion-ncp",
+ "umsh-core",
+ "umsh-crypto",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [

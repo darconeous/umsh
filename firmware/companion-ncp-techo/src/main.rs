@@ -185,7 +185,8 @@ mod firmware {
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{
-        Effect, IdentitySource, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, TxPower,
+        BatteryFields, Effect, IdentitySource, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
+        TxPower,
     };
     use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
     use umsh_crypto::{CryptoEngine, NodeIdentity as _};
@@ -286,42 +287,16 @@ mod firmware {
         frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
     }
 
-    /// Compose the NCP version string once at boot. `crumb` is the
-    /// previous boot's last breadcrumb stage (temporary freeze
-    /// diagnostics; see `panic::breadcrumb_take`).
-    fn ncp_version(bonds: u8, crumb: u8) -> &'static str {
-        use core::fmt::Write as _;
-        #[cfg(not(feature = "t1000e"))]
-        const BOARD: &str = "umsh-ncp-techo";
-        #[cfg(feature = "t1000e")]
-        const BOARD: &str = "umsh-ncp-t1000e";
-        static VERSION: StaticCell<heapless09::String<96>> = StaticCell::new();
-        let version = VERSION.init(heapless09::String::new());
-        // Compact diagnostic form: PROP_NCP_VERSION is truncated to the
-        // session's 96-byte property buffer, so the SHA and bond count
-        // yield their space to the freeze capture for now. `d5` is the
-        // diagnostic build tag — bump it every diagnostic rebuild so the
-        // running image is provably the fresh one.
-        let _ = write!(
-            version,
-            "{BOARD} d6 c={crumb} b={} rr={:#x} rc={} pc={:#010x} lr={:#010x} ps={:#010x}",
-            PREV_BOOT_BEATS.load(Ordering::Acquire),
-            BOOT_RESETREAS.load(Ordering::Acquire),
-            PREV_RING_COUNT.load(Ordering::Acquire),
-            PREV_WDT_PC.load(Ordering::Acquire),
-            PREV_WDT_LR.load(Ordering::Acquire),
-            PREV_WDT_PSR.load(Ordering::Acquire),
-        );
-        let _ = bonds;
-        version.as_str()
-    }
+    /// `PROP_NCP_VERSION`: the board's firmware name and version,
+    /// nothing else. Boot diagnostics stay on the debug console.
+    #[cfg(not(feature = "t1000e"))]
+    const NCP_VERSION: &str = concat!("umsh-ncp-techo ", env!("CARGO_PKG_VERSION"));
+    #[cfg(feature = "t1000e")]
+    const NCP_VERSION: &str = concat!("umsh-ncp-t1000e ", env!("CARGO_PKG_VERSION"));
 
     fn session_config() -> SessionConfig {
         SessionConfig {
-            ncp_version: ncp_version(
-                BLE_BONDS_AT_BOOT.load(Ordering::Acquire),
-                PREV_BOOT_CRUMB.load(Ordering::Acquire),
-            ),
+            ncp_version: NCP_VERSION,
             default_device_name: default_device_name(),
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
@@ -344,6 +319,18 @@ mod firmware {
             },
             default_duty_limit: umsh_companion::ids::DUTY_LIMIT_DISABLED,
             duty: &DUTY_LEDGER,
+            // Both boards are battery powered. The T-1000E's power
+            // monitor reports voltage and charge state (no fuel gauge,
+            // so no level); the T-Echo reports nothing until its P0.04
+            // divider readings are hardware-validated.
+            #[cfg(feature = "t1000e")]
+            battery: Some(BatteryFields {
+                voltage: true,
+                level: false,
+                charge_state: true,
+            }),
+            #[cfg(not(feature = "t1000e"))]
+            battery: Some(BatteryFields::NONE),
         }
     }
 
@@ -631,7 +618,6 @@ mod firmware {
     /// journal, selected by its first page. Executes the session's
     /// durable effects; the session's RAM mirrors are only updated
     /// through the respond_* completions after these return.
-    #[cfg(not(feature = "no-ble"))]
     struct ProtoStore {
         flash: &'static SharedFlash,
         /// First page of this journal's two-page rotation.
@@ -640,7 +626,6 @@ mod firmware {
         slot: Option<u32>,
     }
 
-    #[cfg(not(feature = "no-ble"))]
     impl ProtoStore {
         async fn mount(shared: &'static SharedFlash, page0: u32) -> (Self, Option<BootSnapshot>) {
             let mut flash = shared.lock().await;
@@ -780,22 +765,6 @@ mod firmware {
         store.persist(&[preferences.encode()]).await
     }
 
-    /// The no-ble diagnostic image has no MPSL flash driver; durable
-    /// protocol state is unavailable and saves fail honestly.
-    #[cfg(feature = "no-ble")]
-    struct ProtoStore;
-
-    #[cfg(feature = "no-ble")]
-    impl ProtoStore {
-        async fn persist(&mut self, _payload: &[u8]) -> Result<(), ()> {
-            Err(())
-        }
-
-        async fn clear(&mut self) -> Result<(), ()> {
-            Err(())
-        }
-    }
-
     // ─── Device-node counter persistence (plan increment 4) ─────────────────
 
     // ─── Device-node counter persistence (plan increment 4) ─────────────────
@@ -810,9 +779,9 @@ mod firmware {
     pub struct NodeCounters {
         map: super::counter_map::CounterMap,
         dirty: bool,
-        /// Mounted counter journal; `None` in the no-ble image (no
-        /// MPSL flash driver), where counters live only in RAM — the
-        /// node is dormant there anyway (no identity journal either).
+        /// Mounted counter journal; `None` only between
+        /// [`init_node_counters`] and the boot-time
+        /// [`mount_node_counters`], where flushes stay RAM-only.
         journal: Option<ProtoStore>,
     }
 
@@ -832,7 +801,6 @@ mod firmware {
     }
 
     /// Mount the counter journal and load the persisted map.
-    #[cfg(not(feature = "no-ble"))]
     async fn mount_node_counters(
         counters: &'static NodeCountersMutex,
         flash: &'static SharedFlash,
@@ -1022,6 +990,49 @@ mod firmware {
         }
     }
     static DEVICE_NAME_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// The platform battery source behind `Effect::SampleBattery`: one
+    /// async sample operation per board profile, returning the fields
+    /// that board's `SessionConfig::battery` advertises.
+    ///
+    /// T-1000E: a request/reply round trip into the BSP battery monitor
+    /// — the sole SAADC and sensor-rail owner — which runs its normal
+    /// gated sample/classify/publish iteration early and replies with
+    /// the millivolt reading and UX classification. The timeout covers
+    /// the monitor having exited for critical-battery shutdown.
+    #[cfg(feature = "t1000e")]
+    async fn sample_battery_snapshot() -> Result<umsh_companion::battery::BatteryStatus, ()> {
+        use umsh_companion::battery::{BatteryChargeState, BatteryStatus};
+        use umsh_ux_tracker::battery::BatteryState;
+        let sample = embassy_time::with_timeout(
+            Duration::from_secs(2),
+            umsh_bsp_t1000e::power::sample_battery(),
+        )
+        .await
+        .map_err(|_| ())?;
+        // Low and critical are UX presentation policy, not charge
+        // states; all three unpowered classifications are Discharging.
+        let charge_state = match sample.state {
+            BatteryState::BatteryCharging => BatteryChargeState::Charging,
+            BatteryState::BatteryCharged => BatteryChargeState::Charged,
+            BatteryState::BatteryOnly
+            | BatteryState::BatteryLow
+            | BatteryState::BatteryCritical => BatteryChargeState::Discharging,
+        };
+        Ok(BatteryStatus {
+            voltage_mv: Some(sample.battery_mv),
+            level_percent: None,
+            charge_state: Some(charge_state),
+        })
+    }
+
+    /// T-Echo: `BatteryFields::NONE` means the session answers the empty
+    /// value without emitting the effect, so this is unreachable; a
+    /// failure keeps any future misrouting honest.
+    #[cfg(not(feature = "t1000e"))]
+    async fn sample_battery_snapshot() -> Result<umsh_companion::battery::BatteryStatus, ()> {
+        Err(())
+    }
 
     /// Published session epoch, checked by each transport at framing edges.
     static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
@@ -1323,6 +1334,7 @@ mod firmware {
             // Deferred effects needing `&mut Session` + the emitter are
             // handled inline in ncp_task rather than here.
             Some(Effect::SampleRssi { .. })
+            | Some(Effect::SampleBattery { .. })
             | Some(Effect::SetPairingPin { .. })
             | Some(Effect::WipeHostDomain { .. })
             | Some(Effect::DrainQueue)
@@ -2431,6 +2443,16 @@ mod firmware {
                                 });
                                 emitter.flush(arbitration.destination()).await;
                             }
+                            Some(Effect::SampleBattery { tid }) => {
+                                // Round-trip to the platform battery
+                                // source for a fresh measurement, then
+                                // answer the deferred PROP_BATTERY get.
+                                let sample = sample_battery_snapshot().await;
+                                session.respond_battery(tid, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination()).await;
+                            }
                             Some(Effect::DrainQueue) => {
                                 // Deliver the covered frames one per
                                 // step, flushing between steps so the
@@ -3419,25 +3441,16 @@ mod firmware {
         // MPSL owns CLOCK/POWER, RADIO, RTC0, TIMER0, TEMP, and the listed
         // PPI channels. embassy-time remains on RTC1; LoRa remains on SPIM1.
         //
-        // The `no-ble` diagnostic build skips this entire section (and the
-        // SDC/Trouble construction below); the firmware is then a USB-only
-        // NCP with the identical clock configuration.
-        #[cfg(not(feature = "no-ble"))]
+        // MPSL, the flash driver, and the protocol journals come up in
+        // BOTH images: the flash driver needs only the MPSL timeslot
+        // scheduler, not the BLE controller on top of it. The `no-ble`
+        // diagnostic build skips just the SDC/Trouble construction
+        // below; it is then a USB-only NCP with identical persistence
+        // and clock configuration.
         let mut rng = rng::Rng::new(p.RNG, Irqs);
         #[cfg(not(feature = "no-ble"))]
         let mut sdc_memory = sdc::Mem::<8192>::new();
-        #[cfg(not(feature = "no-ble"))]
-        let (
-            controller,
-            ble_store,
-            proto_store,
-            boot_snapshot,
-            identity_store,
-            boot_identity_keys,
-            identity_rng,
-            node_seed,
-            ux_store,
-        ) = {
+        let mpsl = {
             let mpsl_peripherals = mpsl::Peripherals::new(
                 p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31,
             );
@@ -3450,7 +3463,7 @@ mod firmware {
             };
             static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
             static TIMESLOT_MEM: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
-            let mpsl = MPSL.init(
+            let mpsl: &'static MultiprotocolServiceLayer = MPSL.init(
                 MultiprotocolServiceLayer::with_timeslots(
                     mpsl_peripherals,
                     Irqs,
@@ -3460,38 +3473,51 @@ mod firmware {
                 .unwrap_or_else(|_| panic!("mpsl init")),
             );
             spawner.spawn(mpsl_task(mpsl).unwrap());
-            super::panic::breadcrumb_mark(5);
-            static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
-            let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
-            let mut ble_store = BleStore::mount(flash).await;
-            // Mount the protocol journals before the NCP session starts: a
-            // stored snapshot must be restored (and the PHY re-applied) and
-            // the persisted device identity installed before the first host
-            // command.
-            let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
-            let (identity_store, identity_payload) =
-                ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
-            let (ux_store, _) = ProtoStore::mount(flash, proto_store::UX_PAGE0).await;
-            mount_node_counters(node_counters, flash).await;
-            #[cfg(feature = "t1000e")]
-            let mut ux_store = ux_store;
-            #[cfg(feature = "t1000e")]
-            if t1000e_wake_cleared_sleep {
-                let _ = persist_ux_preferences(&mut ux_store, umsh_bsp_t1000e::preferences::load())
-                    .await;
-            }
-            // Both halves of the persisted keypair: the public key seeds
-            // the session's PROP_DEV_KEY surface, the secret brings up
-            // the device node's MAC identity.
-            let boot_identity_keys = identity_payload
-                .as_deref()
-                .and_then(proto_store::decode_identity);
-            // A replaced identity leaves its TX boundary behind in the
-            // counter journal; drop it so the map cannot silt up.
-            if let Some((_, public)) = boot_identity_keys.as_ref() {
-                prune_stale_tx_counters(node_counters, public).await;
-            }
+            mpsl
+        };
+        super::panic::breadcrumb_mark(5);
+        static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
+        let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
+        // Mount the protocol journals before the NCP session starts: a
+        // stored snapshot must be restored (and the PHY re-applied) and
+        // the persisted device identity installed before the first host
+        // command.
+        let (proto_store, boot_snapshot) = ProtoStore::mount(flash, proto_store::PAGE0).await;
+        let (identity_store, identity_payload) =
+            ProtoStore::mount(flash, proto_store::IDENTITY_PAGE0).await;
+        let (ux_store, _) = ProtoStore::mount(flash, proto_store::UX_PAGE0).await;
+        mount_node_counters(node_counters, flash).await;
+        #[cfg(feature = "t1000e")]
+        let mut ux_store = ux_store;
+        #[cfg(feature = "t1000e")]
+        if t1000e_wake_cleared_sleep {
+            let _ =
+                persist_ux_preferences(&mut ux_store, umsh_bsp_t1000e::preferences::load()).await;
+        }
+        // Both halves of the persisted keypair: the public key seeds
+        // the session's PROP_DEV_KEY surface, the secret brings up
+        // the device node's MAC identity.
+        let boot_identity_keys = identity_payload
+            .as_deref()
+            .and_then(proto_store::decode_identity);
+        // A replaced identity leaves its TX boundary behind in the
+        // counter journal; drop it so the map cannot silt up.
+        if let Some((_, public)) = boot_identity_keys.as_ref() {
+            prune_stale_tx_counters(node_counters, public).await;
+        }
+        // Seed the identity-generation and device-node CSPRNGs from the
+        // TRNG; in the BLE image this must happen while the peripheral
+        // is still ours — build_sdc below hands the RNG to the
+        // SoftDevice Controller for its lifetime.
+        let mut identity_seed = [0u8; 32];
+        rng.fill_bytes(&mut identity_seed).await;
+        let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
+        let mut node_seed = [0u8; 32];
+        rng.fill_bytes(&mut node_seed).await;
 
+        #[cfg(not(feature = "no-ble"))]
+        let (controller, ble_store) = {
+            let mut ble_store = BleStore::mount(flash).await;
             // Deliberate recovery image for hardware testing. This runs before the
             // Trouble host is constructed, so there is no live bond table to keep
             // in sync: the empty persisted snapshot becomes the host's initial
@@ -3544,67 +3570,11 @@ mod firmware {
                     "STORE FAULT INJECTION ARMED: all runtime writes and erases will fail"
                 ));
             }
-            // Seed the identity-generation and device-node CSPRNGs from
-            // the TRNG while the peripheral is still ours: build_sdc
-            // below hands the RNG to the SoftDevice Controller for its
-            // lifetime.
-            let mut identity_seed = [0u8; 32];
-            rng.fill_bytes(&mut identity_seed).await;
-            let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
-            let mut node_seed = [0u8; 32];
-            rng.fill_bytes(&mut node_seed).await;
             super::panic::breadcrumb_mark(6);
             let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
                 .unwrap_or_else(|_| panic!("sdc init"));
             super::panic::breadcrumb_mark(7);
-            (
-                controller,
-                ble_store,
-                proto_store,
-                boot_snapshot,
-                identity_store,
-                boot_identity_keys,
-                identity_rng,
-                node_seed,
-                ux_store,
-            )
-        };
-        #[cfg(feature = "no-ble")]
-        let (
-            proto_store,
-            boot_snapshot,
-            identity_store,
-            boot_identity_keys,
-            identity_rng,
-            node_seed,
-            ux_store,
-        ): (
-            ProtoStore,
-            Option<BootSnapshot>,
-            ProtoStore,
-            Option<([u8; 32], [u8; 32])>,
-            IdentityRng,
-            [u8; 32],
-            ProtoStore,
-        ) = {
-            // No MPSL flash driver, so identity provisioning fails
-            // closed (and the device node stays dormant); the TRNG
-            // peripheral is free in this image and seeds the (unused)
-            // generators directly.
-            let mut rng = rng::Rng::new(p.RNG, Irqs);
-            let mut identity_seed = [0u8; 32];
-            rng.fill_bytes(&mut identity_seed).await;
-            let mut node_seed = [0u8; 32];
-            rng.fill_bytes(&mut node_seed).await;
-            (
-                ProtoStore,
-                None,
-                ProtoStore,
-                None,
-                <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed),
-                node_seed,
-                ProtoStore,
-            )
+            (controller, ble_store)
         };
         // The session surfaces only the public key; the secret stays with
         // the device node.

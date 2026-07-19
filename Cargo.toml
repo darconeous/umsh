@@ -25,6 +25,7 @@ members = [
     "firmware/companion-ncp-t1000e",
     "firmware/companion-ncp-techo",
     "firmware/ble-spike-techo",
+    "tools/companion-web-debugger/engine",
     "umsh",
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
@@ -50,6 +51,7 @@ default-members = [
     "crates/umsh-bsp-wio-tracker-l1",
     "crates/umsh-ux-tracker",
     "crates/umsh-app-companion-cli",
+    "tools/companion-web-debugger/engine",
     "umsh",
 ]
 resolver = "2"

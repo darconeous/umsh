@@ -1,0 +1,35 @@
+[package]
+name = "umsh-companion-web-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sans-IO protocol engine for the UMSH companion web debugger"
+
+[package.metadata.wasm-pack.profile.release]
+# Keep local and CI builds self-contained; wasm-opt is an optional download and
+# the debugger does not need maximum binary-size optimization.
+wasm-opt = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["sim-ncp"]
+sim-ncp = [
+    "dep:critical-section",
+    "dep:umsh-companion-ncp",
+    "dep:umsh-crypto",
+]
+
+[dependencies]
+critical-section = { version = "1", features = ["std"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+umsh-companion = { path = "../../../crates/umsh-companion" }
+umsh-companion-ncp = { path = "../../../crates/umsh-companion-ncp", optional = true }
+umsh-core = { path = "../../../crates/umsh-core" }
+umsh-crypto = { path = "../../../crates/umsh-crypto", features = ["software-crypto"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"

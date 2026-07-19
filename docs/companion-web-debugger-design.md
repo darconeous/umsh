@@ -1,6 +1,8 @@
 # Companion Radio Web Debugger — Design
 
-Status: proposed (2026-07-16). Companion documents:
+Status: in progress (2026-07-17). The implementation and build instructions
+live in [`tools/companion-web-debugger`](../tools/companion-web-debugger/README.md).
+Companion documents:
 [companion-ble-plan.md](companion-ble-plan.md) (implementation
 history), the protocol chapters
 [companion-radio-minimal](protocol/src/companion-radio-minimal.md),

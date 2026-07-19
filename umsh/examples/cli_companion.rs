@@ -27,6 +27,8 @@ use umsh_sync::AsyncRefCell;
 
 use rand::{Rng as _, rng};
 
+#[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
+use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, CompanionRadioError, FrameLink};
 use umsh::{
     crypto::{
         CryptoEngine, NodeIdentity,
@@ -37,8 +39,6 @@ use umsh::{
     node::Host,
     tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform},
 };
-#[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, CompanionRadioError, FrameLink};
 use umsh_cli::{
     DefaultCliSession, NoChannelStore, NoPeerStore, NoPowerControl,
     io::{StdioOutput, stdio_split},

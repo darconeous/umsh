@@ -84,7 +84,8 @@ host is attached:
 * the RF configuration (`PROP_PHY_*`), including `PROP_PHY_ENABLED`, and
   the duty-cycle limit
 * the human-readable device name (`PROP_DEV_NAME`)
-* device behavior settings (property identifiers 69–95, reserved for
+* live battery telemetry (`PROP_BATTERY`), when `CAP_BATTERY` is present
+* device behavior settings (property identifiers 70–95, reserved for
   future definition: repeater policy, positioning, periodic advertisement
   of the device identity, and similar)
 * transport configuration such as `PROP_BLE_PAIRING_PIN`
@@ -182,14 +183,15 @@ restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host's behalf.
 
 * `CMD_SAVE` (see (#cmd-save)) atomically writes the current device
-  domain and host domain — including the RF configuration and the current
-  value of `PROP_PHY_ENABLED` — to non-volatile storage, replacing any
-  previous snapshot. Two things are never part of a snapshot: **queue
-  contents**, and the **device identity keypair**, which is independently
-  persisted the moment it is installed or generated (see
-  (#prop-dev-private-key)) and is changed only by explicit provisioning
-  or `CMD_CLEAR` — neither `CMD_RESTORE` nor a reboot can revert the
-  device identity to an earlier key.
+  domain and host domain **configuration** — including the RF configuration
+  and the current value of `PROP_PHY_ENABLED` — to non-volatile storage,
+  replacing any previous snapshot. Dynamic read-only state, including
+  queue contents and `PROP_BATTERY`, is never part of a snapshot. The
+  device identity keypair is also excluded: it is independently persisted
+  the moment it is installed or generated (see (#prop-dev-private-key)) and
+  is changed only by explicit provisioning or `CMD_CLEAR` — neither
+  `CMD_RESTORE` nor a reboot can revert the device identity to an earlier
+  key.
 * At boot, if a snapshot exists, the NCP **MUST** restore it and resume
   operation accordingly *before* processing any host command: the RF
   configuration is applied, the PHY is re-enabled if it was enabled when
@@ -580,7 +582,7 @@ The full protocol allocates property identifiers by state class:
 Range   | Class
 --------|--------------------------------------------
 48–63   | Session-scoped and global protocol state
-64–95   | Device domain (`PROP_DEV_*`)
+64–95   | Device domain
 96–127  | Host domain (`PROP_HOST_*`)
 
 Unassigned identifiers in these ranges are reserved.
@@ -594,6 +596,7 @@ Id  | Mnemonic                      | Commands                 | Description
 66  | `PROP_DEV_CHANNEL_KEYS`       | Get, Set, Insert, Remove | Device identity channel keys
 67  | `PROP_DEV_PEERS`              | Get, Set, Insert, Remove | Device identity peer list
 68  | `PROP_DEV_NAME`               | Get, Set                 | Human-readable device name
+69  | `PROP_BATTERY`                | Get, Is                  | Battery status snapshot
 96  | `PROP_HOST_KEY`               | Get, Set                 | Tethered host identity public key
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
@@ -756,6 +759,96 @@ split a UTF-8 code point when doing so.
 
 The name is intentionally public metadata. Operators should assume that any
 value used in discovery advertisements can be observed by nearby devices.
+
+### PROP 69: `PROP_BATTERY` {#prop-battery}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_BATTERY`
+* Value Type: Battery status snapshot (see below), or empty
+* Post-Reset Value: Current measurement, or empty if reporting is
+  unsupported
+
+An NCP advertising `CAP_BATTERY` has a battery capable of powering its
+operation and recognizes this property. The capability does not require the
+hardware to support reporting any measurement: an implementation that cannot
+report battery status at all answers `CMD_PROP_GET` successfully with an
+**empty value**.
+
+A non-empty value is a snapshot of the battery measurements the platform
+supports, taken as one measurement event:
+
+Octets | Field
+-------|--------------------------------------------------
+1      | Field flags
+0 or 2 | Battery voltage, UINT16_LE, millivolts
+0 or 1 | Battery level, UINT8, percent (0–100)
+0+     | Charge state, PUI
+
+Bits 0 (voltage), 1 (level), and 2 (charge state) of the field flags octet
+indicate which fields are present; present fields follow in the order above.
+Bits 3–7 are reserved and **MUST** be zero; a host **MUST** treat a value
+with a reserved bit set, or whose length does not match its field flags, as
+malformed.
+
+Which fields are reported is fixed for a given hardware and firmware
+configuration: the field flags do not change while a session is attached. An
+absent field indicates only that the implementation cannot report that
+measurement. It **MUST NOT** be used to indicate a depleted, disconnected,
+or temporarily unreadable battery: an implementation that normally reports a
+field but cannot currently obtain a measurement fails the `CMD_PROP_GET`
+with `STATUS_FAILURE` rather than omitting the field or returning an empty
+value.
+
+The value returned by `CMD_PROP_GET` reflects a measurement performed when
+the request is serviced, not a previously cached reading; concurrent
+requests **MAY** share one measurement. How each field is produced is
+platform-defined — in particular, the level estimate is not necessarily
+derived from the voltage measurement, and a platform with a fuel gauge may
+report a level without reporting a voltage at all.
+
+The fields:
+
+**Battery voltage**
+: The measured voltage at the battery terminals, in millivolts. This is the
+  battery voltage, not an external-power input or regulated system voltage;
+  it may therefore reflect the normal voltage elevation that occurs while
+  the battery is charging.
+
+**Battery level**
+: The implementation's estimate of the battery's state of charge, as an
+  integer percentage from 0 through 100 inclusive. A host **MUST NOT**
+  derive this value from the voltage field or assume that successive
+  estimates change monotonically.
+
+**Charge state**
+: The current battery charge state:
+
+Value | Name
+------|-------------------------------------
+0     | `BATTERY_CHARGE_STATE_DISCHARGING`
+1     | `BATTERY_CHARGE_STATE_CHARGING`
+2     | `BATTERY_CHARGE_STATE_CHARGED`
+
+`BATTERY_CHARGE_STATE_DISCHARGING`
+: The charging system reports neither active charging nor charge completion.
+  This is the charge state used for a disconnected battery when the
+  implementation can detect that condition; an absent field remains reserved
+  exclusively for unsupported reporting.
+
+`BATTERY_CHARGE_STATE_CHARGING`
+: The charging system reports that the battery is actively receiving charge.
+
+`BATTERY_CHARGE_STATE_CHARGED`
+: External power is present and the charging system reports that charging has
+  completed. A battery at 100 percent while operating without external power
+  remains in `BATTERY_CHARGE_STATE_DISCHARGING`.
+
+The property contains live, read-only state. It is never included in a
+saved snapshot and is not changed by `CMD_RESTORE`. An NCP **MAY** emit
+unsolicited `CMD_PROP_IS` updates when the reported snapshot changes. Such
+updates **SHOULD** be coalesced or rate-limited so that measurement noise
+does not produce excessive companion traffic.
 
 ### PROP 96: `PROP_HOST_KEY` {#prop-host-key}
 
@@ -1226,6 +1319,7 @@ Code | Name                | Requires          | Grants
 36   | `CAP_SAVE`          | —                 | `CMD_SAVE`, `CMD_RESTORE`, `PROP_SAVED`, and boot-time restoration of saved state
 37   | `CAP_DEV_IDENTITY`  | —                 | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
 38   | `CAP_DEV_NAME`      | —                 | `PROP_DEV_NAME`
+39   | `CAP_BATTERY`       | —                 | Battery-powered operation and `PROP_BATTERY`
 
 An NCP **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. `CMD_PROP_INSERT`/`CMD_PROP_REMOVE`, `CMD_CLEAR`,

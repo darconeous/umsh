@@ -187,11 +187,9 @@ pub fn fixed_items<const N: usize>(
     if value.len() % N != 0 {
         return Err(ItemError::BadLength);
     }
-    Ok(value.chunks_exact(N).map(|chunk| {
-        chunk
-            .try_into()
-            .expect("chunks_exact yields N-byte chunks")
-    }))
+    Ok(value
+        .chunks_exact(N)
+        .map(|chunk| chunk.try_into().expect("chunks_exact yields N-byte chunks")))
 }
 
 /// Iterate the PUI-length-prefixed items of a whole-table value
@@ -273,7 +271,10 @@ mod tests {
         assert_eq!(entry.digest(), &[0x11; 32]);
         // Debug output must not leak key material.
         let debug = std::format!("{entry:?}");
-        assert!(!debug.contains("k_enc") && !debug.contains("k_mic"), "{debug}");
+        assert!(
+            !debug.contains("k_enc") && !debug.contains("k_mic"),
+            "{debug}"
+        );
     }
 
     #[test]
@@ -302,12 +303,18 @@ mod tests {
     fn filter_rejects_malformed_entries() {
         assert_eq!(Filter::decode(&[]), Err(ItemError::Truncated));
         // Wrong value lengths for each known type.
-        assert_eq!(Filter::decode(&[FILTER_DEST_HINT, 1, 2]), Err(ItemError::BadLength));
+        assert_eq!(
+            Filter::decode(&[FILTER_DEST_HINT, 1, 2]),
+            Err(ItemError::BadLength)
+        );
         assert_eq!(
             Filter::decode(&[FILTER_CHANNEL_ID, 1, 2, 3]),
             Err(ItemError::BadLength)
         );
-        assert_eq!(Filter::decode(&[FILTER_PKT_TYPE]), Err(ItemError::BadLength));
+        assert_eq!(
+            Filter::decode(&[FILTER_PKT_TYPE]),
+            Err(ItemError::BadLength)
+        );
         // Unknown filter type.
         assert_eq!(Filter::decode(&[3, 0]), Err(ItemError::UnknownFilterType));
     }

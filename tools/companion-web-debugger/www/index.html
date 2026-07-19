@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'">
+  <title>UMSH Companion Debugger</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">UMSH tools</p>
+      <h1>Companion debugger</h1>
+      <p class="lede">See the protocol as it happens. No server, account, or device data leaves this page.</p>
+    </div>
+    <div class="connection-status">
+      <span id="status" data-state="busy">Loading engine…</span>
+      <strong id="deviceName">No device</strong>
+    </div>
+  </header>
+
+  <main>
+    <section class="connect-panel panel">
+      <div>
+        <h2>Connect</h2>
+        <p id="platform">Checking browser support…</p>
+        <p class="warning"><strong>Attaching displaces the current host.</strong> The radio keeps its configured state, but its active protocol session is reset.</p>
+        <p id="notice" class="notice">Chrome or Edge on desktop supports both links. Android Chrome supports Bluetooth.</p>
+      </div>
+      <div class="button-stack">
+        <button id="connectSimulator" type="button">Try simulated radio</button>
+        <button id="connectBluetooth" type="button">Connect Bluetooth</button>
+        <button id="connectSerial" type="button">Connect USB serial</button>
+        <button id="disconnect" class="secondary" type="button" disabled>Disconnect</button>
+      </div>
+    </section>
+
+    <section class="dashboard" aria-label="Attach dashboard">
+      <article><span>Protocol</span><strong id="protocolVersion">—</strong></article>
+      <article><span>NCP firmware</span><strong id="ncpVersion">—</strong></article>
+      <article><span>Boot status</span><strong id="bootStatus">—</strong></article>
+      <article class="wide"><span>Capabilities</span><strong id="capabilities">—</strong></article>
+    </section>
+
+    <section class="panel command-panel">
+      <div><p class="eyebrow">NCP operations</p><h2>Commands</h2></div>
+      <div class="command-actions">
+        <button type="button" class="secondary command-button" data-command="queue_drain" data-capability="33" disabled>Drain queue</button>
+        <button type="button" class="secondary command-button" data-command="save" data-capability="36" disabled>Save state</button>
+        <button type="button" class="secondary command-button" data-command="restore" data-capability="36" disabled>Restore saved state</button>
+        <button type="button" class="secondary command-button" data-command="reset" disabled>Reset NCP</button>
+        <button type="button" class="danger command-button" data-command="clear" disabled>Clear persisted state</button>
+      </div>
+      <output id="commandResult">Connect to issue a command.</output>
+    </section>
+
+    <section class="panel capture-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">Radio</p><h2>Packet capture</h2></div>
+        <div class="capture-primary-actions">
+          <span id="captureState" class="capture-state is-recording">Capturing</span>
+          <button id="captureToggle" class="secondary small" type="button">Pause capture</button>
+          <button id="injectDemo" class="secondary small" type="button" disabled>Inject simulator demo</button>
+        </div>
+      </div>
+      <div class="capture-toolbar">
+        <div id="captureStats" class="capture-stats" aria-live="polite">0 packets · 0 bytes</div>
+        <label>
+          <span>Show</span>
+          <select id="captureKind">
+            <option value="all">All packets</option>
+            <option value="umsh">Decoded UMSH</option>
+            <option value="errors">Decode errors</option>
+          </select>
+        </label>
+        <input id="captureFilter" type="search" aria-label="Filter captured packets" placeholder="Filter type, address, channel, hex…">
+        <button id="exportCaptureJson" class="secondary small" type="button" disabled>Export JSON</button>
+        <button id="exportCapturePcap" class="secondary small" type="button" disabled>Export PCAP</button>
+        <button id="clearRx" class="secondary small" type="button">Clear</button>
+      </div>
+      <div class="capture-layout">
+        <div class="capture-table-wrap">
+          <table class="capture-table">
+            <thead><tr><th>#</th><th>Time</th><th>Type</th><th>Source</th><th>Destination</th><th>Signal</th><th>Length</th></tr></thead>
+            <tbody id="captureRows"></tbody>
+          </table>
+          <p id="captureEmpty" class="empty">Packets will appear here as they arrive. Capture starts automatically.</p>
+        </div>
+        <aside id="captureDetail" class="capture-detail" aria-live="polite">
+          <p class="empty">Select a packet to inspect its parsed fields and raw bytes.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="panel properties-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">Live NCP state</p><h2>Properties</h2></div>
+        <div class="property-actions">
+          <input id="propertyFilter" type="search" aria-label="Filter properties" placeholder="Filter properties">
+          <button id="refreshProperties" class="secondary small" type="button" disabled>Refresh all</button>
+        </div>
+      </div>
+      <p class="property-help">Values update whenever the NCP sends <code>PROP_IS</code>. Editable rows use the protocol's native type and units.</p>
+      <div class="property-table-wrap">
+        <table class="property-table">
+          <thead><tr><th>Property</th><th>Description</th><th>Current value</th><th>Change</th></tr></thead>
+          <tbody id="propertyRows"><tr><td colspan="4" class="empty">Loading property definitions…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="panel advanced-panel">
+      <summary>Advanced raw property operation</summary>
+      <div class="inspector">
+        <p>Issue an arbitrary get, set, insert, or remove using raw hexadecimal property contents.</p>
+        <form id="propertyForm">
+          <fieldset id="propertyFieldset" disabled>
+            <label>Operation
+              <select id="propertyOperation">
+                <option value="get">Get</option>
+                <option value="set">Set</option>
+                <option value="insert">Insert</option>
+                <option value="remove">Remove</option>
+              </select>
+            </label>
+            <label>Property number
+              <input id="propertyKey" type="number" min="0" max="2097151" value="1" required>
+            </label>
+            <label class="full">Value or selector <small>hexadecimal octets; ignored for Get</small>
+              <input id="propertyValue" type="text" inputmode="text" autocomplete="off" placeholder="01 02 ff">
+            </label>
+            <button type="submit">Send raw operation</button>
+          </fieldset>
+        </form>
+        <output id="propertyResult">Connect to issue a raw operation.</output>
+      </div>
+    </details>
+
+    <section class="workspace">
+      <section class="panel trace-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">Live</p><h2>Frame trace</h2></div>
+          <div class="trace-actions">
+            <input id="traceFilter" type="search" aria-label="Filter trace" placeholder="Filter summaries">
+            <button id="clearTrace" class="secondary small" type="button">Clear</button>
+            <button id="exportTrace" class="secondary small" type="button">Export JSON</button>
+          </div>
+        </div>
+        <p id="traceEmpty" class="empty">Frames will appear here after attach.</p>
+        <ol id="traceRows" class="trace-rows"></ol>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="./shell.js"></script>
+</body>
+</html>

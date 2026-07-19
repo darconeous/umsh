@@ -25,9 +25,7 @@ use umsh_companion::Status;
 use umsh_companion::ids::cap;
 use umsh_companion::items::{Filter, PeerKeyEntry};
 use umsh_companion::meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED};
-use umsh_companion_ncp::{
-    Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, SessionConfig,
-};
+use umsh_companion_ncp::{Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, SessionConfig};
 use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_crypto::{CryptoEngine, NodeIdentity as _, PairwiseKeys};
@@ -63,6 +61,12 @@ fn session_config() -> SessionConfig {
         // One leaked ledger per simulated NCP: sessions in parallel
         // tests must not share duty state.
         duty: Box::leak(Box::new(umsh_companion_ncp::DutyLedger::new())),
+        // The simulator reports all three battery measurements.
+        battery: Some(umsh_companion_ncp::BatteryFields {
+            voltage: true,
+            level: true,
+            charge_state: true,
+        }),
     }
 }
 
@@ -105,15 +109,26 @@ impl SimNcp {
     fn execute(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
         let mut emit = |frame: &[u8]| emitted.push(frame.to_vec());
         match effect {
-            None
-            | Some(Effect::ApplyRadio(_))
-            | Some(Effect::DeviceNameChanged) => {}
+            None | Some(Effect::ApplyRadio(_)) | Some(Effect::DeviceNameChanged) => {}
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());
                 self.session.on_tx_result(true, self.now_ms, &mut emit);
             }
             Some(Effect::SampleRssi { tid }) => {
                 self.session.respond_rssi(tid, Ok(-77), &mut emit);
+            }
+            Some(Effect::SampleBattery { tid }) => {
+                // Stable simulated measurement matching the simulator's
+                // configured field set (all three fields).
+                self.session.respond_battery(
+                    tid,
+                    Ok(umsh_companion::battery::BatteryStatus {
+                        voltage_mv: Some(4111),
+                        level_percent: Some(87),
+                        charge_state: Some(umsh_companion::battery::BatteryChargeState::Charging),
+                    }),
+                    &mut emit,
+                );
             }
             Some(Effect::SetPairingPin { tid, .. }) => {
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
@@ -125,9 +140,7 @@ impl SimNcp {
                 }
                 self.session.respond_host_wipe(tid, Ok(()), &mut emit);
             }
-            Some(Effect::DrainQueue) => {
-                while self.session.drain_step(self.now_ms, &mut emit) {}
-            }
+            Some(Effect::DrainQueue) => while self.session.drain_step(self.now_ms, &mut emit) {},
             Some(Effect::SaveSnapshot { tid }) => {
                 let mut buf = [0u8; SNAPSHOT_MAX];
                 let result = match self.session.encode_snapshot(&mut buf) {
@@ -154,9 +167,7 @@ impl SimNcp {
                                 [self.identity_seed; 32]
                             }
                         };
-                        let public = SoftwareIdentity::from_secret_bytes(&secret)
-                            .public_key()
-                            .0;
+                        let public = SoftwareIdentity::from_secret_bytes(&secret).public_key().0;
                         self.identity = Some((secret, public));
                         Ok(public)
                     }
@@ -170,7 +181,8 @@ impl SimNcp {
     /// Log and queue everything the session emitted toward the host.
     fn finish(&mut self, emitted: Vec<Vec<u8>>) {
         for frame in emitted {
-            self.log.push(format!("ncp→host {}", describe_frame(&frame)));
+            self.log
+                .push(format!("ncp→host {}", describe_frame(&frame)));
             self.out.push_back(frame);
         }
     }
@@ -256,9 +268,7 @@ fn inject_radio_rx(sim: &Arc<Mutex<SimNcp>>, frame: &[u8]) {
     sim.finish(emitted);
 }
 
-async fn attached_host(
-    sim: &Arc<Mutex<SimNcp>>,
-) -> CompanionRadio<SessionLink> {
+async fn attached_host(sim: &Arc<Mutex<SimNcp>>) -> CompanionRadio<SessionLink> {
     attach(sim, true);
     CompanionRadio::attach_existing(SessionLink { sim: sim.clone() }, host_config())
         .await
@@ -313,7 +323,10 @@ fn sealed_unicast(counter: u32) -> Vec<u8> {
 async fn configure_and_enable_phy(radio: &mut CompanionRadio<SessionLink>) {
     let config = host_config();
     radio
-        .set_prop(umsh::companion::ids::prop::PHY_FREQ, &config.freq_khz.to_le_bytes())
+        .set_prop(
+            umsh::companion::ids::prop::PHY_FREQ,
+            &config.freq_khz.to_le_bytes(),
+        )
         .await
         .unwrap();
     radio
@@ -370,7 +383,11 @@ async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
     // Device identity: generated on-device once, then stable.
     let dev_key = radio.ensure_device_identity().await.unwrap();
     assert_eq!(radio.ensure_device_identity().await.unwrap(), dev_key);
-    assert_eq!(sim.lock().unwrap().identity_seed, 1, "exactly one generation");
+    assert_eq!(
+        sim.lock().unwrap().identity_seed,
+        1,
+        "exactly one generation"
+    );
 
     // Provision the host domain, configure the PHY, and persist.
     let report = radio.provision(&desired_provisioning()).await.unwrap();
@@ -417,14 +434,21 @@ async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
     assert_eq!(sync.saved, Some(true));
     assert_eq!(sync.queue_count, Some(1));
     assert_eq!(sync.auto_ack, Some(true));
-    assert_eq!(sync.dev_key, Some(dev_key), "identity survives the power cycle");
+    assert_eq!(
+        sync.dev_key,
+        Some(dev_key),
+        "identity survives the power cycle"
+    );
     assert!(sync.phy_enabled, "snapshot re-enabled the PHY at boot");
     assert_eq!(sync.freq_khz, host_config().freq_khz);
 
     // Reconciliation is a no-op: everything matches the digests, so
     // no key material crosses the link a second time.
     let report = radio.provision(&desired_provisioning()).await.unwrap();
-    assert!(!report.changed(), "reattach reconcile must be a no-op: {report:?}");
+    assert!(
+        !report.changed(),
+        "reattach reconcile must be a no-op: {report:?}"
+    );
 
     // Drain when ready: the buffered frame carries its acknowledged
     // flag so the host knows not to re-ack it.
@@ -436,11 +460,20 @@ async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
     assert_eq!(drained.len(), 1);
     assert_eq!(drained[0].0, sealed_unicast(5));
     let meta = BufferedRxMeta::decode(&drained[0].1).unwrap();
-    assert_eq!(meta.flags & (RX_FLAG_BUFFERED | RX_FLAG_ACKED), RX_FLAG_BUFFERED | RX_FLAG_ACKED);
+    assert_eq!(
+        meta.flags & (RX_FLAG_BUFFERED | RX_FLAG_ACKED),
+        RX_FLAG_BUFFERED | RX_FLAG_ACKED
+    );
 
     // The capture places every full-protocol command on the record.
     let trace = trace.lock().unwrap();
-    for needle in ["PROP_CAPS", "PROP_HOST_KEY", "PROP_DEV_KEY", "QueueDrain", "StrRecv"] {
+    for needle in [
+        "PROP_CAPS",
+        "PROP_HOST_KEY",
+        "PROP_DEV_KEY",
+        "QueueDrain",
+        "StrRecv",
+    ] {
         assert!(
             trace.iter().any(|line| line.contains(needle)),
             "trace missing {needle}: {trace:#?}"
@@ -547,7 +580,11 @@ async fn full_queue_drains_losslessly_through_the_callback() {
         .await
         .unwrap();
     assert_eq!(drained.len(), 16, "every queued frame reaches the callback");
-    assert_eq!(drained[0], sealed_unicast(4), "oldest surviving frame first");
+    assert_eq!(
+        drained[0],
+        sealed_unicast(4),
+        "oldest surviving frame first"
+    );
     assert_eq!(drained[15], sealed_unicast(19));
 }
 
@@ -579,4 +616,25 @@ async fn insecure_link_refuses_key_provisioning() {
     // gate refused the channel key; ownership is already established.
     let sync = radio.sync(Some(&HOST_KEY)).await.unwrap();
     assert_eq!(sync.ownership, HostOwnership::Ours);
+}
+
+#[tokio::test]
+async fn battery_status_samples_through_the_typed_accessor() {
+    let sim = SimNcp::new();
+    let mut radio = attached_host(&sim).await;
+
+    // The capability is advertised and each read round-trips a sampled
+    // snapshot through Effect::SampleBattery; battery is deliberately
+    // not part of sync.
+    let status = radio
+        .battery_status()
+        .await
+        .unwrap()
+        .expect("simulator advertises CAP_BATTERY");
+    assert_eq!(status.voltage_mv, Some(4111));
+    assert_eq!(status.level_percent, Some(87));
+    assert_eq!(
+        status.charge_state,
+        Some(umsh::companion::battery::BatteryChargeState::Charging)
+    );
 }
