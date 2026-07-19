@@ -3,5 +3,5 @@
 /target
 /docs/ux/book
 /.umsh
-/.claude/settings.local.json
+/.claude
 *.identity
