@@ -7,6 +7,7 @@ protocol RadioConnection: AnyObject, Sendable {
     func autoConnect() async
     func connect() async throws
     func claimForCurrentIdentity() async throws
+    func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     func disconnect() async
 }
@@ -27,4 +28,5 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case incompatibleProtocol
     case identityUnavailable
     case takeoverNotAllowed
+    case operationInProgress
 }

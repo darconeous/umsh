@@ -66,6 +66,7 @@ struct AppRootView: View {
                     radioSnapshot: $radioSnapshot,
                     connectRadio: connectRadio,
                     claimRadio: claimRadio,
+                    refreshRadio: refreshRadio,
                     configureRadio: configureRadio,
                     disconnectRadio: disconnectRadio
                 )
@@ -84,6 +85,7 @@ struct AppRootView: View {
                     snapshot: $radioSnapshot,
                     connect: connectRadio,
                     claim: claimRadio,
+                    refresh: refreshRadio,
                     configure: configureRadio,
                     disconnect: disconnectRadio
                 )
@@ -159,6 +161,12 @@ struct AppRootView: View {
 
     private func configureRadio(_ settings: RadioSettings) async throws {
         try await radioConnection.configure(settings)
+    }
+
+    private func refreshRadio() async {
+        if let refreshed = try? await radioConnection.refresh() {
+            radioSnapshot = refreshed
+        }
     }
 
     private func inspectPeerIdentity(_ input: String) async -> Result<MeshNodeURIPreview, MeshEngineError> {

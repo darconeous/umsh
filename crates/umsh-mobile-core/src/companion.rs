@@ -141,6 +141,7 @@ enum SessionStage {
     Idle,
     Initial,
     Inspection,
+    Refreshing,
     Claiming,
     Saving,
     Configuring,
@@ -323,6 +324,27 @@ impl MobileCompanionSession {
         Ok(state.update(outbound))
     }
 
+    /// Re-read every capability-gated property represented by the mobile
+    /// snapshot. The existing snapshot remains usable while the bounded
+    /// refresh is in flight; authoritative provisioning is published when
+    /// the full capability-gated read completes.
+    pub fn refresh(&self) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidCompanionFrame);
+        }
+        let capabilities = state
+            .responses
+            .get(&prop::CAPS)
+            .ok_or(MobileError::InvalidCompanionFrame)?
+            .value
+            .clone();
+        state.inspection_queue = companion_refresh_properties(capabilities)?.into();
+        let mut outbound = Vec::new();
+        state.start_refresh(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
     /// Consume one complete companion frame and advance the session reducer.
     pub fn consume(&self, frame: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
         let parsed = Frame::parse(&frame).map_err(|_| MobileError::InvalidCompanionFrame)?;
@@ -481,6 +503,9 @@ impl CompanionSessionState {
             SessionStage::Initial | SessionStage::Inspection | SessionStage::Saving => {
                 CompanionSessionPhase::Synchronizing
             }
+            // A refresh deliberately preserves the attached phase so live UI
+            // does not disappear while fresh authoritative values are read.
+            SessionStage::Refreshing => CompanionSessionPhase::Attached,
             SessionStage::AwaitingHost => CompanionSessionPhase::AwaitingHost,
             SessionStage::Claiming => CompanionSessionPhase::Claiming,
             SessionStage::Configuring | SessionStage::SavingConfiguration => {
@@ -613,6 +638,7 @@ impl CompanionSessionState {
                 }
             }
             SessionStage::Inspection => self.start_inspection(outbound)?,
+            SessionStage::Refreshing => self.start_refresh(outbound)?,
             SessionStage::Configuring => {
                 if self.has_capability(cap::SAVE)? {
                     self.stage = SessionStage::SavingConfiguration;
@@ -643,6 +669,23 @@ impl CompanionSessionState {
 
     fn start_inspection(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
         self.stage = SessionStage::Inspection;
+        if self.inspection_queue.is_empty() {
+            let responses = self.responses.values().cloned().collect();
+            self.provisioning = Some(inspect_companion_sync(responses)?);
+            self.stage = SessionStage::Attached;
+            return Ok(());
+        }
+        for _ in 0..usize::from(frame::TID_MAX) {
+            let Some(property) = self.inspection_queue.pop_front() else {
+                break;
+            };
+            outbound.push(self.get_property(property)?);
+        }
+        Ok(())
+    }
+
+    fn start_refresh(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
+        self.stage = SessionStage::Refreshing;
         if self.inspection_queue.is_empty() {
             let responses = self.responses.values().cloned().collect();
             self.provisioning = Some(inspect_companion_sync(responses)?);
@@ -709,6 +752,27 @@ pub fn companion_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>
     if has(cap::HOST_AUTO_ACK) {
         properties.push(prop::HOST_AUTO_ACK);
     }
+    Ok(properties)
+}
+
+fn companion_refresh_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, MobileError> {
+    let decoded = decode_capabilities(&capabilities)?;
+    validate_capability_dependencies(&decoded)?;
+    let has = |capability| decoded.contains(&capability);
+    let mut properties = Vec::new();
+    if has(cap::DEV_IDENTITY) {
+        properties.push(prop::DEV_KEY);
+    }
+    if has(cap::DEV_NAME) {
+        properties.push(prop::DEV_NAME);
+    }
+    if has(cap::BATTERY) {
+        properties.push(prop::BATTERY);
+    }
+    if has(cap::HOST_FILTER) {
+        properties.push(prop::HOST_KEY);
+    }
+    properties.extend(companion_inspection_properties(capabilities)?);
     Ok(properties)
 }
 
@@ -1595,5 +1659,58 @@ mod tests {
         assert_eq!(provisioning.coding_rate_denom, Some(6));
         assert_eq!(provisioning.duty_cycle_now, Some(65));
         assert_eq!(provisioning.duty_cycle_limit, Some(6_553));
+
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::PHY_DUTY_NOW,
+                &131u16.to_le_bytes(),
+            ))
+            .unwrap();
+        assert_eq!(
+            pushed.snapshot.provisioning.unwrap().duty_cycle_now,
+            Some(131)
+        );
+
+        let refresh = session.refresh().unwrap();
+        assert_eq!(refresh.snapshot.phase, CompanionSessionPhase::Attached);
+        assert!(refresh.waiting_for_responses);
+        let refresh_tail =
+            answer_requests(
+                &session,
+                refresh.outbound_frames,
+                |property| match property {
+                    prop::DEV_NAME => (property, b"Fresh name".to_vec()),
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 910_525u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![18]),
+                    prop::PHY_LORA_BW => (property, 62_500u32.to_le_bytes().to_vec()),
+                    prop::PHY_LORA_SF => (property, vec![7]),
+                    _ => unreachable!(),
+                },
+            );
+        let refreshed =
+            answer_requests(
+                &session,
+                refresh_tail.outbound_frames,
+                |property| match property {
+                    prop::PHY_LORA_CR => (property, vec![5]),
+                    prop::PHY_DUTY_NOW => (property, 262u16.to_le_bytes().to_vec()),
+                    prop::PHY_DUTY_LIMIT => (property, 655u16.to_le_bytes().to_vec()),
+                    prop::SAVED => (property, vec![1]),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(refreshed.snapshot.phase, CompanionSessionPhase::Attached);
+        assert!(!refreshed.waiting_for_responses);
+        assert_eq!(
+            refreshed.snapshot.device_name.as_deref(),
+            Some("Fresh name")
+        );
+        let refreshed = refreshed.snapshot.provisioning.unwrap();
+        assert_eq!(refreshed.frequency_khz, 910_525);
+        assert_eq!(refreshed.duty_cycle_now, Some(262));
+        assert_eq!(refreshed.duty_cycle_limit, Some(655));
     }
 }
