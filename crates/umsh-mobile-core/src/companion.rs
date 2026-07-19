@@ -4,10 +4,12 @@ use std::{
 };
 
 use umsh_companion::{
-    BatteryChargeState, BatteryStatus, Cmd, Frame, PropPayload, frame,
+    BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
+    host::{PropertyNotification, PropertyNotificationKind, TidAllocator},
     ids::{INTERFACE_TYPE, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop},
     items::{self, Filter},
+    meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED},
     pui,
 };
 
@@ -94,8 +96,21 @@ pub struct CompanionSessionSnapshotRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CompanionSessionUpdateRecord {
     pub outbound_frames: Vec<Vec<u8>>,
+    pub received_frames: Vec<CompanionReceivedFrameRecord>,
     pub snapshot: CompanionSessionSnapshotRecord,
     pub waiting_for_responses: bool,
+}
+
+/// One validated raw mesh frame delivered by the companion radio.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionReceivedFrameRecord {
+    pub data: Vec<u8>,
+    pub rssi_dbm: Option<i16>,
+    pub lqi: Option<u8>,
+    pub snr_cb: Option<i16>,
+    pub was_buffered: bool,
+    pub was_acknowledged: bool,
+    pub age_seconds: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,7 +134,7 @@ enum ExpectedResponse {
 struct CompanionSessionState {
     generation: u64,
     stage: SessionStage,
-    next_tid: u8,
+    tids: TidAllocator,
     expected: HashMap<u8, ExpectedResponse>,
     selected_host_key: Option<[u8; 32]>,
     radio_host_key: Option<Vec<u8>>,
@@ -137,7 +152,7 @@ impl Default for CompanionSessionState {
         Self {
             generation: 0,
             stage: SessionStage::Idle,
-            next_tid: 1,
+            tids: TidAllocator::new(),
             expected: HashMap::new(),
             selected_host_key: None,
             radio_host_key: None,
@@ -232,6 +247,34 @@ impl MobileCompanionSession {
 
     /// Consume one complete companion frame and advance the session reducer.
     pub fn consume(&self, frame: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let parsed = Frame::parse(&frame).map_err(|_| MobileError::InvalidCompanionFrame)?;
+        if parsed.command() == Some(Cmd::StrRecv) {
+            if parsed.header.tid() != frame::TID_UNSOLICITED {
+                return Err(MobileError::InvalidCompanionFrame);
+            }
+            let payload = StreamPayload::parse(parsed.payload)
+                .map_err(|_| MobileError::InvalidCompanionFrame)?;
+            if payload.stream != umsh_companion::ids::stream::PHY_RAW {
+                return Err(MobileError::InvalidCompanionFrame);
+            }
+            let metadata = BufferedRxMeta::decode(payload.metadata)
+                .map_err(|_| MobileError::InvalidCompanionFrame)?;
+            let state = self.inner.lock().expect("companion session mutex poisoned");
+            if state.stage == SessionStage::Idle {
+                return Err(MobileError::InvalidCompanionFrame);
+            }
+            return Ok(
+                state.update_with_received(vec![CompanionReceivedFrameRecord {
+                    data: payload.data.to_vec(),
+                    rssi_dbm: metadata.rx.rssi_dbm,
+                    lqi: metadata.rx.lqi.map(core::num::NonZeroU8::get),
+                    snr_cb: metadata.rx.snr_cb,
+                    was_buffered: metadata.flags & RX_FLAG_BUFFERED != 0,
+                    was_acknowledged: metadata.flags & RX_FLAG_ACKED != 0,
+                    age_seconds: metadata.age_s,
+                }]),
+            );
+        }
         let response = inspect_companion_property_frame(frame)?;
         let mut state = self.inner.lock().expect("companion session mutex poisoned");
         let mut outbound = Vec::new();
@@ -325,9 +368,7 @@ impl MobileCompanionSession {
 
 impl CompanionSessionState {
     fn allocate_tid(&mut self) -> u8 {
-        let tid = self.next_tid;
-        self.next_tid = if tid >= frame::TID_MAX { 1 } else { tid + 1 };
-        tid
+        self.tids.allocate()
     }
 
     fn get_property(&mut self, property: u32) -> Result<Vec<u8>, MobileError> {
@@ -367,8 +408,24 @@ impl CompanionSessionState {
     }
 
     fn update(&self, outbound_frames: Vec<Vec<u8>>) -> CompanionSessionUpdateRecord {
+        self.update_with(outbound_frames, Vec::new())
+    }
+
+    fn update_with_received(
+        &self,
+        received_frames: Vec<CompanionReceivedFrameRecord>,
+    ) -> CompanionSessionUpdateRecord {
+        self.update_with(Vec::new(), received_frames)
+    }
+
+    fn update_with(
+        &self,
+        outbound_frames: Vec<Vec<u8>>,
+        received_frames: Vec<CompanionReceivedFrameRecord>,
+    ) -> CompanionSessionUpdateRecord {
         CompanionSessionUpdateRecord {
             outbound_frames,
+            received_frames,
             snapshot: CompanionSessionSnapshotRecord {
                 generation: self.generation,
                 phase: self.phase(),
@@ -747,20 +804,18 @@ pub fn inspect_companion_status(value: Vec<u8>) -> Result<u32, MobileError> {
 pub fn inspect_companion_property_frame(
     bytes: Vec<u8>,
 ) -> Result<CompanionPropertyFrameRecord, MobileError> {
-    let parsed = Frame::parse(&bytes).map_err(|_| MobileError::InvalidCompanionFrame)?;
-    if !matches!(
-        parsed.command(),
-        Some(Cmd::PropIs | Cmd::PropInserted | Cmd::PropRemoved)
-    ) {
-        return Err(MobileError::InvalidCompanionFrame);
-    }
-    let payload =
-        PropPayload::parse(parsed.payload).map_err(|_| MobileError::InvalidCompanionFrame)?;
+    let parsed =
+        PropertyNotification::parse(&bytes).map_err(|_| MobileError::InvalidCompanionFrame)?;
+    let command = match parsed.kind {
+        PropertyNotificationKind::Is => Cmd::PropIs,
+        PropertyNotificationKind::Inserted => Cmd::PropInserted,
+        PropertyNotificationKind::Removed => Cmd::PropRemoved,
+    };
     Ok(CompanionPropertyFrameRecord {
-        transaction_id: parsed.header.tid(),
-        command: parsed.cmd,
-        property_id: payload.key,
-        value: payload.value.to_vec(),
+        transaction_id: parsed.tid,
+        command: command as u8,
+        property_id: parsed.key,
+        value: parsed.value.to_vec(),
     })
 }
 
@@ -816,6 +871,7 @@ impl MobileGattReassembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use umsh_companion::PropPayload;
 
     fn response(property_id: u32, value: &[u8]) -> CompanionPropertyFrameRecord {
         CompanionPropertyFrameRecord {
@@ -1166,5 +1222,49 @@ mod tests {
             session.consume(property_response(tid, prop::PHY_FREQ, &[0; 4])),
             Err(MobileError::InvalidCompanionFrame)
         );
+    }
+
+    #[test]
+    fn mobile_session_emits_typed_raw_receive_during_sync() {
+        let session = MobileCompanionSession::new();
+        session.begin(None).unwrap();
+
+        let metadata = BufferedRxMeta {
+            rx: umsh_companion::RxMeta {
+                rssi_dbm: Some(-87),
+                lqi: core::num::NonZeroU8::new(42),
+                snr_cb: Some(125),
+            },
+            flags: RX_FLAG_BUFFERED | RX_FLAG_ACKED,
+            age_s: 9,
+        };
+        let mut metadata_bytes = [0; BufferedRxMeta::WIRE_LEN];
+        metadata.encode(&mut metadata_bytes).unwrap();
+        let mut bytes = vec![0; MAX_FRAME];
+        let len = frame::str_recv(
+            &mut bytes,
+            umsh_companion::ids::stream::PHY_RAW,
+            &[1, 2, 3],
+            &metadata_bytes,
+        )
+        .unwrap();
+        bytes.truncate(len);
+
+        let update = session.consume(bytes).unwrap();
+        assert_eq!(update.received_frames.len(), 1);
+        assert_eq!(
+            update.received_frames[0],
+            CompanionReceivedFrameRecord {
+                data: vec![1, 2, 3],
+                rssi_dbm: Some(-87),
+                lqi: Some(42),
+                snr_cb: Some(125),
+                was_buffered: true,
+                was_acknowledged: true,
+                age_seconds: 9,
+            }
+        );
+        assert!(update.outbound_frames.is_empty());
+        assert!(update.waiting_for_responses);
     }
 }

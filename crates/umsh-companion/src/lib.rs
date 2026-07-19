@@ -23,6 +23,7 @@ pub mod describe;
 pub mod frame;
 pub mod gatt;
 pub mod hdlc;
+pub mod host;
 pub mod ids;
 pub mod items;
 pub mod meta;

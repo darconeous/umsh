@@ -497,6 +497,22 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt16: FfiConverterPrimitive {
+    typealias FfiType = Int16
+    typealias SwiftType = Int16
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int16 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int16, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -1378,6 +1394,83 @@ public func FfiConverterTypeCompanionPropertyFrameRecord_lower(_ value: Companio
 
 
 /**
+ * One validated raw mesh frame delivered by the companion radio.
+ */
+public struct CompanionReceivedFrameRecord: Equatable, Hashable {
+    public var data: Data
+    public var rssiDbm: Int16?
+    public var lqi: UInt8?
+    public var snrCb: Int16?
+    public var wasBuffered: Bool
+    public var wasAcknowledged: Bool
+    public var ageSeconds: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?, wasBuffered: Bool, wasAcknowledged: Bool, ageSeconds: UInt32) {
+        self.data = data
+        self.rssiDbm = rssiDbm
+        self.lqi = lqi
+        self.snrCb = snrCb
+        self.wasBuffered = wasBuffered
+        self.wasAcknowledged = wasAcknowledged
+        self.ageSeconds = ageSeconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionReceivedFrameRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionReceivedFrameRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionReceivedFrameRecord {
+        return
+            try CompanionReceivedFrameRecord(
+                data: FfiConverterData.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                snrCb: FfiConverterOptionInt16.read(from: &buf),
+                wasBuffered: FfiConverterBool.read(from: &buf),
+                wasAcknowledged: FfiConverterBool.read(from: &buf),
+                ageSeconds: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionReceivedFrameRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.data, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCb, into: &buf)
+        FfiConverterBool.write(value.wasBuffered, into: &buf)
+        FfiConverterBool.write(value.wasAcknowledged, into: &buf)
+        FfiConverterUInt32.write(value.ageSeconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionReceivedFrameRecord_lift(_ buf: RustBuffer) throws -> CompanionReceivedFrameRecord {
+    return try FfiConverterTypeCompanionReceivedFrameRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionReceivedFrameRecord_lower(_ value: CompanionReceivedFrameRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionReceivedFrameRecord.lower(value)
+}
+
+
+/**
  * Typed state published after each bounded companion-session transition.
  */
 public struct CompanionSessionSnapshotRecord: Equatable, Hashable {
@@ -1461,13 +1554,15 @@ public func FfiConverterTypeCompanionSessionSnapshotRecord_lower(_ value: Compan
  */
 public struct CompanionSessionUpdateRecord: Equatable, Hashable {
     public var outboundFrames: [Data]
+    public var receivedFrames: [CompanionReceivedFrameRecord]
     public var snapshot: CompanionSessionSnapshotRecord
     public var waitingForResponses: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(outboundFrames: [Data], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool) {
+    public init(outboundFrames: [Data], receivedFrames: [CompanionReceivedFrameRecord], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool) {
         self.outboundFrames = outboundFrames
+        self.receivedFrames = receivedFrames
         self.snapshot = snapshot
         self.waitingForResponses = waitingForResponses
     }
@@ -1489,6 +1584,7 @@ public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuff
         return
             try CompanionSessionUpdateRecord(
                 outboundFrames: FfiConverterSequenceData.read(from: &buf),
+                receivedFrames: FfiConverterSequenceTypeCompanionReceivedFrameRecord.read(from: &buf),
                 snapshot: FfiConverterTypeCompanionSessionSnapshotRecord.read(from: &buf),
                 waitingForResponses: FfiConverterBool.read(from: &buf)
         )
@@ -1496,6 +1592,7 @@ public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuff
 
     public static func write(_ value: CompanionSessionUpdateRecord, into buf: inout [UInt8]) {
         FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
+        FfiConverterSequenceTypeCompanionReceivedFrameRecord.write(value.receivedFrames, into: &buf)
         FfiConverterTypeCompanionSessionSnapshotRecord.write(value.snapshot, into: &buf)
         FfiConverterBool.write(value.waitingForResponses, into: &buf)
     }
@@ -2314,6 +2411,30 @@ fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt16: FfiConverterRustBuffer {
+    typealias SwiftType = Int16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
     typealias SwiftType = UInt32?
 
@@ -2525,6 +2646,31 @@ fileprivate struct FfiConverterSequenceTypeCompanionPropertyFrameRecord: FfiConv
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeCompanionPropertyFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCompanionReceivedFrameRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [CompanionReceivedFrameRecord]
+
+    public static func write(_ value: [CompanionReceivedFrameRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCompanionReceivedFrameRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CompanionReceivedFrameRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CompanionReceivedFrameRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCompanionReceivedFrameRecord.read(from: &buf))
         }
         return seq
     }
