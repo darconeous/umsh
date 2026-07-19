@@ -37,6 +37,7 @@
 - [Minimal Companion Radio Protocol](companion-radio-minimal.md)
 - [Full Companion Radio Protocol](companion-radio-full.md)
 - [Companion Radio over BLE](companion-radio-ble.md)
+- [Identity Export Format](identity-export.md)
 - [Security Considerations](security-considerations.md)
 - [Amateur Radio Operation](amateur-radio.md)
 - [Limitations & Open Items](limitations.md)
