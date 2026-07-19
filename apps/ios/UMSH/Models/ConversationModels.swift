@@ -50,8 +50,17 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     var draftText: String
 }
 
+struct PeerPingReply: Equatable, Sendable {
+    let roundTripMilliseconds: UInt64
+    let hopCount: UInt8?
+    let routeHints: [Data]
+    let rssiDBm: Int16?
+    let signalToNoiseCentibels: Int16?
+    let linkQuality: UInt8?
+}
+
 enum PeerPingResult: Equatable, Sendable {
-    case reply(roundTripMilliseconds: UInt64)
+    case reply(PeerPingReply)
     case timedOut
     case unavailable(reason: String)
 }

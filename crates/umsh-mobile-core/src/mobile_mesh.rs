@@ -70,6 +70,16 @@ pub struct MobileMeshPingEventRecord {
     pub operation_id: u64,
     pub outcome: MobileMeshPingOutcome,
     pub round_trip_milliseconds: Option<u64>,
+    /// Total radio links traversed by the response, when the wire metadata can
+    /// determine it. A direct response is one hop.
+    pub hop_count: Option<u8>,
+    /// Authenticated intermediate-router hints, in source-to-destination order.
+    /// The two endpoints are not included.
+    pub route_hints: Vec<Vec<u8>>,
+    /// Signal measurements for the final radio hop into this device.
+    pub rssi_dbm: Option<i16>,
+    pub snr_centibels: Option<i16>,
+    pub lqi: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -433,12 +443,21 @@ async fn run_worker(
     let pending = Rc::new(RefCell::new(BTreeMap::<[u8; 32], u64>::new()));
     let pong_pending = pending.clone();
     let pong_events = events.clone();
-    let pong_subscription = node.on_pong(move |peer, milliseconds| {
+    let pong_subscription = node.on_pong_with_metadata(move |peer, metadata| {
         if let Some(operation_id) = pong_pending.borrow_mut().remove(&peer.0) {
             let _ = pong_events.send(MobileMeshPingEventRecord {
                 operation_id,
                 outcome: MobileMeshPingOutcome::Reply,
-                round_trip_milliseconds: Some(milliseconds),
+                round_trip_milliseconds: Some(metadata.round_trip_ms),
+                hop_count: metadata.hop_count,
+                route_hints: metadata
+                    .route_hints
+                    .iter()
+                    .map(|hint| hint.0.to_vec())
+                    .collect(),
+                rssi_dbm: metadata.rssi_dbm,
+                snr_centibels: metadata.snr_centibels,
+                lqi: metadata.lqi,
             });
         }
     });
@@ -450,6 +469,11 @@ async fn run_worker(
                 operation_id,
                 outcome: MobileMeshPingOutcome::TimedOut,
                 round_trip_milliseconds: None,
+                hop_count: None,
+                route_hints: Vec::new(),
+                rssi_dbm: None,
+                snr_centibels: None,
+                lqi: None,
             });
         }
     });
@@ -470,7 +494,13 @@ async fn run_worker(
                         }
                         let result = match node.peer(peer).await {
                             Ok(connection) => connection
-                                .ping(6, &SendOptions::default().with_flood_hops(5), timeout_ms)
+                                .ping(
+                                    6,
+                                    &SendOptions::default()
+                                        .with_flood_hops(5)
+                                        .with_trace_route(),
+                                    timeout_ms,
+                                )
                                 .await
                                 .map(|_| ())
                                 .map_err(|_| MobileMeshError::SendFailed),
@@ -516,6 +546,11 @@ fn emit_ping_failure(events: &std_mpsc::Sender<MobileMeshPingEventRecord>, opera
         operation_id,
         outcome: MobileMeshPingOutcome::Failed,
         round_trip_milliseconds: None,
+        hop_count: None,
+        route_hints: Vec::new(),
+        rssi_dbm: None,
+        snr_centibels: None,
+        lqi: None,
     });
 }
 
@@ -580,6 +615,11 @@ mod tests {
                 assert_eq!(event.operation_id, operation);
                 assert_eq!(event.outcome, MobileMeshPingOutcome::Reply);
                 assert!(event.round_trip_milliseconds.is_some());
+                assert_eq!(event.hop_count, Some(1));
+                assert!(event.route_hints.is_empty());
+                assert_eq!(event.rssi_dbm, Some(-42));
+                assert_eq!(event.snr_centibels, Some(90));
+                assert_eq!(event.lqi, None);
                 break;
             }
 
@@ -620,6 +660,9 @@ mod tests {
                 assert_eq!(event.operation_id, operation);
                 assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
                 assert_eq!(event.round_trip_milliseconds, None);
+                assert_eq!(event.hop_count, None);
+                assert!(event.route_hints.is_empty());
+                assert_eq!(event.rssi_dbm, None);
                 break;
             }
             assert!(Instant::now() < deadline, "silent ping never timed out");

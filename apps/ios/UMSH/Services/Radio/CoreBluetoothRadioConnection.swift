@@ -652,7 +652,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 case .reply:
                     waiter.resume(
                         returning: .reply(
-                            roundTripMilliseconds: event.roundTripMilliseconds ?? 0
+                            RadioPingReply(
+                                roundTripMilliseconds: event.roundTripMilliseconds ?? 0,
+                                hopCount: event.hopCount,
+                                routeHints: event.routeHints,
+                                rssiDBm: event.rssiDbm,
+                                signalToNoiseCentibels: event.snrCentibels,
+                                linkQuality: event.lqi
+                            )
                         )
                     )
                 case .timedOut:

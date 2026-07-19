@@ -4,8 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
-use umsh_core::NodeHint;
-use umsh_core::PublicKey;
+use umsh_core::{NodeHint, PublicKey, RouterHint};
 use umsh_mac::{LocalIdentityId, SendOptions};
 
 #[cfg(feature = "software-crypto")]
@@ -125,6 +124,21 @@ pub(crate) struct PendingPing {
     pub deadline_ms: u64,
 }
 
+/// Measurements attached to an authenticated echo response.
+///
+/// RSSI, SNR, and LQI describe the final radio hop into this node. Route
+/// hints are the authenticated trace-route entries accumulated by repeaters;
+/// endpoints are not included in that list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PongMetadata {
+    pub round_trip_ms: u64,
+    pub hop_count: Option<u8>,
+    pub route_hints: Vec<RouterHint>,
+    pub rssi_dbm: Option<i16>,
+    pub snr_centibels: Option<i16>,
+    pub lqi: Option<u8>,
+}
+
 pub(crate) struct PeerSubscriptions {
     peer: PublicKey,
     pub(crate) receive_handlers: HandlerTable<Box<dyn FnMut(&ReceivedPacketRef<'_>) -> bool>>,
@@ -163,6 +177,7 @@ pub(crate) struct LocalNodeState {
     pfs_ended_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pfs_failed_handlers: HandlerTable<Box<dyn FnMut(PublicKey, PfsFailure)>>,
     pong_handlers: HandlerTable<Box<dyn FnMut(PublicKey, u64)>>,
+    pong_metadata_handlers: HandlerTable<Box<dyn FnMut(PublicKey, &PongMetadata)>>,
     ping_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pending_pings: Vec<PendingPing>,
     peer_subscriptions: Vec<PeerSubscriptions>,
@@ -184,6 +199,7 @@ impl LocalNodeState {
             pfs_ended_handlers: HandlerTable::default(),
             pfs_failed_handlers: HandlerTable::default(),
             pong_handlers: HandlerTable::default(),
+            pong_metadata_handlers: HandlerTable::default(),
             ping_timeout_handlers: HandlerTable::default(),
             pending_pings: Vec::new(),
             peer_subscriptions: Vec::new(),
@@ -642,6 +658,19 @@ impl<M: MacBackend> LocalNode<M> {
         Subscription::new(move || state.borrow_mut().pong_handlers.remove(handle))
     }
 
+    pub fn on_pong_with_metadata<F>(&self, handler: F) -> Subscription
+    where
+        F: FnMut(PublicKey, &PongMetadata) + 'static,
+    {
+        let handle = self
+            .state
+            .borrow_mut()
+            .pong_metadata_handlers
+            .insert(Box::new(handler));
+        let state = self.state.clone();
+        Subscription::new(move || state.borrow_mut().pong_metadata_handlers.remove(handle))
+    }
+
     fn add_ping_timeout_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(PublicKey) + 'static,
@@ -685,7 +714,13 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Called when an EchoResponse arrives. Matches against pending pings and fires pong handlers.
-    pub(crate) fn match_pong(&self, from: PublicKey, data: &[u8], now_ms: u64) {
+    pub(crate) fn match_pong(
+        &self,
+        from: PublicKey,
+        data: &[u8],
+        packet: &ReceivedPacketRef<'_>,
+        now_ms: u64,
+    ) {
         if data.len() < 2 {
             return;
         }
@@ -698,10 +733,32 @@ impl<M: MacBackend> LocalNode<M> {
         if let Some(idx) = idx {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
+            let route_hints = packet.trace_route_hops().collect::<Vec<_>>();
+            let hop_count = packet
+                .flood_hops()
+                .map(|hops| hops.accumulated().saturating_add(1))
+                .or_else(|| {
+                    packet.trace_route().is_some().then(|| {
+                        u8::try_from(route_hints.len())
+                            .unwrap_or(u8::MAX)
+                            .saturating_add(1)
+                    })
+                });
+            let metadata = PongMetadata {
+                round_trip_ms: rtt_ms,
+                hop_count,
+                route_hints,
+                rssi_dbm: packet.rssi(),
+                snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
+                lqi: packet.lqi().map(core::num::NonZeroU8::get),
+            };
             if let Some(entry) = state.peer_subscriptions.iter_mut().find(|e| e.peer == from) {
                 entry.pong_handlers.for_each_mut(|h| h(rtt_ms));
             }
             state.pong_handlers.for_each_mut(|h| h(from, rtt_ms));
+            state
+                .pong_metadata_handlers
+                .for_each_mut(|handler| handler(from, &metadata));
         }
     }
 

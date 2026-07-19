@@ -2348,13 +2348,9 @@ impl<
                 if let Some(data) = Self::echo_request_data(payload) {
                     let response =
                         Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
+                    let options = Self::echo_response_options(&original[..frame_len], header);
                     let _ = self
-                        .send_unicast(
-                            local_id,
-                            &peer_key,
-                            response.as_slice(),
-                            &SendOptions::default(),
-                        )
+                        .send_unicast(local_id, &peer_key, response.as_slice(), &options)
                         .await;
                 }
 
@@ -2632,13 +2628,10 @@ impl<
                                 MAC_COMMAND_ECHO_RESPONSE_ID,
                                 data,
                             );
+                            let options =
+                                Self::echo_response_options(&original[..frame_len], header);
                             let _ = self
-                                .send_unicast(
-                                    local_id,
-                                    &peer_key,
-                                    response.as_slice(),
-                                    &SendOptions::default(),
-                                )
+                                .send_unicast(local_id, &peer_key, response.as_slice(), &options)
                                 .await;
                         }
 
@@ -3529,6 +3522,17 @@ impl<
             return None;
         }
         Some(data)
+    }
+
+    fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
+        let mut options = SendOptions::default();
+        let requests_trace = ParsedOptions::extract(frame, header.options_range.clone())
+            .map(|parsed| parsed.trace_route.is_some())
+            .unwrap_or(false);
+        if requests_trace {
+            options = options.with_trace_route();
+        }
+        options
     }
 
     fn echo_response_nonce(payload: &[u8]) -> Option<u32> {

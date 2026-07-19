@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct NetworkView: View {
@@ -125,6 +126,7 @@ struct PeerDetailView: View {
     @State private var openedConversation: DirectConversationSummary?
     @State private var isOpeningConversation = false
     @State private var isPinging = false
+    @State private var pingStatus: PeerPingStatus?
     @State private var feedbackTitle = ""
     @State private var feedbackMessage = ""
     @State private var showsFeedback = false
@@ -164,26 +166,51 @@ struct PeerDetailView: View {
 
             if startConversation != nil, pingPeer != nil {
                 Section("Actions") {
-                HStack(spacing: 12) {
-                    Button {
-                        Task { await openConversation() }
-                    } label: {
-                        Label("Message", systemImage: "message")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isOpeningConversation)
+                    HStack(spacing: 12) {
+                        Button {
+                            Task { await openConversation() }
+                        } label: {
+                            Label("Message", systemImage: "message")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isOpeningConversation)
 
-                    Button {
-                        Task { await ping() }
-                    } label: {
-                        Label(isPinging ? "Pinging…" : "Ping", systemImage: "wave.3.right")
-                            .frame(maxWidth: .infinity)
+                        Button {
+                            Task { await ping() }
+                        } label: {
+                            Label(isPinging ? "Pinging…" : "Ping", systemImage: "wave.3.right")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isPinging)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(isPinging)
+
+                    if let pingStatus {
+                        LabeledContent(isPinging ? "Ping" : "Last ping") {
+                            Label(pingStatus.message, systemImage: pingStatus.symbolName)
+                                .foregroundStyle(pingStatus.color)
+                        }
+                        if case let .reply(reply) = pingStatus {
+                            LabeledContent("Round trip", value: "\(reply.roundTripMilliseconds) ms")
+                            LabeledContent("Hop count", value: reply.hopCountText)
+                            LabeledContent("Route path") {
+                                Text(reply.routePathText)
+                                    .multilineTextAlignment(.trailing)
+                                    .textSelection(.enabled)
+                            }
+                            if let rssi = reply.rssiDBm {
+                                LabeledContent("RSSI (last hop)", value: "\(rssi) dBm")
+                            }
+                            if let snr = reply.signalToNoiseCentibels {
+                                LabeledContent("SNR (last hop)", value: Self.decibels(snr))
+                            }
+                            if let linkQuality = reply.linkQuality {
+                                LabeledContent("Link quality (last hop)", value: "\(linkQuality)")
+                            }
+                        }
+                    }
                 }
-            }
             }
 
             if peer.isCompanionRadio {
@@ -227,19 +254,70 @@ struct PeerDetailView: View {
         guard let pingPeer else { return }
         guard !isPinging else { return }
         isPinging = true
+        pingStatus = .pinging
         defer { isPinging = false }
         switch await pingPeer(peer) {
-        case let .reply(milliseconds):
-            feedbackTitle = "Ping reply"
-            feedbackMessage = "Round trip: \(milliseconds) ms"
+        case let .reply(reply):
+            pingStatus = .reply(reply)
         case .timedOut:
-            feedbackTitle = "Ping timed out"
-            feedbackMessage = "No authenticated echo response arrived from this peer."
+            pingStatus = .timedOut
         case let .unavailable(reason):
-            feedbackTitle = "Ping unavailable"
-            feedbackMessage = reason
+            pingStatus = .unavailable(reason: reason)
         }
-        showsFeedback = true
+    }
+
+    private static func decibels(_ centibels: Int16) -> String {
+        String(format: "%.2f dB", Double(centibels) / 100)
+    }
+}
+
+private enum PeerPingStatus: Equatable {
+    case pinging
+    case reply(PeerPingReply)
+    case timedOut
+    case unavailable(reason: String)
+
+    var message: String {
+        switch self {
+        case .pinging: "Waiting for reply…"
+        case let .reply(reply): "Reply in \(reply.roundTripMilliseconds) ms"
+        case .timedOut: "Timed out"
+        case let .unavailable(reason): reason
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .pinging: "clock"
+        case .reply: "checkmark.circle.fill"
+        case .timedOut: "clock.badge.exclamationmark"
+        case .unavailable: "exclamationmark.triangle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .pinging: .secondary
+        case .reply: .green
+        case .timedOut: .orange
+        case .unavailable: .red
+        }
+    }
+}
+
+private extension PeerPingReply {
+    var hopCountText: String {
+        hopCount.map(String.init) ?? "Not reported"
+    }
+
+    var routePathText: String {
+        let intermediates = routeHints.map { hint in
+            hint.map { String(format: "%02X", $0) }.joined()
+        }
+        if intermediates.isEmpty {
+            return hopCount == 1 ? "Phone → Peer (direct)" : "Not reported"
+        }
+        return (["Phone"] + intermediates + ["Peer"]).joined(separator: " → ")
     }
 }
 
