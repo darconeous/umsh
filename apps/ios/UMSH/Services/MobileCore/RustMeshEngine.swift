@@ -80,7 +80,7 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
-    func meshSession(fileManager: FileManager = .default) throws -> MobileMeshSession? {
+    func meshSession(fileManager: FileManager = .default) async throws -> MobileMeshSession? {
         guard let localIdentity else { return nil }
         if let mobileMeshSession { return mobileMeshSession }
         guard let applicationSupport = fileManager.urls(
@@ -94,7 +94,7 @@ actor RustMeshEngine: MeshEngine {
             .appendingPathComponent("CounterReservations", isDirectory: true)
         do {
             let store = try MobileCounterStore(rootDirectory: root.path)
-            let session = try MobileMeshSession(identity: localIdentity, counterStore: store)
+            let session = try await MobileMeshSession(identity: localIdentity, counterStore: store)
             mobileMeshSession = session
             return session
         } catch {
