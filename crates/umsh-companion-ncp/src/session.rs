@@ -3392,7 +3392,10 @@ mod tests {
         let mut buf = [0u8; 16];
         let len = frame::prop_get(&mut buf, 7, prop::BATTERY).unwrap();
         let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
-        assert!(emitted.is_empty(), "no response until the battery is sampled");
+        assert!(
+            emitted.is_empty(),
+            "no response until the battery is sampled"
+        );
         assert_eq!(effect, Some(Effect::SampleBattery { tid: 7 }));
 
         // The caller feeds the snapshot back; the session emits PROP_IS

@@ -19,6 +19,7 @@ let capabilitiesKnown = false;
 let isConnected = false;
 let commandBusy = false;
 let selectedPacketId;
+let batteryPropertySpec;
 const propertyRowByKey = new Map();
 
 start();
@@ -31,6 +32,7 @@ async function start() {
     await wasm.default();
     SimulatedNcp = wasm.SimulatedNcp;
     propertySpecs = JSON.parse(wasm.propertySpecs());
+    batteryPropertySpec = propertySpecs.find((spec) => spec.name === "PROP_BATTERY");
     renderPropertyTable();
     session = new ProtocolSession(wasm.DebuggerEngine, "serial_hdlc");
     session.addEventListener("engine-event", ({ detail }) => handleEvent(detail));
@@ -76,6 +78,7 @@ function bindUi() {
   elements.traceFilter.addEventListener("input", renderTrace);
   elements.propertyFilter.addEventListener("input", filterProperties);
   elements.refreshProperties.addEventListener("click", () => session?.refreshKnownProperties());
+  elements.refreshBattery.addEventListener("click", refreshBattery);
   elements.propertyForm.addEventListener("submit", submitProperty);
   for (const button of document.querySelectorAll(".command-button")) button.addEventListener("click", issueCommand);
 }
@@ -124,10 +127,15 @@ function handleEvent(event) {
       elements.capabilities.textContent = event.capabilities.length
         ? event.capabilities.map(({ code, name }) => name ? `${name} (${code})` : String(code)).join(", ")
         : "None advertised";
+      updateBatteryAvailability();
       setStatus("Attached", "ready");
       break;
     case "property":
       updateKnownProperty(event);
+      if (event.key === batteryPropertySpec?.key) {
+        elements.batteryStatus.textContent = event.decoded?.display || "Malformed battery response";
+        elements.refreshBattery.disabled = false;
+      }
       if (event.unsolicited || event.key === requestedPropertyKey || (requestedPropertyKey !== undefined && event.key === 0)) {
         renderPropertyResult(event);
         if (!event.unsolicited) requestedPropertyKey = undefined;
@@ -135,6 +143,10 @@ function handleEvent(event) {
       break;
     case "property_error":
       showPropertyError(event.key, event.status);
+      if (event.key === batteryPropertySpec?.key) {
+        elements.batteryStatus.textContent = `Unavailable · ${event.status.replace(/^Status::/, "")}`;
+        elements.refreshBattery.disabled = false;
+      }
       if (event.key === requestedPropertyKey) {
         elements.propertyResult.textContent = `${event.name || `Property ${event.key}`}: ${event.status}`;
         requestedPropertyKey = undefined;
@@ -363,6 +375,28 @@ function updateCommandAvailability() {
   }
 }
 
+function updateBatteryAvailability() {
+  const supported = batteryPropertySpec?.capability != null
+    && capabilitiesKnown
+    && activeCapabilities.has(batteryPropertySpec.capability);
+  elements.refreshBattery.disabled = !isConnected || !supported;
+  if (!isConnected) elements.batteryStatus.textContent = "—";
+  else if (capabilitiesKnown && !supported) elements.batteryStatus.textContent = "Not supported";
+  else if (supported) elements.batteryStatus.textContent = "Reading…";
+}
+
+async function refreshBattery() {
+  if (!batteryPropertySpec) return;
+  elements.refreshBattery.disabled = true;
+  elements.batteryStatus.textContent = "Reading…";
+  try {
+    await session.property("get", batteryPropertySpec.key);
+  } catch (error) {
+    elements.batteryStatus.textContent = error instanceof Error ? error.message : String(error);
+    elements.refreshBattery.disabled = !isConnected;
+  }
+}
+
 function filterProperties() {
   const needle = elements.propertyFilter.value.trim().toLowerCase();
   for (const { row } of propertyRowByKey.values()) row.hidden = Boolean(needle && !row.dataset.search.includes(needle));
@@ -557,6 +591,7 @@ function setConnectionState({ connected, name }) {
   }
   updatePropertyAvailability();
   updateCommandAvailability();
+  updateBatteryAvailability();
 }
 
 async function submitProperty(event) {

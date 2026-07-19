@@ -74,18 +74,68 @@ logical message, not raw companion-link traffic.
 │ │ 9:41                            │ │
 │ └─────────────────────────────────┘ │
 │        ┌ On my way. ─────────────┐  │
-│        │             Waiting for │  │
-│        │             radio   [×] │  │
+│        │ 9:42     Sent over radio│  │
+│        │    Delivery unconfirmed │  │
 │        └─────────────────────────┘  │
-│ [ Message…                    ] [↑]│
+│        ┌ Copy that. ─────────────┐  │
+│        │ 9:43 Not sent · [Retry] │  │
+│        └─────────────────────────┘  │
+│ [ Message…                    ] [⇧̸]│
 └─────────────────────────────────────┘
 ```
 
-The composer remains active. Pressing Send while disconnected creates an
-editable local-outbox item. Tapping a message status opens evidence and retry
-details. `Bt` / `C5` is the peer's deterministic NodeHint avatar. A thin solid
+The composer remains available for drafting. While the radio is disconnected,
+Send has a visibly blocked treatment but remains an explanatory action, using
+the same pattern as the duty-limited state below. There is no deferred outbox.
+**On my way.** was transmitted before the disconnection and shows terminal
+**Delivery unconfirmed** because its active send ended without the expected
+acknowledgement. **Copy that.** failed mid-send and offers an explicit **Retry**
+on the message itself. Retry sends the same logical chat Message Sequence ID in
+fresh packets with fresh counters, so an already-received copy is reconciled
+rather than shown twice. MAC retransmissions may have occurred before the
+original active send reached this terminal result. Tapping a message status
+opens evidence and retry details.
+`Bt` / `C5` is the peer's deterministic NodeHint avatar. A thin solid
 outer ring marks active PFS in the visual mockup, while the visible **PFS
 active** text remains authoritative.
+
+### Duty-limited composer state
+
+```text
+┌─────────────────────────────────────┐
+│ ‹ Conversations     [⌁ ◫]      [ⓘ] │
+│ Ridge Medic                         │
+│ Direct                              │
+│                                     │
+│                                     │
+│ [ Meet at the trailhead.        ] [⇧̸]│
+│ Airtime limit · Try after 4:32 PM   │
+└─────────────────────────────────────┘
+
+       ┌ Airtime limit ─────────────┐
+       │ This radio cannot send the │
+       │ message within its current │
+       │ airtime limit.             │
+       │                            │
+       │ Try again after 4:32 PM.   │
+       │                       [OK] │
+       └────────────────────────────┘
+```
+
+The visually blocked Send control remains an explanatory activation target
+rather than silently doing nothing. Its tint changes from the normal active
+accent to a clearly blocked, lower-emphasis color while preserving adequate
+contrast; color is reinforced by the slashed-send symbol and explanatory line.
+Activating it sends no frame and opens the native alert. VoiceOver describes
+**Cannot send, airtime limit, try after 4:32 PM**. The draft remains in place
+and the app creates no application-level attempt to start later. The time is
+shown as an estimate when it is not authoritative; if the radio cannot support
+any reliable time, the alert says that and offers a later recheck instead of
+inventing a timestamp. This composer state applies to direct, channel, and room
+conversations. The same blocked-Send pattern covers a disconnected radio, with
+**Radio disconnected · Connect to send** as the
+explanation; sending always requires a connected radio, and no message is ever
+queued for later transmission.
 
 ## B2. Channel conversation
 
@@ -641,7 +691,8 @@ later; the address, not the name, is the identity.
 │ Restoring marks a fresh start for   │
 │ this identity's message counters.   │
 │ The exporting phone must stop       │
-│ using this identity.                │
+│ using this identity. This app       │
+│ cannot verify that it was erased.   │
 │ [        Restore identity        ]  │
 └─────────────────────────────────────┘
 ```

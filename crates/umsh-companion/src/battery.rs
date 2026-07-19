@@ -258,10 +258,7 @@ mod tests {
     #[test]
     fn rejects_malformed_values() {
         // A zero flags octet: the empty form is the only no-field encoding.
-        assert_eq!(
-            BatteryStatus::decode(&[0]),
-            Err(BatteryError::Malformed)
-        );
+        assert_eq!(BatteryStatus::decode(&[0]), Err(BatteryError::Malformed));
         // Reserved flag bits.
         assert_eq!(
             BatteryStatus::decode(&[0b1000, 1]),

@@ -31,6 +31,10 @@ operations. Capability-dependent commands are enabled only when the attached
 radio advertises support, and commands that discard or erase state require
 confirmation.
 
+Battery-capable radios are sampled automatically after attach. Their decoded
+voltage, level, and charge state appear in the top dashboard and in the Device
+property group; the dashboard also provides an explicit refresh control.
+
 `STR_PHY_RAW` receive events feed a bounded packet-capture model that is
 independent of the debugger DOM. The capture UI can pause/resume, filter, and
 inspect packets while retaining both raw bytes and decoded UMSH MAC details:
