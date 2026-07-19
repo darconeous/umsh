@@ -657,6 +657,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     )
                 case .timedOut:
                     waiter.resume(returning: .timedOut)
+                case .failed:
+                    waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
                 }
             }
             if !pingWaiters.isEmpty || idlePolls > 0 {

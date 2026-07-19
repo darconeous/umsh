@@ -3010,6 +3010,7 @@ public enum MobileMeshPingOutcome: Equatable, Hashable {
 
     case reply
     case timedOut
+    case failed
 
 
 
@@ -3035,6 +3036,8 @@ public struct FfiConverterTypeMobileMeshPingOutcome: FfiConverterRustBuffer {
 
         case 2: return .timedOut
 
+        case 3: return .failed
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3049,6 +3052,10 @@ public struct FfiConverterTypeMobileMeshPingOutcome: FfiConverterRustBuffer {
 
         case .timedOut:
             writeInt(&buf, Int32(2))
+
+
+        case .failed:
+            writeInt(&buf, Int32(3))
 
         }
     }
