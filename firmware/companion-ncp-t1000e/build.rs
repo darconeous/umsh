@@ -18,14 +18,11 @@ fn main() {
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 
-    let sha = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=GIT_SHORT_SHA={sha}");
+    // `PROP_NCP_VERSION` reports this: a bare short hash today, and the
+    // nearest-tag form automatically once release tags exist. Falls back
+    // to "unknown" if git is unavailable or the build is outside a repo.
+    let describe = git_output(&["describe", "--always"]).unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
     if let Some(path) = git_path("HEAD") {
         println!("cargo:rerun-if-changed={path}");
     }
