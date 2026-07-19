@@ -680,6 +680,14 @@ public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
     func consume(frame: Data) throws  -> CompanionSessionUpdateRecord
 
     /**
+     * Re-read every capability-gated property represented by the mobile
+     * snapshot. The existing snapshot remains usable while the bounded
+     * refresh is in flight; authoritative provisioning is published when
+     * the full capability-gated read completes.
+     */
+    func refresh() throws  -> CompanionSessionUpdateRecord
+
+    /**
      * Invalidate all outstanding transactions for a disconnected transport.
      */
     func reset()  -> CompanionSessionUpdateRecord
@@ -802,6 +810,21 @@ open func consume(frame: Data)throws  -> CompanionSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_consume(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Re-read every capability-gated property represented by the mobile
+     * snapshot. The existing snapshot remains usable while the bounded
+     * refresh is in flight; authoritative provisioning is published when
+     * the full capability-gated read completes.
+     */
+open func refresh()throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_refresh(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -3123,6 +3146,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_consume() != 8102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_refresh() != 54243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_reset() != 64513) {

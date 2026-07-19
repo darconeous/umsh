@@ -41,6 +41,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var syncAttempt = UUID()
     private var selectedHostKey: Data?
     private var preservesFailureOnDisconnect = false
+    private var refreshInProgress = false
+    private var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
+    private var configurationWaiter: CheckedContinuation<Void, any Error>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -149,7 +152,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     func claimForCurrentIdentity() async throws {
-        try await withCheckedThrowingContinuation { result in
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
                 do {
                     try claimForCurrentIdentityOnQueue()
@@ -182,12 +185,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     func configure(_ settings: RadioSettings) async throws {
-        try await withCheckedThrowingContinuation { result in
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    return
+                }
+                guard configurationWaiter == nil, !refreshInProgress else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                configurationWaiter = result
                 do {
-                    guard let peripheral, peripheral.state == .connected else {
-                        throw RadioConnectionError.companionNotFound
-                    }
                     let record = CompanionRadioSettingsRecord(
                         deviceName: settings.deviceName,
                         frequencyKhz: settings.frequencyKHz,
@@ -201,9 +210,31 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         companionSession.configure(settings: record),
                         from: peripheral
                     )
-                    result.resume()
                 } catch {
-                    result.resume(throwing: error)
+                    finishConfiguration(throwing: error)
+                }
+            }
+        }
+    }
+
+    func refresh() async throws -> RadioSnapshot {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<RadioSnapshot, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    return
+                }
+                guard configurationWaiter == nil else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                refreshWaiters.append(result)
+                guard !refreshInProgress else { return }
+                refreshInProgress = true
+                do {
+                    try applySessionUpdate(companionSession.refresh(), from: peripheral)
+                } catch {
+                    finishRefresh(throwing: error)
                 }
             }
         }
@@ -363,6 +394,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     private func publishFailure(_ message: String, name: String? = nil) {
+        finishPendingOperations(throwing: RadioConnectionError.incompatibleProtocol)
         pendingWrites.removeAll()
         writeInProgress = false
         syncAttempt = UUID()
@@ -517,6 +549,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         publish(snapshot)
 
+        if !update.waitingForResponses, update.snapshot.phase == .attached {
+            if refreshInProgress {
+                finishRefresh(throwing: nil)
+            }
+            if configurationWaiter != nil {
+                finishConfiguration(throwing: nil)
+            }
+        }
+
         guard update.waitingForResponses else { return }
         let attempt = syncAttempt
         bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
@@ -537,7 +578,38 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    private func finishRefresh(throwing error: (any Error)?) {
+        refreshInProgress = false
+        let waiters = refreshWaiters
+        refreshWaiters.removeAll()
+        for waiter in waiters {
+            if let error {
+                waiter.resume(throwing: error)
+            } else {
+                waiter.resume(returning: snapshot)
+            }
+        }
+    }
+
+    private func finishConfiguration(throwing error: (any Error)?) {
+        guard let waiter = configurationWaiter else { return }
+        configurationWaiter = nil
+        if let error {
+            waiter.resume(throwing: error)
+        } else {
+            waiter.resume()
+        }
+    }
+
+    private func finishPendingOperations(throwing error: any Error) {
+        if refreshInProgress || !refreshWaiters.isEmpty {
+            finishRefresh(throwing: error)
+        }
+        finishConfiguration(throwing: error)
+    }
+
     private func clearPeripheral() {
+        finishPendingOperations(throwing: RadioConnectionError.companionNotFound)
         peripheral?.delegate = nil
         peripheral = nil
         frameIn = nil

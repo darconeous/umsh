@@ -43,6 +43,11 @@ actor FakeRadioConnection: RadioConnection {
         publish(.previewReady)
     }
 
+    func refresh() async throws -> RadioSnapshot {
+        publish(snapshot)
+        return snapshot
+    }
+
     func configure(_ settings: RadioSettings) async throws {
         var updated = snapshot
         updated.name = settings.deviceName ?? updated.name

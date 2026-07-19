@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
     let claimRadio: () async -> Void
+    let refreshRadio: () async -> Void
     let configureRadio: (RadioSettings) async throws -> Void
     let disconnectRadio: () async -> Void
 
@@ -54,6 +55,7 @@ struct SettingsView: View {
                         snapshot: $radioSnapshot,
                         connect: connectRadio,
                         claim: claimRadio,
+                        refresh: refreshRadio,
                         configure: configureRadio,
                         disconnect: disconnectRadio
                     )
@@ -106,6 +108,7 @@ struct RadioDetailView: View {
     @Binding var snapshot: RadioSnapshot
     let connect: () async -> Void
     let claim: () async -> Void
+    let refresh: () async -> Void
     let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
     @Environment(\.dismiss) private var dismiss
@@ -161,8 +164,10 @@ struct RadioDetailView: View {
                 if let provisioning = snapshot.provisioning, canEditConfiguration {
                     NavigationLink {
                         RadioSettingsEditor(
+                            snapshot: $snapshot,
                             radioName: snapshot.name,
                             provisioning: provisioning,
+                            refresh: refresh,
                             configure: configure
                         )
                     } label: {
@@ -206,6 +211,15 @@ struct RadioDetailView: View {
                     }
                     if let saved = provisioning.saved {
                         LabeledContent("Saved for restart", value: saved ? "Yes" : "No")
+                    }
+                    if let dutyNow = provisioning.dutyCycleNow {
+                        LabeledContent("Past-hour duty usage", value: dutyPercentage(dutyNow))
+                    }
+                    if let dutyLimit = provisioning.dutyCycleLimit {
+                        LabeledContent(
+                            "Duty-cycle limit",
+                            value: dutyLimit == UInt16.max ? "Disabled" : dutyPercentage(dutyLimit)
+                        )
                     }
                 }
 
@@ -257,6 +271,12 @@ struct RadioDetailView: View {
             }
         }
         .navigationTitle("Radio")
+        .task {
+            await refresh()
+        }
+        .refreshable {
+            await refresh()
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
@@ -274,6 +294,11 @@ struct RadioDetailView: View {
         } message: {
             Text("The previous host's keys, filters, queued traffic, and saved host provisioning will be permanently erased. The radio's own identity and device settings remain unchanged.")
         }
+    }
+
+    private func dutyPercentage(_ value: UInt16) -> String {
+        let percent = Double(value) * 100 / Double(UInt16.max)
+        return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
     }
 
     private var canEditConfiguration: Bool {
@@ -325,7 +350,9 @@ struct RadioDetailView: View {
 }
 
 private struct RadioSettingsEditor: View {
+    @Binding var snapshot: RadioSnapshot
     let provisioning: RadioProvisioningSummary
+    let refresh: () async -> Void
     let configure: (RadioSettings) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -337,14 +364,21 @@ private struct RadioSettingsEditor: View {
     @State private var codingRate: UInt8
     @State private var dutyCycleLimit: UInt16
     @State private var isSaving = false
+    @State private var isRefreshing = false
     @State private var problem: String?
+    @State private var lastAuthoritativeName: String?
+    @State private var lastAuthoritativeProvisioning: RadioProvisioningSummary
 
     init(
+        snapshot: Binding<RadioSnapshot>,
         radioName: String?,
         provisioning: RadioProvisioningSummary,
+        refresh: @escaping () async -> Void,
         configure: @escaping (RadioSettings) async throws -> Void
     ) {
+        _snapshot = snapshot
         self.provisioning = provisioning
+        self.refresh = refresh
         self.configure = configure
         _deviceName = State(initialValue: radioName ?? "")
         _frequencyKHz = State(initialValue: String(provisioning.frequencyKHz))
@@ -353,6 +387,8 @@ private struct RadioSettingsEditor: View {
         _spreadingFactor = State(initialValue: provisioning.spreadingFactor ?? 9)
         _codingRate = State(initialValue: provisioning.codingRateDenominator ?? 5)
         _dutyCycleLimit = State(initialValue: provisioning.dutyCycleLimit ?? UInt16.max)
+        _lastAuthoritativeName = State(initialValue: radioName)
+        _lastAuthoritativeProvisioning = State(initialValue: provisioning)
     }
 
     var body: some View {
@@ -429,7 +465,7 @@ private struct RadioSettingsEditor: View {
 
             if provisioning.supportsDutyCycleLimit {
                 Section {
-                    if let usage = provisioning.dutyCycleNow {
+                    if let usage = snapshot.provisioning?.dutyCycleNow {
                         LabeledContent("Past-hour usage", value: dutyPercentage(usage))
                     }
                     Picker("Transmit limit", selection: $dutyCycleLimit) {
@@ -449,10 +485,20 @@ private struct RadioSettingsEditor: View {
             }
         }
         .navigationTitle("Radio settings")
+        .task {
+            await refreshAndApply()
+        }
+        .refreshable {
+            await refreshAndApply()
+        }
+        .onChange(of: snapshot) { _, newSnapshot in
+            guard !isSaving else { return }
+            applyAuthoritativeSnapshot(newSnapshot, force: false)
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { Task { await save() } }
-                    .disabled(settings == nil || isSaving)
+                    .disabled(settings == nil || isSaving || isRefreshing)
             }
         }
     }
@@ -524,6 +570,46 @@ private struct RadioSettingsEditor: View {
     private func dutyPercentage(_ value: UInt16) -> String {
         let percent = Double(value) * 100 / Double(UInt16.max)
         return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
+    }
+
+    private func refreshAndApply() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        await refresh()
+        applyAuthoritativeSnapshot(snapshot, force: true)
+    }
+
+    private func applyAuthoritativeSnapshot(_ authoritative: RadioSnapshot, force: Bool) {
+        guard let latest = authoritative.provisioning else { return }
+        if provisioning.supportsDeviceName,
+           force || authoritative.name != lastAuthoritativeName {
+            deviceName = authoritative.name ?? ""
+        }
+        if force || latest.frequencyKHz != lastAuthoritativeProvisioning.frequencyKHz {
+            frequencyKHz = String(latest.frequencyKHz)
+        }
+        if force || latest.transmitPowerDBm != lastAuthoritativeProvisioning.transmitPowerDBm {
+            transmitPowerDBm = String(latest.transmitPowerDBm)
+        }
+        if let bandwidth = latest.bandwidthHz,
+           force || bandwidth != lastAuthoritativeProvisioning.bandwidthHz {
+            bandwidthHz = bandwidth
+        }
+        if let sf = latest.spreadingFactor,
+           force || sf != lastAuthoritativeProvisioning.spreadingFactor {
+            spreadingFactor = sf
+        }
+        if let cr = latest.codingRateDenominator,
+           force || cr != lastAuthoritativeProvisioning.codingRateDenominator {
+            codingRate = cr
+        }
+        if let limit = latest.dutyCycleLimit,
+           force || limit != lastAuthoritativeProvisioning.dutyCycleLimit {
+            dutyCycleLimit = limit
+        }
+        lastAuthoritativeName = authoritative.name
+        lastAuthoritativeProvisioning = latest
     }
 
     private func save() async {
