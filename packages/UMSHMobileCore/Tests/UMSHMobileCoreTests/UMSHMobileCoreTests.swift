@@ -4,7 +4,7 @@ import XCTest
 
 final class UMSHMobileCoreTests: XCTestCase {
     func testReferenceNodeHintRoundTripsThroughRust() throws {
-        XCTAssertEqual(mobileApiVersion(), 6)
+        XCTAssertEqual(mobileApiVersion(), 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         XCTAssertEqual(hint.bytes, Data([0xA1, 0xB2, 0x03]))
@@ -20,7 +20,9 @@ final class UMSHMobileCoreTests: XCTestCase {
     }
 
     func testSecretDerivationReturnsPublicMaterial() throws {
-        let identity = try derivePublicIdentity(secretKey: Data(repeating: 7, count: 32))
+        let identity = try MobileIdentity.unlock(
+            secretKey: Data(repeating: 7, count: 32)
+        ).publicIdentity()
         XCTAssertEqual(identity.canonicalAddress.count, 44)
         XCTAssertEqual(try inspectPublicIdentity(address: identity.canonicalAddress), identity)
     }

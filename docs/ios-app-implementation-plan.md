@@ -315,6 +315,14 @@ closed; the prepared frame remains internal or is discarded, and the user sees
 a storage/preparation failure rather than a radio send. A failed flush does not
 roll the counter backward or reclaim its value.
 
+Do **not** eagerly create or advance a counter reservation while loading an
+identity or starting the app. This is an intentional flash-longevity invariant,
+not an optimization to remove: a device caught in a reboot loop must perform no
+counter-store writes if it has not attempted an authenticated transmission.
+The first authenticated send after boot is what schedules the reservation; the
+mobile facade then flushes it before releasing that prepared frame to the
+radio.
+
 Replay windows, identity metadata versions, message sequence-reset state, and
 outbound logical-message identity also need explicit persistence contracts.
 Tests must simulate termination between every allocation, encryption,

@@ -4,19 +4,23 @@
 //! the internal protocol crate graph. Platform bindings should wrap this API;
 //! mobile feature code should not depend on `umsh-core` directly.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
+use lwuri::UriRef;
 use umsh_core::{AddressParseError, NodeHint, PublicKey};
 use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
+use umsh_uri::UmshUri;
 use zeroize::Zeroize;
 
 mod companion;
 mod counter_store;
 
 pub use companion::{
-    CompanionBatteryRecord, CompanionPropertyFrameRecord, CompanionSyncRecord, GattSegmentRecord,
-    MobileGattReassembler, companion_gatt_segments, companion_inspection_properties,
-    companion_prop_get, companion_prop_set, companion_save, inspect_companion_battery,
+    CompanionBatteryRecord, CompanionHostOwnership, CompanionPropertyFrameRecord,
+    CompanionSessionPhase, CompanionSessionSnapshotRecord, CompanionSessionUpdateRecord,
+    CompanionSyncRecord, GattSegmentRecord, MobileCompanionSession, MobileGattReassembler,
+    companion_gatt_segments, companion_inspection_properties, companion_prop_get,
+    companion_prop_set, companion_save, inspect_companion_battery,
     inspect_companion_property_frame, inspect_companion_status, inspect_companion_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
@@ -27,7 +31,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 6;
+pub const MOBILE_API_VERSION: u16 = 8;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -38,6 +42,7 @@ pub enum MobileError {
     InvalidNodeHintLength,
     InvalidSecretKeyLength,
     InvalidPublicKeyLength,
+    InvalidUri,
     InvalidCompanionFrame,
     InvalidGattSegment,
 }
@@ -52,6 +57,7 @@ impl MobileError {
             Self::InvalidNodeHintLength => "mobile.error.node_hint.invalid_length",
             Self::InvalidSecretKeyLength => "mobile.error.secret_key.invalid_length",
             Self::InvalidPublicKeyLength => "mobile.error.public_key.invalid_length",
+            Self::InvalidUri => "mobile.error.uri.invalid",
             Self::InvalidCompanionFrame => "mobile.error.companion.invalid_frame",
             Self::InvalidGattSegment => "mobile.error.companion.invalid_gatt_segment",
         }
@@ -66,6 +72,7 @@ impl MobileError {
             Self::InvalidNodeHintLength => "NODE_HINT_INVALID_LENGTH",
             Self::InvalidSecretKeyLength => "SECRET_KEY_INVALID_LENGTH",
             Self::InvalidPublicKeyLength => "PUBLIC_KEY_INVALID_LENGTH",
+            Self::InvalidUri => "URI_INVALID",
             Self::InvalidCompanionFrame => "COMPANION_INVALID_FRAME",
             Self::InvalidGattSegment => "COMPANION_INVALID_GATT_SEGMENT",
         }
@@ -105,6 +112,30 @@ pub struct PublicIdentityRecord {
     /// Exact canonical 44-character fixed-width Base58 address.
     pub canonical_address: String,
     pub hint: NodeHintRecord,
+}
+
+/// Safe, non-mutating preview of a parsed node URI.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct NodeUriPreviewRecord {
+    pub canonical_address: String,
+    pub hint: NodeHintRecord,
+    pub has_identity_data: bool,
+}
+
+/// Parse a node URI locally and return only validated public identity fields.
+#[uniffi::export]
+pub fn inspect_node_uri(uri: String) -> Result<NodeUriPreviewRecord, MobileError> {
+    let reference = UriRef::from_str(&uri).map_err(|_| MobileError::InvalidUri)?;
+    let node = match umsh_uri::parse_umsh_uri(reference).map_err(|_| MobileError::InvalidUri)? {
+        UmshUri::Node(node) => node,
+        _ => return Err(MobileError::InvalidUri),
+    };
+    let identity = public_identity_record(&node.public_key);
+    Ok(NodeUriPreviewRecord {
+        canonical_address: identity.canonical_address,
+        hint: identity.hint,
+        has_identity_data: node.identity_data.is_some(),
+    })
 }
 
 /// Return the binding-visible mobile API version.
@@ -158,26 +189,33 @@ pub fn inspect_public_identity_bytes(
     Ok(public_identity_record(&PublicKey(bytes)))
 }
 
-/// Derive public identity information from a 32-byte Ed25519 secret.
-///
-/// This is the one binding operation used by the platform identity vault when
-/// creating or unlocking an identity. The secret is consumed and erased before
-/// returning; only the public record crosses back to Swift.
+/// Identity secret retained by the Rust engine after one controlled unlock
+/// transfer. Swift receives only public identity records from this object.
+#[derive(uniffi::Object)]
+pub struct MobileIdentity {
+    identity: SoftwareIdentity,
+}
+
 #[uniffi::export]
-pub fn derive_public_identity(
-    mut secret_key: Vec<u8>,
-) -> Result<PublicIdentityRecord, MobileError> {
-    let result = (|| {
-        let mut bytes: [u8; 32] = secret_key
-            .as_slice()
-            .try_into()
-            .map_err(|_| MobileError::InvalidSecretKeyLength)?;
-        let identity = SoftwareIdentity::from_secret_bytes(&bytes);
-        bytes.zeroize();
-        Ok(public_identity_record(identity.public_key()))
-    })();
-    secret_key.zeroize();
-    result
+impl MobileIdentity {
+    #[uniffi::constructor]
+    pub fn unlock(mut secret_key: Vec<u8>) -> Result<Arc<Self>, MobileError> {
+        let result = (|| {
+            let mut bytes: [u8; 32] = secret_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| MobileError::InvalidSecretKeyLength)?;
+            let identity = SoftwareIdentity::from_secret_bytes(&bytes);
+            bytes.zeroize();
+            Ok(Arc::new(Self { identity }))
+        })();
+        secret_key.zeroize();
+        result
+    }
+
+    pub fn public_identity(&self) -> PublicIdentityRecord {
+        public_identity_record(self.identity.public_key())
+    }
 }
 
 fn public_identity_record(key: &PublicKey) -> PublicIdentityRecord {
@@ -222,6 +260,21 @@ mod tests {
         assert_eq!(identity.canonical_address, address);
         assert_eq!(identity.hint.bytes, [0, 1, 2]);
         assert_eq!(identity.hint.text, "111t");
+    }
+
+    #[test]
+    fn node_uri_preview_is_typed_and_non_mutating() {
+        let address = "111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE";
+        let preview = inspect_node_uri(format!("umsh:n:{address}")).unwrap();
+        assert_eq!(preview.canonical_address, address);
+        assert!(!preview.has_identity_data);
+
+        let with_metadata = inspect_node_uri(format!("umsh:n:{address}:signed-data")).unwrap();
+        assert!(with_metadata.has_identity_data);
+        assert_eq!(
+            inspect_node_uri("umsh:cs:public".to_owned()),
+            Err(MobileError::InvalidUri)
+        );
     }
 
     #[test]
@@ -282,16 +335,18 @@ mod tests {
 
     #[test]
     fn secret_identity_derivation_returns_only_valid_public_material() {
-        let identity = derive_public_identity(vec![7; 32]).unwrap();
+        let identity = MobileIdentity::unlock(vec![7; 32])
+            .unwrap()
+            .public_identity();
         assert_eq!(identity.canonical_address.len(), 44);
         assert_eq!(
             inspect_public_identity(identity.canonical_address.clone()).unwrap(),
             identity
         );
 
-        assert_eq!(
-            derive_public_identity(vec![7; 31]).unwrap_err(),
-            MobileError::InvalidSecretKeyLength
-        );
+        assert!(matches!(
+            MobileIdentity::unlock(vec![7; 31]),
+            Err(MobileError::InvalidSecretKeyLength)
+        ));
     }
 }

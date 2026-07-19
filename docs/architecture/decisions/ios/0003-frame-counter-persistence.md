@@ -15,6 +15,13 @@ On a failed write, protected-data loss, or crash, transmission fails closed.
 Allocated values are never reclaimed and startup resumes at the persisted
 boundary, skipping unused values.
 
+Identity load and application startup are deliberately read-only with respect
+to the counter store. The implementation must not reserve a new block merely
+because the device booted: repeated boot failures without a transmission could
+otherwise consume embedded-flash endurance. The first authenticated send
+schedules the next reservation, which is committed before that prepared frame
+is exposed to the radio transport.
+
 ## Required evidence
 
 Tests must terminate between allocation, encryption, reservation commit,

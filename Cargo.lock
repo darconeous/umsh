@@ -3391,11 +3391,13 @@ dependencies = [
 name = "umsh-mobile-core"
 version = "0.1.0"
 dependencies = [
+ "lwuri",
  "tempfile",
  "umsh-companion",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-uri",
  "uniffi",
  "zeroize",
 ]

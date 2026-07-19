@@ -943,6 +943,14 @@ impl<
     }
 
     /// Load the persisted frame-counter boundary for `id` from the counter store.
+    ///
+    /// # Flash-wear invariant
+    ///
+    /// This method must remain read-only. In particular, booting or repeatedly
+    /// rebooting without transmitting must never write a new reservation and
+    /// wear out embedded flash. The first authenticated send schedules the
+    /// future reservation; the MAC driver services that pending write because
+    /// actual transmission has made persistence necessary.
     pub async fn load_persisted_counter(
         &mut self,
         id: LocalIdentityId,
@@ -961,12 +969,10 @@ impl<
             .load(&context.0)
             .await
             .map_err(CounterPersistenceError::Store)?;
-        // A stored value of 0 is the sentinel for "no boundary persisted yet"
-        // (see CounterStore impls). In that case keep the random initial counter
-        // installed by `insert_identity` instead of overwriting it with 0, which
-        // would let TX frames start at counter 1 and be rejected as replays by
-        // any peer that still has a higher persisted RX boundary from a previous
-        // session.
+        // Zero is the store's missing-record sentinel. Keep the random non-zero
+        // initial value in that case; it covers both a fresh identity and
+        // counter-state loss for an identity that survived in a separate secret
+        // store. Do not persist here: see the flash-wear invariant above.
         if loaded == 0 {
             let slot = self
                 .identity(id)
@@ -3211,7 +3217,7 @@ impl<
         identity: LocalIdentity<P::Identity>,
         pfs_parent: Option<LocalIdentityId>,
     ) -> Result<LocalIdentityId, CapacityError> {
-        let initial_frame_counter = self.rng.next_u32();
+        let initial_frame_counter = nonzero_initial_frame_counter(self.rng.next_u32());
 
         if let Some((index, slot)) = self
             .identities
@@ -4766,6 +4772,10 @@ impl<
 
 fn align_counter_boundary(value: u32) -> u32 {
     value & !COUNTER_PERSIST_BLOCK_MASK
+}
+
+pub(crate) const fn nonzero_initial_frame_counter(random: u32) -> u32 {
+    if random == 0 { 1 } else { random }
 }
 
 fn next_counter_persist_target(next_counter: u32) -> u32 {

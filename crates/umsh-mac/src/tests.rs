@@ -604,6 +604,15 @@ fn new_identity_starts_with_random_frame_counter() {
 }
 
 #[test]
+fn random_initial_frame_counter_never_uses_zero_sentinel() {
+    assert_eq!(crate::coordinator::nonzero_initial_frame_counter(0), 1);
+    assert_eq!(
+        crate::coordinator::nonzero_initial_frame_counter(0xA5A5_5A5A),
+        0xA5A5_5A5A
+    );
+}
+
+#[test]
 fn persisted_counter_load_overrides_random_initial_counter() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -628,6 +637,8 @@ fn persisted_counter_load_overrides_random_initial_counter() {
 
     assert_eq!(loaded, 128);
     assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 128);
+    assert!(mac.counter_store().stored.borrow().is_empty());
+    assert_eq!(mac.counter_store().flushes.get(), 0);
 }
 
 #[cfg(feature = "software-crypto")]
@@ -1413,6 +1424,22 @@ fn load_persisted_counter_aligns_to_block_boundary() {
     assert_eq!(loaded, 128);
     assert_eq!(mac.identity(local_id).unwrap().frame_counter(), 128);
     assert_eq!(mac.identity(local_id).unwrap().persisted_counter(), 128);
+    assert!(mac.counter_store().stored.borrow().is_empty());
+    assert_eq!(mac.counter_store().flushes.get(), 0);
+}
+
+#[test]
+fn missing_counter_record_keeps_random_nonzero_start_without_writing() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let random_start = u32::from_le_bytes([7, 8, 9, 10]);
+
+    let loaded = block_on(mac.load_persisted_counter(local_id)).unwrap();
+
+    assert_eq!(loaded, random_start);
+    assert_ne!(loaded, 0);
+    assert!(mac.counter_store().stored.borrow().is_empty());
+    assert_eq!(mac.counter_store().flushes.get(), 0);
 }
 
 #[test]

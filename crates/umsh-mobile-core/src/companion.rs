@@ -1,9 +1,12 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 use umsh_companion::{
     BatteryChargeState, BatteryStatus, Cmd, Frame, PropPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
-    ids::{INTERFACE_TYPE, cap, prop},
+    ids::{INTERFACE_TYPE, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop},
     items::{self, Filter},
     pui,
 };
@@ -49,6 +52,450 @@ pub struct CompanionSyncRecord {
     pub host_channel_count: Option<u32>,
     pub host_peer_count: Option<u32>,
     pub auto_ack: Option<bool>,
+}
+
+/// Long-lived host-session phase. Swift maps this value to UI link state but
+/// does not implement companion protocol transitions itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum CompanionSessionPhase {
+    Idle,
+    Synchronizing,
+    AwaitingHost,
+    Claiming,
+    Attached,
+}
+
+/// Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum CompanionHostOwnership {
+    Unknown,
+    LocalIdentityUnavailable,
+    Unsupported,
+    Unclaimed,
+    Ours,
+    OtherHost,
+}
+
+/// Typed state published after each bounded companion-session transition.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionSessionSnapshotRecord {
+    pub generation: u64,
+    pub phase: CompanionSessionPhase,
+    pub host_ownership: CompanionHostOwnership,
+    pub device_key: Option<Vec<u8>>,
+    pub device_name: Option<String>,
+    pub battery: Option<CompanionBatteryRecord>,
+    pub provisioning: Option<CompanionSyncRecord>,
+}
+
+/// Work produced by the Rust companion session. Frames are complete companion
+/// frames; the platform adapter remains responsible for GATT segmentation and
+/// write backpressure.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionSessionUpdateRecord {
+    pub outbound_frames: Vec<Vec<u8>>,
+    pub snapshot: CompanionSessionSnapshotRecord,
+    pub waiting_for_responses: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionStage {
+    Idle,
+    Initial,
+    Inspection,
+    Claiming,
+    Saving,
+    AwaitingHost,
+    Attached,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExpectedResponse {
+    Property(u32),
+    Claim,
+    Save,
+}
+
+struct CompanionSessionState {
+    generation: u64,
+    stage: SessionStage,
+    next_tid: u8,
+    expected: HashMap<u8, ExpectedResponse>,
+    selected_host_key: Option<[u8; 32]>,
+    radio_host_key: Option<Vec<u8>>,
+    host_key_unsupported: bool,
+    responses: HashMap<u32, CompanionPropertyFrameRecord>,
+    inspection_queue: VecDeque<u32>,
+    device_key: Option<Vec<u8>>,
+    device_name: Option<String>,
+    battery: Option<CompanionBatteryRecord>,
+    provisioning: Option<CompanionSyncRecord>,
+}
+
+impl Default for CompanionSessionState {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            stage: SessionStage::Idle,
+            next_tid: 1,
+            expected: HashMap::new(),
+            selected_host_key: None,
+            radio_host_key: None,
+            host_key_unsupported: false,
+            responses: HashMap::new(),
+            inspection_queue: VecDeque::new(),
+            device_key: None,
+            device_name: None,
+            battery: None,
+            provisioning: None,
+        }
+    }
+}
+
+/// Stateful mobile host session for the companion protocol.
+///
+/// This is the protocol boundary: it consumes complete reassembled companion
+/// frames and owns TIDs, response matching, capability-driven synchronization,
+/// host ownership, and claim/save choreography. Platform code owns only the
+/// transport lifecycle, byte shuttling, and timers.
+#[derive(uniffi::Object)]
+pub struct MobileCompanionSession {
+    inner: Mutex<CompanionSessionState>,
+}
+
+#[uniffi::export]
+impl MobileCompanionSession {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CompanionSessionState::default()),
+        })
+    }
+
+    /// Begin post-attach synchronization for a new transport generation.
+    pub fn begin(
+        &self,
+        selected_host_key: Option<Vec<u8>>,
+    ) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let selected_host_key = selected_host_key
+            .map(|key| {
+                key.try_into()
+                    .map_err(|_| MobileError::InvalidPublicKeyLength)
+            })
+            .transpose()?;
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        let generation = state.generation.wrapping_add(1);
+        *state = CompanionSessionState {
+            generation,
+            stage: SessionStage::Initial,
+            selected_host_key,
+            ..CompanionSessionState::default()
+        };
+
+        let mut outbound = Vec::new();
+        for property in [
+            prop::LAST_STATUS,
+            prop::PROTOCOL_VERSION,
+            prop::CAPS,
+            prop::DEV_KEY,
+            prop::DEV_NAME,
+            prop::BATTERY,
+            prop::HOST_KEY,
+        ] {
+            outbound.push(state.get_property(property)?);
+        }
+        Ok(state.update(outbound))
+    }
+
+    /// Replace an unclaimed or other-host configuration with this phone's key.
+    pub fn claim(&self, host_key: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let host_key: [u8; 32] = host_key
+            .try_into()
+            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        if state.stage != SessionStage::AwaitingHost
+            || !matches!(
+                state.ownership(),
+                CompanionHostOwnership::Unclaimed | CompanionHostOwnership::OtherHost
+            )
+        {
+            return Err(MobileError::InvalidCompanionFrame);
+        }
+        state.selected_host_key = Some(host_key);
+        state.stage = SessionStage::Claiming;
+        state.expected.clear();
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::Claim);
+        let frame = companion_prop_set(tid, prop::HOST_KEY, host_key.to_vec())?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Consume one complete companion frame and advance the session reducer.
+    pub fn consume(&self, frame: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let response = inspect_companion_property_frame(frame)?;
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        let mut outbound = Vec::new();
+
+        if response.transaction_id == frame::TID_UNSOLICITED {
+            if response.command == Cmd::PropIs as u8 {
+                state
+                    .responses
+                    .insert(response.property_id, response.clone());
+            }
+            state.apply_property(&response)?;
+            state.refresh_attached_snapshot()?;
+            return Ok(state.update(outbound));
+        }
+
+        let expected = state
+            .expected
+            .remove(&response.transaction_id)
+            .ok_or(MobileError::InvalidCompanionFrame)?;
+        match expected {
+            ExpectedResponse::Property(property) => {
+                if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
+                    if state.stage == SessionStage::Initial
+                        && matches!(property, prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY)
+                    {
+                        // Optional device properties may be absent on minimal radios.
+                    } else if state.stage == SessionStage::Initial && property == prop::HOST_KEY {
+                        state.host_key_unsupported = true;
+                    } else {
+                        return Err(MobileError::InvalidCompanionFrame);
+                    }
+                } else {
+                    if response.property_id != property || response.command != Cmd::PropIs as u8 {
+                        return Err(MobileError::InvalidCompanionFrame);
+                    }
+                    state.responses.insert(property, response.clone());
+                    state.apply_property(&response)?;
+                }
+            }
+            ExpectedResponse::Claim => {
+                if response.property_id != prop::HOST_KEY || response.command != Cmd::PropIs as u8 {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                let selected = state
+                    .selected_host_key
+                    .ok_or(MobileError::InvalidCompanionFrame)?;
+                if response.value.as_slice() != selected {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                state.radio_host_key = Some(response.value.clone());
+                state.responses.insert(prop::HOST_KEY, response);
+                if state.has_capability(cap::SAVE)? {
+                    state.stage = SessionStage::Saving;
+                    let tid = state.allocate_tid();
+                    state.expected.insert(tid, ExpectedResponse::Save);
+                    outbound.push(companion_save(tid)?);
+                } else {
+                    state.start_inspection(&mut outbound)?;
+                }
+            }
+            ExpectedResponse::Save => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                if inspect_companion_status(response.value)? != 0 {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                state.start_inspection(&mut outbound)?;
+            }
+        }
+
+        if state.expected.is_empty() {
+            state.advance_completed_stage(&mut outbound)?;
+        }
+        Ok(state.update(outbound))
+    }
+
+    /// Invalidate all outstanding transactions for a disconnected transport.
+    pub fn reset(&self) -> CompanionSessionUpdateRecord {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        let generation = state.generation.wrapping_add(1);
+        *state = CompanionSessionState {
+            generation,
+            ..CompanionSessionState::default()
+        };
+        state.update(Vec::new())
+    }
+}
+
+impl CompanionSessionState {
+    fn allocate_tid(&mut self) -> u8 {
+        let tid = self.next_tid;
+        self.next_tid = if tid >= frame::TID_MAX { 1 } else { tid + 1 };
+        tid
+    }
+
+    fn get_property(&mut self, property: u32) -> Result<Vec<u8>, MobileError> {
+        let tid = self.allocate_tid();
+        self.expected
+            .insert(tid, ExpectedResponse::Property(property));
+        companion_prop_get(tid, property)
+    }
+
+    fn phase(&self) -> CompanionSessionPhase {
+        match self.stage {
+            SessionStage::Idle => CompanionSessionPhase::Idle,
+            SessionStage::Initial | SessionStage::Inspection | SessionStage::Saving => {
+                CompanionSessionPhase::Synchronizing
+            }
+            SessionStage::AwaitingHost => CompanionSessionPhase::AwaitingHost,
+            SessionStage::Claiming => CompanionSessionPhase::Claiming,
+            SessionStage::Attached => CompanionSessionPhase::Attached,
+        }
+    }
+
+    fn ownership(&self) -> CompanionHostOwnership {
+        if self.host_key_unsupported {
+            return CompanionHostOwnership::Unsupported;
+        }
+        let Some(radio_key) = self.radio_host_key.as_deref() else {
+            return CompanionHostOwnership::Unknown;
+        };
+        if radio_key.is_empty() {
+            return CompanionHostOwnership::Unclaimed;
+        }
+        match self.selected_host_key {
+            None => CompanionHostOwnership::LocalIdentityUnavailable,
+            Some(selected) if radio_key == selected => CompanionHostOwnership::Ours,
+            Some(_) => CompanionHostOwnership::OtherHost,
+        }
+    }
+
+    fn update(&self, outbound_frames: Vec<Vec<u8>>) -> CompanionSessionUpdateRecord {
+        CompanionSessionUpdateRecord {
+            outbound_frames,
+            snapshot: CompanionSessionSnapshotRecord {
+                generation: self.generation,
+                phase: self.phase(),
+                host_ownership: self.ownership(),
+                device_key: self.device_key.clone(),
+                device_name: self.device_name.clone(),
+                battery: self.battery.clone(),
+                provisioning: self.provisioning.clone(),
+            },
+            waiting_for_responses: !self.expected.is_empty(),
+        }
+    }
+
+    fn apply_property(
+        &mut self,
+        response: &CompanionPropertyFrameRecord,
+    ) -> Result<(), MobileError> {
+        if response.command != Cmd::PropIs as u8 {
+            // Insert/remove notifications are valid protocol frames, but none
+            // of the mobile snapshot fields are multi-value payloads.
+            return Ok(());
+        }
+        match response.property_id {
+            prop::DEV_KEY => {
+                if response.value.is_empty() {
+                    self.device_key = None;
+                } else if response.value.len() == items::PUBLIC_KEY_LEN {
+                    self.device_key = Some(response.value.clone());
+                } else {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+            }
+            prop::DEV_NAME => {
+                let name = core::str::from_utf8(&response.value)
+                    .map_err(|_| MobileError::InvalidCompanionFrame)?;
+                self.device_name = (!name.is_empty()).then(|| name.to_owned());
+            }
+            prop::BATTERY => {
+                self.battery = Some(inspect_companion_battery(response.value.clone())?);
+            }
+            prop::HOST_KEY => {
+                if !response.value.is_empty() && response.value.len() != items::PUBLIC_KEY_LEN {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                self.radio_host_key = Some(response.value.clone());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn has_capability(&self, capability: u32) -> Result<bool, MobileError> {
+        let capabilities = self
+            .responses
+            .get(&prop::CAPS)
+            .ok_or(MobileError::InvalidCompanionFrame)?;
+        Ok(decode_capabilities(&capabilities.value)?.contains(&capability))
+    }
+
+    fn advance_completed_stage(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
+        match self.stage {
+            SessionStage::Initial => {
+                let version = self
+                    .responses
+                    .get(&prop::PROTOCOL_VERSION)
+                    .ok_or(MobileError::InvalidCompanionFrame)?;
+                if version.value != [PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION] {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                let capabilities = self
+                    .responses
+                    .get(&prop::CAPS)
+                    .ok_or(MobileError::InvalidCompanionFrame)?;
+                self.inspection_queue =
+                    companion_inspection_properties(capabilities.value.clone())?.into();
+                let advertises_host_filter = self.has_capability(cap::HOST_FILTER)?;
+                if advertises_host_filter == self.host_key_unsupported {
+                    return Err(MobileError::InvalidCompanionFrame);
+                }
+                match self.ownership() {
+                    CompanionHostOwnership::Ours | CompanionHostOwnership::Unsupported => {
+                        self.start_inspection(outbound)?;
+                    }
+                    _ => self.stage = SessionStage::AwaitingHost,
+                }
+            }
+            SessionStage::Inspection => self.start_inspection(outbound)?,
+            SessionStage::Claiming
+            | SessionStage::Saving
+            | SessionStage::AwaitingHost
+            | SessionStage::Attached
+            | SessionStage::Idle => {}
+        }
+        Ok(())
+    }
+
+    fn start_inspection(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
+        self.stage = SessionStage::Inspection;
+        if self.inspection_queue.is_empty() {
+            let responses = self.responses.values().cloned().collect();
+            self.provisioning = Some(inspect_companion_sync(responses)?);
+            self.stage = SessionStage::Attached;
+            return Ok(());
+        }
+        for _ in 0..usize::from(frame::TID_MAX) {
+            let Some(property) = self.inspection_queue.pop_front() else {
+                break;
+            };
+            outbound.push(self.get_property(property)?);
+        }
+        Ok(())
+    }
+
+    fn refresh_attached_snapshot(&mut self) -> Result<(), MobileError> {
+        if self.stage != SessionStage::Attached {
+            return Ok(());
+        }
+        let responses = self.responses.values().cloned().collect();
+        self.provisioning = Some(inspect_companion_sync(responses)?);
+        if !matches!(
+            self.ownership(),
+            CompanionHostOwnership::Ours | CompanionHostOwnership::Unsupported
+        ) {
+            self.stage = SessionStage::AwaitingHost;
+        }
+        Ok(())
+    }
 }
 
 /// Return the authoritative properties needed for the read-only post-attach
@@ -379,6 +826,39 @@ mod tests {
         }
     }
 
+    fn property_request(bytes: &[u8]) -> (u8, u32) {
+        let parsed = Frame::parse(bytes).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropGet));
+        let (property, used) = pui::decode(parsed.payload).unwrap();
+        assert_eq!(used, parsed.payload.len());
+        (parsed.header.tid(), property)
+    }
+
+    fn property_response(tid: u8, property: u32, value: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0; MAX_FRAME];
+        let length = frame::prop_is(&mut bytes, tid, property, value).unwrap();
+        bytes.truncate(length);
+        bytes
+    }
+
+    fn answer_requests(
+        session: &MobileCompanionSession,
+        requests: Vec<Vec<u8>>,
+        value: impl Fn(u32) -> (u32, Vec<u8>),
+    ) -> CompanionSessionUpdateRecord {
+        let mut last = None;
+        for request in requests {
+            let (tid, requested) = property_request(&request);
+            let (returned, bytes) = value(requested);
+            last = Some(
+                session
+                    .consume(property_response(tid, returned, &bytes))
+                    .unwrap(),
+            );
+        }
+        last.unwrap()
+    }
+
     #[test]
     fn exported_gatt_round_trip_uses_shared_codec() {
         let frame = companion_prop_get(3, 4_864).unwrap();
@@ -533,6 +1013,157 @@ mod tests {
                 response(prop::PHY_ENABLED, &[1]),
                 response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
             ]),
+            Err(MobileError::InvalidCompanionFrame)
+        );
+    }
+
+    #[test]
+    fn mobile_session_owns_sync_tids_and_attaches_transparent_radio() {
+        let session = MobileCompanionSession::new();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        assert_eq!(begin.snapshot.phase, CompanionSessionPhase::Synchronizing);
+        assert_eq!(begin.outbound_frames.len(), 7);
+        assert_eq!(
+            begin
+                .outbound_frames
+                .iter()
+                .map(|request| property_request(request).0)
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4, 5, 6, 7]
+        );
+
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, vec![cap::WRITABLE_RAW_STREAM as u8]),
+                prop::DEV_KEY => (property, Vec::new()),
+                prop::DEV_NAME => (property, b"Transparent".to_vec()),
+                prop::BATTERY => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        assert_eq!(inspection.outbound_frames.len(), 3);
+        assert_eq!(
+            inspection.snapshot.host_ownership,
+            CompanionHostOwnership::Unsupported
+        );
+
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.device_name.as_deref(),
+            Some("Transparent")
+        );
+        assert_eq!(
+            attached.snapshot.provisioning.unwrap().frequency_khz,
+            915_000
+        );
+    }
+
+    #[test]
+    fn mobile_session_owns_claim_then_save_choreography() {
+        let host_key = vec![0xAA; 32];
+        let session = MobileCompanionSession::new();
+        let begin = session.begin(Some(host_key.clone())).unwrap();
+        let awaiting =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, vec![cap::HOST_FILTER as u8, cap::SAVE as u8]),
+                prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY | prop::HOST_KEY => {
+                    (property, Vec::new())
+                }
+                _ => unreachable!(),
+            });
+        assert_eq!(awaiting.snapshot.phase, CompanionSessionPhase::AwaitingHost);
+        assert_eq!(
+            awaiting.snapshot.host_ownership,
+            CompanionHostOwnership::Unclaimed
+        );
+
+        let claim = session.claim(host_key.clone()).unwrap();
+        assert_eq!(claim.snapshot.phase, CompanionSessionPhase::Claiming);
+        assert_eq!(claim.outbound_frames.len(), 1);
+        let parsed_claim = Frame::parse(&claim.outbound_frames[0]).unwrap();
+        assert_eq!(parsed_claim.command(), Some(Cmd::PropSet));
+        let payload = PropPayload::parse(parsed_claim.payload).unwrap();
+        assert_eq!(payload.key, prop::HOST_KEY);
+        assert_eq!(payload.value, host_key);
+
+        let save = session
+            .consume(property_response(
+                parsed_claim.header.tid(),
+                prop::HOST_KEY,
+                &host_key,
+            ))
+            .unwrap();
+        assert_eq!(save.outbound_frames.len(), 1);
+        let parsed_save = Frame::parse(&save.outbound_frames[0]).unwrap();
+        assert_eq!(parsed_save.command(), Some(Cmd::Save));
+
+        let inspection = session
+            .consume(property_response(
+                parsed_save.header.tid(),
+                prop::LAST_STATUS,
+                &[0],
+            ))
+            .unwrap();
+        assert_eq!(inspection.outbound_frames.len(), 5);
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 868_100u32.to_le_bytes().to_vec()),
+                    prop::SAVED => (property, vec![1]),
+                    prop::HOST_RX_FILTERS => (property, Vec::new()),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.host_ownership,
+            CompanionHostOwnership::Ours
+        );
+        assert_eq!(attached.snapshot.provisioning.unwrap().saved, Some(true));
+
+        let changed_host = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::HOST_KEY,
+                &[0xBB; 32],
+            ))
+            .unwrap();
+        assert_eq!(
+            changed_host.snapshot.phase,
+            CompanionSessionPhase::AwaitingHost
+        );
+        assert_eq!(
+            changed_host.snapshot.host_ownership,
+            CompanionHostOwnership::OtherHost
+        );
+    }
+
+    #[test]
+    fn mobile_session_rejects_mismatched_transaction_response() {
+        let session = MobileCompanionSession::new();
+        let begin = session.begin(None).unwrap();
+        let (tid, _) = property_request(&begin.outbound_frames[0]);
+        assert_eq!(
+            session.consume(property_response(tid, prop::PHY_FREQ, &[0; 4])),
             Err(MobileError::InvalidCompanionFrame)
         );
     }
