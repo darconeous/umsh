@@ -7,12 +7,12 @@ struct PeerAvatar: View {
     var body: some View {
         let characters = Array(hint.text)
 
-        VStack(spacing: -diameter * 0.06) {
+        VStack(spacing: -diameter * 0.08) {
             Text(String(characters.prefix(2)))
             Text(String(characters.dropFirst(2)))
         }
-        .font(.system(size: diameter * 0.25, weight: .semibold, design: .monospaced))
-        .minimumScaleFactor(0.7)
+        .font(.system(size: diameter * 0.30, weight: .semibold, design: .monospaced))
+        .minimumScaleFactor(0.8)
         .foregroundStyle(foregroundColor)
         .frame(width: diameter, height: diameter)
         .background(fillColor, in: Circle())
