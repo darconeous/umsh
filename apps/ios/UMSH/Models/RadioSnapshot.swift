@@ -57,12 +57,15 @@ struct RadioSnapshot: Equatable, Sendable {
             supportsDelegatedAcknowledgements: false,
             supportsDeviceName: true,
             supportsLoRa: true,
+            supportsDutyCycleLimit: true,
             phyEnabled: true,
             frequencyKHz: 915_000,
             transmitPowerDBm: 14,
             bandwidthHz: 125_000,
             spreadingFactor: 9,
             codingRateDenominator: 5,
+            dutyCycleNow: 65,
+            dutyCycleLimit: 655,
             saved: true,
             queuedFrames: 0,
             droppedFrames: 0,
@@ -175,12 +178,15 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let supportsDelegatedAcknowledgements: Bool
     let supportsDeviceName: Bool
     let supportsLoRa: Bool
+    let supportsDutyCycleLimit: Bool
     let phyEnabled: Bool
     let frequencyKHz: UInt32
     let transmitPowerDBm: Int8
     let bandwidthHz: UInt32?
     let spreadingFactor: UInt8?
     let codingRateDenominator: UInt8?
+    let dutyCycleNow: UInt16?
+    let dutyCycleLimit: UInt16?
     let saved: Bool?
     let queuedFrames: Int?
     let droppedFrames: UInt32?
@@ -197,4 +203,5 @@ struct RadioSettings: Equatable, Sendable {
     let bandwidthHz: UInt32?
     let spreadingFactor: UInt8?
     let codingRateDenominator: UInt8?
+    let dutyCycleLimit: UInt16?
 }
