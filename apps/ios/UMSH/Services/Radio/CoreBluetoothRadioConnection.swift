@@ -6,8 +6,7 @@ import UMSHMobileCore
 ///
 /// The adapter owns ATT/GATT lifecycle and write backpressure. Companion wire
 /// encoding, validation, segmentation, and reassembly remain in Rust.
-@MainActor
-final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
+final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked Sendable {
     private enum PreferenceKey {
         static let lastAttachedPeripheral = "radio.lastAttachedPeripheral"
     }
@@ -18,26 +17,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
         static let frameOut = CBUUID(string: "21EB6B15-0003-4CCF-92E4-A079171BEC97")
     }
 
-    private enum Property {
-        static let lastStatus: UInt32 = 0
-        static let protocolVersion: UInt32 = 1
-        static let capabilities: UInt32 = 5
-        static let deviceKey: UInt32 = 64
-        static let deviceName: UInt32 = 68
-        static let battery: UInt32 = 69
-        static let saved: UInt32 = 49
-        static let hostKey: UInt32 = 96
-        static let hostReceiveFilters: UInt32 = 99
-    }
-
-    private enum SyncStage {
-        case idle
-        case initial
-        case inspection
-        case claiming
-    }
-
     private var central: CBCentralManager?
+    private let bluetoothQueue = DispatchQueue(
+        label: "com.umsh.radio.core-bluetooth",
+        qos: .userInitiated
+    )
     private let defaults: UserDefaults
     private var peripheral: CBPeripheral?
     private var frameIn: CBCharacteristic?
@@ -50,45 +34,54 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
     private var autoConnectAttempt = UUID()
     private var automaticConnectionInProgress = false
     private let reassembler = MobileGattReassembler()
+    private let companionSession = MobileCompanionSession()
     private var pendingWrites: [Data] = []
     private var writeInProgress = false
-    private var expectedProperties: [UInt8: UInt32] = [:]
     private var syncAttempt = UUID()
     private var selectedHostKey: Data?
-    private var radioHostKey: Data?
-    private var claimInProgress = false
-    private var saveInProgress = false
     private var preservesFailureOnDisconnect = false
-    private var syncStage = SyncStage.idle
-    private var inspectionQueue: [UInt32] = []
-    private var syncPropertyResponses: [UInt32: CompanionPropertyFrameRecord] = [:]
-    private var hostKeyUnsupported = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init()
     }
 
-    func snapshots() -> AsyncStream<RadioSnapshot> {
-        let initial = snapshot
-        return AsyncStream { continuation in
-            let id = UUID()
-            continuations[id] = continuation
-            continuation.yield(initial)
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in self?.continuations[id] = nil }
+    func snapshots() async -> AsyncStream<RadioSnapshot> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                let initial = snapshot
+                let stream = AsyncStream { continuation in
+                    let id = UUID()
+                    continuations[id] = continuation
+                    continuation.yield(initial)
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.continuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
             }
         }
     }
 
     func connect() async throws {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                connectOnQueue()
+                result.resume()
+            }
+        }
+    }
+
+    private func connectOnQueue() {
         autoConnectRequested = false
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
         scanRequested = true
         if central == nil {
             publish(state: .scanning)
-            central = CBCentralManager(delegate: self, queue: nil)
+            central = CBCentralManager(delegate: self, queue: bluetoothQueue)
             return
         }
         guard central?.state == .poweredOn else {
@@ -99,76 +92,87 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
     }
 
     func autoConnect() async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                autoConnectOnQueue()
+                result.resume()
+            }
+        }
+    }
+
+    private func autoConnectOnQueue() {
         guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
               UUID(uuidString: value) != nil
         else { return }
         autoConnectRequested = true
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: nil)
+            central = CBCentralManager(delegate: self, queue: bluetoothQueue)
             return
         }
         guard central?.state == .poweredOn else { return }
         startAutomaticConnection()
     }
 
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async {
+    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {
+        let hostKey: Data?
         if let identity {
-            selectedHostKey = try? UMSHMobileCore.publicIdentityBytes(
+            hostKey = try UMSHMobileCore.publicIdentityBytes(
                 address: identity.canonicalAddress
             )
         } else {
-            selectedHostKey = nil
+            hostKey = nil
         }
-        reconcileHostOwnership()
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                selectedHostKey = hostKey
+                result.resume()
+            }
+        }
     }
 
     func claimForCurrentIdentity() async throws {
+        try await withCheckedThrowingContinuation { result in
+            bluetoothQueue.async { [self] in
+                do {
+                    try claimForCurrentIdentityOnQueue()
+                    result.resume()
+                } catch {
+                    result.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func claimForCurrentIdentityOnQueue() throws {
         guard let peripheral, peripheral.state == .connected, let selectedHostKey else {
             throw RadioConnectionError.identityUnavailable
         }
-        guard expectedProperties.isEmpty,
-              snapshot.hostState == .unclaimed || snapshot.hostState == .belongsToAnotherIdentity
+        guard snapshot.hostState == .unclaimed || snapshot.hostState == .belongsToAnotherIdentity
         else {
             throw RadioConnectionError.takeoverNotAllowed
         }
 
         do {
-            let transactionID: UInt8 = 1
-            let frame = try UMSHMobileCore.companionPropSet(
-                transactionId: transactionID,
-                propertyId: Property.hostKey,
-                value: selectedHostKey
+            try applySessionUpdate(
+                companionSession.claim(hostKey: selectedHostKey),
+                from: peripheral
             )
-            expectedProperties[transactionID] = Property.hostKey
-            claimInProgress = true
-            saveInProgress = false
-            syncStage = .claiming
-            syncAttempt = UUID()
-            let attempt = syncAttempt
-            snapshot.linkState = .provisioning
-            snapshot.hostState = .claiming
-            snapshot.problemDescription = nil
-            publish(snapshot)
-            try enqueue(frame: frame, on: peripheral)
-            writeNext(on: peripheral)
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(8))
-                guard let self, self.syncAttempt == attempt, self.claimInProgress else { return }
-                self.claimInProgress = false
-                self.saveInProgress = false
-                self.expectedProperties.removeAll()
-                self.publishFailure("The radio did not finish replacing its host", name: peripheral.name)
-            }
         } catch {
-            claimInProgress = false
-            saveInProgress = false
-            expectedProperties.removeAll()
-            publishFailure("The host replacement request could not be encoded", name: peripheral.name)
+            publishFailure("The radio could not replace its configured host", name: peripheral.name)
             throw RadioConnectionError.incompatibleProtocol
         }
     }
 
     func disconnect() async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                disconnectOnQueue()
+                result.resume()
+            }
+        }
+    }
+
+    private func disconnectOnQueue() {
         scanRequested = false
         scanAttempt = UUID()
         autoConnectRequested = false
@@ -197,8 +201,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
             withServices: [UUIDs.service],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
+        bluetoothQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
             guard let self, self.scanAttempt == attempt, self.snapshot.linkState == .scanning else {
                 return
             }
@@ -245,12 +248,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
         )
         central.connect(remembered)
 
-        Task { @MainActor [weak self, weak remembered] in
-            try? await Task.sleep(for: .seconds(8))
-            guard let self, let remembered,
+        bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, let remembered = self.peripheral,
                   self.autoConnectAttempt == attempt,
                   self.automaticConnectionInProgress,
-                  self.peripheral === remembered,
                   remembered.state != .connected
             else { return }
             self.automaticConnectionInProgress = false
@@ -318,11 +319,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
     private func publishFailure(_ message: String, name: String? = nil) {
         pendingWrites.removeAll()
         writeInProgress = false
-        expectedProperties.removeAll()
         syncAttempt = UUID()
-        claimInProgress = false
-        syncStage = .idle
-        inspectionQueue.removeAll()
+        _ = companionSession.reset()
         snapshot.linkState = .failed
         snapshot.name = name ?? snapshot.name
         snapshot.problemDescription = message
@@ -346,50 +344,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
         reassembler.reset()
         pendingWrites.removeAll(keepingCapacity: true)
         writeInProgress = false
-        expectedProperties.removeAll(keepingCapacity: true)
-        syncPropertyResponses.removeAll(keepingCapacity: true)
-        inspectionQueue.removeAll(keepingCapacity: true)
-        radioHostKey = nil
-        hostKeyUnsupported = false
-        syncStage = .initial
-        syncAttempt = UUID()
-        let attempt = syncAttempt
-        publish(
-            state: .synchronizing,
-            name: peripheral.name,
-            localIdentifier: peripheral.identifier
-        )
-
-        let requests: [(UInt8, UInt32)] = [
-            (1, Property.lastStatus),
-            (2, Property.protocolVersion),
-            (3, Property.capabilities),
-            (4, Property.deviceKey),
-            (5, Property.deviceName),
-            (6, Property.battery),
-            (7, Property.hostKey),
-        ]
         do {
-            for (transactionID, propertyID) in requests {
-                expectedProperties[transactionID] = propertyID
-                let frame = try UMSHMobileCore.companionPropGet(
-                    transactionId: transactionID,
-                    propertyId: propertyID
-                )
-                try enqueue(frame: frame, on: peripheral)
-            }
-            writeNext(on: peripheral)
+            try applySessionUpdate(
+                companionSession.begin(selectedHostKey: selectedHostKey),
+                from: peripheral
+            )
         } catch {
-            publishFailure("The companion synchronization request could not be encoded", name: peripheral.name)
-            return
-        }
-
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard let self, self.syncAttempt == attempt, !self.expectedProperties.isEmpty else {
-                return
-            }
-            self.publishFailure("The companion radio did not finish synchronizing", name: peripheral.name)
+            publishFailure("The companion session could not start", name: peripheral.name)
         }
     }
 
@@ -413,267 +374,88 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
     private func receive(_ value: Data, from peripheral: CBPeripheral) {
         do {
             guard let frame = try reassembler.push(segment: value) else { return }
-            let response = try UMSHMobileCore.inspectCompanionPropertyFrame(bytes: frame)
-            apply(response, from: peripheral)
+            try applySessionUpdate(companionSession.consume(frame: frame), from: peripheral)
         } catch {
             publishFailure("The radio sent an invalid companion frame", name: peripheral.name)
         }
     }
 
-    private func apply(_ response: CompanionPropertyFrameRecord, from peripheral: CBPeripheral) {
-        guard response.transactionId != 0 else {
-            // Unsolicited property changes will feed the same reducer once the
-            // long-lived companion session is introduced.
-            return
-        }
-        guard let expected = expectedProperties.removeValue(forKey: response.transactionId) else {
-            return
-        }
-        if response.propertyId == Property.lastStatus, expected != Property.lastStatus {
-            if claimInProgress && expected == Property.hostKey {
-                claimInProgress = false
-                publishFailure("The radio refused to replace its configured host", name: peripheral.name)
-            } else if expected == Property.protocolVersion {
-                publishFailure("The radio does not support the required companion protocol", name: peripheral.name)
-            } else if syncStage == .initial && expected == Property.hostKey {
-                hostKeyUnsupported = true
-                finishSynchronizationIfComplete(on: peripheral)
-            } else if syncStage == .inspection {
-                publishFailure("The radio refused an advertised synchronization property", name: peripheral.name)
-            } else {
-                finishSynchronizationIfComplete(on: peripheral)
-            }
-            return
-        }
-        guard response.propertyId == expected else {
-            publishFailure("The radio returned a mismatched companion response", name: peripheral.name)
-            return
-        }
-        guard response.command == 6 else {
-            publishFailure("The radio returned an invalid transaction response", name: peripheral.name)
-            return
-        }
-        syncPropertyResponses[response.propertyId] = response
-
-        switch response.propertyId {
-        case Property.lastStatus where saveInProgress:
-            do {
-                let status = try UMSHMobileCore.inspectCompanionStatus(value: response.value)
-                guard status == 0 else {
-                    claimInProgress = false
-                    saveInProgress = false
-                    publishFailure("The radio could not save this phone as its host", name: peripheral.name)
-                    return
-                }
-                claimInProgress = false
-                saveInProgress = false
-            } catch {
-                claimInProgress = false
-                saveInProgress = false
-                publishFailure("The radio returned an invalid save result", name: peripheral.name)
-                return
-            }
-        case Property.protocolVersion:
-            guard response.value.count == 2, response.value.first == 6 else {
-                publishFailure("The radio uses an incompatible companion protocol", name: peripheral.name)
-                return
-            }
-        case Property.deviceKey:
-            if response.value.isEmpty {
-                snapshot.deviceIdentity = nil
-            } else {
-                do {
-                    let identity = try UMSHMobileCore.inspectPublicIdentityBytes(publicKey: response.value)
-                    snapshot.deviceIdentity = MeshPublicIdentity(
-                        canonicalAddress: identity.canonicalAddress,
-                        hint: MeshNodeHint(bytes: identity.hint.bytes, text: identity.hint.text)
-                    )
-                } catch {
-                    publishFailure("The radio returned an invalid device identity", name: peripheral.name)
-                    return
-                }
-            }
-        case Property.deviceName:
-            if let name = String(data: response.value, encoding: .utf8), !name.isEmpty {
-                snapshot.name = name
-            }
-        case Property.battery:
-            do {
-                let battery = try UMSHMobileCore.inspectCompanionBattery(value: response.value)
-                snapshot.batteryPercentage = battery.percentage.map(Int.init)
-                snapshot.isExternallyPowered = battery.isExternallyPowered
-                snapshot.batteryReadAt = .now
-            } catch {
-                publishFailure("The radio returned an invalid battery status", name: peripheral.name)
-                return
-            }
-        case Property.hostKey:
-            guard response.value.isEmpty || response.value.count == 32 else {
-                publishFailure("The radio returned an invalid host identity", name: peripheral.name)
-                return
-            }
-            radioHostKey = response.value
-            if claimInProgress {
-                guard response.value == selectedHostKey else {
-                    claimInProgress = false
-                    publishFailure("The radio did not apply the requested host identity", name: peripheral.name)
-                    return
-                }
-                if inspectionQueue.contains(Property.saved) {
-                    do {
-                        let transactionID: UInt8 = 2
-                        expectedProperties[transactionID] = Property.lastStatus
-                        saveInProgress = true
-                        let frame = try UMSHMobileCore.companionSave(transactionId: transactionID)
-                        try enqueue(frame: frame, on: peripheral)
-                        writeNext(on: peripheral)
-                    } catch {
-                        claimInProgress = false
-                        saveInProgress = false
-                        expectedProperties.removeAll()
-                        publishFailure("The radio save request could not be encoded", name: peripheral.name)
-                        return
-                    }
-                } else {
-                    claimInProgress = false
-                }
-            }
-        default:
-            break
-        }
-        publish(snapshot)
-        finishSynchronizationIfComplete(on: peripheral)
-    }
-
-    private func finishSynchronizationIfComplete(on peripheral: CBPeripheral) {
-        guard expectedProperties.isEmpty else { return }
+    private func applySessionUpdate(
+        _ update: CompanionSessionUpdateRecord,
+        from peripheral: CBPeripheral
+    ) throws {
         syncAttempt = UUID()
-        switch syncStage {
-        case .initial:
-            syncStage = .idle
-            prepareInspection(on: peripheral)
-        case .claiming:
-            syncStage = .idle
-            reconcileHostOwnership()
-        case .inspection:
-            startNextInspectionBatch(on: peripheral)
-        case .idle:
-            break
+        snapshot.linkState = switch update.snapshot.phase {
+        case .idle: .attaching
+        case .synchronizing: .synchronizing
+        case .awaitingHost: .awaitingHost
+        case .claiming: .provisioning
+        case .attached: .attached
         }
-    }
-
-    private func reconcileHostOwnership() {
-        guard expectedProperties.isEmpty else { return }
-        snapshot.problemDescription = nil
-        if hostKeyUnsupported {
-            snapshot.hostState = .unsupported
-            beginInspectionIfPossible()
-            return
+        snapshot.hostState = switch update.snapshot.hostOwnership {
+        case .unknown: .unknown
+        case .localIdentityUnavailable: .localIdentityUnavailable
+        case .unsupported: .unsupported
+        case .unclaimed: .unclaimed
+        case .ours: .matchesCurrentIdentity
+        case .otherHost: .belongsToAnotherIdentity
         }
-        guard let radioHostKey else { return }
-        snapshot.hostState = .classify(
-            radioKey: radioHostKey,
-            selectedHostKey: selectedHostKey
-        )
-        if snapshot.hostState == .matchesCurrentIdentity {
-            beginInspectionIfPossible()
+        snapshot.name = update.snapshot.deviceName ?? snapshot.name ?? peripheral.name
+        if let deviceKey = update.snapshot.deviceKey {
+            let identity = try UMSHMobileCore.inspectPublicIdentityBytes(publicKey: deviceKey)
+            snapshot.deviceIdentity = MeshPublicIdentity(
+                canonicalAddress: identity.canonicalAddress,
+                hint: MeshNodeHint(bytes: identity.hint.bytes, text: identity.hint.text)
+            )
         } else {
-            snapshot.linkState = .awaitingHost
-            publish(snapshot)
+            snapshot.deviceIdentity = nil
         }
-    }
-
-    private func prepareInspection(on peripheral: CBPeripheral) {
-        guard let capabilities = syncPropertyResponses[Property.capabilities]?.value else {
-            publishFailure("The radio did not return its capability list", name: peripheral.name)
-            return
+        if let battery = update.snapshot.battery {
+            snapshot.batteryPercentage = battery.percentage.map(Int.init)
+            snapshot.isExternallyPowered = battery.isExternallyPowered
+            snapshot.batteryReadAt = .now
         }
-        do {
-            inspectionQueue = try UMSHMobileCore.companionInspectionProperties(
-                capabilities: capabilities
+        snapshot.provisioning = update.snapshot.provisioning.map {
+            RadioProvisioningSummary(
+                capabilityCount: Int($0.capabilityCount),
+                hasHostFiltering: $0.hasHostFiltering,
+                supportsOfflineQueue: $0.supportsOfflineQueue,
+                supportsDelegatedAcknowledgements: $0.supportsDelegatedAck,
+                phyEnabled: $0.phyEnabled,
+                frequencyKHz: $0.frequencyKhz,
+                saved: $0.saved,
+                queuedFrames: $0.queuedFrames.map(Int.init),
+                droppedFrames: $0.droppedFrames,
+                filterCount: $0.filterCount.map(Int.init),
+                hostChannelCount: $0.hostChannelCount.map(Int.init),
+                hostPeerCount: $0.hostPeerCount.map(Int.init),
+                autoAcknowledgementEnabled: $0.autoAck
             )
-        } catch {
-            publishFailure("The radio advertised an invalid capability set", name: peripheral.name)
-            return
         }
-        let advertisesHostFiltering = inspectionQueue.contains(Property.hostReceiveFilters)
-        if advertisesHostFiltering == hostKeyUnsupported {
-            publishFailure("The radio's host capability does not match its behavior", name: peripheral.name)
-            return
-        }
-        reconcileHostOwnership()
-    }
+        snapshot.problemDescription = nil
 
-    private func beginInspectionIfPossible() {
-        guard syncStage == .idle, snapshot.provisioning == nil, let peripheral else { return }
-        snapshot.linkState = .synchronizing
+        for frame in update.outboundFrames {
+            try enqueue(frame: frame, on: peripheral)
+        }
+        writeNext(on: peripheral)
+        if update.snapshot.phase == .attached {
+            defaults.set(
+                peripheral.identifier.uuidString,
+                forKey: PreferenceKey.lastAttachedPeripheral
+            )
+        }
         publish(snapshot)
-        syncStage = .inspection
-        startNextInspectionBatch(on: peripheral)
-    }
 
-    private func startNextInspectionBatch(on peripheral: CBPeripheral) {
-        guard syncStage == .inspection, expectedProperties.isEmpty else { return }
-        guard !inspectionQueue.isEmpty else {
-            finishInspection(on: peripheral)
-            return
-        }
-        let batch = Array(inspectionQueue.prefix(7))
-        inspectionQueue.removeFirst(batch.count)
-        syncAttempt = UUID()
+        guard update.waitingForResponses else { return }
         let attempt = syncAttempt
-        do {
-            for (offset, propertyID) in batch.enumerated() {
-                let transactionID = UInt8(offset + 1)
-                expectedProperties[transactionID] = propertyID
-                let frame = try UMSHMobileCore.companionPropGet(
-                    transactionId: transactionID,
-                    propertyId: propertyID
-                )
-                try enqueue(frame: frame, on: peripheral)
+        bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, let peripheral = self.peripheral, self.syncAttempt == attempt else {
+                return
             }
-            writeNext(on: peripheral)
-        } catch {
-            publishFailure("The radio inspection request could not be encoded", name: peripheral.name)
-            return
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard let self, self.syncAttempt == attempt, self.syncStage == .inspection,
-                  !self.expectedProperties.isEmpty
-            else { return }
-            self.publishFailure("The radio did not finish its state inspection", name: peripheral.name)
-        }
-    }
-
-    private func finishInspection(on peripheral: CBPeripheral) {
-        do {
-            let state = try UMSHMobileCore.inspectCompanionSync(
-                responses: Array(syncPropertyResponses.values)
+            self.publishFailure(
+                "The companion radio did not finish synchronizing",
+                name: peripheral.name
             )
-            snapshot.provisioning = RadioProvisioningSummary(
-                capabilityCount: Int(state.capabilityCount),
-                hasHostFiltering: state.hasHostFiltering,
-                supportsOfflineQueue: state.supportsOfflineQueue,
-                supportsDelegatedAcknowledgements: state.supportsDelegatedAck,
-                phyEnabled: state.phyEnabled,
-                frequencyKHz: state.frequencyKhz,
-                saved: state.saved,
-                queuedFrames: state.queuedFrames.map(Int.init),
-                droppedFrames: state.droppedFrames,
-                filterCount: state.filterCount.map(Int.init),
-                hostChannelCount: state.hostChannelCount.map(Int.init),
-                hostPeerCount: state.hostPeerCount.map(Int.init),
-                autoAcknowledgementEnabled: state.autoAck
-            )
-            syncStage = .idle
-            syncAttempt = UUID()
-            snapshot.linkState = .attached
-            snapshot.problemDescription = nil
-            defaults.set(peripheral.identifier.uuidString, forKey: PreferenceKey.lastAttachedPeripheral)
-            publish(snapshot)
-        } catch {
-            publishFailure("The radio returned malformed synchronization state", name: peripheral.name)
         }
     }
 
@@ -690,23 +472,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection {
         frameIn = nil
         frameOut = nil
         reassembler.reset()
+        _ = companionSession.reset()
         pendingWrites.removeAll()
         writeInProgress = false
-        expectedProperties.removeAll()
         syncAttempt = UUID()
-        radioHostKey = nil
-        claimInProgress = false
-        saveInProgress = false
         preservesFailureOnDisconnect = false
-        syncStage = .idle
-        inspectionQueue.removeAll()
-        syncPropertyResponses.removeAll()
-        hostKeyUnsupported = false
         automaticConnectionInProgress = false
     }
 }
 
-extension CoreBluetoothRadioConnection: @preconcurrency CBCentralManagerDelegate {
+extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         publishBluetoothState()
     }
@@ -779,7 +554,7 @@ extension CoreBluetoothRadioConnection: @preconcurrency CBCentralManagerDelegate
     }
 }
 
-extension CoreBluetoothRadioConnection: @preconcurrency CBPeripheralDelegate {
+extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         if let error {
             publishFailure(error.localizedDescription, name: peripheral.name)

@@ -199,7 +199,17 @@ struct RadioDetailView: View {
             if let deviceIdentity = snapshot.deviceIdentity {
                 Section("Radio identity") {
                     NavigationLink {
-                        PeerDetailView(snapshot: $snapshot)
+                        PeerDetailView(
+                            peer: PeerSummary(
+                                id: 0,
+                                identity: deviceIdentity,
+                                alias: nil,
+                                advertisedName: snapshot.name,
+                                isContact: false,
+                                systemRole: "companion_radio"
+                            ),
+                            radioSnapshot: $snapshot
+                        )
                     } label: {
                         LabeledContent("Peer", value: deviceIdentity.hint.text)
                     }

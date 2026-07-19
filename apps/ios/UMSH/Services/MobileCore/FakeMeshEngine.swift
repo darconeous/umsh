@@ -18,7 +18,17 @@ actor FakeMeshEngine: MeshEngine {
         )
     }
 
-    func derivePublicIdentity(secretKey: Data) throws -> MeshPublicIdentity {
+    func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview {
+        guard uri.hasPrefix("umsh:n:") else {
+            throw MeshEngineError.invalidAddress
+        }
+        return MeshNodeURIPreview(
+            publicIdentity: try inspectPublicIdentity(String(uri.dropFirst("umsh:n:".count))),
+            hasIdentityData: false
+        )
+    }
+
+    func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity {
         guard secretKey.count == 32 else {
             throw MeshEngineError.invalidAddress
         }

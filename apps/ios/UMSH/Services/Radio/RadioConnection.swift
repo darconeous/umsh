@@ -1,9 +1,8 @@
 import Foundation
 
-@MainActor
-protocol RadioConnection: AnyObject {
-    func snapshots() -> AsyncStream<RadioSnapshot>
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async
+protocol RadioConnection: AnyObject, Sendable {
+    func snapshots() async -> AsyncStream<RadioSnapshot>
+    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func autoConnect() async
     func connect() async throws
     func claimForCurrentIdentity() async throws

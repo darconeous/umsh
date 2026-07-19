@@ -1,7 +1,6 @@
 import Foundation
 
-@MainActor
-final class FakeRadioConnection: RadioConnection {
+actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
 
@@ -16,7 +15,7 @@ final class FakeRadioConnection: RadioConnection {
             continuations[id] = continuation
             continuation.yield(initial)
             continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in self?.removeContinuation(id) }
+                Task { await self?.removeContinuation(id) }
             }
         }
     }
@@ -25,7 +24,7 @@ final class FakeRadioConnection: RadioConnection {
         publish(.previewReady)
     }
 
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async {}
+    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {}
 
     func autoConnect() async {}
 

@@ -26,6 +26,7 @@
 		100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */; };
 		100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */; };
 		100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */; };
+		100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* UMSH/Models/ConversationModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/FrameCounterReservationStore.swift; sourceTree = "<group>"; };
 		200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Persistence/SQLiteApplicationStore.swift; sourceTree = "<group>"; };
 		200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/CoreBluetoothRadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000014 /* UMSH/Models/ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/ConversationModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +93,7 @@
 				200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */,
 				200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */,
 				200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */,
+				200000000000000000000014 /* UMSH/Models/ConversationModels.swift */,
 			);
 			name = Sources;
 			sourceTree = "<group>";
@@ -195,6 +198,7 @@
 				100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */,
 				100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */,
 				100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */,
+				100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

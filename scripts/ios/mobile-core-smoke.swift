@@ -3,13 +3,15 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 6)
+        precondition(mobileApiVersion() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
         precondition(hint.text == "BtC5")
 
-        let identity = try derivePublicIdentity(secretKey: Data(repeating: 7, count: 32))
+        let identity = try MobileIdentity.unlock(
+            secretKey: Data(repeating: 7, count: 32)
+        ).publicIdentity()
         precondition(identity.canonicalAddress.count == 44)
         let inspectedIdentity = try inspectPublicIdentity(address: identity.canonicalAddress)
         precondition(inspectedIdentity == identity)
@@ -19,6 +21,9 @@ struct MobileCoreSmokeTest {
         precondition(rawIdentity.canonicalAddress.count == 44)
         let decodedIdentity = try publicIdentityBytes(address: rawIdentity.canonicalAddress)
         precondition(decodedIdentity == Data((0..<32).map(UInt8.init)))
+        let nodePreview = try inspectNodeUri(uri: "umsh:n:\(rawIdentity.canonicalAddress)")
+        precondition(nodePreview.canonicalAddress == rawIdentity.canonicalAddress)
+        precondition(!nodePreview.hasIdentityData)
 
         let propertyGet = try companionPropGet(transactionId: 3, propertyId: 4_864)
         let propertySet = try companionPropSet(

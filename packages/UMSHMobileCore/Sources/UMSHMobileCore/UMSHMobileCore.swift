@@ -513,6 +513,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -597,6 +613,207 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
         writeBytes(&buf, value)
     }
 }
+
+
+
+
+/**
+ * Stateful mobile host session for the companion protocol.
+ *
+ * This is the protocol boundary: it consumes complete reassembled companion
+ * frames and owns TIDs, response matching, capability-driven synchronization,
+ * host ownership, and claim/save choreography. Platform code owns only the
+ * transport lifecycle, byte shuttling, and timers.
+ */
+public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
+
+    /**
+     * Begin post-attach synchronization for a new transport generation.
+     */
+    func begin(selectedHostKey: Data?) throws  -> CompanionSessionUpdateRecord
+
+    /**
+     * Replace an unclaimed or other-host configuration with this phone's key.
+     */
+    func claim(hostKey: Data) throws  -> CompanionSessionUpdateRecord
+
+    /**
+     * Consume one complete companion frame and advance the session reducer.
+     */
+    func consume(frame: Data) throws  -> CompanionSessionUpdateRecord
+
+    /**
+     * Invalidate all outstanding transactions for a disconnected transport.
+     */
+    func reset()  -> CompanionSessionUpdateRecord
+
+}
+/**
+ * Stateful mobile host session for the companion protocol.
+ *
+ * This is the protocol boundary: it consumes complete reassembled companion
+ * frames and owns TIDs, response matching, capability-driven synchronization,
+ * host ownership, and claim/save choreography. Platform code owns only the
+ * transport lifecycle, byte shuttling, and timers.
+ */
+open class MobileCompanionSession: MobileCompanionSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilecompanionsession(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobilecompanionsession_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilecompanionsession(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Begin post-attach synchronization for a new transport generation.
+     */
+open func begin(selectedHostKey: Data?)throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_begin(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Replace an unclaimed or other-host configuration with this phone's key.
+     */
+open func claim(hostKey: Data)throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_claim(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(hostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Consume one complete companion frame and advance the session reducer.
+     */
+open func consume(frame: Data)throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_consume(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Invalidate all outstanding transactions for a disconnected transport.
+     */
+open func reset() -> CompanionSessionUpdateRecord  {
+    return try!  FfiConverterTypeCompanionSessionUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCompanionSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileCompanionSession
+
+    public static func lift(_ handle: UInt64) throws -> MobileCompanionSession {
+        return MobileCompanionSession(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileCompanionSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCompanionSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileCompanionSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCompanionSession_lift(_ handle: UInt64) throws -> MobileCompanionSession {
+    return try FfiConverterTypeMobileCompanionSession.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCompanionSession_lower(_ value: MobileCompanionSession) -> UInt64 {
+    return FfiConverterTypeMobileCompanionSession.lower(value)
+}
+
+
 
 
 
@@ -904,6 +1121,140 @@ public func FfiConverterTypeMobileGattReassembler_lower(_ value: MobileGattReass
 
 
 
+
+
+/**
+ * Identity secret retained by the Rust engine after one controlled unlock
+ * transfer. Swift receives only public identity records from this object.
+ */
+public protocol MobileIdentityProtocol: AnyObject, Sendable {
+
+    func publicIdentity()  -> PublicIdentityRecord
+
+}
+/**
+ * Identity secret retained by the Rust engine after one controlled unlock
+ * transfer. Swift receives only public identity records from this object.
+ */
+open class MobileIdentity: MobileIdentityProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileidentity(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileidentity(handle, $0) }
+    }
+
+
+public static func unlock(secretKey: Data)throws  -> MobileIdentity  {
+    return try  FfiConverterTypeMobileIdentity_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileidentity_unlock(
+        FfiConverterData.lower(secretKey),uniffiCallStatus
+    )
+})
+}
+
+
+
+open func publicIdentity() -> PublicIdentityRecord  {
+    return try!  FfiConverterTypePublicIdentityRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileidentity_public_identity(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIdentity: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileIdentity
+
+    public static func lift(_ handle: UInt64) throws -> MobileIdentity {
+        return MobileIdentity(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileIdentity) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentity {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileIdentity, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentity_lift(_ handle: UInt64) throws -> MobileIdentity {
+    return try FfiConverterTypeMobileIdentity.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentity_lower(_ value: MobileIdentity) -> UInt64 {
+    return FfiConverterTypeMobileIdentity.lower(value)
+}
+
+
+
+
 /**
  * UI-relevant fields from a validated `PROP_BATTERY` value.
  */
@@ -1023,6 +1374,146 @@ public func FfiConverterTypeCompanionPropertyFrameRecord_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeCompanionPropertyFrameRecord_lower(_ value: CompanionPropertyFrameRecord) -> RustBuffer {
     return FfiConverterTypeCompanionPropertyFrameRecord.lower(value)
+}
+
+
+/**
+ * Typed state published after each bounded companion-session transition.
+ */
+public struct CompanionSessionSnapshotRecord: Equatable, Hashable {
+    public var generation: UInt64
+    public var phase: CompanionSessionPhase
+    public var hostOwnership: CompanionHostOwnership
+    public var deviceKey: Data?
+    public var deviceName: String?
+    public var battery: CompanionBatteryRecord?
+    public var provisioning: CompanionSyncRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(generation: UInt64, phase: CompanionSessionPhase, hostOwnership: CompanionHostOwnership, deviceKey: Data?, deviceName: String?, battery: CompanionBatteryRecord?, provisioning: CompanionSyncRecord?) {
+        self.generation = generation
+        self.phase = phase
+        self.hostOwnership = hostOwnership
+        self.deviceKey = deviceKey
+        self.deviceName = deviceName
+        self.battery = battery
+        self.provisioning = provisioning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionSessionSnapshotRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionSessionSnapshotRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionSnapshotRecord {
+        return
+            try CompanionSessionSnapshotRecord(
+                generation: FfiConverterUInt64.read(from: &buf),
+                phase: FfiConverterTypeCompanionSessionPhase.read(from: &buf),
+                hostOwnership: FfiConverterTypeCompanionHostOwnership.read(from: &buf),
+                deviceKey: FfiConverterOptionData.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                battery: FfiConverterOptionTypeCompanionBatteryRecord.read(from: &buf),
+                provisioning: FfiConverterOptionTypeCompanionSyncRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionSessionSnapshotRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.generation, into: &buf)
+        FfiConverterTypeCompanionSessionPhase.write(value.phase, into: &buf)
+        FfiConverterTypeCompanionHostOwnership.write(value.hostOwnership, into: &buf)
+        FfiConverterOptionData.write(value.deviceKey, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterOptionTypeCompanionBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionTypeCompanionSyncRecord.write(value.provisioning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionSnapshotRecord_lift(_ buf: RustBuffer) throws -> CompanionSessionSnapshotRecord {
+    return try FfiConverterTypeCompanionSessionSnapshotRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionSnapshotRecord_lower(_ value: CompanionSessionSnapshotRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionSessionSnapshotRecord.lower(value)
+}
+
+
+/**
+ * Work produced by the Rust companion session. Frames are complete companion
+ * frames; the platform adapter remains responsible for GATT segmentation and
+ * write backpressure.
+ */
+public struct CompanionSessionUpdateRecord: Equatable, Hashable {
+    public var outboundFrames: [Data]
+    public var snapshot: CompanionSessionSnapshotRecord
+    public var waitingForResponses: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(outboundFrames: [Data], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool) {
+        self.outboundFrames = outboundFrames
+        self.snapshot = snapshot
+        self.waitingForResponses = waitingForResponses
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionSessionUpdateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionUpdateRecord {
+        return
+            try CompanionSessionUpdateRecord(
+                outboundFrames: FfiConverterSequenceData.read(from: &buf),
+                snapshot: FfiConverterTypeCompanionSessionSnapshotRecord.read(from: &buf),
+                waitingForResponses: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionSessionUpdateRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
+        FfiConverterTypeCompanionSessionSnapshotRecord.write(value.snapshot, into: &buf)
+        FfiConverterBool.write(value.waitingForResponses, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionUpdateRecord_lift(_ buf: RustBuffer) throws -> CompanionSessionUpdateRecord {
+    return try FfiConverterTypeCompanionSessionUpdateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionUpdateRecord_lower(_ value: CompanionSessionUpdateRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionSessionUpdateRecord.lower(value)
 }
 
 
@@ -1251,6 +1742,67 @@ public func FfiConverterTypeNodeHintRecord_lower(_ value: NodeHintRecord) -> Rus
 
 
 /**
+ * Safe, non-mutating preview of a parsed node URI.
+ */
+public struct NodeUriPreviewRecord: Equatable, Hashable {
+    public var canonicalAddress: String
+    public var hint: NodeHintRecord
+    public var hasIdentityData: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(canonicalAddress: String, hint: NodeHintRecord, hasIdentityData: Bool) {
+        self.canonicalAddress = canonicalAddress
+        self.hint = hint
+        self.hasIdentityData = hasIdentityData
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NodeUriPreviewRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNodeUriPreviewRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NodeUriPreviewRecord {
+        return
+            try NodeUriPreviewRecord(
+                canonicalAddress: FfiConverterString.read(from: &buf),
+                hint: FfiConverterTypeNodeHintRecord.read(from: &buf),
+                hasIdentityData: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NodeUriPreviewRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.canonicalAddress, into: &buf)
+        FfiConverterTypeNodeHintRecord.write(value.hint, into: &buf)
+        FfiConverterBool.write(value.hasIdentityData, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeUriPreviewRecord_lift(_ buf: RustBuffer) throws -> NodeUriPreviewRecord {
+    return try FfiConverterTypeNodeUriPreviewRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeUriPreviewRecord_lower(_ value: NodeUriPreviewRecord) -> RustBuffer {
+    return FfiConverterTypeNodeUriPreviewRecord.lower(value)
+}
+
+
+/**
  * Public identity information safe to keep in ordinary application models.
  */
 public struct PublicIdentityRecord: Equatable, Hashable {
@@ -1311,6 +1863,194 @@ public func FfiConverterTypePublicIdentityRecord_lift(_ buf: RustBuffer) throws 
 public func FfiConverterTypePublicIdentityRecord_lower(_ value: PublicIdentityRecord) -> RustBuffer {
     return FfiConverterTypePublicIdentityRecord.lower(value)
 }
+
+
+/**
+ * Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
+ */
+
+public enum CompanionHostOwnership: Equatable, Hashable {
+
+    case unknown
+    case localIdentityUnavailable
+    case unsupported
+    case unclaimed
+    case ours
+    case otherHost
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionHostOwnership: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionHostOwnership: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionHostOwnership
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionHostOwnership {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .localIdentityUnavailable
+
+        case 3: return .unsupported
+
+        case 4: return .unclaimed
+
+        case 5: return .ours
+
+        case 6: return .otherHost
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CompanionHostOwnership, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .localIdentityUnavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(3))
+
+
+        case .unclaimed:
+            writeInt(&buf, Int32(4))
+
+
+        case .ours:
+            writeInt(&buf, Int32(5))
+
+
+        case .otherHost:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionHostOwnership_lift(_ buf: RustBuffer) throws -> CompanionHostOwnership {
+    return try FfiConverterTypeCompanionHostOwnership.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionHostOwnership_lower(_ value: CompanionHostOwnership) -> RustBuffer {
+    return FfiConverterTypeCompanionHostOwnership.lower(value)
+}
+
+
+
+/**
+ * Long-lived host-session phase. Swift maps this value to UI link state but
+ * does not implement companion protocol transitions itself.
+ */
+
+public enum CompanionSessionPhase: Equatable, Hashable {
+
+    case idle
+    case synchronizing
+    case awaitingHost
+    case claiming
+    case attached
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionSessionPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionSessionPhase: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionSessionPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .synchronizing
+
+        case 3: return .awaitingHost
+
+        case 4: return .claiming
+
+        case 5: return .attached
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CompanionSessionPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .synchronizing:
+            writeInt(&buf, Int32(2))
+
+
+        case .awaitingHost:
+            writeInt(&buf, Int32(3))
+
+
+        case .claiming:
+            writeInt(&buf, Int32(4))
+
+
+        case .attached:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionPhase_lift(_ buf: RustBuffer) throws -> CompanionSessionPhase {
+    return try FfiConverterTypeCompanionSessionPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionSessionPhase_lower(_ value: CompanionSessionPhase) -> RustBuffer {
+    return FfiConverterTypeCompanionSessionPhase.lower(value)
+}
+
 
 
 public
@@ -1416,6 +2156,7 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidNodeHintLength
     case InvalidSecretKeyLength
     case InvalidPublicKeyLength
+    case InvalidUri
     case InvalidCompanionFrame
     case InvalidGattSegment
 
@@ -1453,8 +2194,9 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 4: return .InvalidNodeHintLength
         case 5: return .InvalidSecretKeyLength
         case 6: return .InvalidPublicKeyLength
-        case 7: return .InvalidCompanionFrame
-        case 8: return .InvalidGattSegment
+        case 7: return .InvalidUri
+        case 8: return .InvalidCompanionFrame
+        case 9: return .InvalidGattSegment
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1491,12 +2233,16 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
 
 
-        case .InvalidCompanionFrame:
+        case .InvalidUri:
             writeInt(&buf, Int32(7))
 
 
-        case .InvalidGattSegment:
+        case .InvalidCompanionFrame:
             writeInt(&buf, Int32(8))
+
+
+        case .InvalidGattSegment:
+            writeInt(&buf, Int32(9))
 
         }
     }
@@ -1616,6 +2362,30 @@ fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
     typealias SwiftType = Data?
 
@@ -1632,6 +2402,54 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeCompanionBatteryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionBatteryRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCompanionBatteryRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCompanionBatteryRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeCompanionSyncRecord: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionSyncRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCompanionSyncRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCompanionSyncRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -1657,6 +2475,31 @@ fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
         }
         return seq
     }
@@ -1712,17 +2555,13 @@ fileprivate struct FfiConverterSequenceTypeGattSegmentRecord: FfiConverterRustBu
     }
 }
 /**
- * Derive public identity information from a 32-byte Ed25519 secret.
- *
- * This is the one binding operation used by the platform identity vault when
- * creating or unlocking an identity. The secret is consumed and erased before
- * returning; only the public record crosses back to Swift.
+ * Parse a node URI locally and return only validated public identity fields.
  */
-public func derivePublicIdentity(secretKey: Data)throws  -> PublicIdentityRecord  {
-    return try  FfiConverterTypePublicIdentityRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+public func inspectNodeUri(uri: String)throws  -> NodeUriPreviewRecord  {
+    return try  FfiConverterTypeNodeUriPreviewRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_derive_public_identity(
-        FfiConverterData.lower(secretKey),uniffiCallStatus
+    uniffi_umsh_mobile_core_fn_func_inspect_node_uri(
+        FfiConverterString.lower(uri),uniffiCallStatus
     )
 })
 }
@@ -1907,7 +2746,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_derive_public_identity() != 3568) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_node_uri() != 44840) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_public_identity() != 3965) {
@@ -1952,6 +2791,21 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_companion_sync() != 14126) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_begin() != 29892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_claim() != 57104) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_consume() != 8102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_reset() != 64513) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 2566) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1962,6 +2816,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_load_boundary() != 19270) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilecompanionsession_new() != 14313) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 10873) {

@@ -52,12 +52,7 @@ actor KeychainIdentityVault: IdentityVault {
     }
 
     func createIdentity() async throws -> LocalIdentitySnapshot {
-        if try await loadIdentity() != nil {
-            throw IdentityVaultError.identityAlreadyExists
-        }
-
         var secret = Data(count: 32)
-        defer { secret.resetBytes(in: secret.startIndex..<secret.endIndex) }
 
         let randomStatus = secret.withUnsafeMutableBytes { bytes in
             SecRandomCopyBytes(kSecRandomDefault, bytes.count, bytes.baseAddress!)
@@ -66,7 +61,6 @@ actor KeychainIdentityVault: IdentityVault {
             throw IdentityVaultError.randomGenerationFailed
         }
 
-        let identity = try await snapshot(secretKey: secret)
         let item: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: Self.service,
@@ -79,14 +73,22 @@ actor KeychainIdentityVault: IdentityVault {
         guard status == errSecSuccess else {
             throw mapKeychainStatus(status)
         }
-        return identity
+        do {
+            return try await snapshot(secretKey: secret)
+        } catch {
+            SecItemDelete([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: Self.service,
+                kSecAttrAccount: Self.account,
+            ] as CFDictionary)
+            throw error
+        }
     }
 
     private func snapshot(secretKey: Data) async throws -> LocalIdentitySnapshot {
         do {
             return LocalIdentitySnapshot(
-                id: Self.account,
-                publicIdentity: try await meshEngine.derivePublicIdentity(secretKey: secretKey)
+                publicIdentity: try await meshEngine.unlockIdentity(secretKey: secretKey)
             )
         } catch {
             throw IdentityVaultError.coreFailure
@@ -95,10 +97,18 @@ actor KeychainIdentityVault: IdentityVault {
 
     private func mapKeychainStatus(_ status: OSStatus) -> IdentityVaultError {
         switch status {
+        case errSecDuplicateItem:
+            .identityAlreadyExists
         case errSecInteractionNotAllowed, errSecNotAvailable:
             .protectedDataUnavailable
         default:
             .keychainFailure
         }
+    }
+}
+
+private extension LocalIdentitySnapshot {
+    init(publicIdentity: MeshPublicIdentity) {
+        self.init(id: publicIdentity.canonicalAddress, publicIdentity: publicIdentity)
     }
 }

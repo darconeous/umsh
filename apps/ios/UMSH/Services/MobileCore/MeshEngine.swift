@@ -1,13 +1,18 @@
 import Foundation
 
-struct MeshNodeHint: Equatable, Sendable {
+struct MeshNodeHint: Hashable, Sendable {
     let bytes: Data
     let text: String
 }
 
-struct MeshPublicIdentity: Equatable, Sendable {
+struct MeshPublicIdentity: Hashable, Sendable {
     let canonicalAddress: String
     let hint: MeshNodeHint
+}
+
+struct MeshNodeURIPreview: Equatable, Sendable {
+    let publicIdentity: MeshPublicIdentity
+    let hasIdentityData: Bool
 }
 
 enum MeshEngineError: Error, Equatable, Sendable {
@@ -19,5 +24,6 @@ enum MeshEngineError: Error, Equatable, Sendable {
 protocol MeshEngine: Actor {
     func renderNodeHint(_ bytes: Data) throws -> MeshNodeHint
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity
-    func derivePublicIdentity(secretKey: Data) throws -> MeshPublicIdentity
+    func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview
+    func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity
 }

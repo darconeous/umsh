@@ -10,10 +10,19 @@ connection, characteristic discovery, notification subscription, negotiated
 write length, and with-response ATT write backpressure. The application asks
 for Bluetooth access only after the operator selects **Find companion radio**.
 
-The Rust mobile facade owns companion frame encoding and validation, GATT SAR
-segmentation and bounded reassembly, raw device-key canonicalization, and
-battery-value decoding. Swift passes complete ATT values and immutable records
-across UniFFI; feature views never retain CoreBluetooth or generated types.
+The Rust mobile facade owns the long-lived companion host session: transaction
+IDs, response matching, synchronization and inspection stages,
+capability-gated reads, host ownership, claim/save choreography, companion
+frame encoding and validation, GATT SAR segmentation and bounded reassembly,
+raw device-key canonicalization, and battery-value decoding. Swift passes
+complete ATT values into one opaque session object and receives outbound frames
+plus immutable typed snapshots; feature views never retain CoreBluetooth or
+generated types.
+
+CoreBluetooth runs on a dedicated serial queue. Only immutable
+`RadioSnapshot` values cross back to the main actor, so GATT notification
+reassembly and Rust calls do not consume UI-thread time when the frame data
+plane is enabled.
 
 The production app uses the CoreBluetooth adapter. The fake radio exists only
 for previews and tests. A radio device identity is published only after a valid

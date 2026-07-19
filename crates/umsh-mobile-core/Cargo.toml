@@ -14,6 +14,8 @@ umsh-core = { path = "../umsh-core" }
 umsh-crypto = { path = "../umsh-crypto" }
 umsh-hal = { path = "../umsh-hal" }
 umsh-companion = { path = "../umsh-companion" }
+umsh-uri = { path = "../umsh-uri" }
+lwuri.workspace = true
 uniffi = "=0.32.0"
 zeroize.workspace = true
 
