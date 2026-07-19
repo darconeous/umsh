@@ -386,13 +386,29 @@ fn receive_one_auto_replies_to_echo_request() {
         .public_key()
         .hint();
     let request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
-    mac.radio_mut()
-        .queue_received_unicast(&remote, &keys, &dst_hint, &request, false);
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        &request,
+        false,
+        7,
+        None,
+        Some(&[]),
+        None,
+    );
 
     let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
 
     assert!(handled);
     let response = mac.tx_queue_mut().pop_next().expect("echo response queued");
+    let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(response.frame.as_slice(), header.options_range.clone()).unwrap();
+    assert!(
+        options.trace_route.is_some(),
+        "echo response must preserve a trace-route request"
+    );
     let payload = decrypt_unicast_payload(response.frame.as_slice(), &keys);
     assert_eq!(
         payload.as_slice(),

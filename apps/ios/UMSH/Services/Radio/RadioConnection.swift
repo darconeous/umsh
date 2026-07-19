@@ -15,8 +15,17 @@ protocol RadioConnection: AnyObject, Sendable {
     func disconnect() async
 }
 
+struct RadioPingReply: Equatable, Sendable {
+    let roundTripMilliseconds: UInt64
+    let hopCount: UInt8?
+    let routeHints: [Data]
+    let rssiDBm: Int16?
+    let signalToNoiseCentibels: Int16?
+    let linkQuality: UInt8?
+}
+
 enum RadioPingResult: Equatable, Sendable {
-    case reply(roundTripMilliseconds: UInt64)
+    case reply(RadioPingReply)
     case timedOut
 }
 

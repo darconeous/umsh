@@ -298,7 +298,12 @@ fn dispatch_payload_callbacks<M: MacBackend>(
         if let Ok(command) = mac_command::parse(packet.payload()) {
             // Match EchoResponse before converting to owned, so we can borrow data.
             if let mac_command::MacCommand::EchoResponse { data } = command {
-                node.match_pong(from, data, now_ms);
+                node.match_pong(
+                    from,
+                    data,
+                    packet,
+                    packet.received_at_ms().unwrap_or(now_ms),
+                );
             }
             let owned = OwnedMacCommand::from(command);
             node.dispatch_mac_command(from, &owned);

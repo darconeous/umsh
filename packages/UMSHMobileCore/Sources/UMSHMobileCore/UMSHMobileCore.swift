@@ -2135,13 +2135,45 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var operationId: UInt64
     public var outcome: MobileMeshPingOutcome
     public var roundTripMilliseconds: UInt64?
+    /**
+     * Total radio links traversed by the response, when the wire metadata can
+     * determine it. A direct response is one hop.
+     */
+    public var hopCount: UInt8?
+    /**
+     * Authenticated intermediate-router hints, in source-to-destination order.
+     * The two endpoints are not included.
+     */
+    public var routeHints: [Data]
+    /**
+     * Signal measurements for the final radio hop into this device.
+     */
+    public var rssiDbm: Int16?
+    public var snrCentibels: Int16?
+    public var lqi: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(operationId: UInt64, outcome: MobileMeshPingOutcome, roundTripMilliseconds: UInt64?) {
+    public init(operationId: UInt64, outcome: MobileMeshPingOutcome, roundTripMilliseconds: UInt64?,
+        /**
+         * Total radio links traversed by the response, when the wire metadata can
+         * determine it. A direct response is one hop.
+         */hopCount: UInt8?,
+        /**
+         * Authenticated intermediate-router hints, in source-to-destination order.
+         * The two endpoints are not included.
+         */routeHints: [Data],
+        /**
+         * Signal measurements for the final radio hop into this device.
+         */rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?) {
         self.operationId = operationId
         self.outcome = outcome
         self.roundTripMilliseconds = roundTripMilliseconds
+        self.hopCount = hopCount
+        self.routeHints = routeHints
+        self.rssiDbm = rssiDbm
+        self.snrCentibels = snrCentibels
+        self.lqi = lqi
     }
 
 
@@ -2162,7 +2194,12 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
             try MobileMeshPingEventRecord(
                 operationId: FfiConverterUInt64.read(from: &buf),
                 outcome: FfiConverterTypeMobileMeshPingOutcome.read(from: &buf),
-                roundTripMilliseconds: FfiConverterOptionUInt64.read(from: &buf)
+                roundTripMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                hopCount: FfiConverterOptionUInt8.read(from: &buf),
+                routeHints: FfiConverterSequenceData.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                snrCentibels: FfiConverterOptionInt16.read(from: &buf),
+                lqi: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
@@ -2170,6 +2207,11 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
         FfiConverterUInt64.write(value.operationId, into: &buf)
         FfiConverterTypeMobileMeshPingOutcome.write(value.outcome, into: &buf)
         FfiConverterOptionUInt64.write(value.roundTripMilliseconds, into: &buf)
+        FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
+        FfiConverterSequenceData.write(value.routeHints, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
+        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
     }
 }
 

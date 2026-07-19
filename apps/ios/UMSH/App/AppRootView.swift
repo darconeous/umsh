@@ -253,8 +253,17 @@ struct AppRootView: View {
             switch try await radioConnection.ping(
                 peerAddress: peer.identity.canonicalAddress
             ) {
-            case let .reply(milliseconds):
-                return .reply(roundTripMilliseconds: milliseconds)
+            case let .reply(reply):
+                return .reply(
+                    PeerPingReply(
+                        roundTripMilliseconds: reply.roundTripMilliseconds,
+                        hopCount: reply.hopCount,
+                        routeHints: reply.routeHints,
+                        rssiDBm: reply.rssiDBm,
+                        signalToNoiseCentibels: reply.signalToNoiseCentibels,
+                        linkQuality: reply.linkQuality
+                    )
+                )
             case .timedOut:
                 return .timedOut
             }

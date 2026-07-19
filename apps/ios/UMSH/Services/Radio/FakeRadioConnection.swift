@@ -84,7 +84,16 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func ping(peerAddress: String) async throws -> RadioPingResult {
-        .reply(roundTripMilliseconds: 42)
+        .reply(
+            RadioPingReply(
+                roundTripMilliseconds: 42,
+                hopCount: 2,
+                routeHints: [Data([0x12, 0x34])],
+                rssiDBm: -72,
+                signalToNoiseCentibels: 650,
+                linkQuality: 180
+            )
+        )
     }
 
     func disconnect() async {

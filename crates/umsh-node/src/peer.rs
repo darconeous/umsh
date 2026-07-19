@@ -251,6 +251,9 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         } else {
             opts = opts.no_flood();
         }
+        if options.trace_route {
+            opts = opts.with_trace_route();
+        }
         self.send(&buf[..n], &opts).await
     }
 
