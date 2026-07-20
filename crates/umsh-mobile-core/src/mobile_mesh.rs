@@ -40,7 +40,7 @@ use umsh_text::validate::{DeliveryPath, Envelope};
 use crate::mobile_chat::{
     MobileChatArchiveLookupRecord, MobileChatArchiveResultKind, MobileChatCheckpointRecord,
     MobileChatComposeBatchRecord, MobileChatDeliveryRecord, MobileChatMutationRecord,
-    MobileChatState, transmission_peer,
+    MobileChatOriginalRef, MobileChatState, transmission_peer,
 };
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
@@ -142,10 +142,10 @@ enum WorkerCommand {
         checkpoints: Vec<MobileChatCheckpointRecord>,
         response: oneshot::Sender<()>,
     },
-    ComposeText {
+    ComposeChat {
         peer: PublicKey,
         client_token: u32,
-        body: String,
+        request: ChatComposeRequest,
         response: oneshot::Sender<Result<MobileChatComposeBatchRecord, MobileMeshError>>,
     },
     CommitChatBatch {
@@ -165,6 +165,19 @@ enum WorkerCommand {
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
     Shutdown,
+}
+
+enum ChatComposeRequest {
+    Text {
+        body: String,
+    },
+    Edit {
+        original: MobileChatOriginalRef,
+        body: String,
+    },
+    Delete {
+        original: MobileChatOriginalRef,
+    },
 }
 
 struct InboundFrame {
@@ -605,19 +618,43 @@ impl MobileMeshSession {
         client_token: u32,
         body: String,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
-        let (response, result) = oneshot::channel();
-        self.commands
-            .send(WorkerCommand::ComposeText {
-                peer,
-                client_token,
-                body,
-                response,
-            })
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-        result
+        self.compose_chat(&peer_address, client_token, ChatComposeRequest::Text { body })
             .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Compose an edit of a previously sent message. The original may come
+    /// from an earlier app launch: its persisted `(wire_id, epoch)` is used
+    /// when the facade session no longer holds a live handle, and the engine
+    /// rejects it (`ChatComposeFailed`) if stream continuity was lost since.
+    pub async fn compose_edit(
+        &self,
+        peer_address: String,
+        client_token: u32,
+        original: MobileChatOriginalRef,
+        body: String,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            &peer_address,
+            client_token,
+            ChatComposeRequest::Edit { original, body },
+        )
+        .await
+    }
+
+    /// Compose a deletion (empty edit on the wire) of a previously sent
+    /// message. Same original-reference rules as [`Self::compose_edit`].
+    pub async fn compose_delete(
+        &self,
+        peer_address: String,
+        client_token: u32,
+        original: MobileChatOriginalRef,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            &peer_address,
+            client_token,
+            ChatComposeRequest::Delete { original },
+        )
+        .await
     }
 
     pub async fn commit_chat_batch(&self, batch_id: u64) -> Result<(), MobileMeshError> {
@@ -749,6 +786,27 @@ impl MobileMeshSession {
 }
 
 impl MobileMeshSession {
+    async fn compose_chat(
+        &self,
+        peer_address: &str,
+        client_token: u32,
+        request: ChatComposeRequest,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        let peer = decode_peer(peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::ComposeChat {
+                peer,
+                client_token,
+                request,
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
     /// Construct a session whose worker runtime starts with tokio's clock
     /// paused (test builds only). Timers auto-advance whenever the worker is
     /// otherwise idle, so multi-second protocol deadlines — MAC ACK
@@ -1017,22 +1075,28 @@ async fn run_worker(
                             chat.restore(&checkpoints, handle.now_ms().await);
                             let _ = response.send(());
                         }
-                        Some(WorkerCommand::ComposeText {
+                        Some(WorkerCommand::ComposeChat {
                             peer,
                             client_token,
-                            body,
+                            request,
                             response,
                         }) => {
                             // Rejecting a persisted batch rebuilds the reducer from
                             // durable checkpoints. Keep that recovery operation
                             // unambiguous by allowing only one uncommitted compose.
                             let result = if chat.pending_batches.is_empty() {
-                                match chat.compose_text(
-                                    peer,
-                                    client_token,
-                                    &body,
-                                    handle.now_ms().await,
-                                ) {
+                                let now_ms = handle.now_ms().await;
+                                let composed = match &request {
+                                    ChatComposeRequest::Text { body } => {
+                                        chat.compose_text(peer, client_token, body, now_ms)
+                                    }
+                                    ChatComposeRequest::Edit { original, body } => chat
+                                        .compose_edit(peer, client_token, original, body, now_ms),
+                                    ChatComposeRequest::Delete { original } => {
+                                        chat.compose_delete(peer, client_token, original, now_ms)
+                                    }
+                                };
+                                match composed {
                                     Ok(composed) => {
                                         for delivery in composed.deliveries {
                                             let _ = chat_events.send(

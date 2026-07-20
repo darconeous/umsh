@@ -34,6 +34,7 @@ pub use mobile_chat::{
     MobileChatArchiveLookupRecord, MobileChatArchiveRecord, MobileChatArchiveResultKind,
     MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
     MobileChatDeliveryState, MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord,
+    MobileChatOriginalRef,
 };
 pub use mobile_mesh::{
     MobileMeshError, MobileMeshOutboundFrameRecord, MobileMeshPingEventRecord,

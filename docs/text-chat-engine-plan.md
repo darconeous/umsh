@@ -92,13 +92,16 @@ real messages. Its current boundary and follow-ups are explicit:
 - The facade accepts only `ConversationKey::Direct`. Channel and room
   destinations are not silently reimplemented in Swift; exporting those
   profiles belongs with their later mobile integration.
-- Engine handles and inbound reference maps are process-local. After an app
-  restart, an edit/delete whose wire reference resolves only to an older
-  SQLite row is currently retained by the engine as `ResolvedRef::Unresolved`
-  but cannot yet be applied by the mobile facade. The platform adapter must
-  export the unresolved wire reference and resolve it against persisted
-  `(wire_id, epoch)` aliases; until then such an edit/delete is omitted rather
-  than guessed.
+- Wire references survive restarts (2026-07-20). Outbound: `ComposeRef::Wire
+  { message_id, epoch }` lets a restored stream edit/delete a persisted
+  original; the engine rejects it (`UnknownOriginal`) when the epoch moved or
+  continuity was lost, so a dangling edit is never transmitted. Inbound and
+  outbound edit/delete mutations now carry their conversation, and the mobile
+  facade exports unresolved references as `(peer_address, original_wire_id,
+  original_direction)`; the iOS store resolves them against persisted rows,
+  newest `(epoch, created_at)` first, matching serial-ID recycling. Room
+  (`RoomCanonical`/claimed-member) references remain out of the direct-message
+  facade's scope.
 - The optional persisted-checkpoint compose hint is still pending coordination
   with the engine API. Without it, conversations beyond the 8 active + 24 cold
   continuity bound safely announce a Sequence Reset instead of continuing the
