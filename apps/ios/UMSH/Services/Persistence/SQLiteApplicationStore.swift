@@ -44,6 +44,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// after the facade session that composed it is gone.
     let wireID: UInt8?
     let epoch: UInt16?
+    let isEdited: Bool
 }
 
 /// Phase 0 direct-SQLite prototype.
@@ -51,7 +52,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 4
+    static let currentSchemaVersion: Int32 = 5
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -350,6 +351,61 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// Remove a conversation and its local history. Outbound stream
+    /// checkpoints are deliberately retained: sequence continuity with the
+    /// peer must survive the transcript, or the next message would announce
+    /// a Sequence Reset. Archived outbound payloads go with the history, so
+    /// a late resend request for them is answered Unavailable — the protocol
+    /// handles that; keeping deleted content on disk would not be acceptable.
+    func deleteDirectConversation(ownerIdentityID: String, conversationID: Int64) throws {
+        try transaction {
+            let peerSelect = """
+                SELECT n.public_address FROM direct_conversation c
+                JOIN node n ON n.id = c.node_id
+                WHERE c.id = ? AND c.owner_identity_id = ?
+                """
+            let peer = try prepare(peerSelect)
+            defer { sqlite3_finalize(peer) }
+            try check(sqlite3_bind_int64(peer, 1, conversationID))
+            try bind(ownerIdentityID, to: peer, at: 2)
+            guard sqlite3_step(peer) == SQLITE_ROW else { return }
+            let peerAddress = Self.stringColumn(peer, at: 0)
+
+            let fragments = try prepare(
+                """
+                DELETE FROM chat_delivery_fragment
+                WHERE owner_identity_id = ? AND (session_id, handle) IN (
+                    SELECT session_id, handle FROM chat_message
+                    WHERE owner_identity_id = ? AND peer_address = ?
+                )
+                """
+            )
+            defer { sqlite3_finalize(fragments) }
+            try bind(ownerIdentityID, to: fragments, at: 1)
+            try bind(ownerIdentityID, to: fragments, at: 2)
+            try bind(peerAddress, to: fragments, at: 3)
+            try stepDone(fragments)
+
+            for table in ["chat_message", "chat_outbound_archive"] {
+                let statement = try prepare(
+                    "DELETE FROM \(table) WHERE owner_identity_id = ? AND peer_address = ?"
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind(ownerIdentityID, to: statement, at: 1)
+                try bind(peerAddress, to: statement, at: 2)
+                try stepDone(statement)
+            }
+
+            let conversation = try prepare(
+                "DELETE FROM direct_conversation WHERE id = ? AND owner_identity_id = ?"
+            )
+            defer { sqlite3_finalize(conversation) }
+            try check(sqlite3_bind_int64(conversation, 1, conversationID))
+            try bind(ownerIdentityID, to: conversation, at: 2)
+            try stepDone(conversation)
+        }
+    }
+
     func updateDraft(ownerIdentityID: String, conversationID: Int64, text: String) throws {
         let statement = try prepare(
             "UPDATE direct_conversation SET draft_text = ? WHERE id = ? AND owner_identity_id = ?"
@@ -558,7 +614,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
-                   wire_id, epoch
+                   wire_id, epoch, edited
             FROM chat_message
             WHERE owner_identity_id = ? AND peer_address = ?
             ORDER BY created_at_ms ASC, rowid ASC
@@ -583,7 +639,8 @@ actor SQLiteApplicationStore {
                         wireID: sqlite3_column_type(statement, 7) == SQLITE_NULL
                             ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
                         epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
-                            ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8))
+                            ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8)),
+                        isEdited: sqlite3_column_int(statement, 9) != 0
                     )
                 )
             case SQLITE_DONE: return messages
@@ -831,19 +888,22 @@ actor SQLiteApplicationStore {
         case .edit, .delete:
             let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
             let deleted: Int32 = mutation.kind == .delete ? 1 : 0
+            let markEdited: Int32 = mutation.kind == .edit ? 1 : 0
             if let original = mutation.originalHandle {
                 let statement = try prepare(
                     """
-                    UPDATE chat_message SET body = ?, deleted = ?
+                    UPDATE chat_message SET body = ?, deleted = ?,
+                        edited = MAX(edited, ?)
                     WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                     """
                 )
                 defer { sqlite3_finalize(statement) }
                 try bind(body, to: statement, at: 1)
                 try check(sqlite3_bind_int(statement, 2, deleted))
-                try bind(ownerIdentityID, to: statement, at: 3)
-                try bind(sessionID, to: statement, at: 4)
-                try check(sqlite3_bind_int64(statement, 5, Int64(original)))
+                try check(sqlite3_bind_int(statement, 3, markEdited))
+                try bind(ownerIdentityID, to: statement, at: 4)
+                try bind(sessionID, to: statement, at: 5)
+                try check(sqlite3_bind_int64(statement, 6, Int64(original)))
                 try stepDone(statement)
             } else if let wireID = mutation.originalWireId,
                       let direction = mutation.originalDirection,
@@ -854,7 +914,8 @@ actor SQLiteApplicationStore {
                 // epoch/row with that ID is the one still referenceable.
                 let statement = try prepare(
                     """
-                    UPDATE chat_message SET body = ?, deleted = ?
+                    UPDATE chat_message SET body = ?, deleted = ?,
+                        edited = MAX(edited, ?)
                     WHERE rowid = (
                         SELECT rowid FROM chat_message
                         WHERE owner_identity_id = ? AND peer_address = ?
@@ -867,10 +928,11 @@ actor SQLiteApplicationStore {
                 defer { sqlite3_finalize(statement) }
                 try bind(body, to: statement, at: 1)
                 try check(sqlite3_bind_int(statement, 2, deleted))
-                try bind(ownerIdentityID, to: statement, at: 3)
-                try bind(peerAddress, to: statement, at: 4)
-                try check(sqlite3_bind_int(statement, 5, direction == .outbound ? 1 : 0))
-                try check(sqlite3_bind_int(statement, 6, Int32(wireID)))
+                try check(sqlite3_bind_int(statement, 3, markEdited))
+                try bind(ownerIdentityID, to: statement, at: 4)
+                try bind(peerAddress, to: statement, at: 5)
+                try check(sqlite3_bind_int(statement, 6, direction == .outbound ? 1 : 0))
+                try check(sqlite3_bind_int(statement, 7, Int32(wireID)))
                 try stepDone(statement)
             }
         }
@@ -1138,6 +1200,23 @@ actor SQLiteApplicationStore {
                     );
 
                     PRAGMA user_version = 4;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 5 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;
+                    PRAGMA user_version = 5;
                     """
                 )
                 try execute(database, sql: "COMMIT")
