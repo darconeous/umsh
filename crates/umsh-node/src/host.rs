@@ -208,23 +208,24 @@ impl<M: MacBackend> Host<M> {
     /// even when the remote peer sends no response at all.
     pub async fn service_protocol_timeouts(&mut self) {
         let now_ms = self.mac.now_ms().await;
+        service_node_timeouts(&self.nodes, now_ms).await;
+    }
 
-        #[cfg(feature = "software-crypto")]
-        for (_, node) in &self.nodes {
-            if let Ok(expired) = node.expire_pfs_sessions().await {
-                for peer in expired {
-                    node.dispatch_pfs_ended(peer);
-                }
-            }
-            // Abandon sent PFS requests that were never answered, so the
-            // requester reports a timeout instead of sitting in `Requested`.
-            for peer in node.expire_pfs_requests(now_ms) {
-                node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
-            }
-        }
-
-        for (_, node) in &self.nodes {
-            node.expire_pings(now_ms);
+    /// Detach an owned handle that services the same node-layer deadlines as
+    /// [`service_protocol_timeouts`](Self::service_protocol_timeouts).
+    ///
+    /// Use this when the host pump runs as its own long-lived future (so the
+    /// `Host` is exclusively borrowed) and a sibling timer task must still
+    /// fire ping/PFS timeouts — e.g. while the pump is parked awaiting a slow
+    /// physical transmit. The handle snapshots the current node set; nodes
+    /// added afterwards are not covered by it.
+    pub fn protocol_timeout_servicer(&self) -> ProtocolTimeoutServicer<M>
+    where
+        M: Clone,
+    {
+        ProtocolTimeoutServicer {
+            mac: self.mac.clone(),
+            nodes: self.nodes.clone(),
         }
     }
 
@@ -261,6 +262,44 @@ impl<M: MacBackend> Host<M> {
             // Surface it so applications can report the failure.
             Err(err) => node.dispatch_pfs_failed(from, err.pfs_failure()),
         }
+    }
+}
+
+/// Owned deadline-service handle detached from a [`Host`]; see
+/// [`Host::protocol_timeout_servicer`].
+pub struct ProtocolTimeoutServicer<M: MacBackend> {
+    mac: M,
+    nodes: Vec<(LocalIdentityId, LocalNode<M>)>,
+}
+
+impl<M: MacBackend> ProtocolTimeoutServicer<M> {
+    /// Fire any elapsed ping and PFS deadlines on the snapshot's nodes.
+    pub async fn service(&self) {
+        let now_ms = self.mac.now_ms().await;
+        service_node_timeouts(&self.nodes, now_ms).await;
+    }
+}
+
+async fn service_node_timeouts<M: MacBackend>(
+    nodes: &[(LocalIdentityId, LocalNode<M>)],
+    now_ms: u64,
+) {
+    #[cfg(feature = "software-crypto")]
+    for (_, node) in nodes {
+        if let Ok(expired) = node.expire_pfs_sessions().await {
+            for peer in expired {
+                node.dispatch_pfs_ended(peer);
+            }
+        }
+        // Abandon sent PFS requests that were never answered, so the
+        // requester reports a timeout instead of sitting in `Requested`.
+        for peer in node.expire_pfs_requests(now_ms) {
+            node.dispatch_pfs_failed(peer, crate::node::PfsFailure::Timeout);
+        }
+    }
+
+    for (_, node) in nodes {
+        node.expire_pings(now_ms);
     }
 }
 
