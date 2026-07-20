@@ -460,7 +460,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1431,6 +1437,8 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
+    func clearWakeListener()
+
     func commitChatBatch(batchId: UInt64) async throws
 
     /**
@@ -1475,6 +1483,13 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord]) async throws
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
+
+    /**
+     * Register (or replace) the listener that is told when this session
+     * has new data for `poll_update`. If data is already pending, the
+     * listener fires immediately.
+     */
+    func setWakeListener(listener: MobileMeshWakeListener)
 
     /**
      * Build and sign this phone's node-identity bundle without transmitting
@@ -1597,6 +1612,14 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
         FfiConverterUInt32.lower(requestId),
         FfiConverterTypeMobileChatArchiveResultKind_lower(kind),
         FfiConverterData.lower(payload),uniffiCallStatus
+    )
+}
+}
+
+open func clearWakeListener()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_clear_wake_listener(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
 }
@@ -1782,6 +1805,20 @@ open func restoreChat(checkpoints: [MobileChatCheckpointRecord])async throws   {
 }
 
     /**
+     * Register (or replace) the listener that is told when this session
+     * has new data for `poll_update`. If data is already pending, the
+     * listener fires immediately.
+     */
+open func setWakeListener(listener: MobileMeshWakeListener)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_wake_listener(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMeshWakeListener_lower(listener),uniffiCallStatus
+    )
+}
+}
+
+    /**
      * Build and sign this phone's node-identity bundle without transmitting
      * it, for embedding in the shareable `umsh:n:` URI and QR code.
      */
@@ -1844,6 +1881,217 @@ public func FfiConverterTypeMobileMeshSession_lift(_ handle: UInt64) throws -> M
 #endif
 public func FfiConverterTypeMobileMeshSession_lower(_ value: MobileMeshSession) -> UInt64 {
     return FfiConverterTypeMobileMeshSession.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Platform-side listener invoked when `poll_update` has new data waiting.
+ *
+ * Called on the worker thread; implementations must only schedule a drain
+ * on their own executor and return. Notifications are coalesced: at most
+ * one call fires per pending-to-drained cycle, so a burst of protocol
+ * activity costs one crossing, and the platform needs no polling cadence.
+ */
+public protocol MobileMeshWakeListener: AnyObject, Sendable {
+
+    func onUpdatePending()
+
+}
+/**
+ * Platform-side listener invoked when `poll_update` has new data waiting.
+ *
+ * Called on the worker thread; implementations must only schedule a drain
+ * on their own executor and return. Notifications are coalesced: at most
+ * one call fires per pending-to-drained cycle, so a burst of protocol
+ * activity costs one crossing, and the platform needs no polling cadence.
+ */
+open class MobileMeshWakeListenerImpl: MobileMeshWakeListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilemeshwakelistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilemeshwakelistener(handle, $0) }
+    }
+
+
+
+
+open func onUpdatePending()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshwakelistener_on_update_pending(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceMobileMeshWakeListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceMobileMeshWakeListener = UniffiVTableCallbackInterfaceMobileMeshWakeListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeMobileMeshWakeListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface MobileMeshWakeListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeMobileMeshWakeListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface MobileMeshWakeListener: handle missing in uniffiClone")
+            }
+        },
+        onUpdatePending: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeMobileMeshWakeListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onUpdatePending(
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceMobileMeshWakeListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceMobileMeshWakeListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitMobileMeshWakeListener() {
+    uniffi_umsh_mobile_core_fn_init_callback_vtable_mobilemeshwakelistener(UniffiCallbackInterfaceMobileMeshWakeListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshWakeListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<MobileMeshWakeListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMeshWakeListener
+
+    public static func lift(_ handle: UInt64) throws -> MobileMeshWakeListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return MobileMeshWakeListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: MobileMeshWakeListener) -> UInt64 {
+         if let rustImpl = value as? MobileMeshWakeListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshWakeListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMeshWakeListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshWakeListener_lift(_ handle: UInt64) throws -> MobileMeshWakeListener {
+    return try FfiConverterTypeMobileMeshWakeListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshWakeListener_lower(_ value: MobileMeshWakeListener) -> UInt64 {
+    return FfiConverterTypeMobileMeshWakeListener.lower(value)
 }
 
 
@@ -6091,6 +6339,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_wake_listener() != 53225) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_commit_chat_batch() != 61370) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6127,7 +6378,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_wake_listener() != 44475) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_sign_identity_bundle() != 23222) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshwakelistener_on_update_pending() != 41919) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
@@ -6146,6 +6403,7 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitMobileMeshWakeListener()
     return InitializationResult.ok
 }()
 
