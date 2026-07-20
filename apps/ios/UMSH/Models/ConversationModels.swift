@@ -57,11 +57,30 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let isOutbound: Bool
     let deliveryState: String?
     let isDeleted: Bool
+    /// Facade session that recorded the message plus its engine handle;
+    /// paired with the durable wire identity below they let the Rust engine
+    /// target this message for an edit/delete even after an app restart.
+    let sessionID: String
+    let handle: UInt32
+    let wireID: UInt8?
+    let epoch: UInt16?
 }
 
 enum MessageSendResult: Sendable {
     case sent(DirectConversationSummary)
     case failed(String)
+}
+
+/// Message-level operations on an open transcript. Bundled so intermediate
+/// views do not grow a parameter per operation.
+struct ChatMessageActions: Sendable {
+    let edit: @Sendable (DirectConversationSummary, ChatMessageSummary, String) async -> MessageSendResult
+    let delete: @Sendable (DirectConversationSummary, ChatMessageSummary) async -> MessageSendResult
+
+    static let unavailable = ChatMessageActions(
+        edit: { _, _, _ in .failed("Messaging is unavailable.") },
+        delete: { _, _ in .failed("Messaging is unavailable.") }
+    )
 }
 
 struct PeerPingReply: Equatable, Sendable {

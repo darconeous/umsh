@@ -40,6 +40,10 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let deliveryState: String?
     let isDeleted: Bool
     let createdAtMilliseconds: Int64
+    /// Durable wire identity for referencing this message (edit/delete)
+    /// after the facade session that composed it is gone.
+    let wireID: UInt8?
+    let epoch: UInt16?
 }
 
 /// Phase 0 direct-SQLite prototype.
@@ -553,7 +557,8 @@ actor SQLiteApplicationStore {
     func chatMessages(ownerIdentityID: String, peerAddress: String) throws -> [StoredChatMessage] {
         let statement = try prepare(
             """
-            SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms
+            SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
+                   wire_id, epoch
             FROM chat_message
             WHERE owner_identity_id = ? AND peer_address = ?
             ORDER BY created_at_ms ASC, rowid ASC
@@ -574,7 +579,11 @@ actor SQLiteApplicationStore {
                         outbound: sqlite3_column_int(statement, 3) == 1,
                         deliveryState: Self.optionalStringColumn(statement, at: 4),
                         isDeleted: sqlite3_column_int(statement, 5) != 0,
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 6)
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 6),
+                        wireID: sqlite3_column_type(statement, 7) == SQLITE_NULL
+                            ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
+                        epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
+                            ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8))
                     )
                 )
             case SQLITE_DONE: return messages
@@ -820,20 +829,50 @@ actor SQLiteApplicationStore {
             try check(sqlite3_bind_int64(statement, 8, Int64(mutation.handle)))
             try stepDone(statement)
         case .edit, .delete:
-            guard let original = mutation.originalHandle else { return }
-            let statement = try prepare(
-                """
-                UPDATE chat_message SET body = ?, deleted = ?
-                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
-                """
-            )
-            defer { sqlite3_finalize(statement) }
-            try bind(mutation.kind == .delete ? "" : (mutation.body ?? ""), to: statement, at: 1)
-            try check(sqlite3_bind_int(statement, 2, mutation.kind == .delete ? 1 : 0))
-            try bind(ownerIdentityID, to: statement, at: 3)
-            try bind(sessionID, to: statement, at: 4)
-            try check(sqlite3_bind_int64(statement, 5, Int64(original)))
-            try stepDone(statement)
+            let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
+            let deleted: Int32 = mutation.kind == .delete ? 1 : 0
+            if let original = mutation.originalHandle {
+                let statement = try prepare(
+                    """
+                    UPDATE chat_message SET body = ?, deleted = ?
+                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    """
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind(body, to: statement, at: 1)
+                try check(sqlite3_bind_int(statement, 2, deleted))
+                try bind(ownerIdentityID, to: statement, at: 3)
+                try bind(sessionID, to: statement, at: 4)
+                try check(sqlite3_bind_int64(statement, 5, Int64(original)))
+                try stepDone(statement)
+            } else if let wireID = mutation.originalWireId,
+                      let direction = mutation.originalDirection,
+                      let peerAddress = mutation.peerAddress {
+                // The original predates the current facade session, so the
+                // engine exported its wire reference instead of a handle.
+                // Wire IDs recycle serially within a stream; the newest
+                // epoch/row with that ID is the one still referenceable.
+                let statement = try prepare(
+                    """
+                    UPDATE chat_message SET body = ?, deleted = ?
+                    WHERE rowid = (
+                        SELECT rowid FROM chat_message
+                        WHERE owner_identity_id = ? AND peer_address = ?
+                            AND direction = ? AND wire_id = ?
+                        ORDER BY epoch DESC, created_at_ms DESC, rowid DESC
+                        LIMIT 1
+                    )
+                    """
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind(body, to: statement, at: 1)
+                try check(sqlite3_bind_int(statement, 2, deleted))
+                try bind(ownerIdentityID, to: statement, at: 3)
+                try bind(peerAddress, to: statement, at: 4)
+                try check(sqlite3_bind_int(statement, 5, direction == .outbound ? 1 : 0))
+                try check(sqlite3_bind_int(statement, 6, Int32(wireID)))
+                try stepDone(statement)
+            }
         }
     }
 

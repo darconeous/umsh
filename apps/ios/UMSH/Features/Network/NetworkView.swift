@@ -10,6 +10,7 @@ struct NetworkView: View {
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
+    var messageActions: ChatMessageActions = .unavailable
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
@@ -102,6 +103,7 @@ struct NetworkView: View {
                 startConversation: startConversation,
                 updateDraft: updateDraft,
                 sendMessage: sendMessage,
+                messageActions: messageActions,
                 pingPeer: pingPeer
             )
         } label: {
@@ -127,6 +129,7 @@ struct PeerDetailView: View {
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
+    let messageActions: ChatMessageActions
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
 
     @State private var openedConversation: DirectConversationSummary?
@@ -144,6 +147,7 @@ struct PeerDetailView: View {
         startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil,
         updateDraft: ((Int64, String) async -> Void)? = nil,
         sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
+        messageActions: ChatMessageActions = .unavailable,
         pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil
     ) {
         self.peer = peer
@@ -152,6 +156,7 @@ struct PeerDetailView: View {
         self.startConversation = startConversation
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
+        self.messageActions = messageActions
         self.pingPeer = pingPeer
     }
 
@@ -238,7 +243,8 @@ struct PeerDetailView: View {
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft ?? { _, _ in },
-                    sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") }
+                    sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") },
+                    messageActions: messageActions
                 )
             }
         }

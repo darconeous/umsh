@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import UMSHMobileCore
 
 @MainActor
 struct AppRootView: View {
@@ -34,7 +35,8 @@ struct AppRootView: View {
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage
+                    sendMessage: sendMessage,
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -57,6 +59,7 @@ struct AppRootView: View {
                     startConversation: startConversation,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
                     pingPeer: pingPeer
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -249,6 +252,61 @@ struct AppRootView: View {
         _ conversation: DirectConversationSummary,
         _ body: String
     ) async -> MessageSendResult {
+        await performChatCompose(conversation, clearsDraft: true) { clientToken in
+            try await radioConnection.composeText(
+                peerAddress: conversation.peer.identity.canonicalAddress,
+                clientToken: clientToken,
+                body: body
+            )
+        }
+    }
+
+    private func editMessage(
+        _ conversation: DirectConversationSummary,
+        _ message: ChatMessageSummary,
+        _ newBody: String
+    ) async -> MessageSendResult {
+        await performChatCompose(conversation, clearsDraft: false) { clientToken in
+            try await radioConnection.composeEdit(
+                peerAddress: conversation.peer.identity.canonicalAddress,
+                clientToken: clientToken,
+                original: originalRef(message),
+                body: newBody
+            )
+        }
+    }
+
+    private func deleteMessage(
+        _ conversation: DirectConversationSummary,
+        _ message: ChatMessageSummary
+    ) async -> MessageSendResult {
+        await performChatCompose(conversation, clearsDraft: false) { clientToken in
+            try await radioConnection.composeDelete(
+                peerAddress: conversation.peer.identity.canonicalAddress,
+                clientToken: clientToken,
+                original: originalRef(message)
+            )
+        }
+    }
+
+    /// The engine accepts either the live handle (same facade session) or
+    /// the persisted wire identity (after an app restart); send both and let
+    /// Rust pick, so the transcript never has to care which run composed a
+    /// message.
+    private func originalRef(_ message: ChatMessageSummary) -> MobileChatOriginalRef {
+        MobileChatOriginalRef(
+            sessionId: UInt64(message.sessionID) ?? 0,
+            handle: message.handle,
+            wireId: message.wireID,
+            epoch: message.epoch
+        )
+    }
+
+    private func performChatCompose(
+        _ conversation: DirectConversationSummary,
+        clearsDraft: Bool,
+        compose: (UInt32) async throws -> MobileChatComposeBatchRecord
+    ) async -> MessageSendResult {
         guard let applicationStore, let localIdentity else {
             return .failed("The local identity or message database is unavailable.")
         }
@@ -256,11 +314,7 @@ struct AppRootView: View {
               radioSnapshot.hostState == .matchesCurrentIdentity
         else { return .failed("Connect a companion radio configured for this phone before sending.") }
         do {
-            let batch = try await radioConnection.composeText(
-                peerAddress: conversation.peer.identity.canonicalAddress,
-                clientToken: UInt32.random(in: 1...UInt32.max),
-                body: body
-            )
+            let batch = try await compose(UInt32.random(in: 1...UInt32.max))
             do {
                 try await applicationStore.commitChatComposeBatch(
                     ownerIdentityID: localIdentity.id,
@@ -293,11 +347,13 @@ struct AppRootView: View {
                 await reloadApplicationState()
                 return .failed("The message could not be queued for transmission: \(error)")
             }
-            try await applicationStore.updateDraft(
-                ownerIdentityID: localIdentity.id,
-                conversationID: conversation.id,
-                text: ""
-            )
+            if clearsDraft {
+                try await applicationStore.updateDraft(
+                    ownerIdentityID: localIdentity.id,
+                    conversationID: conversation.id,
+                    text: ""
+                )
+            }
             await reloadApplicationState()
             guard let updated = conversations.first(where: { $0.id == conversation.id }) else {
                 return .failed("The message was saved, but the conversation could not be refreshed.")
@@ -515,7 +571,11 @@ struct AppRootView: View {
                                 body: $0.body,
                                 isOutbound: $0.outbound,
                                 deliveryState: $0.deliveryState,
-                                isDeleted: $0.isDeleted
+                                isDeleted: $0.isDeleted,
+                                sessionID: $0.sessionID,
+                                handle: $0.handle,
+                                wireID: $0.wireID,
+                                epoch: $0.epoch
                             )
                         }
                     )

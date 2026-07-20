@@ -355,6 +355,34 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
     }
 
+    func composeEdit(
+        peerAddress: String,
+        clientToken: UInt32,
+        original: MobileChatOriginalRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeEdit(
+            peerAddress: peerAddress,
+            clientToken: clientToken,
+            original: original,
+            body: body
+        )
+    }
+
+    func composeDelete(
+        peerAddress: String,
+        clientToken: UInt32,
+        original: MobileChatOriginalRef
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeDelete(
+            peerAddress: peerAddress,
+            clientToken: clientToken,
+            original: original
+        )
+    }
+
     func commitChatBatch(_ batchID: UInt64) async throws {
         let session = try await currentMeshSession()
         try await session.commitChatBatch(batchId: batchID)

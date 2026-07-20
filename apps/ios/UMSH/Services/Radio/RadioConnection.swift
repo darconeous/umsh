@@ -24,6 +24,17 @@ protocol RadioConnection: AnyObject, Sendable {
         clientToken: UInt32,
         body: String
     ) async throws -> MobileChatComposeBatchRecord
+    func composeEdit(
+        peerAddress: String,
+        clientToken: UInt32,
+        original: MobileChatOriginalRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord
+    func composeDelete(
+        peerAddress: String,
+        clientToken: UInt32,
+        original: MobileChatOriginalRef
+    ) async throws -> MobileChatComposeBatchRecord
     func commitChatBatch(_ batchID: UInt64) async throws
     func rejectChatBatch(
         _ batchID: UInt64,
