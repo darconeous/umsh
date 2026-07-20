@@ -8,6 +8,7 @@ struct ConversationsView: View {
     let savePeer: (MeshPublicIdentity, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
+    var messageActions: ChatMessageActions = .unavailable
 
     @State private var showsImport = false
     @State private var openedConversation: DirectConversationSummary?
@@ -40,7 +41,8 @@ struct ConversationsView: View {
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage
+                    sendMessage: sendMessage,
+                    messageActions: messageActions
                 )
             }
         }
@@ -50,7 +52,8 @@ struct ConversationsView: View {
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage
+                    sendMessage: sendMessage,
+                    messageActions: messageActions
                 )
             }
         }
@@ -220,11 +223,15 @@ struct DirectConversationView: View {
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
+    let messageActions: ChatMessageActions
 
     @State private var draft: String
     @State private var showsPeerProfile = false
     @State private var showsBlockedReason = false
     @State private var sendFailureMessage: String?
+    @State private var editingMessage: ChatMessageSummary?
+    @State private var editDraft = ""
+    @State private var deletingMessage: ChatMessageSummary?
     @State private var followsLatestMessage = true
     @State private var userIsScrollingTranscript = false
     @State private var transcriptDistanceFromBottom: CGFloat = 0
@@ -234,12 +241,14 @@ struct DirectConversationView: View {
         conversation: Binding<DirectConversationSummary>,
         radioSnapshot: RadioSnapshot,
         updateDraft: @escaping (Int64, String) async -> Void,
-        sendMessage: @escaping (DirectConversationSummary, String) async -> MessageSendResult
+        sendMessage: @escaping (DirectConversationSummary, String) async -> MessageSendResult,
+        messageActions: ChatMessageActions = .unavailable
     ) {
         _conversation = conversation
         self.radioSnapshot = radioSnapshot
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
+        self.messageActions = messageActions
         _draft = State(initialValue: conversation.wrappedValue.draftText)
     }
 
@@ -257,8 +266,19 @@ struct DirectConversationView: View {
                     ScrollView {
                         LazyVStack(spacing: 10) {
                             ForEach(conversation.messages) { message in
-                                ChatMessageBubble(message: message)
-                                    .id(message.id)
+                                ChatMessageBubble(
+                                    message: message,
+                                    onEdit: message.isOutbound && !message.isDeleted
+                                        ? {
+                                            editDraft = message.body
+                                            editingMessage = message
+                                        }
+                                        : nil,
+                                    onDelete: message.isOutbound && !message.isDeleted
+                                        ? { deletingMessage = message }
+                                        : nil
+                                )
+                                .id(message.id)
                             }
                             Color.clear
                                 .frame(height: 1)
@@ -404,6 +424,56 @@ struct DirectConversationView: View {
         } message: {
             Text((sendFailureMessage ?? blockedReason ?? "The message could not be queued.") + " Your draft has been preserved.")
         }
+        .sheet(item: $editingMessage) { message in
+            MessageEditSheet(
+                originalBody: message.body,
+                text: $editDraft,
+                save: { newBody in
+                    editingMessage = nil
+                    await edit(message, newBody: newBody)
+                },
+                cancel: { editingMessage = nil }
+            )
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: Binding(
+                get: { deletingMessage != nil },
+                set: { if !$0 { deletingMessage = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete for everyone", role: .destructive) {
+                if let message = deletingMessage {
+                    deletingMessage = nil
+                    Task { await delete(message) }
+                }
+            }
+        } message: {
+            Text("A deletion is broadcast to \(conversation.peer.displayName) and cannot be undone.")
+        }
+    }
+
+    private func edit(_ message: ChatMessageSummary, newBody: String) async {
+        let body = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, body != message.body else { return }
+        switch await messageActions.edit(conversation, message, body) {
+        case let .sent(updated):
+            conversation = updated
+        case let .failed(reason):
+            sendFailureMessage = reason
+            showsBlockedReason = true
+        }
+    }
+
+    private func delete(_ message: ChatMessageSummary) async {
+        switch await messageActions.delete(conversation, message) {
+        case let .sent(updated):
+            conversation = updated
+        case let .failed(reason):
+            sendFailureMessage = reason
+            showsBlockedReason = true
+        }
     }
 
     private func updateFollowState(distanceFromBottom: CGFloat, userDriven: Bool) {
@@ -535,8 +605,46 @@ private final class HardwareAwareTextView: UITextView {
     }
 }
 
+private struct MessageEditSheet: View {
+    let originalBody: String
+    @Binding var text: String
+    let save: (String) async -> Void
+    let cancel: () -> Void
+
+    @FocusState private var editorFocused: Bool
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            TextEditor(text: $text)
+                .focused($editorFocused)
+                .padding(8)
+                .navigationTitle("Edit Message")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { cancel() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            Task { await save(trimmed) }
+                        }
+                        .disabled(trimmed.isEmpty || trimmed == originalBody)
+                    }
+                }
+                .onAppear { editorFocused = true }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 private struct ChatMessageBubble: View {
     let message: ChatMessageSummary
+    var onEdit: (() -> Void)?
+    var onDelete: (() -> Void)?
 
     private var isFailed: Bool {
         message.deliveryState?.lowercased() == "failed"
@@ -587,6 +695,12 @@ private struct ChatMessageBubble: View {
                 Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = message.body
                 }
+            }
+            if let onEdit {
+                Button("Edit", systemImage: "pencil", action: onEdit)
+            }
+            if let onDelete {
+                Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
     }
