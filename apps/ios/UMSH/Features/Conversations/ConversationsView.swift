@@ -269,6 +269,7 @@ struct DirectConversationView: View {
     @State private var userIsScrollingTranscript = false
     @State private var transcriptDistanceFromBottom: CGFloat = 0
     @State private var outgoingScrollRequest = 0
+    @State private var scrollToBottomScheduled = false
 
     init(
         conversation: Binding<DirectConversationSummary>,
@@ -297,7 +298,13 @@ struct DirectConversationView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 10) {
+                        // A plain VStack, deliberately: LazyVStack re-measures
+                        // rows as they enter the viewport, and combined with
+                        // an animated scrollTo to a bottom anchor plus the
+                        // geometry observer below, oscillating row heights
+                        // can wedge the main thread in a layout loop (screen
+                        // renders but touches never deliver).
+                        VStack(spacing: 10) {
                             let lastOutboundID = conversation.messages.last(
                                 where: { $0.isOutbound && !$0.isDeleted }
                             )?.id
@@ -329,12 +336,14 @@ struct DirectConversationView: View {
                         // Initial presentation always opens at the newest
                         // message. Conditional auto-follow applies only after
                         // the reader has had a chance to scroll upward.
-                        DispatchQueue.main.async {
-                            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                        }
+                        scheduleScrollToBottom(proxy, animated: false)
                     }
                     .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        // Whole-point granularity: sub-pixel measurement
+                        // jitter must not feed a state-write → layout →
+                        // state-write feedback loop.
                         max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                            .rounded()
                     } action: { _, distance in
                         transcriptDistanceFromBottom = distance
                         updateFollowState(
@@ -359,21 +368,13 @@ struct DirectConversationView: View {
                         // Follow inserts as well as live body/delivery-state
                         // mutations. Deferring lets SwiftUI finish measuring
                         // the changed final bubble before targeting the edge.
-                        DispatchQueue.main.async {
-                            withAnimation {
-                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                            }
-                        }
+                        scheduleScrollToBottom(proxy)
                     }
                     .onChange(of: outgoingScrollRequest) { _, _ in
                         // Sending is an explicit navigation to the new item,
                         // unlike a passive update while reading older history.
                         followsLatestMessage = true
-                        DispatchQueue.main.async {
-                            withAnimation {
-                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                            }
-                        }
+                        scheduleScrollToBottom(proxy)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -510,6 +511,25 @@ struct DirectConversationView: View {
         case let .failed(reason):
             sendFailureMessage = reason
             showsBlockedReason = true
+        }
+    }
+
+    /// At most one scroll command per run-loop tick. After a send, both the
+    /// messages change and the explicit scroll request fire together; two
+    /// simultaneous animated scrollTo calls fight each other and churn
+    /// layout while the transcript is still settling.
+    private func scheduleScrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard !scrollToBottomScheduled else { return }
+        scrollToBottomScheduled = true
+        DispatchQueue.main.async {
+            scrollToBottomScheduled = false
+            if animated {
+                withAnimation {
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
         }
     }
 
@@ -796,12 +816,21 @@ private struct SelectableMessageText: UIViewRepresentable {
         uiView: BubbleTextView,
         context: Context
     ) -> CGSize? {
-        let width = proposal.width ?? .greatestFiniteMagnitude
+        var width = proposal.width ?? .greatestFiniteMagnitude
         guard width > 0 else { return nil }
+        if width.isFinite {
+            // Propose whole points. Fractional widths make UITextView's
+            // wrapping non-reproducible across layout passes, and any
+            // non-convergent answer here can wedge SwiftUI in a layout loop.
+            width = width.rounded(.down)
+        }
         let measured = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         )
-        return CGSize(width: min(measured.width, width), height: measured.height)
+        return CGSize(
+            width: min(measured.width.rounded(.up), width),
+            height: measured.height.rounded(.up)
+        )
     }
 }
 
