@@ -511,6 +511,25 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// Outbound messages still marked 'pending' at launch were composed by a
+    /// previous process. Their in-flight transmissions died with that process
+    /// and the replacement Rust session issues new session IDs, so no delivery
+    /// evidence can ever arrive for them. Resolve them to 'failed' instead of
+    /// promising a send that is no longer happening. Messages that reached
+    /// 'sent' keep that state: they went on the air and may well have arrived.
+    func failStalePendingMessages(ownerIdentityID: String) throws {
+        let statement = try prepare(
+            """
+            UPDATE chat_message SET delivery_state = 'failed'
+            WHERE owner_identity_id = ? AND direction = 1
+                AND delivery_state = 'pending'
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try stepDone(statement)
+    }
+
     func chatArchive(
         ownerIdentityID: String,
         lookup: MobileChatArchiveLookupRecord

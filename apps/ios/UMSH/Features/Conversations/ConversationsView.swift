@@ -222,6 +222,7 @@ struct DirectConversationView: View {
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
 
     @State private var draft: String
+    @State private var showsPeerProfile = false
     @State private var showsBlockedReason = false
     @State private var sendFailureMessage: String?
     @State private var followsLatestMessage = true
@@ -364,6 +365,40 @@ struct DirectConversationView: View {
         }
         .navigationTitle(conversation.peer.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // The avatar replaces the plain title, as in Messages; tapping it
+            // opens the peer's profile. The navigation title above still
+            // labels the back button and accessibility focus.
+            ToolbarItem(placement: .principal) {
+                Button {
+                    showsPeerProfile = true
+                } label: {
+                    VStack(spacing: 1) {
+                        PeerAvatar(hint: conversation.peer.identity.hint, diameter: 28)
+                        Text(conversation.peer.displayName)
+                            .font(.caption2)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(conversation.peer.displayName) profile")
+            }
+        }
+        .sheet(isPresented: $showsPeerProfile) {
+            NavigationStack {
+                PeerDetailView(
+                    peer: conversation.peer,
+                    radioSnapshot: .constant(radioSnapshot)
+                )
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showsPeerProfile = false }
+                    }
+                }
+            }
+        }
         .alert("Message not sent", isPresented: $showsBlockedReason) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -503,34 +538,119 @@ private final class HardwareAwareTextView: UITextView {
 private struct ChatMessageBubble: View {
     let message: ChatMessageSummary
 
+    private var isFailed: Bool {
+        message.deliveryState?.lowercased() == "failed"
+    }
+
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom) {
             if message.isOutbound { Spacer(minLength: 44) }
-            VStack(alignment: message.isOutbound ? .trailing : .leading, spacing: 3) {
-                Text(message.isDeleted ? "Message deleted" : message.body)
-                    .foregroundStyle(message.isDeleted ? .secondary : .primary)
-                    .italic(message.isDeleted)
-                    .textSelection(.enabled)
-                if message.isOutbound, let deliveryState = message.deliveryState {
-                    Text(deliveryLabel(deliveryState))
+            VStack(alignment: message.isOutbound ? .trailing : .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    bubble
+                    if isFailed {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("Message not delivered")
+                    }
+                }
+                if message.isOutbound, let label = deliveryLabel {
+                    Text(label)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .fontWeight(isFailed ? .semibold : .regular)
+                        .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .padding(.horizontal, 4)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(message.isOutbound ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.14))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
             if !message.isOutbound { Spacer(minLength: 44) }
         }
     }
 
-    private func deliveryLabel(_ state: String) -> String {
-        switch state.lowercased() {
+    private var bubble: some View {
+        Group {
+            if message.isDeleted {
+                Text("Message deleted")
+                    .foregroundStyle(.secondary)
+                    .italic()
+            } else {
+                SelectableMessageText(text: message.body)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(message.isOutbound ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
+        .contextMenu {
+            if !message.isDeleted {
+                Button("Copy", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = message.body
+                }
+            }
+        }
+    }
+
+    private var deliveryLabel: String? {
+        guard let state = message.deliveryState else { return nil }
+        return switch state.lowercased() {
         case "acknowledged": "Delivered"
         case "sent": "Sent"
-        case "failed": "Failed"
-        default: "Sending"
+        case "failed": "Not Delivered"
+        default: "Sending…"
         }
+    }
+}
+
+/// UITextView-backed message body: pointer-driven selection (mouse or
+/// trackpad drag, double-click for a word) works like any ordinary text,
+/// which SwiftUI's `.textSelection(.enabled)` does not provide inside a
+/// scroll view. Long presses are left to the bubble's context menu, as in
+/// Messages; touch users select through the menu or a double tap.
+private struct SelectableMessageText: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> BubbleTextView {
+        let view = BubbleTextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.dataDetectorTypes = .link
+        return view
+    }
+
+    func updateUIView(_ view: BubbleTextView, context: Context) {
+        if view.text != text {
+            view.text = text
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: BubbleTextView,
+        context: Context
+    ) -> CGSize? {
+        let width = proposal.width ?? .greatestFiniteMagnitude
+        guard width > 0 else { return nil }
+        let measured = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        return CGSize(width: min(measured.width, width), height: measured.height)
+    }
+}
+
+final class BubbleTextView: UITextView {
+    override func gestureRecognizerShouldBegin(
+        _ gestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        // Long press must fall through to the SwiftUI context menu on the
+        // bubble; only pointer and double-tap selection stay on the text.
+        if gestureRecognizer is UILongPressGestureRecognizer { return false }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 }

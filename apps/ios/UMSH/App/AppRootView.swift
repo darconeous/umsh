@@ -439,6 +439,11 @@ struct AppRootView: View {
                 id: localIdentity.id,
                 publicAddress: localIdentity.publicIdentity.canonicalAddress
             )
+            // Runs before any compose in this process, so every 'pending'
+            // outbound row is an orphan from a previous launch.
+            try await applicationStore.failStalePendingMessages(
+                ownerIdentityID: localIdentity.id
+            )
             await synchronizeRadioPeer(from: radioSnapshot)
             await reloadApplicationState()
         } catch {
