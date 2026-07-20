@@ -43,6 +43,10 @@ pub struct Slot {
     pub present: u16,
     /// Bitmap of fragments the sender reported unavailable.
     pub unavailable: u16,
+    /// Missing fragments whose automatic repair budget was exhausted. This
+    /// is separate from `unavailable`: the body remains pending until the
+    /// reassembly TTL, but the scheduler must not reset and retry forever.
+    pub repair_exhausted: u16,
     pub frag_len: [u8; FRAGMENT_COUNT_MAX as usize],
     frag_head: [u8; FRAGMENT_COUNT_MAX as usize],
     pub meta: FirstMeta,
@@ -54,6 +58,8 @@ pub struct Slot {
     pub deadline_ms: u64,
     /// Next time repair scheduling may consider this slot.
     pub repair_at_ms: u64,
+    /// When the newest fragment was stored; arrivals defer repair from here.
+    pub last_fragment_ms: u64,
 }
 
 impl Slot {
@@ -73,6 +79,13 @@ impl Slot {
         (0..self.count).filter(|index| {
             let bit = 1u16 << index;
             self.present & bit == 0 && self.unavailable & bit == 0
+        })
+    }
+
+    pub fn repairable_missing(&self) -> impl Iterator<Item = u8> + '_ {
+        self.missing().filter(|index| {
+            let bit = 1u16 << index;
+            self.repair_exhausted & bit == 0
         })
     }
 
@@ -290,6 +303,7 @@ pub fn empty_slot(
         count,
         present: 0,
         unavailable: 0,
+        repair_exhausted: 0,
         frag_len: [0; FRAGMENT_COUNT_MAX as usize],
         frag_head: [PAGE_NONE; FRAGMENT_COUNT_MAX as usize],
         meta: FirstMeta::default(),
@@ -299,6 +313,7 @@ pub fn empty_slot(
         created_ms: now_ms,
         deadline_ms: now_ms,
         repair_at_ms: now_ms,
+        last_fragment_ms: now_ms,
     }
 }
 
