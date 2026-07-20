@@ -31,14 +31,7 @@ actor RustMeshEngine: MeshEngine {
 
     func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview {
         do {
-            let record = try UMSHMobileCore.inspectNodeUri(uri: uri)
-            return MeshNodeURIPreview(
-                publicIdentity: MeshPublicIdentity(
-                    canonicalAddress: record.canonicalAddress,
-                    hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
-                ),
-                hasIdentityData: record.hasIdentityData
-            )
+            return Self.preview(from: try UMSHMobileCore.inspectNodeUri(uri: uri))
         } catch is MobileError {
             throw MeshEngineError.invalidAddress
         } catch {
@@ -48,19 +41,58 @@ actor RustMeshEngine: MeshEngine {
 
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
         do {
-            let record = try UMSHMobileCore.inspectPeerIdentity(input: input)
-            return MeshNodeURIPreview(
-                publicIdentity: MeshPublicIdentity(
-                    canonicalAddress: record.canonicalAddress,
-                    hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
-                ),
-                hasIdentityData: record.hasIdentityData
-            )
+            return Self.preview(from: try UMSHMobileCore.inspectPeerIdentity(input: input))
         } catch is MobileError {
             throw MeshEngineError.invalidAddress
         } catch {
             throw MeshEngineError.coreFailure
         }
+    }
+
+    func decodeNodeIdentity(address: String, payload: Data) throws -> MeshNodeIdentity {
+        do {
+            let record = try UMSHMobileCore.decodeNodeIdentity(address: address, payload: payload)
+            return Self.identity(from: record)
+        } catch MobileError.InvalidIdentityData {
+            throw MeshEngineError.invalidIdentityData
+        } catch is MobileError {
+            throw MeshEngineError.invalidAddress
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    private static func preview(from record: NodeUriPreviewRecord) -> MeshNodeURIPreview {
+        MeshNodeURIPreview(
+            publicIdentity: MeshPublicIdentity(
+                canonicalAddress: record.canonicalAddress,
+                hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
+            ),
+            hasIdentityData: record.hasIdentityData,
+            identity: record.identity.map(identity(from:)),
+            identityPayload: record.identityPayload
+        )
+    }
+
+    private static func identity(from record: NodeIdentityRecord) -> MeshNodeIdentity {
+        MeshNodeIdentity(
+            roleCode: record.roleCode,
+            roleLabel: record.roleLabel,
+            capabilities: record.capabilities,
+            name: record.name,
+            latitude: record.latitude,
+            longitude: record.longitude,
+            locationPrecision: record.locationPrecision,
+            altitudeMeters: record.altitudeM,
+            timestamp: record.timestamp,
+            signature: {
+                switch record.signature {
+                case .unsigned: .unsigned
+                case .valid: .valid
+                case .invalid: .invalid
+                }
+            }()
+        )
     }
 
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity {

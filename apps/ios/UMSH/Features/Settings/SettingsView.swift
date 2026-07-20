@@ -5,6 +5,10 @@ struct SettingsView: View {
     let identityError: IdentityVaultError?
     let isLoadingIdentity: Bool
     let createIdentity: () async -> Void
+    var advertisedName: String = ""
+    var saveAdvertisedName: (String) async -> Void = { _ in }
+    var advertiseIdentity: () async -> String? = { nil }
+    var identityShareURI: (() async -> String)? = nil
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
     let reconnectRadio: () async -> Void
@@ -18,7 +22,13 @@ struct SettingsView: View {
             Section("Identity") {
                 if let identity {
                     NavigationLink {
-                        IdentityDetailView(identity: identity)
+                        IdentityDetailView(
+                            identity: identity,
+                            advertisedName: advertisedName,
+                            saveAdvertisedName: saveAdvertisedName,
+                            advertiseIdentity: advertiseIdentity,
+                            identityShareURI: identityShareURI
+                        )
                     } label: {
                         HStack(spacing: 12) {
                             PeerAvatar(hint: identity.publicIdentity.hint)
@@ -76,6 +86,15 @@ struct SettingsView: View {
 
 struct IdentityDetailView: View {
     let identity: LocalIdentitySnapshot
+    var advertisedName: String = ""
+    var saveAdvertisedName: (String) async -> Void = { _ in }
+    var advertiseIdentity: () async -> String? = { nil }
+    var identityShareURI: (() async -> String)? = nil
+
+    @State private var shareURI = ""
+    @State private var nameDraft = ""
+    @State private var isAdvertising = false
+    @State private var advertiseFeedback: AdvertiseFeedback?
 
     var body: some View {
         List {
@@ -91,8 +110,39 @@ struct IdentityDetailView: View {
                 }
             }
 
-            Section("Identity") {
+            Section {
+                IdentityShareView(
+                    uri: shareURI.isEmpty ? identity.publicIdentity.nodeURI : shareURI
+                )
                 CanonicalAddressView(address: identity.publicIdentity.canonicalAddress)
+            } header: {
+                Text("Identity")
+            } footer: {
+                Text(shareURI.count > identity.publicIdentity.nodeURI.count
+                     ? "The QR code carries your public key plus your signed identity details."
+                     : "The QR code carries your public key. Connect the companion radio to include signed identity details.")
+            }
+
+            Section {
+                TextField("Name (optional)", text: $nameDraft)
+                    .textInputAutocapitalization(.words)
+                    .onSubmit { Task { await commitName() } }
+                Button {
+                    Task { await advertise() }
+                } label: {
+                    Label(isAdvertising ? "Advertising…" : "Advertise Identity",
+                          systemImage: "dot.radiowaves.left.and.right")
+                }
+                .disabled(isAdvertising)
+                if let advertiseFeedback {
+                    Label(advertiseFeedback.message, systemImage: advertiseFeedback.symbol)
+                        .font(.caption)
+                        .foregroundStyle(advertiseFeedback.isSuccess ? .green : .red)
+                }
+            } header: {
+                Text("Advertised identity")
+            } footer: {
+                Text("Advertising broadcasts your public key, name, and capabilities to every nearby node, signed by your identity.")
             }
 
             Section("Storage") {
@@ -103,6 +153,47 @@ struct IdentityDetailView: View {
             }
         }
         .navigationTitle("Your identity")
+        .task {
+            nameDraft = advertisedName
+            await refreshShareURI()
+        }
+    }
+
+    private func commitName() async {
+        await saveAdvertisedName(nameDraft)
+        await refreshShareURI()
+    }
+
+    private func advertise() async {
+        guard !isAdvertising else { return }
+        isAdvertising = true
+        defer { isAdvertising = false }
+        // Any pending name edit rides along with the advertisement.
+        await saveAdvertisedName(nameDraft)
+        if let message = await advertiseIdentity() {
+            advertiseFeedback = AdvertiseFeedback(message: message, isSuccess: false)
+        } else {
+            advertiseFeedback = AdvertiseFeedback(
+                message: "Advertisement broadcast",
+                isSuccess: true
+            )
+            await refreshShareURI()
+        }
+    }
+
+    private func refreshShareURI() async {
+        if let identityShareURI {
+            shareURI = await identityShareURI()
+        }
+    }
+}
+
+private struct AdvertiseFeedback {
+    let message: String
+    let isSuccess: Bool
+
+    var symbol: String {
+        isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
     }
 }
 

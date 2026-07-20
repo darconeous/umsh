@@ -13,6 +13,9 @@ struct AppRootView: View {
     @State private var isLoadingIdentity = true
     @State private var peers: [PeerSummary] = []
     @State private var conversations: [DirectConversationSummary] = []
+    @State private var openedConversation: DirectConversationSummary?
+    @State private var incomingPeerImport: IncomingPeerImport?
+    @State private var advertisedName = ""
 
     private let meshEngine: RustMeshEngine
     private let identityVault: KeychainIdentityVault
@@ -37,7 +40,9 @@ struct AppRootView: View {
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
-                    deleteConversation: deleteConversation
+                    deleteConversation: deleteConversation,
+                    updateAlias: updateAlias,
+                    openedConversation: $openedConversation
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -54,14 +59,15 @@ struct AppRootView: View {
                     conversations: $conversations,
                     peers: peers,
                     inspectPeerIdentity: inspectPeerIdentity,
-                    savePeer: { identity, details in
-                        _ = await savePeer(identity, details: details, startConversation: false)
+                    savePeer: { preview, details in
+                        _ = await savePeer(preview, details: details, startConversation: false)
                     },
                     startConversation: startConversation,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
-                    pingPeer: pingPeer
+                    pingPeer: pingPeer,
+                    updateAlias: updateAlias
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -78,6 +84,10 @@ struct AppRootView: View {
                     identityError: identityError,
                     isLoadingIdentity: isLoadingIdentity,
                     createIdentity: createIdentity,
+                    advertisedName: advertisedName,
+                    saveAdvertisedName: saveAdvertisedName,
+                    advertiseIdentity: advertiseIdentity,
+                    identityShareURI: identityShareURI,
                     radioSnapshot: $radioSnapshot,
                     connectRadio: connectRadio,
                     reconnectRadio: reconnectRadio,
@@ -94,6 +104,30 @@ struct AppRootView: View {
                 Label("Settings", systemImage: "gearshape")
             }
             .tag(AppTab.settings)
+        }
+        .onOpenURL { url in
+            guard url.scheme?.lowercased() == "umsh" else { return }
+            incomingPeerImport = IncomingPeerImport(uri: url.absoluteString)
+        }
+        .sheet(item: $incomingPeerImport) { item in
+            NavigationStack {
+                NodeImportView(
+                    inspectPeerIdentity: inspectPeerIdentity,
+                    save: { preview, details, startConversation in
+                        let conversation = await savePeer(
+                            preview,
+                            details: details,
+                            startConversation: startConversation
+                        )
+                        incomingPeerImport = nil
+                        if startConversation, let conversation {
+                            selectedTab = .conversations
+                            openedConversation = conversation
+                        }
+                    },
+                    initialInput: item.uri
+                )
+            }
         }
         .sheet(isPresented: $showsRadioDetail) {
             NavigationStack {
@@ -122,6 +156,37 @@ struct AppRootView: View {
                 await applyChatUpdate(update)
             }
         }
+        .task {
+            for await advertisement in await radioConnection.advertisementEvents() {
+                await applyReceivedAdvertisement(advertisement)
+            }
+        }
+    }
+
+    /// Persist an over-the-air advertisement. A broadcast frame is
+    /// unauthenticated at the MAC layer, so only bundles whose embedded
+    /// signature verifies against the claimed sender key are stored;
+    /// anything else could be spoofed by any nearby transmitter.
+    @MainActor
+    private func applyReceivedAdvertisement(_ advertisement: RadioAdvertisementEvent) async {
+        guard let applicationStore, let localIdentity else { return }
+        guard let identity = try? await meshEngine.decodeNodeIdentity(
+            address: advertisement.peerAddress,
+            payload: advertisement.payload
+        ), identity.signature == .valid else { return }
+        do {
+            try await applicationStore.upsertPeer(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: advertisement.peerAddress,
+                alias: nil,
+                advertisedName: identity.name,
+                isContact: false,
+                advertisement: advertisement.payload
+            )
+            await reloadApplicationState()
+        } catch {
+            Self.logger.error("Failed to persist received advertisement")
+        }
     }
 
     @MainActor
@@ -134,6 +199,7 @@ struct AppRootView: View {
             try await installMeshSession()
             await prepareApplicationState()
             await prepareChatState()
+            await loadAdvertisedName()
             if localIdentity != nil {
                 await radioConnection.autoConnect()
             }
@@ -155,12 +221,58 @@ struct AppRootView: View {
             try await installMeshSession()
             await prepareApplicationState()
             await prepareChatState()
+            await loadAdvertisedName()
             identityError = nil
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
             identityError = .keychainFailure
         }
+    }
+
+    @MainActor
+    private func loadAdvertisedName() async {
+        guard let applicationStore, let localIdentity else { return }
+        advertisedName = (try? await applicationStore.localAdvertisedName(
+            ownerIdentityID: localIdentity.id
+        ).flatMap { $0 }) ?? ""
+    }
+
+    private func saveAdvertisedName(_ name: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? await applicationStore.updateLocalAdvertisedName(
+            ownerIdentityID: localIdentity.id,
+            name: trimmed.isEmpty ? nil : trimmed
+        )
+        advertisedName = trimmed
+    }
+
+    /// Broadcast a signed identity advertisement. Returns a user-facing
+    /// failure message, or nil on success.
+    private func advertiseIdentity() async -> String? {
+        do {
+            let name = advertisedName.isEmpty ? nil : advertisedName
+            try await radioConnection.advertiseIdentity(name: name)
+            return nil
+        } catch {
+            return "The advertisement could not be sent. Check that the companion radio is connected."
+        }
+    }
+
+    /// The shareable identity URI: bundle-bearing (name, role, capabilities,
+    /// signed) when the mesh session can sign, bare public key otherwise.
+    private func identityShareURI() async -> String {
+        guard let localIdentity else { return "" }
+        let bare = localIdentity.publicIdentity.nodeURI
+        let name = advertisedName.isEmpty ? nil : advertisedName
+        guard let bundle = try? await radioConnection.signIdentityBundle(name: name),
+              let uri = try? nodeUriWithIdentity(
+                  address: localIdentity.publicIdentity.canonicalAddress,
+                  identityPayload: bundle
+              )
+        else { return bare }
+        return uri
     }
 
     private func connectRadio() async {
@@ -210,18 +322,21 @@ struct AppRootView: View {
     }
 
     private func savePeer(
-        _ identity: MeshPublicIdentity,
+        _ preview: MeshNodeURIPreview,
         details: PeerImportDetails,
         startConversation: Bool
     ) async -> DirectConversationSummary? {
         guard let applicationStore, let localIdentity else { return nil }
+        let identity = preview.publicIdentity
         do {
             try await applicationStore.upsertPeer(
                 ownerIdentityID: localIdentity.id,
                 publicAddress: identity.canonicalAddress,
                 alias: details.alias,
+                advertisedName: preview.identity?.name,
                 isContact: details.isContact,
-                nodeKind: details.kind.rawValue
+                nodeKind: details.kind.rawValue,
+                advertisement: preview.identityPayload
             )
             if startConversation {
                 _ = try await applicationStore.ensureDirectConversation(
@@ -234,6 +349,26 @@ struct AppRootView: View {
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
+        }
+    }
+
+    private struct IncomingPeerImport: Identifiable {
+        let id = UUID()
+        let uri: String
+    }
+
+    private func updateAlias(_ peer: PeerSummary, _ alias: String?) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.updateNodeAlias(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress,
+                alias: alias
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -553,6 +688,13 @@ struct AppRootView: View {
                 guard let identity = try? await meshEngine.inspectPublicIdentity(stored.publicAddress) else {
                     continue
                 }
+                let advertisedIdentity: MeshNodeIdentity? = await {
+                    guard let payload = stored.advertisement else { return nil }
+                    return try? await meshEngine.decodeNodeIdentity(
+                        address: stored.publicAddress,
+                        payload: payload
+                    )
+                }()
                 mappedPeers[stored.id] = PeerSummary(
                     id: stored.id,
                     identity: identity,
@@ -560,7 +702,8 @@ struct AppRootView: View {
                     advertisedName: stored.advertisedName,
                     isContact: stored.isContact,
                     systemRole: stored.systemRole,
-                    kind: stored.nodeKind.flatMap(PeerKind.init(rawValue:)) ?? .unknown
+                    kind: stored.nodeKind.flatMap(PeerKind.init(rawValue:)) ?? .unknown,
+                    advertisedIdentity: advertisedIdentity
                 )
             }
             let storedConversations = try await applicationStore.listDirectConversations(

@@ -24,7 +24,9 @@ actor FakeMeshEngine: MeshEngine {
         }
         return MeshNodeURIPreview(
             publicIdentity: try inspectPublicIdentity(String(uri.dropFirst("umsh:n:".count))),
-            hasIdentityData: false
+            hasIdentityData: false,
+            identity: nil,
+            identityPayload: nil
         )
     }
 
@@ -34,8 +36,14 @@ actor FakeMeshEngine: MeshEngine {
         }
         return MeshNodeURIPreview(
             publicIdentity: try inspectPublicIdentity(input),
-            hasIdentityData: false
+            hasIdentityData: false,
+            identity: nil,
+            identityPayload: nil
         )
+    }
+
+    func decodeNodeIdentity(address: String, payload: Data) throws -> MeshNodeIdentity {
+        throw MeshEngineError.invalidIdentityData
     }
 
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity {

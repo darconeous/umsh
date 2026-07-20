@@ -5,14 +5,17 @@ struct ConversationsView: View {
     @Binding var conversations: [DirectConversationSummary]
     let radioSnapshot: RadioSnapshot
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let savePeer: (MeshPublicIdentity, PeerImportDetails, Bool) async -> DirectConversationSummary?
+    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
     var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }
+    var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+    // Owned by the app root so URL-scheme imports can open a transcript
+    // directly from outside this view.
+    @Binding var openedConversation: DirectConversationSummary?
 
     @State private var showsImport = false
-    @State private var openedConversation: DirectConversationSummary?
     @State private var conversationPendingDeletion: DirectConversationSummary?
 
     var body: some View {
@@ -49,7 +52,8 @@ struct ConversationsView: View {
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
-                    messageActions: messageActions
+                    messageActions: messageActions,
+                    updateAlias: updateAlias
                 )
             }
         }
@@ -60,7 +64,8 @@ struct ConversationsView: View {
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
-                    messageActions: messageActions
+                    messageActions: messageActions,
+                    updateAlias: updateAlias
                 )
             }
         }
@@ -90,8 +95,8 @@ struct ConversationsView: View {
             NavigationStack {
                 NodeImportView(
                     inspectPeerIdentity: inspectPeerIdentity,
-                    save: { identity, details, startConversation in
-                        let conversation = await savePeer(identity, details, startConversation)
+                    save: { preview, details, startConversation in
+                        let conversation = await savePeer(preview, details, startConversation)
                         showsImport = false
                         if startConversation {
                             openedConversation = conversation
@@ -146,7 +151,10 @@ private struct ConversationRow: View {
 
 struct NodeImportView: View {
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let save: (MeshPublicIdentity, PeerImportDetails, Bool) async -> Void
+    let save: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> Void
+    // Prefilled by URL-scheme opens (Camera scan, tapped umsh: link);
+    // validation then runs immediately instead of waiting for the button.
+    var initialInput: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
@@ -174,12 +182,15 @@ struct NodeImportView: View {
                         PeerAvatar(hint: preview.publicIdentity.hint)
                         VStack(alignment: .leading) {
                             Text(preview.publicIdentity.hint.text)
-                            Text(preview.hasIdentityData ? "Includes unverified identity metadata" : "Public key only")
+                            Text(previewCaption)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     CanonicalAddressView(address: preview.publicIdentity.canonicalAddress)
+                    if let identity = preview.identity {
+                        AdvertisedIdentityRows(identity: identity)
+                    }
                     Text("Previewing does not save this peer or transmit anything.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -198,11 +209,11 @@ struct NodeImportView: View {
                 }
                 Section {
                     Button("Message") {
-                        Task { await save(preview.publicIdentity, details, true) }
+                        Task { await save(preview, details, true) }
                     }
                     .buttonStyle(.borderedProminent)
                     Button(isContact ? "Save Contact" : "Save Peer") {
-                        Task { await save(preview.publicIdentity, details, false) }
+                        Task { await save(preview, details, false) }
                     }
                 }
             }
@@ -215,6 +226,12 @@ struct NodeImportView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
+            }
+        }
+        .task {
+            if let initialInput, input.isEmpty {
+                input = initialInput
+                await inspect()
             }
         }
     }
@@ -241,6 +258,16 @@ struct NodeImportView: View {
             isContact: isContact
         )
     }
+
+    private var previewCaption: String {
+        guard let preview else { return "" }
+        if preview.identity != nil {
+            return "Includes advertised identity details"
+        }
+        return preview.hasIdentityData
+            ? "Identity metadata present but unreadable"
+            : "Public key only"
+    }
 }
 
 struct DirectConversationView: View {
@@ -257,6 +284,7 @@ struct DirectConversationView: View {
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
     let messageActions: ChatMessageActions
+    let updateAlias: ((PeerSummary, String?) async -> Bool)?
 
     @State private var draft: String
     @State private var showsPeerProfile = false
@@ -276,13 +304,15 @@ struct DirectConversationView: View {
         radioSnapshot: RadioSnapshot,
         updateDraft: @escaping (Int64, String) async -> Void,
         sendMessage: @escaping (DirectConversationSummary, String) async -> MessageSendResult,
-        messageActions: ChatMessageActions = .unavailable
+        messageActions: ChatMessageActions = .unavailable,
+        updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
     ) {
         _conversation = conversation
         self.radioSnapshot = radioSnapshot
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
         self.messageActions = messageActions
+        self.updateAlias = updateAlias
         _draft = State(initialValue: conversation.wrappedValue.draftText)
     }
 
@@ -452,7 +482,8 @@ struct DirectConversationView: View {
             NavigationStack {
                 PeerDetailView(
                     peer: conversation.peer,
-                    radioSnapshot: .constant(radioSnapshot)
+                    radioSnapshot: .constant(radioSnapshot),
+                    updateAlias: updateAlias
                 )
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
