@@ -37,8 +37,9 @@ pub use mobile_chat::{
     MobileChatOriginalRef,
 };
 pub use mobile_mesh::{
-    MobileMeshError, MobileMeshOutboundFrameRecord, MobileMeshPingEventRecord,
-    MobileMeshPingOutcome, MobileMeshRxRecord, MobileMeshSession, MobileMeshSessionUpdateRecord,
+    MobileMeshAdvertisementRecord, MobileMeshError, MobileMeshOutboundFrameRecord,
+    MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRxRecord, MobileMeshSession,
+    MobileMeshSessionUpdateRecord,
 };
 
 uniffi::setup_scaffolding!();
@@ -47,7 +48,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 23;
+pub const MOBILE_API_VERSION: u16 = 24;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -59,6 +60,7 @@ pub enum MobileError {
     InvalidSecretKeyLength,
     InvalidPublicKeyLength,
     InvalidUri,
+    InvalidIdentityData,
     InvalidCompanionFrame,
     InvalidGattSegment,
 }
@@ -74,6 +76,7 @@ impl MobileError {
             Self::InvalidSecretKeyLength => "mobile.error.secret_key.invalid_length",
             Self::InvalidPublicKeyLength => "mobile.error.public_key.invalid_length",
             Self::InvalidUri => "mobile.error.uri.invalid",
+            Self::InvalidIdentityData => "mobile.error.identity_data.invalid",
             Self::InvalidCompanionFrame => "mobile.error.companion.invalid_frame",
             Self::InvalidGattSegment => "mobile.error.companion.invalid_gatt_segment",
         }
@@ -89,6 +92,7 @@ impl MobileError {
             Self::InvalidSecretKeyLength => "SECRET_KEY_INVALID_LENGTH",
             Self::InvalidPublicKeyLength => "PUBLIC_KEY_INVALID_LENGTH",
             Self::InvalidUri => "URI_INVALID",
+            Self::InvalidIdentityData => "IDENTITY_DATA_INVALID",
             Self::InvalidCompanionFrame => "COMPANION_INVALID_FRAME",
             Self::InvalidGattSegment => "COMPANION_INVALID_GATT_SEGMENT",
         }
@@ -130,12 +134,50 @@ pub struct PublicIdentityRecord {
     pub hint: NodeHintRecord,
 }
 
+/// Authentication state of a standalone node-identity bundle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum IdentitySignatureState {
+    /// No signature was attached; the claims are unauthenticated.
+    Unsigned,
+    /// The attached signature verifies against the node's public key.
+    Valid,
+    /// The attached signature does not verify; the claims must not be
+    /// presented as coming from the key's owner.
+    Invalid,
+}
+
+/// Decoded advertised node identity (node-identity.md), UI-safe fields only.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct NodeIdentityRecord {
+    pub role_code: u8,
+    /// Canonical English role label; UI may localize by `role_code`.
+    pub role_label: String,
+    /// Canonical capability labels in wire bit order.
+    pub capabilities: Vec<String>,
+    pub name: Option<String>,
+    /// Center of the advertised location grid cell, in degrees.
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// Grid-code precision in bytes (1-7); larger is finer.
+    pub location_precision: Option<u8>,
+    pub altitude_m: Option<i32>,
+    /// Seconds since the Unix epoch (freshness marker).
+    pub timestamp: Option<u32>,
+    pub signature: IdentitySignatureState,
+}
+
 /// Safe, non-mutating preview of a parsed node URI.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NodeUriPreviewRecord {
     pub canonical_address: String,
     pub hint: NodeHintRecord,
     pub has_identity_data: bool,
+    /// Decoded identity bundle when the URI carried one that parses.
+    pub identity: Option<NodeIdentityRecord>,
+    /// Raw identity payload bytes suitable for persistence. Absent when the
+    /// bundle is unparseable or its signature fails verification, so callers
+    /// never store tampered claims.
+    pub identity_payload: Option<Vec<u8>>,
 }
 
 /// Parse a node URI locally and return only validated public identity fields.
@@ -147,10 +189,115 @@ pub fn inspect_node_uri(uri: String) -> Result<NodeUriPreviewRecord, MobileError
         _ => return Err(MobileError::InvalidUri),
     };
     let identity = public_identity_record(&node.public_key);
+    let (decoded, payload) = match node.identity_data {
+        None => (None, None),
+        Some(data) => match umsh_uri::decode_base58_bytes(data)
+            .ok()
+            .and_then(|bytes| {
+                node_identity_record(&node.public_key, &bytes)
+                    .ok()
+                    .map(|record| (record, bytes))
+            }) {
+            None => (None, None),
+            Some((record, bytes)) => {
+                // Tampered bundles are shown as invalid but never persisted.
+                let payload = (record.signature != IdentitySignatureState::Invalid)
+                    .then_some(bytes);
+                (Some(record), payload)
+            }
+        },
+    };
     Ok(NodeUriPreviewRecord {
         canonical_address: identity.canonical_address,
         hint: identity.hint,
         has_identity_data: node.identity_data.is_some(),
+        identity: decoded,
+        identity_payload: payload,
+    })
+}
+
+/// Decode a persisted advertised-identity payload for display.
+///
+/// `address` is the canonical Base58 address of the node the payload claims
+/// to describe; the signature state is recomputed against it on every call.
+#[uniffi::export]
+pub fn decode_node_identity(
+    address: String,
+    payload: Vec<u8>,
+) -> Result<NodeIdentityRecord, MobileError> {
+    let key = PublicKey(umsh_core::base58::decode(address.as_bytes())?);
+    node_identity_record(&key, &payload)
+}
+
+fn node_identity_record(
+    key: &PublicKey,
+    payload: &[u8],
+) -> Result<NodeIdentityRecord, MobileError> {
+    let identity = umsh_node::NodeIdentityPayload::from_bytes(payload)
+        .map_err(|_| MobileError::InvalidIdentityData)?;
+
+    let signature = match identity.signature {
+        None => IdentitySignatureState::Unsigned,
+        Some(signature) => {
+            // The signed range is everything before the trailing signature.
+            let signed = &payload[..payload.len() - 64];
+            if umsh_crypto::verify_ed25519_signature(key, signed, &signature) {
+                IdentitySignatureState::Valid
+            } else {
+                IdentitySignatureState::Invalid
+            }
+        }
+    };
+
+    let role_label = match identity.role {
+        umsh_node::NodeRole::Unspecified => "Unspecified".to_owned(),
+        umsh_node::NodeRole::Repeater => "Repeater".to_owned(),
+        umsh_node::NodeRole::Chat => "Chat".to_owned(),
+        umsh_node::NodeRole::Tracker => "Tracker".to_owned(),
+        umsh_node::NodeRole::Sensor => "Sensor".to_owned(),
+        umsh_node::NodeRole::Bridge => "Bridge".to_owned(),
+        umsh_node::NodeRole::ChatRoom => "Chat room".to_owned(),
+        umsh_node::NodeRole::TemporarySession => "Temporary session".to_owned(),
+        umsh_node::NodeRole::Unknown(code) => format!("Unknown ({code})"),
+    };
+
+    let capabilities = [
+        (umsh_node::NodeCapabilities::REPEATER, "Repeater"),
+        (umsh_node::NodeCapabilities::MOBILE, "Mobile"),
+        (umsh_node::NodeCapabilities::TEXT_MESSAGES, "Text messages"),
+        (umsh_node::NodeCapabilities::TELEMETRY, "Telemetry"),
+        (umsh_node::NodeCapabilities::CHAT_ROOM, "Chat room"),
+        (umsh_node::NodeCapabilities::COAP, "CoAP"),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| identity.capabilities.contains(*bit))
+    .map(|(_, label)| label.to_owned())
+    .collect();
+
+    let location = identity.location.filter(|loc| !loc.is_unspecified());
+    let (latitude, longitude, location_precision) = match location {
+        None => (None, None, None),
+        Some(location) => {
+            let (lon, lat) = location.center();
+            (
+                Some(f64::from(lat)),
+                Some(f64::from(lon)),
+                Some(location.precision()),
+            )
+        }
+    };
+
+    Ok(NodeIdentityRecord {
+        role_code: identity.role.as_byte(),
+        role_label,
+        capabilities,
+        name: identity.name,
+        latitude,
+        longitude,
+        location_precision,
+        altitude_m: identity.altitude_m,
+        timestamp: identity.timestamp,
+        signature,
     })
 }
 
@@ -187,6 +334,8 @@ pub fn inspect_peer_identity(input: String) -> Result<NodeUriPreviewRecord, Mobi
             canonical_address: identity.canonical_address,
             hint: identity.hint,
             has_identity_data: false,
+            identity: None,
+            identity_payload: None,
         });
     }
 
@@ -195,7 +344,37 @@ pub fn inspect_peer_identity(input: String) -> Result<NodeUriPreviewRecord, Mobi
         canonical_address: identity.canonical_address,
         hint: identity.hint,
         has_identity_data: false,
+        identity: None,
+        identity_payload: None,
     })
+}
+
+/// Render the canonical shareable node URI for a public identity address.
+///
+/// The result is the plain `umsh:n:` form without an appended identity
+/// bundle, suitable for copying and for QR presentation of the bare key.
+#[uniffi::export]
+pub fn node_uri_for_address(address: String) -> Result<String, MobileError> {
+    let key = PublicKey(umsh_core::base58::decode(address.as_bytes())?);
+    let mut buf = [0u8; 64];
+    let len = umsh_uri::format_node_uri(&key, &mut buf).map_err(|_| MobileError::InvalidUri)?;
+    Ok(core::str::from_utf8(&buf[..len])
+        .expect("node URI is ASCII")
+        .to_owned())
+}
+
+/// Render the shareable node URI carrying a signed identity bundle:
+/// `umsh:n:<address>:<base58 bundle>`.
+#[uniffi::export]
+pub fn node_uri_with_identity(
+    address: String,
+    identity_payload: Vec<u8>,
+) -> Result<String, MobileError> {
+    let base = node_uri_for_address(address)?;
+    Ok(format!(
+        "{base}:{}",
+        umsh_uri::encode_base58_bytes(&identity_payload)
+    ))
 }
 
 /// Return the binding-visible mobile API version.
@@ -350,6 +529,95 @@ mod tests {
             inspect_node_uri("umsh:cs:public".to_owned()),
             Err(MobileError::InvalidUri)
         );
+    }
+
+    #[tokio::test]
+    async fn signed_identity_bundle_round_trips_through_uri_inspection() {
+        let identity = SoftwareIdentity::from_secret_bytes(&[7u8; 32]);
+        let payload = umsh_node::NodeIdentityPayload {
+            role: umsh_node::NodeRole::Chat,
+            capabilities: umsh_node::NodeCapabilities::TEXT_MESSAGES
+                | umsh_node::NodeCapabilities::MOBILE,
+            name: Some("Basecamp".into()),
+            location: Some(umsh_node::location::NodeLocation::from_lat_lon(
+                -123.09, 44.05, 4,
+            )),
+            altitude_m: Some(72),
+            timestamp: Some(1_760_000_000),
+            supported_regions: None,
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; 256];
+        let len = payload.encode_for_signing(&mut buf).unwrap();
+        let signature = identity.sign(&buf[..len]).await.unwrap();
+        buf[len..len + 64].copy_from_slice(&signature);
+        let bundle = &buf[..len + 64];
+
+        let address = public_identity_record(identity.public_key()).canonical_address;
+        let uri = format!("umsh:n:{address}:{}", umsh_uri::encode_base58_bytes(bundle));
+        let preview = inspect_node_uri(uri).unwrap();
+        assert!(preview.has_identity_data);
+        assert_eq!(preview.identity_payload.as_deref(), Some(bundle));
+        let record = preview.identity.unwrap();
+        assert_eq!(record.signature, IdentitySignatureState::Valid);
+        assert_eq!(record.role_label, "Chat");
+        assert_eq!(record.name.as_deref(), Some("Basecamp"));
+        assert_eq!(
+            record.capabilities,
+            vec!["Mobile".to_owned(), "Text messages".to_owned()]
+        );
+        assert_eq!(record.altitude_m, Some(72));
+        assert_eq!(record.timestamp, Some(1_760_000_000));
+        assert_eq!(record.location_precision, Some(4));
+        // A 4-byte grid cell is ~610 x 305 m; the center must land nearby.
+        assert!((record.latitude.unwrap() - 44.05).abs() < 0.01);
+        assert!((record.longitude.unwrap() + 123.09).abs() < 0.01);
+
+        // Tampering with the signed range must flag the bundle and withhold
+        // the persistable payload.
+        let mut tampered = bundle.to_vec();
+        tampered[0] ^= 0x01;
+        let uri = format!(
+            "umsh:n:{address}:{}",
+            umsh_uri::encode_base58_bytes(&tampered)
+        );
+        let preview = inspect_node_uri(uri).unwrap();
+        assert_eq!(
+            preview.identity.unwrap().signature,
+            IdentitySignatureState::Invalid
+        );
+        assert!(preview.identity_payload.is_none());
+
+        // An unsigned bundle stays displayable and persistable, but is
+        // explicitly marked unauthenticated.
+        let unsigned_len = {
+            let unsigned = umsh_node::NodeIdentityPayload {
+                signature: None,
+                ..payload.clone()
+            };
+            unsigned.encode(&mut buf).unwrap()
+        };
+        let uri = format!(
+            "umsh:n:{address}:{}",
+            umsh_uri::encode_base58_bytes(&buf[..unsigned_len])
+        );
+        let preview = inspect_node_uri(uri).unwrap();
+        assert_eq!(
+            preview.identity.unwrap().signature,
+            IdentitySignatureState::Unsigned
+        );
+        assert!(preview.identity_payload.is_some());
+    }
+
+    #[test]
+    fn node_uri_round_trips_through_inspection() {
+        let address = "111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE";
+        let uri = node_uri_for_address(address.to_owned()).unwrap();
+
+        assert_eq!(uri, format!("umsh:n:{address}"));
+        let preview = inspect_node_uri(uri).unwrap();
+        assert_eq!(preview.canonical_address, address);
     }
 
     #[test]

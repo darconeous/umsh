@@ -153,6 +153,65 @@ fn encode_base58_32(bytes: &[u8; 32]) -> String {
         .collect()
 }
 
+/// Base58 digit alphabet (Bitcoin variant), matching `umsh_core::base58`.
+const BASE58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Encode arbitrary-length bytes as base58 with no fixed width; leading
+/// zero bytes render as leading `1` digits. This is the encoding of the
+/// optional node-identity bundle segment of a node URI (the 32-byte key
+/// segment keeps its fixed 44-digit form).
+pub fn encode_base58_bytes(bytes: &[u8]) -> String {
+    let zeros = bytes.iter().take_while(|&&byte| byte == 0).count();
+    let mut digits: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    for &byte in &bytes[zeros..] {
+        let mut carry = u32::from(byte);
+        for digit in digits.iter_mut() {
+            let acc = (u32::from(*digit) << 8) + carry;
+            *digit = (acc % 58) as u8;
+            carry = acc / 58;
+        }
+        while carry > 0 {
+            digits.push((carry % 58) as u8);
+            carry /= 58;
+        }
+    }
+    let mut out = String::with_capacity(zeros + digits.len());
+    for _ in 0..zeros {
+        out.push('1');
+    }
+    for &digit in digits.iter().rev() {
+        out.push(char::from(BASE58_ALPHABET[usize::from(digit)]));
+    }
+    out
+}
+
+/// Decode a variable-length base58 string produced by
+/// [`encode_base58_bytes`].
+pub fn decode_base58_bytes(input: &str) -> Result<alloc::vec::Vec<u8>, Error> {
+    let bytes = input.as_bytes();
+    let zeros = bytes.iter().take_while(|&&byte| byte == b'1').count();
+    let mut out: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    for &digit in &bytes[zeros..] {
+        let value = BASE58_ALPHABET
+            .iter()
+            .position(|&c| c == digit)
+            .ok_or(Error::InvalidBase58)? as u32;
+        let mut carry = value;
+        for byte in out.iter_mut() {
+            let acc = u32::from(*byte) * 58 + carry;
+            *byte = acc as u8;
+            carry = acc >> 8;
+        }
+        while carry > 0 {
+            out.push((carry & 0xFF) as u8);
+            carry >>= 8;
+        }
+    }
+    let mut result = alloc::vec![0u8; zeros];
+    result.extend(out.iter().rev());
+    Ok(result)
+}
+
 /// Parse a base58-encoded public key.
 pub fn parse_public_key_base58(input: &str) -> Result<umsh_core::PublicKey, Error> {
     Ok(umsh_core::PublicKey(decode_base58_32(input)?))
@@ -262,6 +321,34 @@ mod tests {
     use lwuri::UriRef;
 
     use super::*;
+
+    #[test]
+    fn variable_base58_round_trips_and_matches_fixed_width() {
+        for bytes in [
+            &[][..],
+            &[0u8][..],
+            &[0, 0, 1, 2, 3][..],
+            &[0xFF; 100][..],
+            b"role-caps-options-and-signature".as_slice(),
+        ] {
+            let encoded = encode_base58_bytes(bytes);
+            assert_eq!(decode_base58_bytes(&encoded).unwrap(), bytes);
+        }
+
+        // A 32-byte value with no leading zeros must agree with the
+        // fixed-width address codec (which only differs by `1` padding).
+        let key = [0xFFu8; 32];
+        let fixed: alloc::string::String = umsh_core::base58::encode(&key)
+            .into_iter()
+            .map(char::from)
+            .collect();
+        assert_eq!(encode_base58_bytes(&key), fixed);
+
+        assert_eq!(
+            decode_base58_bytes("not-base58!"),
+            Err(Error::InvalidBase58)
+        );
+    }
 
     #[test]
     fn uri_parse_and_format_cover_node_channel_name_and_key() {

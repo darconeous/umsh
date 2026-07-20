@@ -545,6 +545,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -555,6 +571,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
     }
 }
 
@@ -1389,6 +1421,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func acknowledgeChatBatch(batchId: UInt64) throws
 
+    /**
+     * Broadcast a signed node-identity advertisement describing this phone.
+     *
+     * The bundle always carries the standalone EdDSA signature because a
+     * broadcast frame has no MIC to authenticate it.
+     */
+    func advertiseIdentity(name: String?, timestamp: UInt32?) async throws
+
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     func commitChatBatch(batchId: UInt64) async throws
@@ -1435,6 +1475,12 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord]) async throws
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
+
+    /**
+     * Build and sign this phone's node-identity bundle without transmitting
+     * it, for embedding in the shareable `umsh:n:` URI and QR code.
+     */
+    func signIdentityBundle(name: String?, timestamp: UInt32?) async throws  -> Data
 
 }
 /**
@@ -1520,6 +1566,28 @@ open func acknowledgeChatBatch(batchId: UInt64)throws   {try rustCallWithError(F
         FfiConverterUInt64.lower(batchId),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Broadcast a signed node-identity advertisement describing this phone.
+     *
+     * The bundle always carries the standalone EdDSA signature because a
+     * broadcast frame has no MIC to authenticate it.
+     */
+open func advertiseIdentity(name: String?, timestamp: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_advertise_identity(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(timestamp)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
 open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
@@ -1709,6 +1777,26 @@ open func restoreChat(checkpoints: [MobileChatCheckpointRecord])async throws   {
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Build and sign this phone's node-identity bundle without transmitting
+     * it, for embedding in the shareable `umsh:n:` URI and QR code.
+     */
+open func signIdentityBundle(name: String?, timestamp: UInt32?)async throws  -> Data  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_sign_identity_bundle(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(timestamp)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterData.lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -3095,6 +3183,79 @@ public func FfiConverterTypeMobileChatOriginalRef_lower(_ value: MobileChatOrigi
 }
 
 
+/**
+ * A node-identity advertisement received over the mesh. Only frames whose
+ * source address carried the full public key are surfaced; the platform
+ * verifies the embedded signature before trusting or persisting any claim.
+ */
+public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
+    /**
+     * Canonical Base58 address of the claimed sender.
+     */
+    public var peerAddress: String
+    /**
+     * Raw node-identity payload bytes (without the payload-type byte),
+     * decodable with `decode_node_identity`.
+     */
+    public var payload: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Canonical Base58 address of the claimed sender.
+         */peerAddress: String,
+        /**
+         * Raw node-identity payload bytes (without the payload-type byte),
+         * decodable with `decode_node_identity`.
+         */payload: Data) {
+        self.peerAddress = peerAddress
+        self.payload = payload
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshAdvertisementRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshAdvertisementRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshAdvertisementRecord {
+        return
+            try MobileMeshAdvertisementRecord(
+                peerAddress: FfiConverterString.read(from: &buf),
+                payload: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshAdvertisementRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshAdvertisementRecord_lift(_ buf: RustBuffer) throws -> MobileMeshAdvertisementRecord {
+    return try FfiConverterTypeMobileMeshAdvertisementRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshAdvertisementRecord_lower(_ value: MobileMeshAdvertisementRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshAdvertisementRecord.lower(value)
+}
+
+
 public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
     public var id: UInt64
     public var data: Data
@@ -3319,6 +3480,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      */
     public var outboundFrames: [MobileMeshOutboundFrameRecord]
     public var pingEvents: [MobileMeshPingEventRecord]
+    public var advertisementEvents: [MobileMeshAdvertisementRecord]
     /**
      * Chat effects remain in the facade until Swift durably applies them and
      * acknowledges this batch. Repeated polls may return the same batch.
@@ -3336,13 +3498,14 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * Complete raw UMSH frames ready for the companion PHY transport. Each
          * frame must be completed after the companion reports the physical radio
          * result; queue acceptance is not transmit completion.
-         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord],
+         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord],
         /**
          * Chat effects remain in the facade until Swift durably applies them and
          * acknowledges this batch. Repeated polls may return the same batch.
          */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord], chatArchiveLookups: [MobileChatArchiveLookupRecord], chatDiagnostics: [String]) {
         self.outboundFrames = outboundFrames
         self.pingEvents = pingEvents
+        self.advertisementEvents = advertisementEvents
         self.chatBatchId = chatBatchId
         self.chatMutations = chatMutations
         self.chatDeliveries = chatDeliveries
@@ -3368,6 +3531,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
             try MobileMeshSessionUpdateRecord(
                 outboundFrames: FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.read(from: &buf),
                 pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf),
+                advertisementEvents: FfiConverterSequenceTypeMobileMeshAdvertisementRecord.read(from: &buf),
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
                 chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
                 chatDeliveries: FfiConverterSequenceTypeMobileChatDeliveryRecord.read(from: &buf),
@@ -3379,6 +3543,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
     public static func write(_ value: MobileMeshSessionUpdateRecord, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.write(value.outboundFrames, into: &buf)
         FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
+        FfiConverterSequenceTypeMobileMeshAdvertisementRecord.write(value.advertisementEvents, into: &buf)
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
         FfiConverterSequenceTypeMobileChatDeliveryRecord.write(value.chatDeliveries, into: &buf)
@@ -3473,19 +3638,158 @@ public func FfiConverterTypeNodeHintRecord_lower(_ value: NodeHintRecord) -> Rus
 
 
 /**
+ * Decoded advertised node identity (node-identity.md), UI-safe fields only.
+ */
+public struct NodeIdentityRecord: Equatable, Hashable {
+    public var roleCode: UInt8
+    /**
+     * Canonical English role label; UI may localize by `role_code`.
+     */
+    public var roleLabel: String
+    /**
+     * Canonical capability labels in wire bit order.
+     */
+    public var capabilities: [String]
+    public var name: String?
+    /**
+     * Center of the advertised location grid cell, in degrees.
+     */
+    public var latitude: Double?
+    public var longitude: Double?
+    /**
+     * Grid-code precision in bytes (1-7); larger is finer.
+     */
+    public var locationPrecision: UInt8?
+    public var altitudeM: Int32?
+    /**
+     * Seconds since the Unix epoch (freshness marker).
+     */
+    public var timestamp: UInt32?
+    public var signature: IdentitySignatureState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(roleCode: UInt8,
+        /**
+         * Canonical English role label; UI may localize by `role_code`.
+         */roleLabel: String,
+        /**
+         * Canonical capability labels in wire bit order.
+         */capabilities: [String], name: String?,
+        /**
+         * Center of the advertised location grid cell, in degrees.
+         */latitude: Double?, longitude: Double?,
+        /**
+         * Grid-code precision in bytes (1-7); larger is finer.
+         */locationPrecision: UInt8?, altitudeM: Int32?,
+        /**
+         * Seconds since the Unix epoch (freshness marker).
+         */timestamp: UInt32?, signature: IdentitySignatureState) {
+        self.roleCode = roleCode
+        self.roleLabel = roleLabel
+        self.capabilities = capabilities
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
+        self.locationPrecision = locationPrecision
+        self.altitudeM = altitudeM
+        self.timestamp = timestamp
+        self.signature = signature
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NodeIdentityRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNodeIdentityRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NodeIdentityRecord {
+        return
+            try NodeIdentityRecord(
+                roleCode: FfiConverterUInt8.read(from: &buf),
+                roleLabel: FfiConverterString.read(from: &buf),
+                capabilities: FfiConverterSequenceString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                latitude: FfiConverterOptionDouble.read(from: &buf),
+                longitude: FfiConverterOptionDouble.read(from: &buf),
+                locationPrecision: FfiConverterOptionUInt8.read(from: &buf),
+                altitudeM: FfiConverterOptionInt32.read(from: &buf),
+                timestamp: FfiConverterOptionUInt32.read(from: &buf),
+                signature: FfiConverterTypeIdentitySignatureState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NodeIdentityRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.roleCode, into: &buf)
+        FfiConverterString.write(value.roleLabel, into: &buf)
+        FfiConverterSequenceString.write(value.capabilities, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionDouble.write(value.latitude, into: &buf)
+        FfiConverterOptionDouble.write(value.longitude, into: &buf)
+        FfiConverterOptionUInt8.write(value.locationPrecision, into: &buf)
+        FfiConverterOptionInt32.write(value.altitudeM, into: &buf)
+        FfiConverterOptionUInt32.write(value.timestamp, into: &buf)
+        FfiConverterTypeIdentitySignatureState.write(value.signature, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeIdentityRecord_lift(_ buf: RustBuffer) throws -> NodeIdentityRecord {
+    return try FfiConverterTypeNodeIdentityRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeIdentityRecord_lower(_ value: NodeIdentityRecord) -> RustBuffer {
+    return FfiConverterTypeNodeIdentityRecord.lower(value)
+}
+
+
+/**
  * Safe, non-mutating preview of a parsed node URI.
  */
 public struct NodeUriPreviewRecord: Equatable, Hashable {
     public var canonicalAddress: String
     public var hint: NodeHintRecord
     public var hasIdentityData: Bool
+    /**
+     * Decoded identity bundle when the URI carried one that parses.
+     */
+    public var identity: NodeIdentityRecord?
+    /**
+     * Raw identity payload bytes suitable for persistence. Absent when the
+     * bundle is unparseable or its signature fails verification, so callers
+     * never store tampered claims.
+     */
+    public var identityPayload: Data?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(canonicalAddress: String, hint: NodeHintRecord, hasIdentityData: Bool) {
+    public init(canonicalAddress: String, hint: NodeHintRecord, hasIdentityData: Bool,
+        /**
+         * Decoded identity bundle when the URI carried one that parses.
+         */identity: NodeIdentityRecord?,
+        /**
+         * Raw identity payload bytes suitable for persistence. Absent when the
+         * bundle is unparseable or its signature fails verification, so callers
+         * never store tampered claims.
+         */identityPayload: Data?) {
         self.canonicalAddress = canonicalAddress
         self.hint = hint
         self.hasIdentityData = hasIdentityData
+        self.identity = identity
+        self.identityPayload = identityPayload
     }
 
 
@@ -3506,7 +3810,9 @@ public struct FfiConverterTypeNodeUriPreviewRecord: FfiConverterRustBuffer {
             try NodeUriPreviewRecord(
                 canonicalAddress: FfiConverterString.read(from: &buf),
                 hint: FfiConverterTypeNodeHintRecord.read(from: &buf),
-                hasIdentityData: FfiConverterBool.read(from: &buf)
+                hasIdentityData: FfiConverterBool.read(from: &buf),
+                identity: FfiConverterOptionTypeNodeIdentityRecord.read(from: &buf),
+                identityPayload: FfiConverterOptionData.read(from: &buf)
         )
     }
 
@@ -3514,6 +3820,8 @@ public struct FfiConverterTypeNodeUriPreviewRecord: FfiConverterRustBuffer {
         FfiConverterString.write(value.canonicalAddress, into: &buf)
         FfiConverterTypeNodeHintRecord.write(value.hint, into: &buf)
         FfiConverterBool.write(value.hasIdentityData, into: &buf)
+        FfiConverterOptionTypeNodeIdentityRecord.write(value.identity, into: &buf)
+        FfiConverterOptionData.write(value.identityPayload, into: &buf)
     }
 }
 
@@ -3956,6 +4264,92 @@ public func FfiConverterTypeCounterStoreError_lower(_ value: CounterStoreError) 
 }
 
 
+/**
+ * Authentication state of a standalone node-identity bundle.
+ */
+
+public enum IdentitySignatureState: Equatable, Hashable {
+
+    /**
+     * No signature was attached; the claims are unauthenticated.
+     */
+    case unsigned
+    /**
+     * The attached signature verifies against the node's public key.
+     */
+    case valid
+    /**
+     * The attached signature does not verify; the claims must not be
+     * presented as coming from the key's owner.
+     */
+    case invalid
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension IdentitySignatureState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeIdentitySignatureState: FfiConverterRustBuffer {
+    typealias SwiftType = IdentitySignatureState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IdentitySignatureState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unsigned
+
+        case 2: return .valid
+
+        case 3: return .invalid
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: IdentitySignatureState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unsigned:
+            writeInt(&buf, Int32(1))
+
+
+        case .valid:
+            writeInt(&buf, Int32(2))
+
+
+        case .invalid:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIdentitySignatureState_lift(_ buf: RustBuffer) throws -> IdentitySignatureState {
+    return try FfiConverterTypeIdentitySignatureState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIdentitySignatureState_lower(_ value: IdentitySignatureState) -> RustBuffer {
+    return FfiConverterTypeIdentitySignatureState.lower(value)
+}
+
+
+
 
 public enum MobileChatArchiveResultKind: Equatable, Hashable {
 
@@ -4270,6 +4664,7 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidSecretKeyLength
     case InvalidPublicKeyLength
     case InvalidUri
+    case InvalidIdentityData
     case InvalidCompanionFrame
     case InvalidGattSegment
 
@@ -4308,8 +4703,9 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 5: return .InvalidSecretKeyLength
         case 6: return .InvalidPublicKeyLength
         case 7: return .InvalidUri
-        case 8: return .InvalidCompanionFrame
-        case 9: return .InvalidGattSegment
+        case 8: return .InvalidIdentityData
+        case 9: return .InvalidCompanionFrame
+        case 10: return .InvalidGattSegment
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4350,12 +4746,16 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
 
 
-        case .InvalidCompanionFrame:
+        case .InvalidIdentityData:
             writeInt(&buf, Int32(8))
 
 
-        case .InvalidGattSegment:
+        case .InvalidCompanionFrame:
             writeInt(&buf, Int32(9))
+
+
+        case .InvalidGattSegment:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -4655,6 +5055,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt32: FfiConverterRustBuffer {
+    typealias SwiftType = Int32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
     typealias SwiftType = UInt64?
 
@@ -4671,6 +5095,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4839,6 +5287,30 @@ fileprivate struct FfiConverterOptionTypeCompanionSyncRecord: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeCompanionSyncRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeNodeIdentityRecord: FfiConverterRustBuffer {
+    typealias SwiftType = NodeIdentityRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNodeIdentityRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNodeIdentityRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -5146,6 +5618,31 @@ fileprivate struct FfiConverterSequenceTypeMobileChatMutationRecord: FfiConverte
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshAdvertisementRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshAdvertisementRecord]
+
+    public static func write(_ value: [MobileMeshAdvertisementRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshAdvertisementRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshAdvertisementRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshAdvertisementRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshAdvertisementRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileMeshOutboundFrameRecord]
 
@@ -5241,6 +5738,21 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
     }
 }
 /**
+ * Decode a persisted advertised-identity payload for display.
+ *
+ * `address` is the canonical Base58 address of the node the payload claims
+ * to describe; the signature state is recomputed against it on every call.
+ */
+public func decodeNodeIdentity(address: String, payload: Data)throws  -> NodeIdentityRecord  {
+    return try  FfiConverterTypeNodeIdentityRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_decode_node_identity(
+        FfiConverterString.lower(address),
+        FfiConverterData.lower(payload),uniffiCallStatus
+    )
+})
+}
+/**
  * Parse a node URI locally and return only validated public identity fields.
  */
 public func inspectNodeUri(uri: String)throws  -> NodeUriPreviewRecord  {
@@ -5299,6 +5811,33 @@ public func mobileApiVersion() -> UInt16  {
     return try!  FfiConverterUInt16.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_mobile_api_version(uniffiCallStatus
+    )
+})
+}
+/**
+ * Render the canonical shareable node URI for a public identity address.
+ *
+ * The result is the plain `umsh:n:` form without an appended identity
+ * bundle, suitable for copying and for QR presentation of the bare key.
+ */
+public func nodeUriForAddress(address: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_node_uri_for_address(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
+ * Render the shareable node URI carrying a signed identity bundle:
+ * `umsh:n:<address>:<base58 bundle>`.
+ */
+public func nodeUriWithIdentity(address: String, identityPayload: Data)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_node_uri_with_identity(
+        FfiConverterString.lower(address),
+        FfiConverterData.lower(identityPayload),uniffiCallStatus
     )
 })
 }
@@ -5447,6 +5986,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_node_uri() != 44840) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5460,6 +6002,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_mobile_api_version() != 62014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_node_uri_for_address() != 61644) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_node_uri_with_identity() != 62280) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_public_identity_bytes() != 22411) {
@@ -5537,6 +6085,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_acknowledge_chat_batch() != 54346) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_advertise_identity() != 53415) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5574,6 +6125,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_sign_identity_bundle() != 23222) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
