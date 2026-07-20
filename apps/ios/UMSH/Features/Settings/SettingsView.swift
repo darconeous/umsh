@@ -7,6 +7,7 @@ struct SettingsView: View {
     let createIdentity: () async -> Void
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
+    let reconnectRadio: () async -> Void
     let claimRadio: () async -> Void
     let refreshRadio: () async -> Void
     let configureRadio: (RadioSettings) async throws -> Void
@@ -54,6 +55,7 @@ struct SettingsView: View {
                     RadioDetailView(
                         snapshot: $radioSnapshot,
                         connect: connectRadio,
+                        reconnect: reconnectRadio,
                         claim: claimRadio,
                         refresh: refreshRadio,
                         configure: configureRadio,
@@ -107,6 +109,7 @@ struct IdentityDetailView: View {
 struct RadioDetailView: View {
     @Binding var snapshot: RadioSnapshot
     let connect: () async -> Void
+    let reconnect: () async -> Void
     let claim: () async -> Void
     let refresh: () async -> Void
     let configure: (RadioSettings) async throws -> Void
@@ -132,7 +135,16 @@ struct RadioDetailView: View {
                     LabeledContent("Host identity", value: snapshot.hostState.label)
                 }
                 connectionControl
-                if snapshot.linkState == .attaching {
+                if let problem = snapshot.problemDescription {
+                    Label(problem, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if snapshot.linkState == .reconnecting {
+                    Text("Trying only the saved companion radio. Other nearby radios will not be selected.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if snapshot.linkState == .attaching {
                     Text("Bluetooth transport is attached. Waiting to start companion synchronization.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -143,7 +155,7 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if snapshot.linkState == .attached {
-                    Text("Radio state inspection is complete. Queued traffic has not been drained because message ingestion is not implemented yet.")
+                    Text("Radio state inspection is complete and mesh traffic is enabled.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if snapshot.linkState == .configuring {
@@ -322,7 +334,7 @@ struct RadioDetailView: View {
     @ViewBuilder
     private var connectionControl: some View {
         switch snapshot.linkState {
-        case .scanning, .connecting, .pairing, .provisioning, .configuring, .disconnecting:
+        case .scanning, .connecting, .reconnecting, .pairing, .provisioning, .configuring, .disconnecting:
             HStack {
                 ProgressView()
                 Text(snapshot.linkState.accessibilityLabel)
@@ -342,8 +354,17 @@ struct RadioDetailView: View {
                 Task { await disconnect() }
             }
         case .idle, .unavailable, .discovered, .failed:
-            Button("Find companion radio") {
-                Task { await connect() }
+            if snapshot.localIdentifier != nil {
+                Button("Reconnect") {
+                    Task { await reconnect() }
+                }
+                Button("Find another companion radio") {
+                    Task { await connect() }
+                }
+            } else {
+                Button("Find companion radio") {
+                    Task { await connect() }
+                }
             }
         }
     }

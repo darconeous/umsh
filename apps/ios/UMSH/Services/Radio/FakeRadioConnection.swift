@@ -53,6 +53,10 @@ actor FakeRadioConnection: RadioConnection {
 
     func autoConnect() async {}
 
+    func reconnect() async {
+        publish(.previewReady)
+    }
+
     func claimForCurrentIdentity() async throws {
         publish(.previewReady)
     }
