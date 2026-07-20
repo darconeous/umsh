@@ -82,10 +82,37 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var lastChatBatchYield = DispatchTime.distantFuture
     private var autoEnableAttemptedGeneration: UInt64?
 
+    /// Stable restoration identifier: iOS relaunches the app in the
+    /// background for companion events only when a central with this
+    /// identifier is recreated promptly at launch.
+    private static let restoreIdentifier = "com.umsh.radio.central"
+    private static var centralOptions: [String: Any] {
+        [CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier]
+    }
+    private var restorationPendingResume = false
+    private var framesAwaitingMeshSession: [MobileMeshRxRecord] = []
+    private static let maximumFramesAwaitingMeshSession = 32
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init()
         snapshot.localIdentifier = rememberedPeripheralIdentifier
+        // Recreate the central immediately when a companion radio is saved:
+        // a background relaunch delivers `willRestoreState` (and the event
+        // that caused it) only after this object exists. Gated on a saved
+        // radio so a first launch does not prompt for Bluetooth permission
+        // before onboarding reaches the radio step.
+        if rememberedPeripheralIdentifier != nil {
+            bluetoothQueue.async { [self] in
+                if central == nil {
+                    central = CBCentralManager(
+                        delegate: self,
+                        queue: bluetoothQueue,
+                        options: Self.centralOptions
+                    )
+                }
+            }
+        }
     }
 
     // All streams use bounded buffering. A slow consumer must never turn a
@@ -174,9 +201,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             name: name,
             timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
         )
-        bluetoothQueue.async { [self] in
-            scheduleMeshPump(idlePolls: 4, delay: 0)
-        }
     }
 
     func signIdentityBundle(name: String?) async throws -> Data {
@@ -205,7 +229,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         scanRequested = true
         if central == nil {
             publish(state: .scanning)
-            central = CBCentralManager(delegate: self, queue: bluetoothQueue)
+            central = CBCentralManager(
+                delegate: self,
+                queue: bluetoothQueue,
+                options: Self.centralOptions
+            )
             return
         }
         guard central?.state == .poweredOn else {
@@ -234,6 +262,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     private func autoConnectOnQueue() {
+        // A state-restored link may already be connected or attaching by the
+        // time app bootstrap requests its usual startup reconnect; starting
+        // a fresh connection here would tear that session down.
+        if restorationPendingResume { return }
+        if let peripheral, peripheral.state == .connected || peripheral.state == .connecting {
+            return
+        }
         guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
               UUID(uuidString: value) != nil
         else {
@@ -243,7 +278,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         intentionalDisconnect = false
         autoConnectRequested = true
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: bluetoothQueue)
+            central = CBCentralManager(
+                delegate: self,
+                queue: bluetoothQueue,
+                options: Self.centralOptions
+            )
             return
         }
         guard central?.state == .poweredOn else {
@@ -273,6 +312,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func useMeshSession(_ session: MobileMeshSession?) async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
+                meshSession?.clearWakeListener()
                 meshSession = session
                 meshPumpGeneration = UUID()
                 meshPumpScheduled = false
@@ -280,8 +320,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 // suppress a fresh session's first batches.
                 lastYieldedChatBatchID = nil
                 lastChatBatchYield = .distantFuture
+                // Push, not poll: the Rust worker announces pending updates
+                // (outbound frames, ping/advertisement events, chat batches)
+                // through this listener, so no polling cadence exists. If
+                // data is already pending, the listener fires immediately.
+                session?.setWakeListener(listener: MeshSessionWakeListener(connection: self))
+                if let session {
+                    for record in framesAwaitingMeshSession {
+                        try? session.receive(frame: record)
+                    }
+                }
+                framesAwaitingMeshSession.removeAll()
                 result.resume()
             }
+        }
+    }
+
+    /// Called by the Rust worker (on its own thread) whenever `pollUpdate`
+    /// has new data. Hop to the Bluetooth queue and drain.
+    fileprivate func meshSessionDidAnnounceUpdate() {
+        bluetoothQueue.async { [weak self] in
+            self?.scheduleMeshPump()
         }
     }
 
@@ -371,7 +430,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         timeoutMs: Self.peerPingTimeoutMilliseconds
                     )
                     pingWaiters[operation] = result
-                    scheduleMeshPump(idlePolls: 0)
                 } catch {
                     result.resume(throwing: error)
                 }
@@ -386,9 +444,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         let session = try await currentMeshSession()
         try await session.registerPeers(peerAddresses: peerAddresses)
         try await session.restoreChat(checkpoints: checkpoints)
-        bluetoothQueue.async { [weak self] in
-            self?.scheduleMeshPump(idlePolls: 40)
-        }
     }
 
     func registerChatPeers(_ peerAddresses: [String]) async throws {
@@ -440,9 +495,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func commitChatBatch(_ batchID: UInt64) async throws {
         let session = try await currentMeshSession()
         try await session.commitChatBatch(batchId: batchID)
-        bluetoothQueue.async { [weak self] in
-            self?.scheduleMeshPump(idlePolls: 80)
-        }
     }
 
     func rejectChatBatch(
@@ -460,9 +512,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     ) async throws {
         let session = try await currentMeshSession()
         try session.applyChatArchiveResult(requestId: requestID, kind: kind, payload: payload)
-        bluetoothQueue.async { [weak self] in
-            self?.scheduleMeshPump(idlePolls: 40)
-        }
     }
 
     func acknowledgeChatBatch(_ batchID: UInt64) async throws {
@@ -514,6 +563,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         guard let peripheral else {
             intentionalDisconnect = false
             publishDisconnected()
+            return
+        }
+        guard peripheral.state == .connected else {
+            // Only an armed (or in-flight) connection request exists.
+            // Cancelling it produces no delegate callback, so settle the
+            // state here; this is the user's off switch for the standing
+            // wait-for-radio request.
+            central?.cancelPeripheralConnection(peripheral)
+            clearPeripheral()
+            intentionalDisconnect = false
+            publishDisconnected(problem: nil)
             return
         }
         publish(state: .disconnecting, name: peripheral.name)
@@ -591,12 +651,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                   self.automaticConnectionInProgress,
                   remembered.state != .connected
             else { return }
+            // The bounded window is UI honesty only. Leave the system
+            // connection request armed: it never expires, costs nothing
+            // while the radio is away, and completes the moment the radio
+            // powers on — waking or relaunching the app in the background.
+            // Disconnect (or a fresh scan) is what cancels it.
             self.automaticConnectionInProgress = false
-            self.central?.cancelPeripheralConnection(remembered)
-            self.clearPeripheral()
-            self.publishDisconnected(
+            self.publish(
+                state: .waitingForRadio,
                 name: remembered.name,
-                problem: "The saved companion radio could not be reached"
+                localIdentifier: remembered.identifier
             )
         }
     }
@@ -606,7 +670,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         let message: String
         switch central.state {
         case .poweredOn:
-            if autoConnectRequested {
+            if restorationPendingResume {
+                resumeRestoredPeripheral()
+            } else if autoConnectRequested {
                 startAutomaticConnection()
             } else if scanRequested {
                 startScanning()
@@ -894,16 +960,25 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
 
         for received in update.receivedFrames {
+            let record = MobileMeshRxRecord(
+                data: received.data,
+                rssiDbm: received.rssiDbm,
+                lqi: received.lqi,
+                snrCb: received.snrCb
+            )
             if let meshSession {
-                try meshSession.receive(
-                    frame: MobileMeshRxRecord(
-                        data: received.data,
-                        rssiDbm: received.rssiDbm,
-                        lqi: received.lqi,
-                        snrCb: received.snrCb
+                try meshSession.receive(frame: record)
+            } else {
+                // A restored background link can deliver frames before app
+                // bootstrap installs the Rust session. Hold a bounded,
+                // newest-wins window for replay; anything dropped is
+                // ordinary RF loss to the protocol's repair path.
+                framesAwaitingMeshSession.append(record)
+                if framesAwaitingMeshSession.count > Self.maximumFramesAwaitingMeshSession {
+                    framesAwaitingMeshSession.removeFirst(
+                        framesAwaitingMeshSession.count - Self.maximumFramesAwaitingMeshSession
                     )
-                )
-                scheduleMeshPump(idlePolls: 40)
+                }
             }
             let frame = RadioReceivedFrame(
                 data: received.data,
@@ -934,9 +1009,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 peripheral.identifier.uuidString,
                 forKey: PreferenceKey.lastAttachedPeripheral
             )
-            if meshSession != nil, !chatContinuations.isEmpty {
-                scheduleMeshPump(idlePolls: 40)
-            }
         }
         publish(snapshot)
 
@@ -993,15 +1065,30 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    private func scheduleMeshPump(idlePolls: Int, delay: TimeInterval = 0.025) {
+    /// Coalesced immediate drain of the Rust session. There is no polling
+    /// cadence: pumps are triggered by the session's wake listener, by
+    /// inbound BLE data, and by the one-shot chat-batch redelivery timer.
+    private func scheduleMeshPump() {
         guard !meshPumpScheduled else { return }
         meshPumpScheduled = true
         let generation = meshPumpGeneration
-        bluetoothQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+        bluetoothQueue.async { [weak self] in
             guard let self else { return }
             self.meshPumpScheduled = false
             guard self.meshPumpGeneration == generation else { return }
-            self.pumpMeshSession(idlePolls: idlePolls)
+            self.pumpMeshSession()
+        }
+    }
+
+    /// One-shot delayed pump so an unacknowledged chat batch is redelivered.
+    /// Deliberately bypasses the immediate-pump coalescing flag: a pending
+    /// delayed pump must never absorb (and thereby delay) a wake-triggered
+    /// immediate pump.
+    private func scheduleChatBatchRedelivery() {
+        let generation = meshPumpGeneration
+        bluetoothQueue.asyncAfter(deadline: .now() + 2.1) { [weak self] in
+            guard let self, self.meshPumpGeneration == generation else { return }
+            self.pumpMeshSession()
         }
     }
 
@@ -1017,7 +1104,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    private func pumpMeshSession(idlePolls: Int) {
+    private func pumpMeshSession() {
         guard let meshSession,
               let peripheral,
               peripheral.state == .connected,
@@ -1068,11 +1155,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 || !update.chatArchiveLookups.isEmpty
                 || !update.chatDiagnostics.isEmpty)
             {
-                // The facade replays a batch until it is acknowledged, and
-                // this poll runs several times a second. Deliver a given
-                // batch once, with a slow retry in case the consumer failed
-                // to apply it — never at the poll cadence, which floods the
-                // consumer with duplicate SQLite work.
+                // The facade replays a batch until it is acknowledged, and a
+                // wake-triggered pump can run several times in quick
+                // succession. Deliver a given batch once; if the consumer
+                // fails to acknowledge it, the one-shot redelivery pump
+                // re-yields it every couple of seconds until it does.
                 let now = DispatchTime.now()
                 let isRetryDue = lastChatBatchYield < now
                     && now.uptimeNanoseconds - lastChatBatchYield.uptimeNanoseconds
@@ -1090,15 +1177,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     for continuation in chatContinuations.values {
                         continuation.yield(chatUpdate)
                     }
+                    scheduleChatBatchRedelivery()
                 }
-            }
-            if !pingWaiters.isEmpty || idlePolls > 0 {
-                scheduleMeshPump(idlePolls: max(0, idlePolls - 1))
-            } else if !chatContinuations.isEmpty {
-                // The Rust reducer owns repair and delivery timers. Poll at a
-                // low active-app cadence so those effects reach persistence
-                // without keeping the 25 ms burst cadence alive forever.
-                scheduleMeshPump(idlePolls: 0, delay: 0.25)
             }
         } catch {
             for waiter in pingWaiters.values {
@@ -1278,6 +1358,68 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         publishBluetoothState()
     }
 
+    func centralManager(_ central: CBCentralManager, willRestoreState state: [String: Any]) {
+        // iOS relaunched (or re-created) us in the background because a
+        // companion event arrived. Adopt the restored peripheral now, but
+        // defer all CoreBluetooth calls until the central reports poweredOn.
+        let restored = state[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        guard let remembered = restored.first(where: {
+            $0.identifier == rememberedPeripheralIdentifier
+        }) ?? restored.first else { return }
+        Self.logger.info(
+            "Restoring companion radio session for \(remembered.identifier, privacy: .public)"
+        )
+        peripheral = remembered
+        remembered.delegate = self
+        restorationPendingResume = true
+        publish(
+            state: .reconnecting,
+            name: remembered.name,
+            localIdentifier: remembered.identifier
+        )
+    }
+
+    /// Continue a state-restored link once Bluetooth is powered on. Process
+    /// memory did not survive, so an already-connected peripheral still
+    /// re-runs discovery and companion synchronization from scratch.
+    private func resumeRestoredPeripheral() {
+        restorationPendingResume = false
+        guard let central, let peripheral else { return }
+        switch peripheral.state {
+        case .connected:
+            publish(
+                state: .attaching,
+                name: peripheral.name,
+                localIdentifier: peripheral.identifier
+            )
+            peripheral.discoverServices([UUIDs.service])
+        case .connecting:
+            // The system kept the pending connect alive; didConnect will
+            // continue the normal attach path.
+            break
+        default:
+            automaticConnectionInProgress = true
+            autoConnectAttempt = UUID()
+            let attempt = autoConnectAttempt
+            central.connect(peripheral)
+            bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let self, let remembered = self.peripheral,
+                      self.autoConnectAttempt == attempt,
+                      self.automaticConnectionInProgress,
+                      remembered.state != .connected
+                else { return }
+                // Same policy as startAutomaticConnection: report honestly,
+                // keep the system connection request armed.
+                self.automaticConnectionInProgress = false
+                self.publish(
+                    state: .waitingForRadio,
+                    name: remembered.name,
+                    localIdentifier: remembered.identifier
+                )
+            }
+        }
+    }
+
     func centralManager(
         _ central: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
@@ -1322,12 +1464,16 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         error: (any Error)?
     ) {
         guard self.peripheral === peripheral else { return }
-        if automaticConnectionInProgress {
+        if automaticConnectionInProgress || snapshot.linkState == .waitingForRadio {
+            // A transient failure of the standing connection request; iOS
+            // does not retry a failed request on its own, so re-arm it and
+            // keep waiting for the radio.
             automaticConnectionInProgress = false
-            clearPeripheral()
-            publishDisconnected(
+            central.connect(peripheral)
+            publish(
+                state: .waitingForRadio,
                 name: peripheral.name,
-                problem: error?.localizedDescription ?? "The saved companion radio could not be reached"
+                localIdentifier: peripheral.identifier
             )
             return
         }
@@ -1439,7 +1585,6 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             )
             do {
                 try meshSession?.failOutboundTransmissions()
-                scheduleMeshPump(idlePolls: 40)
             } catch {
                 Self.logger.error(
                     "Could not publish companion write failure to Rust mesh session"
@@ -1472,5 +1617,20 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             return
         }
         receive(value, from: peripheral)
+    }
+}
+
+/// Bridges the Rust session's pending-update announcement onto the
+/// connection's Bluetooth queue. Runs on the Rust worker thread; holds the
+/// connection weakly so a retired session cannot keep it alive.
+private final class MeshSessionWakeListener: MobileMeshWakeListener, @unchecked Sendable {
+    private weak var connection: CoreBluetoothRadioConnection?
+
+    init(connection: CoreBluetoothRadioConnection) {
+        self.connection = connection
+    }
+
+    func onUpdatePending() {
+        connection?.meshSessionDidAnnounceUpdate()
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import UIKit
 import UMSHMobileCore
 
 @MainActor
@@ -21,6 +22,7 @@ struct AppRootView: View {
     private let identityVault: KeychainIdentityVault
     private let applicationStore = try? SQLiteApplicationStore.applicationStore()
     private let radioConnection: any RadioConnection
+    private let notificationService = ChatNotificationService()
 
     init(radioConnection: any RadioConnection = CoreBluetoothRadioConnection()) {
         let meshEngine = RustMeshEngine()
@@ -148,6 +150,11 @@ struct AppRootView: View {
         .task {
             for await snapshot in await radioConnection.snapshots() {
                 radioSnapshot = snapshot
+                if snapshot.linkState == .attached {
+                    // The first successful attach is the first moment a
+                    // message notification has concrete meaning.
+                    notificationService.requestAuthorizationIfNeeded()
+                }
                 await synchronizeRadioPeer(from: snapshot)
             }
         }
@@ -161,6 +168,30 @@ struct AppRootView: View {
                 await applyReceivedAdvertisement(advertisement)
             }
         }
+        .task {
+            for await peerAddress in notificationService.conversationOpens {
+                await openConversationFromNotification(peerAddress: peerAddress)
+            }
+        }
+        .onChange(of: openedConversation) { _, conversation in
+            notificationService.setVisibleConversation(
+                peerAddress: conversation?.peer.identity.canonicalAddress
+            )
+        }
+    }
+
+    @MainActor
+    private func openConversationFromNotification(peerAddress: String) async {
+        selectedTab = .conversations
+        if conversations.first(where: {
+            $0.peer.identity.canonicalAddress == peerAddress
+        }) == nil {
+            await reloadApplicationState()
+        }
+        guard let conversation = conversations.first(where: {
+            $0.peer.identity.canonicalAddress == peerAddress
+        }) else { return }
+        openedConversation = conversation
     }
 
     /// Persist an over-the-air advertisement. A broadcast frame is
@@ -587,6 +618,16 @@ struct AppRootView: View {
 
     private func applyChatUpdate(_ update: RadioChatUpdate) async {
         guard let applicationStore, let localIdentity else { return }
+        // A background BLE wake gives a short grace window; the assertion
+        // keeps iOS from suspending us between persisting the batch and
+        // acknowledging it. Worst case on expiry is a duplicate re-apply,
+        // which the store tolerates.
+        let assertion = UIApplication.shared.beginBackgroundTask(withName: "umsh.chat.apply")
+        defer {
+            if assertion != .invalid {
+                UIApplication.shared.endBackgroundTask(assertion)
+            }
+        }
         for diagnostic in update.diagnostics {
             Self.logger.warning("Rust chat diagnostic: \(diagnostic, privacy: .public)")
         }
@@ -624,11 +665,39 @@ struct AppRootView: View {
             if !update.mutations.isEmpty || !update.deliveries.isEmpty {
                 await reloadApplicationState()
             }
+            postNotifications(for: update.mutations)
         } catch {
             // Effects remain idempotent and can safely be applied again if
             // the Rust facade re-emits them.
             Self.logger.error(
                 "Could not apply chat update batch \(update.batchID, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    /// Notify for newly inserted, complete inbound messages — never for
+    /// local echoes, delivery-state changes, edits, or deletions. Runs only
+    /// after the batch reached durable storage; the willPresent delegate
+    /// suppresses the banner when that conversation is visible in the
+    /// foreground. A batch redelivered after a failed acknowledgement can
+    /// repeat a banner; that is the accepted worst case.
+    @MainActor
+    private func postNotifications(for mutations: [MobileChatMutationRecord]) {
+        for mutation in mutations {
+            guard mutation.kind == .insert,
+                  mutation.direction == .inbound,
+                  mutation.complete != false,
+                  let peerAddress = mutation.peerAddress,
+                  let body = mutation.body,
+                  !body.isEmpty
+            else { continue }
+            let displayName = peers.first {
+                $0.identity.canonicalAddress == peerAddress
+            }?.displayName ?? String(peerAddress.prefix(10))
+            notificationService.postInboundMessage(
+                peerAddress: peerAddress,
+                displayName: displayName,
+                body: body
             )
         }
     }
