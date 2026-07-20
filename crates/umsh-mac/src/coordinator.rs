@@ -1935,7 +1935,16 @@ impl<
             }
         }
 
-        if self.tx_queue.has_ready(now_ms) {
+        // Ready queue entries are only actionable when they could actually
+        // transmit: during a post-transmit listen window only immediate-ACK
+        // frames may go out, and the window's own expiry is already covered
+        // by `earliest_deadline_ms` above. Reporting a blocked-but-ready
+        // frame here would spin this poll hot for the whole window —
+        // starving every other task sharing the executor — since the drain
+        // it triggers requeues the frame without progress.
+        if self.tx_queue.has_ready(now_ms)
+            && (self.post_tx_listen.is_none() || self.tx_queue.has_ready_immediate_ack(now_ms))
+        {
             return Poll::Ready(Ok(WakeReason::TimerExpired));
         }
 
