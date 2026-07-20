@@ -7,12 +7,13 @@ use umsh_core::{ChannelId, NodeHint, PublicKey};
 use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    ArchiveResult, CompletionStatus, ComposeIntent, DeliveryState, Destination, Diagnostic, Engine,
-    EngineConfig, Event, MutationKind, Output, RepairOutcome, ResolvedRef, destination_for,
+    ArchiveResult, CompletionStatus, ComposeError, ComposeIntent, ComposeRef, DeliveryState,
+    Destination, Diagnostic, Engine, EngineConfig, Event, MutationKind, Output, RepairOutcome,
+    ResolvedRef, StreamCheckpoint, destination_for,
 };
 use umsh_text::validate::{DeliveryPath, DirectChannelProfile, Envelope};
 use umsh_text::{
-    ConversationKey, Fragment, MessageSequence, MessageType, SenderScope, TextMessage,
+    ConversationKey, Fragment, MessageSequence, MessageType, SenderScope, TextMessage, WireRef,
 };
 
 const LOCAL: PublicKey = PublicKey([0xAA; 32]);
@@ -148,11 +149,13 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     body: engine.body(&body).to_string(),
                     status,
                 },
-                MutationKind::Edit { original, body } => Drained::Edit {
+                MutationKind::Edit {
+                    original, body, ..
+                } => Drained::Edit {
                     original,
                     body: engine.body(&body).to_string(),
                 },
-                MutationKind::Delete { original } => Drained::Delete { original },
+                MutationKind::Delete { original, .. } => Drained::Delete { original },
             },
             Output::Event(event) => Drained::Event(event),
             Output::Diagnostic(diagnostic) => Drained::Diagnostic(diagnostic),
@@ -393,7 +396,7 @@ fn compose_edit_and_delete_reuse_original_reference() {
             direct_conv(),
             2,
             ComposeIntent::Edit {
-                original,
+                original: ComposeRef::Handle(original),
                 body: "v2",
             },
             1,
@@ -412,7 +415,14 @@ fn compose_edit_and_delete_reuse_original_reference() {
     )));
 
     engine
-        .compose(direct_conv(), 3, ComposeIntent::Delete { original }, 2)
+        .compose(
+            direct_conv(),
+            3,
+            ComposeIntent::Delete {
+                original: ComposeRef::Handle(original),
+            },
+            2,
+        )
         .unwrap();
     let outputs = drain(&mut engine);
     let Drained::Transmit { payload, .. } = &outputs[1] else {
@@ -425,6 +435,144 @@ fn compose_edit_and_delete_reuse_original_reference() {
         output,
         Drained::Delete { original: ResolvedRef::Handle(handle) } if *handle == original
     )));
+}
+
+#[test]
+fn wire_referenced_edit_survives_process_restart() {
+    // First process: compose the original and persist its checkpoint plus
+    // the message's (wire_id, epoch), as the mobile store does.
+    let mut first = engine();
+    first
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "v1",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let outputs = drain(&mut first);
+    let Some(Drained::StoreCheckpoint { next_id, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::StoreCheckpoint { .. }))
+    else {
+        panic!("expected checkpoint");
+    };
+    let Some(Drained::Insert {
+        wire_id: Some(wire_id),
+        ..
+    }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Insert { .. }))
+    else {
+        panic!("expected insert with wire id");
+    };
+
+    // Second process: a fresh engine restored from the checkpoint edits the
+    // persisted original by wire reference.
+    let mut restarted = engine();
+    restarted.restore(
+        &[StreamCheckpoint {
+            conversation: direct_conv(),
+            next_id: *next_id,
+            epoch: 0,
+        }],
+        0,
+    );
+    restarted
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Edit {
+                original: ComposeRef::Wire {
+                    message_id: *wire_id,
+                    epoch: 0,
+                },
+                body: "v2",
+            },
+            1,
+        )
+        .expect("wire-referenced edit composes after restart");
+    let outputs = drain(&mut restarted);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    let message = parse_payload(payload);
+    assert_eq!(message.editing, Some(*wire_id), "edit names the original");
+    assert_eq!(
+        message.sequence,
+        Some(MessageSequence::unfragmented(*next_id)),
+        "restored stream continues its sequence"
+    );
+    assert!(
+        !message.sequence_reset,
+        "continuity restored: no Sequence Reset announced"
+    );
+    // The local mutation exports the unresolved wire reference for the
+    // platform to resolve against its persisted rows.
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Edit {
+            original: ResolvedRef::Unresolved(WireRef::SenderScoped {
+                sender: SenderScope::Local,
+                message_id,
+            }),
+            ..
+        } if *message_id == *wire_id
+    )));
+}
+
+#[test]
+fn wire_referenced_edit_is_rejected_without_continuity() {
+    // Without a restored checkpoint the stream will announce a Sequence
+    // Reset, which invalidates persisted wire IDs as reference targets.
+    let mut engine = engine();
+    let error = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Edit {
+                original: ComposeRef::Wire {
+                    message_id: 0,
+                    epoch: 0,
+                },
+                body: "v2",
+            },
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(error, ComposeError::UnknownOriginal);
+
+    // A restored stream in a newer epoch likewise rejects an older epoch's
+    // wire reference.
+    let mut restarted = self::engine();
+    restarted.restore(
+        &[StreamCheckpoint {
+            conversation: direct_conv(),
+            next_id: 4,
+            epoch: 3,
+        }],
+        0,
+    );
+    let error = restarted
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Delete {
+                original: ComposeRef::Wire {
+                    message_id: 2,
+                    epoch: 2,
+                },
+            },
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(error, ComposeError::UnknownOriginal);
 }
 
 #[test]

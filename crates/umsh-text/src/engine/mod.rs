@@ -192,11 +192,15 @@ pub enum MutationKind {
     },
     /// Apply an edit to the referenced original message.
     Edit {
+        conversation: ConversationKey,
         original: ResolvedRef,
         body: BodyRef,
     },
     /// Mark the referenced original message deleted (empty edit).
-    Delete { original: ResolvedRef },
+    Delete {
+        conversation: ConversationKey,
+        original: ResolvedRef,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -377,11 +381,24 @@ pub enum ComposeIntent<'a> {
     },
     /// Replace a previously composed message's content.
     Edit {
-        original: MessageHandle,
+        original: ComposeRef,
         body: &'a str,
     },
     /// Delete a previously composed message (empty edit on the wire).
-    Delete { original: MessageHandle },
+    Delete { original: ComposeRef },
+}
+
+/// Reference to a previously composed original for edits and deletes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComposeRef {
+    /// A message composed by this engine instance.
+    Handle(MessageHandle),
+    /// A persisted original from an earlier process: the wire ID and epoch
+    /// recorded when it was composed. Valid only while the outbound stream
+    /// is still in that epoch — a Sequence Reset invalidates older wire IDs
+    /// as reference targets — and while the ID is within the recently
+    /// allocated serial half-space.
+    Wire { message_id: u8, epoch: u16 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -552,13 +569,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     .ok_or(ComposeError::UnknownRegarding)?,
             ),
         };
+        // Wire references may target a stream restored from a checkpoint
+        // that has not composed yet in this process; materialize it first so
+        // its epoch is available for validation.
+        self.ensure_outbound(conversation, now_ms);
         let editing = match edit_original {
             None => None,
-            Some(handle) => {
-                let stream = self
-                    .outbound
-                    .get(&conversation)
-                    .ok_or(ComposeError::UnknownOriginal)?;
+            Some(ComposeRef::Handle(handle)) => {
+                let stream = self.outbound.get(&conversation).expect("just ensured");
                 Some(
                     stream
                         .refs
@@ -566,9 +584,25 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                         .ok_or(ComposeError::UnknownOriginal)?,
                 )
             }
+            Some(ComposeRef::Wire { message_id, epoch }) => {
+                let stream = self.outbound.get(&conversation).expect("just ensured");
+                if stream.epoch != epoch || stream.announce_reset {
+                    // The original predates a Sequence Reset (or the stream
+                    // lost continuity and will announce one); receivers have
+                    // discarded its wire ID as a reference target.
+                    return Err(ComposeError::UnknownOriginal);
+                }
+                // Best-effort recency guard: the ID must lie in the already
+                // allocated serial half-space. Receivers only retain refs
+                // for recent messages, so anything older dangles anyway.
+                let delta = stream.next_id.wrapping_sub(message_id);
+                if delta == 0 || delta > 128 {
+                    return Err(ComposeError::UnknownOriginal);
+                }
+                Some(message_id)
+            }
         };
 
-        self.ensure_outbound(conversation, now_ms);
         let stream = self.outbound.get_mut(&conversation).expect("just ensured");
         stream.last_active_ms = now_ms;
         let message_id = stream.allocate();
@@ -616,12 +650,26 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let body_ref = self
             .arena_store(body)
             .unwrap_or(BodyRef { offset: 0, len: 0 });
-        let kind = match (edit_original, body.is_empty()) {
+        // A wire-referenced original has no live handle in this process; the
+        // platform resolves the exported reference against its own persisted
+        // rows for the local sender's stream.
+        let original_ref = edit_original.map(|original| match original {
+            ComposeRef::Handle(handle) => ResolvedRef::Handle(handle),
+            ComposeRef::Wire { message_id, .. } => {
+                ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+                    sender: SenderScope::Local,
+                    message_id,
+                })
+            }
+        });
+        let kind = match (original_ref, body.is_empty()) {
             (Some(original), true) => MutationKind::Delete {
-                original: ResolvedRef::Handle(original),
+                conversation,
+                original,
             },
             (Some(original), false) => MutationKind::Edit {
-                original: ResolvedRef::Handle(original),
+                conversation,
+                original,
                 body: body_ref,
             },
             (None, _) => MutationKind::Insert {
@@ -959,13 +1007,17 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 ));
             let handle = self.alloc_handle();
             let kind = if content.body.is_empty() {
-                MutationKind::Delete { original }
+                MutationKind::Delete {
+                    conversation: key.conversation,
+                    original,
+                }
             } else {
                 let body = core::str::from_utf8(content.body).unwrap_or("");
                 let body_ref = self
                     .arena_store(body)
                     .unwrap_or(BodyRef { offset: 0, len: 0 });
                 MutationKind::Edit {
+                    conversation: key.conversation,
                     original,
                     body: body_ref,
                 }
@@ -1225,9 +1277,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 ));
             let body_ref = self.render_to_arena(slot_index, true);
             let kind = if body_ref.len == 0 {
-                MutationKind::Delete { original }
+                MutationKind::Delete {
+                    conversation: key.conversation,
+                    original,
+                }
             } else {
                 MutationKind::Edit {
+                    conversation: key.conversation,
                     original,
                     body: body_ref,
                 }
