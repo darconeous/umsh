@@ -169,6 +169,20 @@ impl<'a> OptionDecoder<'a> {
         }
     }
 
+    /// Byte offset of the next undecoded byte in the underlying buffer.
+    ///
+    /// Sampled before a call to `next`, this is the offset of that option's
+    /// header, allowing higher-level codecs to retain sub-ranges of an option
+    /// block verbatim.
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
+    /// The absolute option number in effect for delta decoding.
+    pub fn last_number(&self) -> u16 {
+        self.last_number
+    }
+
     /// Return the trailing bytes after a consumed end marker.
     ///
     /// This is typically used by higher-level codecs whose options are followed
@@ -286,7 +300,10 @@ fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
             if data.len() < 2 {
                 return Err(ParseError::Truncated);
             }
-            Ok((u16::from_be_bytes([data[0], data[1]]) + 269, 2))
+            let value = u16::from_be_bytes([data[0], data[1]])
+                .checked_add(269)
+                .ok_or(ParseError::InvalidOptionNibble)?;
+            Ok((value, 2))
         }
         _ => Err(ParseError::InvalidOptionNibble),
     }

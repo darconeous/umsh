@@ -443,7 +443,12 @@ where
                         if let Ok(msg) = umsh_text::parse_text_message(rest) {
                             let alias = self.peer_alias_display(&from);
                             let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                            let _ = write!(&mut line, "<{}> {}", alias, msg.body);
+                            let _ = write!(
+                                &mut line,
+                                "<{}> {}",
+                                alias,
+                                msg.body_str().unwrap_or("<invalid utf-8>")
+                            );
                             self.out.write_line(&line).await?;
                             if self.settings.show_hex {
                                 let mut hex: HString<EVENT_LINE_MAX> = HString::new();

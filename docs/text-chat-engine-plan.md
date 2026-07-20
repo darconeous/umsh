@@ -2,10 +2,91 @@
 
 ## Status
 
-Design proposal. Wire-protocol rules settled during this design have been
-applied to `docs/protocol/src/app-text-messages.md` and
-`docs/protocol/src/app-chat-rooms.md`; the spec is authoritative for wire
-behavior, and the remaining open wire questions are listed in Increment 0.
+Increments 0–3 are implemented in `crates/umsh-text`.
+
+- Increment 0: the open wire questions are settled in
+  `docs/protocol/src/app-text-messages.md` — serial-number ordering with the
+  1–127 forward half, an automatic repair bound of 8 messages per gap with
+  re-baselining beyond it, conversation-determined `Regarding` width (1-byte
+  for all one-to-one conversations including blind-unicast), and 160-byte /
+  10-fragment wire maxima with defined receiver behavior for larger counts.
+  The spec also records the duplicate-option treatments, lazy reset scoping,
+  jittered group repair with multicast cancellation, and ID-reuse retirement.
+- Increment 1: the codec is rewritten (`codec.rs`, `model.rs`) with
+  `MessageUnavailable`, `Channel Group Resend`, occurrence tracking,
+  zero-copy extension-option retention, and a true no-alloc
+  no-default-features build; semantic validation and the profile contract
+  live in `validate.rs` with `DirectChannelProfile`. Canonical byte vectors
+  are in `tests/codec_vectors.rs`.
+- Increments 2–3: the sans-I/O reducer is in `engine/` (sequence state,
+  page-pool reassembly, partial rendering with sentinels, gap inference,
+  jittered bounded repair, and the coalescing resend service), exercised by
+  the simulations in `tests/engine_tests.rs`.
+
+Review fixes (2026-07-17), from an independent review of increments 0–3:
+
+- **Oversized fragment bodies** no longer panic the engine — previously a
+  >160-byte body truncated its stored `u8` length in release builds and
+  could panic the fixed-size read paths (remotely triggerable DoS). The
+  spec now states both limits are sender obligations whose excess remains
+  syntactically valid, with receiver behavior conditional ("a receiver
+  that will not reassemble such a message drops the assembly…"). The
+  engine *salvages* instead of dropping: the oversized fragment alone is
+  marked unavailable in its slot (`Diagnostic::OversizedFragment`; a
+  resend would return the same bytes, so no repair is attempted for it —
+  an already-queued repair is cancelled by the normal arrival path), an
+  oversized fragment zero still contributes its valid options, every
+  storable fragment reassembles normally, and a slot settled by the mark
+  finalizes immediately. Over-*count* frames are simply ignored at the
+  guard (diagnostic, ID accounted): no slot ever opens for a count above
+  10, and the count-mismatch guard protects a coherent valid assembly
+  from stray frames with a different count — a later valid-count frame
+  for the same ID may legitimately open a fresh assembly. A defensive
+  `InsertOutcome::TooLarge` guard remains in the page pool.
+- **Sequence Reset on a continuation fragment is ignored** (and reported
+  via the ignored-continuation-metadata diagnostic) instead of destroying
+  the sender's stream and reassembly state; the spec's "options from the
+  first fragment apply to the entire message" rule covers it.
+- **Fragment-zero presentation metadata survives reassembly at full
+  fidelity**: the announcing Insert mutation always runs during the
+  receive call that delivered fragment zero, so the sender handle and
+  colors are borrowed from that fragment's validated content — nothing is
+  retained (or truncated) in the slot, and `FirstMeta` keeps only what
+  later calls consult (type, Regarding, Editing). Extension options are
+  *not* yet carried through reassembly — nor by `MutationKind::Insert`
+  for unfragmented messages — that plumbing is increment 4/6 scope (room
+  Timestamp/Sender Sequence).
+- **Absent runs split by repair state**: an unavailable portion renders
+  `[UNAVAILABLE]` immediately even when adjacent to still-repairable
+  fragments (which stay `[PENDING]`, or `[MISSING]` at final render).
+  Alternating states can produce up to one sentinel per absent fragment;
+  that chatter is bounded by the fragment count and accepted for honesty.
+- **Outbound sequence continuity survives displacement**: restored
+  checkpoints and streams evicted from the 8-entry active map are held in
+  a 24-entry cold stash and resumed on reactivation, instead of silently
+  dropping deep restores and re-announcing Sequence Reset at zero. The
+  in-memory continuity bound is therefore 8 active + 24 cold
+  conversations, and `restore()` takes checkpoints oldest-first (the
+  earliest entries are displaced when over the bound). Beyond the bound
+  the stream resets — safe by design; exact continuity for unbounded
+  conversation counts is the increment-4 compose-hint below.
+- **Persist-before-transmit failure contract documented** on
+  `Output::StoreCheckpoint`: on a failed checkpoint write the platform
+  must drop the covered transmissions and resynchronize via `restore()`.
+  A synchronous acknowledgment API was deliberately not added; the
+  increment-4 facade wraps the drain loop and is the right place to
+  enforce it.
+- **Invalid UTF-8 in a completely reassembled body** is now reported
+  (`Diagnostic::ReassembledInvalidUtf8`) alongside the lossy U+FFFD
+  render, making the spec's reassembly-time validation observable.
+
+Each fix has a regression test (`tests/engine_tests.rs` review section,
+plus pool-level tests in `fragment.rs`).
+
+Remaining: Increment 4 (mobile facade / UniFFI and SQLite ingestion),
+Increment 5 (pager adapter and capacity measurement), and Increment 6 (chat
+rooms in `umsh-chat-room`, including extension-option retention through
+mutations and reassembly). The spec is authoritative for wire behavior.
 
 ## Decision
 
@@ -758,6 +839,15 @@ Add canonical byte vectors for every message type and invalid combination.
 - Embed the engine in the Rust mobile mesh worker.
 - Export typed chat commands/events through UniFFI.
 - Add SQLite transcript/archive tables and idempotent event application.
+- Enforce the `Output::StoreCheckpoint` failure contract in the facade's
+  drain loop: the checkpoint write must complete before any covered
+  `Transmit` reaches the radio; on failure, drop those transmissions and
+  resynchronize the engine via `restore()`.
+- Add an optional persisted-checkpoint hint to compose (platform-supplied
+  input, keeping the reducer synchronous and sans-I/O) so conversations
+  beyond the 8+24 in-memory continuity bound resume exactly instead of
+  resetting; have the facade pass the SQLite checkpoint for the
+  conversation being composed to.
 - Preserve the current companion queue semantics: queue drain is destructive
   and has no durable host-commit handshake. Treat a stronger peek/commit flow
   as a separate companion-protocol feature if it is designed later.
