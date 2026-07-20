@@ -100,6 +100,7 @@ enum RadioLinkState: String, Equatable, Sendable {
     case scanning
     case discovered
     case connecting
+    case reconnecting
     case pairing
     case attaching
     case synchronizing
@@ -118,6 +119,7 @@ enum RadioLinkState: String, Equatable, Sendable {
         case .scanning: "Looking for companion radios"
         case .discovered: "Radio discovered"
         case .connecting: "Radio connecting"
+        case .reconnecting: "Reconnecting to saved radio"
         case .pairing: "Radio pairing"
         case .attaching: "Radio attaching"
         case .synchronizing: "Radio synchronizing"
@@ -134,7 +136,7 @@ enum RadioLinkState: String, Equatable, Sendable {
     var symbolName: String {
         switch self {
         case .attached, .ready: "antenna.radiowaves.left.and.right"
-        case .scanning, .connecting, .pairing, .attaching, .synchronizing, .provisioning, .configuring:
+        case .scanning, .connecting, .reconnecting, .pairing, .attaching, .synchronizing, .provisioning, .configuring:
             "antenna.radiowaves.left.and.right.circle"
         case .failed: "exclamationmark.triangle.fill"
         default: "antenna.radiowaves.left.and.right.slash"

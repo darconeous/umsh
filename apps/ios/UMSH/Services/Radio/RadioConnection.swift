@@ -8,6 +8,7 @@ protocol RadioConnection: AnyObject, Sendable {
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func useMeshSession(_ session: MobileMeshSession?) async
     func autoConnect() async
+    func reconnect() async
     func connect() async throws
     func claimForCurrentIdentity() async throws
     func refresh() async throws -> RadioSnapshot

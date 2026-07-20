@@ -73,6 +73,7 @@ struct AppRootView: View {
                     createIdentity: createIdentity,
                     radioSnapshot: $radioSnapshot,
                     connectRadio: connectRadio,
+                    reconnectRadio: reconnectRadio,
                     claimRadio: claimRadio,
                     refreshRadio: refreshRadio,
                     configureRadio: configureRadio,
@@ -92,6 +93,7 @@ struct AppRootView: View {
                 RadioDetailView(
                     snapshot: $radioSnapshot,
                     connect: connectRadio,
+                    reconnect: reconnectRadio,
                     claim: claimRadio,
                     refresh: refreshRadio,
                     configure: configureRadio,
@@ -161,6 +163,10 @@ struct AppRootView: View {
             // Connection failures are published as radio snapshots so every
             // screen presents the same state and recovery action.
         }
+    }
+
+    private func reconnectRadio() async {
+        await radioConnection.reconnect()
     }
 
     private func disconnectRadio() async {

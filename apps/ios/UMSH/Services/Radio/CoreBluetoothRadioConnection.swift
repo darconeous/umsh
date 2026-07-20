@@ -35,10 +35,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
     private var scanRequested = false
+    private var scanExcludesRememberedRadio = false
     private var scanAttempt = UUID()
     private var autoConnectRequested = false
     private var autoConnectAttempt = UUID()
     private var automaticConnectionInProgress = false
+    private var intentionalDisconnect = false
     private let reassembler = MobileGattReassembler()
     private let companionSession = MobileCompanionSession()
     private var pendingWrites: [Data] = []
@@ -57,6 +59,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init()
+        snapshot.localIdentifier = rememberedPeripheralIdentifier
     }
 
     func snapshots() async -> AsyncStream<RadioSnapshot> {
@@ -122,9 +125,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     private func connectOnQueue() {
+        intentionalDisconnect = false
         autoConnectRequested = false
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
+        scanExcludesRememberedRadio = rememberedPeripheralIdentifier != nil
         scanRequested = true
         if central == nil {
             publish(state: .scanning)
@@ -147,16 +152,32 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func reconnect() async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                autoConnectOnQueue()
+                result.resume()
+            }
+        }
+    }
+
     private func autoConnectOnQueue() {
         guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
               UUID(uuidString: value) != nil
-        else { return }
+        else {
+            publishDisconnected(problem: "No saved companion radio is available to reconnect")
+            return
+        }
+        intentionalDisconnect = false
         autoConnectRequested = true
         if central == nil {
             central = CBCentralManager(delegate: self, queue: bluetoothQueue)
             return
         }
-        guard central?.state == .poweredOn else { return }
+        guard central?.state == .poweredOn else {
+            publishBluetoothState()
+            return
+        }
         startAutomaticConnection()
     }
 
@@ -377,14 +398,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     private func disconnectOnQueue() {
+        intentionalDisconnect = true
         scanRequested = false
+        scanExcludesRememberedRadio = false
         scanAttempt = UUID()
         autoConnectRequested = false
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
         central?.stopScan()
         guard let peripheral else {
-            publish(.idle)
+            intentionalDisconnect = false
+            publishDisconnected()
             return
         }
         publish(state: .disconnecting, name: peripheral.name)
@@ -410,11 +434,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 return
             }
             self.central?.stopScan()
+            self.scanExcludesRememberedRadio = false
             self.publish(
                 RadioSnapshot(
                     linkState: .failed,
                     name: nil,
-                    localIdentifier: nil,
+                    localIdentifier: self.rememberedPeripheralIdentifier,
                     batteryPercentage: nil,
                     isExternallyPowered: nil,
                     batteryReadAt: nil,
@@ -432,21 +457,24 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         autoConnectRequested = false
         guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
               let identifier = UUID(uuidString: value)
-        else { return }
+        else {
+            clearPeripheral()
+            publishDisconnected(problem: "No saved companion radio is available to reconnect")
+            return
+        }
+        clearPeripheral()
         guard let remembered = central.retrievePeripherals(withIdentifiers: [identifier]).first else {
-            defaults.removeObject(forKey: PreferenceKey.lastAttachedPeripheral)
-            publish(.idle)
+            publishDisconnected(problem: "The saved companion radio is not known to Bluetooth")
             return
         }
 
-        clearPeripheral()
         peripheral = remembered
         remembered.delegate = self
         automaticConnectionInProgress = true
         autoConnectAttempt = UUID()
         let attempt = autoConnectAttempt
         publish(
-            state: .connecting,
+            state: .reconnecting,
             name: remembered.name,
             localIdentifier: remembered.identifier
         )
@@ -461,7 +489,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             self.automaticConnectionInProgress = false
             self.central?.cancelPeripheralConnection(remembered)
             self.clearPeripheral()
-            self.publish(.idle)
+            self.publishDisconnected(
+                name: remembered.name,
+                problem: "The saved companion radio could not be reached"
+            )
         }
     }
 
@@ -487,7 +518,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             RadioSnapshot(
                 linkState: .unavailable,
                 name: nil,
-                localIdentifier: nil,
+                localIdentifier: rememberedPeripheralIdentifier,
                 batteryPercentage: nil,
                 isExternallyPowered: nil,
                 batteryReadAt: nil,
@@ -528,12 +559,35 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         _ = companionSession.reset()
         snapshot.linkState = .failed
         snapshot.name = name ?? snapshot.name
+        snapshot.localIdentifier = rememberedPeripheralIdentifier ?? snapshot.localIdentifier
         snapshot.problemDescription = message
         publish(snapshot)
         if let peripheral, peripheral.state == .connected {
             preservesFailureOnDisconnect = true
             central?.cancelPeripheralConnection(peripheral)
         }
+    }
+
+    private var rememberedPeripheralIdentifier: UUID? {
+        defaults.string(forKey: PreferenceKey.lastAttachedPeripheral)
+            .flatMap(UUID.init(uuidString:))
+    }
+
+    private func publishDisconnected(name: String? = nil, problem: String? = "Radio disconnected") {
+        publish(
+            RadioSnapshot(
+                linkState: .idle,
+                name: name,
+                localIdentifier: rememberedPeripheralIdentifier,
+                batteryPercentage: nil,
+                isExternallyPowered: nil,
+                batteryReadAt: nil,
+                deviceIdentity: nil,
+                hostState: .unknown,
+                provisioning: nil,
+                problemDescription: problem
+            )
+        )
     }
 
     private func beginSynchronization(on peripheral: CBPeripheral) {
@@ -863,6 +917,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         syncAttempt = UUID()
         preservesFailureOnDisconnect = false
         automaticConnectionInProgress = false
+        intentionalDisconnect = false
     }
 }
 
@@ -878,6 +933,11 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         guard snapshot.linkState == .scanning else { return }
+        if scanExcludesRememberedRadio,
+           peripheral.identifier == rememberedPeripheralIdentifier {
+            return
+        }
+        scanExcludesRememberedRadio = false
         scanAttempt = UUID()
         central.stopScan()
         self.peripheral = peripheral
@@ -894,6 +954,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard self.peripheral === peripheral else { return }
         automaticConnectionInProgress = false
+        intentionalDisconnect = false
         autoConnectAttempt = UUID()
         publish(
             state: .attaching,
@@ -912,7 +973,10 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         if automaticConnectionInProgress {
             automaticConnectionInProgress = false
             clearPeripheral()
-            publish(.idle)
+            publishDisconnected(
+                name: peripheral.name,
+                problem: error?.localizedDescription ?? "The saved companion radio could not be reached"
+            )
             return
         }
         publishFailure(error?.localizedDescription ?? "The companion radio connection failed", name: peripheral.name)
@@ -930,12 +994,16 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
             clearPeripheral()
             return
         }
-        if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
-        } else {
-            publish(.disconnected)
+        if intentionalDisconnect {
+            clearPeripheral()
+            publishDisconnected(name: peripheral.name, problem: nil)
+            return
         }
-        clearPeripheral()
+        // A remote or link-loss disconnect is provisional. Keep the UI in a
+        // reconnecting state while CoreBluetooth targets only the remembered
+        // peripheral; report disconnected only after that bounded attempt.
+        autoConnectRequested = true
+        startAutomaticConnection()
     }
 }
 
