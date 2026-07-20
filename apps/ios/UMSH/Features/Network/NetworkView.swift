@@ -8,6 +8,7 @@ struct NetworkView: View {
     let savePeer: (MeshPublicIdentity, PeerImportDetails) async -> Void
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
+    let sendMessage: ((DirectConversationSummary, String) async -> Bool)?
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
@@ -98,6 +99,7 @@ struct NetworkView: View {
                 radioSnapshot: $radioSnapshot,
                 startConversation: startConversation,
                 updateDraft: updateDraft,
+                sendMessage: sendMessage,
                 pingPeer: pingPeer
             )
         } label: {
@@ -121,6 +123,7 @@ struct PeerDetailView: View {
     @Binding var radioSnapshot: RadioSnapshot
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
+    let sendMessage: ((DirectConversationSummary, String) async -> Bool)?
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
 
     @State private var openedConversation: DirectConversationSummary?
@@ -136,12 +139,14 @@ struct PeerDetailView: View {
         radioSnapshot: Binding<RadioSnapshot>,
         startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil,
         updateDraft: ((Int64, String) async -> Void)? = nil,
+        sendMessage: ((DirectConversationSummary, String) async -> Bool)? = nil,
         pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil
     ) {
         self.peer = peer
         _radioSnapshot = radioSnapshot
         self.startConversation = startConversation
         self.updateDraft = updateDraft
+        self.sendMessage = sendMessage
         self.pingPeer = pingPeer
     }
 
@@ -226,7 +231,8 @@ struct PeerDetailView: View {
             DirectConversationView(
                 conversation: conversation,
                 radioSnapshot: radioSnapshot,
-                updateDraft: updateDraft ?? { _, _ in }
+                updateDraft: updateDraft ?? { _, _ in },
+                sendMessage: sendMessage ?? { _, _ in false }
             )
         }
         .alert(feedbackTitle, isPresented: $showsFeedback) {

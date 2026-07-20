@@ -6,6 +6,7 @@ struct ConversationsView: View {
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshPublicIdentity, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
+    let sendMessage: (DirectConversationSummary, String) async -> Bool
 
     @State private var showsImport = false
     @State private var openedConversation: DirectConversationSummary?
@@ -24,7 +25,7 @@ struct ConversationsView: View {
             } else {
                 Section("Direct messages") {
                     ForEach(conversations) { conversation in
-                        NavigationLink(value: conversation) {
+                        NavigationLink(value: conversation.id) {
                             ConversationRow(conversation: conversation)
                         }
                     }
@@ -32,18 +33,22 @@ struct ConversationsView: View {
             }
         }
         .navigationTitle("Conversations")
-        .navigationDestination(for: DirectConversationSummary.self) { conversation in
-            DirectConversationView(
-                conversation: conversation,
-                radioSnapshot: radioSnapshot,
-                updateDraft: updateDraft
-            )
+        .navigationDestination(for: Int64.self) { conversationID in
+            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+                DirectConversationView(
+                    conversation: conversation,
+                    radioSnapshot: radioSnapshot,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage
+                )
+            }
         }
         .navigationDestination(item: $openedConversation) { conversation in
             DirectConversationView(
                 conversation: conversation,
                 radioSnapshot: radioSnapshot,
-                updateDraft: updateDraft
+                updateDraft: updateDraft,
+                sendMessage: sendMessage
             )
         }
         .toolbar {
@@ -188,29 +193,46 @@ struct DirectConversationView: View {
     let conversation: DirectConversationSummary
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> Void
+    let sendMessage: (DirectConversationSummary, String) async -> Bool
 
     @State private var draft: String
+    @State private var messages: [ChatMessageSummary]
     @State private var showsBlockedReason = false
 
     init(
         conversation: DirectConversationSummary,
         radioSnapshot: RadioSnapshot,
-        updateDraft: @escaping (Int64, String) async -> Void
+        updateDraft: @escaping (Int64, String) async -> Void,
+        sendMessage: @escaping (DirectConversationSummary, String) async -> Bool
     ) {
         self.conversation = conversation
         self.radioSnapshot = radioSnapshot
         self.updateDraft = updateDraft
+        self.sendMessage = sendMessage
         _draft = State(initialValue: conversation.draftText)
+        _messages = State(initialValue: conversation.messages)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            ContentUnavailableView {
-                Label("No messages yet", systemImage: "bubble.left")
-            } description: {
-                Text("Messages with \(conversation.peer.displayName) will appear here.")
+            if messages.isEmpty {
+                ContentUnavailableView {
+                    Label("No messages yet", systemImage: "bubble.left")
+                } description: {
+                    Text("Messages with \(conversation.peer.displayName) will appear here.")
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(messages) { message in
+                            ChatMessageBubble(message: message)
+                        }
+                    }
+                    .padding()
+                }
+                .frame(maxHeight: .infinity)
             }
-            .frame(maxHeight: .infinity)
 
             Divider()
             VStack(alignment: .leading, spacing: 8) {
@@ -224,35 +246,88 @@ struct DirectConversationView: View {
                             await updateDraft(conversation.id, draft)
                         }
                     Button("Send", systemImage: "arrow.up.circle.fill") {
-                        showsBlockedReason = true
+                        Task { await send() }
                     }
                     .labelStyle(.iconOnly)
                     .font(.title2)
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Label(blockedReason, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let blockedReason {
+                    Label(blockedReason, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding()
             .background(.bar)
         }
         .navigationTitle(conversation.peer.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: conversation.messages) { _, newMessages in
+            messages = newMessages
+        }
         .alert("Message not sent", isPresented: $showsBlockedReason) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(blockedReason + " Your draft has been preserved.")
+            Text((blockedReason ?? "The message could not be queued.") + " Your draft has been preserved.")
         }
     }
 
-    private var blockedReason: String {
+    private func send() async {
+        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        guard blockedReason == nil else {
+            showsBlockedReason = true
+            return
+        }
+        if await sendMessage(conversation, body) {
+            draft = ""
+        } else {
+            showsBlockedReason = true
+        }
+    }
+
+    private var blockedReason: String? {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
             return "Connect a configured companion radio to send."
         }
         guard radioSnapshot.hostState == .matchesCurrentIdentity else {
             return "Set up this radio for the current phone identity to send."
         }
-        return "Direct-message transmission is not connected yet."
+        return nil
+    }
+}
+
+private struct ChatMessageBubble: View {
+    let message: ChatMessageSummary
+
+    var body: some View {
+        HStack {
+            if message.isOutbound { Spacer(minLength: 44) }
+            VStack(alignment: message.isOutbound ? .trailing : .leading, spacing: 3) {
+                Text(message.isDeleted ? "Message deleted" : message.body)
+                    .foregroundStyle(message.isDeleted ? .secondary : .primary)
+                    .italic(message.isDeleted)
+                if message.isOutbound, let deliveryState = message.deliveryState {
+                    Text(deliveryLabel(deliveryState))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(message.isOutbound ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            if !message.isOutbound { Spacer(minLength: 44) }
+        }
+    }
+
+    private func deliveryLabel(_ state: String) -> String {
+        switch state.lowercased() {
+        case "acknowledged": "Acknowledged by radio"
+        case "sent": "Sent"
+        case "failed": "Failed"
+        default: "Pending"
+        }
     }
 }

@@ -1365,11 +1365,25 @@ public func FfiConverterTypeMobileIdentity_lower(_ value: MobileIdentity) -> UIn
  */
 public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
+    func acknowledgeChatBatch(batchId: UInt64) throws
+
+    func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
+
+    func commitChatBatch(batchId: UInt64) async throws
+
+    func composeText(peerAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
+
     func ping(peerAddress: String, timeoutMs: UInt64) throws  -> UInt64
 
     func pollUpdate()  -> MobileMeshSessionUpdateRecord
 
     func receive(frame: MobileMeshRxRecord) throws
+
+    func registerPeers(peerAddresses: [String]) async throws
+
+    func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord]) async throws
+
+    func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
 }
 /**
@@ -1448,6 +1462,58 @@ public convenience init(identity: MobileIdentity, counterStore: MobileCounterSto
 
 
 
+open func acknowledgeChatBatch(batchId: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_acknowledge_chat_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(batchId),uniffiCallStatus
+    )
+}
+}
+
+open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_apply_chat_archive_result(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(requestId),
+        FfiConverterTypeMobileChatArchiveResultKind_lower(kind),
+        FfiConverterData.lower(payload),uniffiCallStatus
+    )
+}
+}
+
+open func commitChatBatch(batchId: UInt64)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_commit_chat_batch(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(batchId)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+open func composeText(peerAddress: String, clientToken: UInt32, body: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_text(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress),FfiConverterUInt32.lower(clientToken),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
 open func ping(peerAddress: String, timeoutMs: UInt64)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
         uniffiCallStatus in
@@ -1475,6 +1541,54 @@ open func receive(frame: MobileMeshRxRecord)throws   {try rustCallWithError(FfiC
         FfiConverterTypeMobileMeshRxRecord_lower(frame),uniffiCallStatus
     )
 }
+}
+
+open func registerPeers(peerAddresses: [String])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_register_peers(
+                        self.uniffiCloneHandle(),FfiConverterSequenceString.lower(peerAddresses)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+open func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_reject_chat_batch(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(batchId),FfiConverterSequenceTypeMobileChatCheckpointRecord.lower(checkpoints)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+open func restoreChat(checkpoints: [MobileChatCheckpointRecord])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_restore_chat(
+                        self.uniffiCloneHandle(),FfiConverterSequenceTypeMobileChatCheckpointRecord.lower(checkpoints)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
 
@@ -2137,6 +2251,458 @@ public func FfiConverterTypeGattSegmentRecord_lower(_ value: GattSegmentRecord) 
 }
 
 
+public struct MobileChatArchiveLookupRecord: Equatable, Hashable {
+    public var requestId: UInt32
+    public var peerAddress: String
+    public var messageId: UInt8
+    public var fragmentIndex: UInt8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(requestId: UInt32, peerAddress: String, messageId: UInt8, fragmentIndex: UInt8?) {
+        self.requestId = requestId
+        self.peerAddress = peerAddress
+        self.messageId = messageId
+        self.fragmentIndex = fragmentIndex
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatArchiveLookupRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatArchiveLookupRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatArchiveLookupRecord {
+        return
+            try MobileChatArchiveLookupRecord(
+                requestId: FfiConverterUInt32.read(from: &buf),
+                peerAddress: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterUInt8.read(from: &buf),
+                fragmentIndex: FfiConverterOptionUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatArchiveLookupRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.requestId, into: &buf)
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterUInt8.write(value.messageId, into: &buf)
+        FfiConverterOptionUInt8.write(value.fragmentIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveLookupRecord_lift(_ buf: RustBuffer) throws -> MobileChatArchiveLookupRecord {
+    return try FfiConverterTypeMobileChatArchiveLookupRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveLookupRecord_lower(_ value: MobileChatArchiveLookupRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatArchiveLookupRecord.lower(value)
+}
+
+
+public struct MobileChatArchiveRecord: Equatable, Hashable {
+    public var peerAddress: String
+    public var messageId: UInt8
+    public var fragmentIndex: UInt8?
+    public var payload: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peerAddress: String, messageId: UInt8, fragmentIndex: UInt8?, payload: Data) {
+        self.peerAddress = peerAddress
+        self.messageId = messageId
+        self.fragmentIndex = fragmentIndex
+        self.payload = payload
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatArchiveRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatArchiveRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatArchiveRecord {
+        return
+            try MobileChatArchiveRecord(
+                peerAddress: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterUInt8.read(from: &buf),
+                fragmentIndex: FfiConverterOptionUInt8.read(from: &buf),
+                payload: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatArchiveRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterUInt8.write(value.messageId, into: &buf)
+        FfiConverterOptionUInt8.write(value.fragmentIndex, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveRecord_lift(_ buf: RustBuffer) throws -> MobileChatArchiveRecord {
+    return try FfiConverterTypeMobileChatArchiveRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveRecord_lower(_ value: MobileChatArchiveRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatArchiveRecord.lower(value)
+}
+
+
+public struct MobileChatCheckpointRecord: Equatable, Hashable {
+    public var peerAddress: String
+    public var nextId: UInt8
+    public var epoch: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peerAddress: String, nextId: UInt8, epoch: UInt16) {
+        self.peerAddress = peerAddress
+        self.nextId = nextId
+        self.epoch = epoch
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatCheckpointRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatCheckpointRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatCheckpointRecord {
+        return
+            try MobileChatCheckpointRecord(
+                peerAddress: FfiConverterString.read(from: &buf),
+                nextId: FfiConverterUInt8.read(from: &buf),
+                epoch: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatCheckpointRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterUInt8.write(value.nextId, into: &buf)
+        FfiConverterUInt16.write(value.epoch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatCheckpointRecord_lift(_ buf: RustBuffer) throws -> MobileChatCheckpointRecord {
+    return try FfiConverterTypeMobileChatCheckpointRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatCheckpointRecord_lower(_ value: MobileChatCheckpointRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatCheckpointRecord.lower(value)
+}
+
+
+public struct MobileChatComposeBatchRecord: Equatable, Hashable {
+    public var batchId: UInt64
+    public var checkpoint: MobileChatCheckpointRecord
+    /**
+     * These exact payloads must be committed with the checkpoint before the
+     * batch is released to the radio.
+     */
+    public var archives: [MobileChatArchiveRecord]
+    public var mutations: [MobileChatMutationRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(batchId: UInt64, checkpoint: MobileChatCheckpointRecord,
+        /**
+         * These exact payloads must be committed with the checkpoint before the
+         * batch is released to the radio.
+         */archives: [MobileChatArchiveRecord], mutations: [MobileChatMutationRecord]) {
+        self.batchId = batchId
+        self.checkpoint = checkpoint
+        self.archives = archives
+        self.mutations = mutations
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatComposeBatchRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatComposeBatchRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatComposeBatchRecord {
+        return
+            try MobileChatComposeBatchRecord(
+                batchId: FfiConverterUInt64.read(from: &buf),
+                checkpoint: FfiConverterTypeMobileChatCheckpointRecord.read(from: &buf),
+                archives: FfiConverterSequenceTypeMobileChatArchiveRecord.read(from: &buf),
+                mutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatComposeBatchRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.batchId, into: &buf)
+        FfiConverterTypeMobileChatCheckpointRecord.write(value.checkpoint, into: &buf)
+        FfiConverterSequenceTypeMobileChatArchiveRecord.write(value.archives, into: &buf)
+        FfiConverterSequenceTypeMobileChatMutationRecord.write(value.mutations, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatComposeBatchRecord_lift(_ buf: RustBuffer) throws -> MobileChatComposeBatchRecord {
+    return try FfiConverterTypeMobileChatComposeBatchRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatComposeBatchRecord_lower(_ value: MobileChatComposeBatchRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatComposeBatchRecord.lower(value)
+}
+
+
+public struct MobileChatDeliveryRecord: Equatable, Hashable {
+    public var sessionId: UInt64
+    public var handle: UInt32
+    public var fragmentIndex: UInt8?
+    public var state: MobileChatDeliveryState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: UInt64, handle: UInt32, fragmentIndex: UInt8?, state: MobileChatDeliveryState) {
+        self.sessionId = sessionId
+        self.handle = handle
+        self.fragmentIndex = fragmentIndex
+        self.state = state
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatDeliveryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatDeliveryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatDeliveryRecord {
+        return
+            try MobileChatDeliveryRecord(
+                sessionId: FfiConverterUInt64.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf),
+                fragmentIndex: FfiConverterOptionUInt8.read(from: &buf),
+                state: FfiConverterTypeMobileChatDeliveryState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatDeliveryRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterOptionUInt8.write(value.fragmentIndex, into: &buf)
+        FfiConverterTypeMobileChatDeliveryState.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDeliveryRecord_lift(_ buf: RustBuffer) throws -> MobileChatDeliveryRecord {
+    return try FfiConverterTypeMobileChatDeliveryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDeliveryRecord_lower(_ value: MobileChatDeliveryRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatDeliveryRecord.lower(value)
+}
+
+
+public struct MobileChatMutationRecord: Equatable, Hashable {
+    /**
+     * A facade-session namespace prevents the engine's process-local u32
+     * handles from colliding after restart.
+     */
+    public var sessionId: UInt64
+    public var handle: UInt32
+    public var revision: UInt32
+    public var kind: MobileChatMutationKind
+    public var peerAddress: String?
+    public var senderAddress: String?
+    public var direction: MobileChatDirection?
+    public var messageType: UInt8?
+    public var wireId: UInt8?
+    public var epoch: UInt16?
+    public var clientToken: UInt32?
+    public var senderHandle: String?
+    public var regardingHandle: UInt32?
+    public var backgroundColor: Data?
+    public var textColor: Data?
+    public var originalHandle: UInt32?
+    public var body: String?
+    public var complete: Bool?
+    public var presentFragments: UInt16?
+    public var fragmentCount: UInt8?
+    public var finalized: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A facade-session namespace prevents the engine's process-local u32
+         * handles from colliding after restart.
+         */sessionId: UInt64, handle: UInt32, revision: UInt32, kind: MobileChatMutationKind, peerAddress: String?, senderAddress: String?, direction: MobileChatDirection?, messageType: UInt8?, wireId: UInt8?, epoch: UInt16?, clientToken: UInt32?, senderHandle: String?, regardingHandle: UInt32?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?, body: String?, complete: Bool?, presentFragments: UInt16?, fragmentCount: UInt8?, finalized: Bool?) {
+        self.sessionId = sessionId
+        self.handle = handle
+        self.revision = revision
+        self.kind = kind
+        self.peerAddress = peerAddress
+        self.senderAddress = senderAddress
+        self.direction = direction
+        self.messageType = messageType
+        self.wireId = wireId
+        self.epoch = epoch
+        self.clientToken = clientToken
+        self.senderHandle = senderHandle
+        self.regardingHandle = regardingHandle
+        self.backgroundColor = backgroundColor
+        self.textColor = textColor
+        self.originalHandle = originalHandle
+        self.body = body
+        self.complete = complete
+        self.presentFragments = presentFragments
+        self.fragmentCount = fragmentCount
+        self.finalized = finalized
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatMutationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatMutationRecord {
+        return
+            try MobileChatMutationRecord(
+                sessionId: FfiConverterUInt64.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf),
+                revision: FfiConverterUInt32.read(from: &buf),
+                kind: FfiConverterTypeMobileChatMutationKind.read(from: &buf),
+                peerAddress: FfiConverterOptionString.read(from: &buf),
+                senderAddress: FfiConverterOptionString.read(from: &buf),
+                direction: FfiConverterOptionTypeMobileChatDirection.read(from: &buf),
+                messageType: FfiConverterOptionUInt8.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf),
+                clientToken: FfiConverterOptionUInt32.read(from: &buf),
+                senderHandle: FfiConverterOptionString.read(from: &buf),
+                regardingHandle: FfiConverterOptionUInt32.read(from: &buf),
+                backgroundColor: FfiConverterOptionData.read(from: &buf),
+                textColor: FfiConverterOptionData.read(from: &buf),
+                originalHandle: FfiConverterOptionUInt32.read(from: &buf),
+                body: FfiConverterOptionString.read(from: &buf),
+                complete: FfiConverterOptionBool.read(from: &buf),
+                presentFragments: FfiConverterOptionUInt16.read(from: &buf),
+                fragmentCount: FfiConverterOptionUInt8.read(from: &buf),
+                finalized: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatMutationRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterUInt32.write(value.revision, into: &buf)
+        FfiConverterTypeMobileChatMutationKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.peerAddress, into: &buf)
+        FfiConverterOptionString.write(value.senderAddress, into: &buf)
+        FfiConverterOptionTypeMobileChatDirection.write(value.direction, into: &buf)
+        FfiConverterOptionUInt8.write(value.messageType, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
+        FfiConverterOptionUInt32.write(value.clientToken, into: &buf)
+        FfiConverterOptionString.write(value.senderHandle, into: &buf)
+        FfiConverterOptionUInt32.write(value.regardingHandle, into: &buf)
+        FfiConverterOptionData.write(value.backgroundColor, into: &buf)
+        FfiConverterOptionData.write(value.textColor, into: &buf)
+        FfiConverterOptionUInt32.write(value.originalHandle, into: &buf)
+        FfiConverterOptionString.write(value.body, into: &buf)
+        FfiConverterOptionBool.write(value.complete, into: &buf)
+        FfiConverterOptionUInt16.write(value.presentFragments, into: &buf)
+        FfiConverterOptionUInt8.write(value.fragmentCount, into: &buf)
+        FfiConverterOptionBool.write(value.finalized, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatMutationRecord_lift(_ buf: RustBuffer) throws -> MobileChatMutationRecord {
+    return try FfiConverterTypeMobileChatMutationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatMutationRecord_lower(_ value: MobileChatMutationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatMutationRecord.lower(value)
+}
+
+
 public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var operationId: UInt64
     public var outcome: MobileMeshPingOutcome
@@ -2305,15 +2871,33 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      */
     public var outboundFrames: [Data]
     public var pingEvents: [MobileMeshPingEventRecord]
+    /**
+     * Chat effects remain in the facade until Swift durably applies them and
+     * acknowledges this batch. Repeated polls may return the same batch.
+     */
+    public var chatBatchId: UInt64?
+    public var chatMutations: [MobileChatMutationRecord]
+    public var chatDeliveries: [MobileChatDeliveryRecord]
+    public var chatArchiveLookups: [MobileChatArchiveLookupRecord]
+    public var chatDiagnostics: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
          * Complete raw UMSH frames ready for the companion PHY transport.
-         */outboundFrames: [Data], pingEvents: [MobileMeshPingEventRecord]) {
+         */outboundFrames: [Data], pingEvents: [MobileMeshPingEventRecord],
+        /**
+         * Chat effects remain in the facade until Swift durably applies them and
+         * acknowledges this batch. Repeated polls may return the same batch.
+         */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord], chatArchiveLookups: [MobileChatArchiveLookupRecord], chatDiagnostics: [String]) {
         self.outboundFrames = outboundFrames
         self.pingEvents = pingEvents
+        self.chatBatchId = chatBatchId
+        self.chatMutations = chatMutations
+        self.chatDeliveries = chatDeliveries
+        self.chatArchiveLookups = chatArchiveLookups
+        self.chatDiagnostics = chatDiagnostics
     }
 
 
@@ -2333,13 +2917,23 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         return
             try MobileMeshSessionUpdateRecord(
                 outboundFrames: FfiConverterSequenceData.read(from: &buf),
-                pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf)
+                pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf),
+                chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
+                chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
+                chatDeliveries: FfiConverterSequenceTypeMobileChatDeliveryRecord.read(from: &buf),
+                chatArchiveLookups: FfiConverterSequenceTypeMobileChatArchiveLookupRecord.read(from: &buf),
+                chatDiagnostics: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMeshSessionUpdateRecord, into buf: inout [UInt8]) {
         FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
         FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
+        FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
+        FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
+        FfiConverterSequenceTypeMobileChatDeliveryRecord.write(value.chatDeliveries, into: &buf)
+        FfiConverterSequenceTypeMobileChatArchiveLookupRecord.write(value.chatArchiveLookups, into: &buf)
+        FfiConverterSequenceString.write(value.chatDiagnostics, into: &buf)
     }
 }
 
@@ -2836,6 +3430,305 @@ public func FfiConverterTypeCounterStoreError_lower(_ value: CounterStoreError) 
 }
 
 
+
+public enum MobileChatArchiveResultKind: Equatable, Hashable {
+
+    case found
+    case deleted
+    case evicted
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatArchiveResultKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatArchiveResultKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatArchiveResultKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatArchiveResultKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .found
+
+        case 2: return .deleted
+
+        case 3: return .evicted
+
+        case 4: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatArchiveResultKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .found:
+            writeInt(&buf, Int32(1))
+
+
+        case .deleted:
+            writeInt(&buf, Int32(2))
+
+
+        case .evicted:
+            writeInt(&buf, Int32(3))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveResultKind_lift(_ buf: RustBuffer) throws -> MobileChatArchiveResultKind {
+    return try FfiConverterTypeMobileChatArchiveResultKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveResultKind_lower(_ value: MobileChatArchiveResultKind) -> RustBuffer {
+    return FfiConverterTypeMobileChatArchiveResultKind.lower(value)
+}
+
+
+
+
+public enum MobileChatDeliveryState: Equatable, Hashable {
+
+    case sent
+    case acknowledged
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatDeliveryState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatDeliveryState: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatDeliveryState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatDeliveryState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .sent
+
+        case 2: return .acknowledged
+
+        case 3: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatDeliveryState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .sent:
+            writeInt(&buf, Int32(1))
+
+
+        case .acknowledged:
+            writeInt(&buf, Int32(2))
+
+
+        case .failed:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDeliveryState_lift(_ buf: RustBuffer) throws -> MobileChatDeliveryState {
+    return try FfiConverterTypeMobileChatDeliveryState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDeliveryState_lower(_ value: MobileChatDeliveryState) -> RustBuffer {
+    return FfiConverterTypeMobileChatDeliveryState.lower(value)
+}
+
+
+
+
+public enum MobileChatDirection: Equatable, Hashable {
+
+    case inbound
+    case outbound
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatDirection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatDirection: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatDirection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatDirection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .inbound
+
+        case 2: return .outbound
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatDirection, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .inbound:
+            writeInt(&buf, Int32(1))
+
+
+        case .outbound:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDirection_lift(_ buf: RustBuffer) throws -> MobileChatDirection {
+    return try FfiConverterTypeMobileChatDirection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatDirection_lower(_ value: MobileChatDirection) -> RustBuffer {
+    return FfiConverterTypeMobileChatDirection.lower(value)
+}
+
+
+
+
+public enum MobileChatMutationKind: Equatable, Hashable {
+
+    case insert
+    case updateBody
+    case edit
+    case delete
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatMutationKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatMutationKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatMutationKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatMutationKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .insert
+
+        case 2: return .updateBody
+
+        case 3: return .edit
+
+        case 4: return .delete
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatMutationKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .insert:
+            writeInt(&buf, Int32(1))
+
+
+        case .updateBody:
+            writeInt(&buf, Int32(2))
+
+
+        case .edit:
+            writeInt(&buf, Int32(3))
+
+
+        case .delete:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatMutationKind_lift(_ buf: RustBuffer) throws -> MobileChatMutationKind {
+    return try FfiConverterTypeMobileChatMutationKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatMutationKind_lower(_ value: MobileChatMutationKind) -> RustBuffer {
+    return FfiConverterTypeMobileChatMutationKind.lower(value)
+}
+
+
+
 /**
  * Stable error categories consumed by platform adapters.
  */
@@ -2968,6 +3861,8 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case OperationInProgress
     case CounterPersistenceFailed
     case SendFailed
+    case ChatComposeFailed
+    case ChatBatchMissing
 
 
 
@@ -3002,6 +3897,8 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case 3: return .OperationInProgress
         case 4: return .CounterPersistenceFailed
         case 5: return .SendFailed
+        case 6: return .ChatComposeFailed
+        case 7: return .ChatBatchMissing
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3032,6 +3929,14 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
 
         case .SendFailed:
             writeInt(&buf, Int32(5))
+
+
+        case .ChatComposeFailed:
+            writeInt(&buf, Int32(6))
+
+
+        case .ChatBatchMissing:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -3368,6 +4273,30 @@ fileprivate struct FfiConverterOptionTypeCompanionSyncRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatDirection?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileChatDirection.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileChatDirection.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -3385,6 +4314,31 @@ fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
         }
         return seq
     }
@@ -3485,6 +4439,131 @@ fileprivate struct FfiConverterSequenceTypeGattSegmentRecord: FfiConverterRustBu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeGattSegmentRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatArchiveLookupRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatArchiveLookupRecord]
+
+    public static func write(_ value: [MobileChatArchiveLookupRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatArchiveLookupRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatArchiveLookupRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatArchiveLookupRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatArchiveLookupRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatArchiveRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatArchiveRecord]
+
+    public static func write(_ value: [MobileChatArchiveRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatArchiveRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatArchiveRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatArchiveRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatArchiveRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatCheckpointRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatCheckpointRecord]
+
+    public static func write(_ value: [MobileChatCheckpointRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatCheckpointRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatCheckpointRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatCheckpointRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatCheckpointRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatDeliveryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatDeliveryRecord]
+
+    public static func write(_ value: [MobileChatDeliveryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatDeliveryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatDeliveryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatDeliveryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatDeliveryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatMutationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatMutationRecord]
+
+    public static func write(_ value: [MobileChatMutationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatMutationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatMutationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatMutationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatMutationRecord.read(from: &buf))
         }
         return seq
     }
@@ -3853,6 +4932,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_load_boundary() != 19270) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_acknowledge_chat_batch() != 54346) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_commit_chat_batch() != 61370) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 53284) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 52427) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3860,6 +4951,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_receive() != 1961) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_register_peers() != 30662) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_reject_chat_batch() != 19006) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {

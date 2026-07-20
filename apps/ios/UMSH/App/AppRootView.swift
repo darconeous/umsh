@@ -31,7 +31,8 @@ struct AppRootView: View {
                     radioSnapshot: radioSnapshot,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
-                    updateDraft: updateDraft
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -52,6 +53,7 @@ struct AppRootView: View {
                     },
                     startConversation: startConversation,
                     updateDraft: updateDraft,
+                    sendMessage: sendMessage,
                     pingPeer: pingPeer
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -106,6 +108,11 @@ struct AppRootView: View {
                 await synchronizeRadioPeer(from: snapshot)
             }
         }
+        .task {
+            for await update in await radioConnection.chatUpdates() {
+                await applyChatUpdate(update)
+            }
+        }
     }
 
     @MainActor
@@ -117,6 +124,7 @@ struct AppRootView: View {
             try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
             try await installMeshSession()
             await prepareApplicationState()
+            await prepareChatState()
             if localIdentity != nil {
                 await radioConnection.autoConnect()
             }
@@ -137,6 +145,7 @@ struct AppRootView: View {
             try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
             try await installMeshSession()
             await prepareApplicationState()
+            await prepareChatState()
             identityError = nil
         } catch let error as IdentityVaultError {
             identityError = error
@@ -208,6 +217,7 @@ struct AppRootView: View {
                 )
             }
             await reloadApplicationState()
+            try await radioConnection.registerChatPeers([identity.canonicalAddress])
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
@@ -226,6 +236,45 @@ struct AppRootView: View {
         }
     }
 
+    private func sendMessage(_ conversation: DirectConversationSummary, _ body: String) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return false }
+        do {
+            let batch = try await radioConnection.composeText(
+                peerAddress: conversation.peer.identity.canonicalAddress,
+                clientToken: UInt32.random(in: 1...UInt32.max),
+                body: body
+            )
+            do {
+                try await applicationStore.commitChatComposeBatch(
+                    ownerIdentityID: localIdentity.id,
+                    batch: batch
+                )
+            } catch {
+                let checkpoints = (try? await applicationStore.chatCheckpoints(
+                    ownerIdentityID: localIdentity.id
+                )) ?? []
+                try? await radioConnection.rejectChatBatch(
+                    batch.batchId,
+                    checkpoints: checkpoints
+                )
+                return false
+            }
+            try await radioConnection.commitChatBatch(batch.batchId)
+            try await applicationStore.updateDraft(
+                ownerIdentityID: localIdentity.id,
+                conversationID: conversation.id,
+                text: ""
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private func startConversation(_ peer: PeerSummary) async -> DirectConversationSummary? {
         guard let applicationStore, let localIdentity else { return nil }
         do {
@@ -234,6 +283,7 @@ struct AppRootView: View {
                 peerAddress: peer.identity.canonicalAddress
             )
             await reloadApplicationState()
+            try await radioConnection.registerChatPeers([peer.identity.canonicalAddress])
             return conversations.first {
                 $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
             }
@@ -275,6 +325,67 @@ struct AppRootView: View {
     private func installMeshSession() async throws {
         let session = try await meshEngine.meshSession()
         await radioConnection.useMeshSession(session)
+    }
+
+    private func prepareChatState() async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            let checkpoints = try await applicationStore.chatCheckpoints(
+                ownerIdentityID: localIdentity.id
+            )
+            let addresses = Set(
+                peers.map(\.identity.canonicalAddress)
+                    + checkpoints.map(\.peerAddress)
+            )
+            try await radioConnection.prepareChat(
+                peerAddresses: addresses.sorted(),
+                checkpoints: checkpoints
+            )
+        } catch {
+            // Chat stays unavailable until the durable state can be restored.
+        }
+    }
+
+    private func applyChatUpdate(_ update: RadioChatUpdate) async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            if !update.mutations.isEmpty {
+                try await applicationStore.applyChatMutations(
+                    ownerIdentityID: localIdentity.id,
+                    mutations: update.mutations
+                )
+                for peerAddress in Set(update.mutations.compactMap(\.peerAddress)) {
+                    _ = try await applicationStore.ensureDirectConversation(
+                        ownerIdentityID: localIdentity.id,
+                        peerAddress: peerAddress
+                    )
+                }
+            }
+            if !update.deliveries.isEmpty {
+                try await applicationStore.applyChatDeliveries(
+                    ownerIdentityID: localIdentity.id,
+                    deliveries: update.deliveries
+                )
+            }
+            for lookup in update.archiveLookups {
+                let payload = try? await applicationStore.chatArchive(
+                    ownerIdentityID: localIdentity.id,
+                    lookup: lookup
+                )
+                try await radioConnection.applyChatArchiveResult(
+                    requestID: lookup.requestId,
+                    kind: payload == nil ? .unknown : .found,
+                    payload: payload ?? Data()
+                )
+            }
+            try await radioConnection.acknowledgeChatBatch(update.batchID)
+            if !update.mutations.isEmpty || !update.deliveries.isEmpty {
+                await reloadApplicationState()
+            }
+        } catch {
+            // Effects remain idempotent and can safely be applied again if
+            // the Rust facade re-emits them.
+        }
     }
 
     private func prepareApplicationState() async {
@@ -341,14 +452,31 @@ struct AppRootView: View {
                 ownerIdentityID: localIdentity.id
             )
             peers = storedPeers.compactMap { mappedPeers[$0.id] }
-            conversations = storedConversations.compactMap { stored in
-                guard let peer = mappedPeers[stored.node.id] else { return nil }
-                return DirectConversationSummary(
-                    id: stored.id,
-                    peer: peer,
-                    draftText: stored.draftText
+            var mappedConversations: [DirectConversationSummary] = []
+            for stored in storedConversations {
+                guard let peer = mappedPeers[stored.node.id] else { continue }
+                let messages = (try? await applicationStore.chatMessages(
+                    ownerIdentityID: localIdentity.id,
+                    peerAddress: peer.identity.canonicalAddress
+                )) ?? []
+                mappedConversations.append(
+                    DirectConversationSummary(
+                        id: stored.id,
+                        peer: peer,
+                        draftText: stored.draftText,
+                        messages: messages.map {
+                            ChatMessageSummary(
+                                id: $0.id,
+                                body: $0.body,
+                                isOutbound: $0.outbound,
+                                deliveryState: $0.deliveryState,
+                                isDeleted: $0.isDeleted
+                            )
+                        }
+                    )
                 )
             }
+            conversations = mappedConversations
         } catch {
             peers = []
             conversations = []

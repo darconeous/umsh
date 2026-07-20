@@ -18,6 +18,7 @@ umsh-uri = { path = "../umsh-uri" }
 umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
 umsh-node = { path = "../umsh-node", features = ["std", "software-crypto"] }
 umsh-sync = { path = "../umsh-sync" }
+umsh-text = { path = "../umsh-text" }
 embedded-hal-async.workspace = true
 lwuri.workspace = true
 rand = { workspace = true, features = ["std", "thread_rng", "sys_rng"] }

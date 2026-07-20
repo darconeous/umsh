@@ -5,6 +5,7 @@ actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
+    private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
 
     init(snapshot: RadioSnapshot = .previewReady) {
         self.snapshot = snapshot
@@ -28,6 +29,16 @@ actor FakeRadioConnection: RadioConnection {
             frameContinuations[id] = continuation
             continuation.onTermination = { [weak self] _ in
                 Task { await self?.removeFrameContinuation(id) }
+            }
+        }
+    }
+
+    func chatUpdates() -> AsyncStream<RadioChatUpdate> {
+        AsyncStream { continuation in
+            let id = UUID()
+            chatContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeChatContinuation(id) }
             }
         }
     }
@@ -96,6 +107,36 @@ actor FakeRadioConnection: RadioConnection {
         )
     }
 
+    func prepareChat(
+        peerAddresses: [String],
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws {}
+
+    func registerChatPeers(_ peerAddresses: [String]) async throws {}
+
+    func composeText(
+        peerAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        throw RadioConnectionError.incompatibleProtocol
+    }
+
+    func commitChatBatch(_ batchID: UInt64) async throws {}
+
+    func rejectChatBatch(
+        _ batchID: UInt64,
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws {}
+
+    func applyChatArchiveResult(
+        requestID: UInt32,
+        kind: MobileChatArchiveResultKind,
+        payload: Data
+    ) async throws {}
+
+    func acknowledgeChatBatch(_ batchID: UInt64) async throws {}
+
     func disconnect() async {
         publish(.disconnected)
     }
@@ -119,5 +160,9 @@ actor FakeRadioConnection: RadioConnection {
 
     private func removeFrameContinuation(_ id: UUID) {
         frameContinuations[id] = nil
+    }
+
+    private func removeChatContinuation(_ id: UUID) {
+        chatContinuations[id] = nil
     }
 }
