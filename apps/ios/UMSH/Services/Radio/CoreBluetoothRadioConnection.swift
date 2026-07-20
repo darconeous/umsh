@@ -303,7 +303,21 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
+                let hadKey = selectedHostKey != nil
                 selectedHostKey = hostKey
+                // A restored or standing-pending link can attach before app
+                // bootstrap supplies the phone identity. The companion
+                // session then classifies the host with no key and parks at
+                // awaitingHost ("Phone identity unavailable") with nothing
+                // to re-judge it. Restart synchronization now that the key
+                // exists; a genuinely different owner still parks for the
+                // user's decision.
+                if hostKey != nil, !hadKey,
+                   snapshot.linkState == .awaitingHost,
+                   let peripheral, peripheral.state == .connected,
+                   frameIn != nil {
+                    beginSynchronization(on: peripheral)
+                }
                 result.resume()
             }
         }
