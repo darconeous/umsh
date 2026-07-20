@@ -588,6 +588,16 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
             .any(|entry| entry.not_before_ms <= now_ms)
     }
 
+    /// Return whether the queue contains an immediate-ACK entry that is
+    /// ready to send now. Only these may transmit during a post-transmit
+    /// listen window, so a wait predicate must not treat other ready
+    /// entries as actionable while one is open.
+    pub fn has_ready_immediate_ack(&self, now_ms: u64) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.priority == TxPriority::ImmediateAck && entry.not_before_ms <= now_ms
+        })
+    }
+
     /// Remove and return the first queued frame matching `predicate`.
     pub fn remove_first_matching(
         &mut self,
