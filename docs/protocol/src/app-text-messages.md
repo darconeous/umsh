@@ -6,6 +6,14 @@ The payload consists of a CoAP-style option list terminated by a `0xFF` byte, fo
 
 ## Message Options
 
+Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option's role:
+
+- An option that carries identity, sequencing, or reference semantics — Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence — makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.
+- A presentation option — Sender Handle, Background Color, Text Color — keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.
+- Duplicates of a zero-length flag option — Sequence Reset, Channel Group Resend — are idempotent.
+
+Repeated unrecognized options remain ignorable.
+
 | Number | Name | Value |
 |---:|---|---|
 | 0 | Message Type | 0 or 1 bytes |
@@ -77,12 +85,27 @@ The option value is either 1 byte or 3 bytes:
 
 Rules:
 
-- Message IDs are monotonically increasing per sender within each conversation, wrapping at 255.
+- Message IDs are monotonically increasing per sender within each conversation, wrapping at 255. A one-to-one blind-unicast conversation and the group conversation on the same channel are distinct conversations with independent sequence streams, even though they share channel key material.
+- When an ID wraps and is reused, the older message with that ID in the same conversation-and-sender stream is retired: it is no longer a valid target for Regarding, Editing, or a resend request in that stream. Retirement does not affect any other stream or already-displayed history.
 - Messages smaller than `MTU`-32 bytes SHOULD NOT be fragmented.
+- A fragment body carries at most 160 bytes, and a message has at most 10 fragments; senders MUST NOT exceed either limit. Larger fragment bodies and larger fragment counts are nevertheless syntactically valid; a receiver that will not reassemble such a message drops the assembly and MAY account for the ID as unavailable rather than leaving a gap.
+- Fragmentation splits the body at byte boundaries. An individual fragment body is not required to be valid UTF-8; the reassembled body is validated as UTF-8 only after every fragment is present.
 - Options from the first fragment (Fragment Index 0) apply to the entire reassembled message. Subsequent fragments MUST NOT include options that would override those of the first fragment, and any such options MUST be ignored by the receiver.
-- During reassembly, missing fragments SHOULD be rendered as `[FRAGMENT MISSING]`, or an appropriately-localized equivalent.
+- During reassembly, missing fragments SHOULD be rendered as `[FRAGMENT MISSING]`, or an appropriately-localized equivalent. When a fragment boundary splits a UTF-8 code point, rendering discards the incomplete code point on each side of the gap; the substituted marker is part of the rendered display, not the message body.
 - Out-of-order reassembly SHOULD be supported for fragments received within a reasonable amount of time (thirty seconds to two minutes).
 - Edits (see [Editing](#editing)) carry their own message IDs and MUST NOT be referenced by subsequent Editing or Regarding options. The original message ID is the stable reference.
+
+### Ordering, Gaps, and Automatic Repair
+
+Message IDs compare using serial-number arithmetic modulo 256. Relative to the most recent ID accepted from a sender in a conversation, a forward delta of 1 through 127 is newer; a delta of 128 through 255 is old or ambiguous.
+
+A forward delta greater than 1 within one conversation-and-sender stream means messages are missing from that stream. A gap in one sender's stream says nothing about any other sender in the conversation. After a short reordering grace period, a receiver MAY request each missing message with a resend request using the 1-byte Message Sequence form, subject to the limits below:
+
+- Automatic repair is bounded: a receiver SHOULD NOT automatically request more than 8 missing messages from a single observed gap, and SHOULD apply per-peer and overall rate limits to all generated resend requests.
+- A forward delta greater than the receiver's automatic-repair bound, an ambiguous delta, the first message observed from a sender, and the first message after a Sequence Reset all establish a new baseline. Receivers MUST NOT generate automatic resend requests to backfill across a baseline.
+- Repair of a channel-group conversation requires addressing a blind unicast to the original sender, which requires that sender's full public key. A member holding only the source hint cannot construct the request and simply renders the loss.
+- In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message — or a Message Unavailable naming it — arrives on the channel before the request is sent.
+- Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.
 
 ### Sequence Reset
 
@@ -90,14 +113,16 @@ A 0-byte flag option that signals the sender has reset its message ID counter fo
 
 The Sequence Reset option SHOULD accompany a Message Sequence option bearing the sender's new starting ID. In the absence of a Message Sequence option, receivers SHOULD treat the next message from that sender as starting a fresh sequence.
 
+Reset announcement is lazy and scoped to the affected conversation: the sender includes the flag on the next message it actually sends in that conversation. Senders do not transmit standalone reset messages preemptively to conversations they are not otherwise sending to.
+
 ### Regarding
 
 References a previously sent message for the purposes of replies and emotes.
 
-The option length depends on context:
+The option length depends on the conversation, not on how the MAC packet is addressed:
 
-- **Unicast** (MAC packet addressed to a single destination): 1 byte — the Message ID of the referenced message.
-- **Multicast channel**: 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.
+- **One-to-one conversation** (unicast, or a blind-unicast conversation with a single logical destination): 1 byte — the Message ID of the referenced message.
+- **Channel-group conversation** (delivered by multicast to the channel): 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.
 
 The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender's sequence, or if the user has since reset their sequence ID.
 

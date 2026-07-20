@@ -57,7 +57,9 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
         self.ledger.record(self.clock.now_ms(), airtime_ms);
         // Mark the load for the battery level estimator: voltage
         // sampled near a transmission is sagged, not resting OCV.
-        #[cfg(feature = "t1000e")]
+        // (`power` exists only on the device target; this module also
+        // builds on the host.)
+        #[cfg(all(feature = "t1000e", target_os = "none"))]
         umsh_bsp_t1000e::power::note_external_load();
         Ok(())
     }

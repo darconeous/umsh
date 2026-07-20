@@ -3446,6 +3446,7 @@ dependencies = [
 name = "umsh-text"
 version = "0.1.0"
 dependencies = [
+ "heapless 0.8.0",
  "umsh-core",
  "umsh-mac",
  "umsh-node",

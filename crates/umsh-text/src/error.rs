@@ -20,6 +20,9 @@ pub enum ParseError {
     InvalidMessageType(u8),
     /// An option payload or fixed-width field had an invalid encoding.
     InvalidOptionValue,
+    /// A recognized option carrying identity, sequencing, or reference
+    /// semantics appeared more than once.
+    DuplicateOption(u16),
 }
 
 impl From<CoreParseError> for ParseError {

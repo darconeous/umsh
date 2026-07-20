@@ -260,7 +260,9 @@ async fn run_simulated_chat(config: CliConfig) -> Result<(), Box<dyn std::error:
     let _remote_echo_subscription = {
         let remote_echoes = remote_echoes.clone();
         remote_chat.on_text(move |_packet, text| {
-            remote_echoes.borrow_mut().push(text.body.to_string());
+            remote_echoes
+                .borrow_mut()
+                .push(String::from_utf8_lossy(text.body).into_owned());
         })
     };
 
@@ -572,7 +574,7 @@ fn register_peer_callbacks<'a, R: Radio>(
                 "[{} h={}] {}",
                 full_key(&peer_key),
                 packet.flood_hops().map(|h| h.accumulated()).unwrap_or(0),
-                text.body
+                String::from_utf8_lossy(text.body)
             ));
         },
         move |packet, issue| {

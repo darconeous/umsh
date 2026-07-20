@@ -8,11 +8,13 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_text/"
 
 [features]
 default = ["std", "software-crypto"]
-std = ["alloc", "umsh-core/std", "umsh-mac/std", "umsh-node/std"]
+std = ["alloc", "node", "umsh-core/std", "umsh-mac/std", "umsh-node/std"]
 alloc = []
-software-crypto = ["umsh-node/software-crypto"]
+node = ["dep:umsh-mac", "dep:umsh-node", "alloc"]
+software-crypto = ["node", "umsh-node/software-crypto"]
 
 [dependencies]
 umsh-core = { path = "../umsh-core", default-features = false }
-umsh-mac = { path = "../umsh-mac", default-features = false }
-umsh-node = { path = "../umsh-node", default-features = false }
+umsh-mac = { path = "../umsh-mac", default-features = false, optional = true }
+umsh-node = { path = "../umsh-node", default-features = false, optional = true }
+heapless = { workspace = true }
