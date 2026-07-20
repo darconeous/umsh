@@ -113,6 +113,90 @@ pub struct MobileMeshAdvertisementRecord {
     pub payload: Vec<u8>,
 }
 
+/// Platform-side listener invoked when `poll_update` has new data waiting.
+///
+/// Called on the worker thread; implementations must only schedule a drain
+/// on their own executor and return. Notifications are coalesced: at most
+/// one call fires per pending-to-drained cycle, so a burst of protocol
+/// activity costs one crossing, and the platform needs no polling cadence.
+#[uniffi::export(with_foreign)]
+pub trait MobileMeshWakeListener: Send + Sync {
+    fn on_update_pending(&self);
+}
+
+/// Coalescing wake flag shared between the worker's producer channels and
+/// `poll_update`. `notify` fires the listener only on the false-to-true
+/// transition; `drained` re-arms it.
+struct WakeSignal {
+    pending: AtomicBool,
+    listener: Mutex<Option<Arc<dyn MobileMeshWakeListener>>>,
+}
+
+impl WakeSignal {
+    fn new() -> Self {
+        Self {
+            pending: AtomicBool::new(false),
+            listener: Mutex::new(None),
+        }
+    }
+
+    fn notify(&self) {
+        if self.pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let listener = self
+            .listener
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().cloned());
+        if let Some(listener) = listener {
+            listener.on_update_pending();
+        }
+    }
+
+    fn drained(&self) {
+        self.pending.store(false, Ordering::Release);
+    }
+
+    fn set_listener(&self, listener: Option<Arc<dyn MobileMeshWakeListener>>) {
+        let already_pending = {
+            let Ok(mut slot) = self.listener.lock() else {
+                return;
+            };
+            *slot = listener.clone();
+            self.pending.load(Ordering::Acquire)
+        };
+        // Data enqueued before registration must not wait for the next
+        // protocol event to surface.
+        if already_pending && let Some(listener) = listener {
+            listener.on_update_pending();
+        }
+    }
+}
+
+/// A producer channel endpoint that arms the wake signal on every enqueue.
+struct NotifyingSender<T> {
+    tx: std_mpsc::Sender<T>,
+    wake: Arc<WakeSignal>,
+}
+
+impl<T> Clone for NotifyingSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            wake: self.wake.clone(),
+        }
+    }
+}
+
+impl<T> NotifyingSender<T> {
+    fn send(&self, value: T) -> Result<(), std_mpsc::SendError<T>> {
+        self.tx.send(value)?;
+        self.wake.notify();
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshSessionUpdateRecord {
     /// Complete raw UMSH frames ready for the companion PHY transport. Each
@@ -320,7 +404,7 @@ impl BridgeTransmitCompletions {
 
 struct BridgeRadio {
     inbound: mpsc::UnboundedReceiver<InboundFrame>,
-    outbound: std_mpsc::Sender<MobileMeshOutboundFrameRecord>,
+    outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     completions: Arc<BridgeTransmitCompletions>,
 }
 
@@ -544,6 +628,7 @@ pub struct MobileMeshSession {
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
     next_chat_batch_id: Mutex<u64>,
     next_operation_id: Mutex<u64>,
+    wake: Arc<WakeSignal>,
 }
 
 #[uniffi::export]
@@ -776,6 +861,10 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         if pending.as_ref().is_some_and(|batch| batch.id == batch_id) {
             *pending = None;
+            // Events that queued while this batch was outstanding could not
+            // form a new batch; poke the listener so the platform drains
+            // again now that the slot is free.
+            self.wake.notify();
         }
         Ok(())
     }
@@ -801,7 +890,21 @@ impl MobileMeshSession {
         Ok(())
     }
 
+    /// Register (or replace) the listener that is told when this session
+    /// has new data for `poll_update`. If data is already pending, the
+    /// listener fires immediately.
+    pub fn set_wake_listener(&self, listener: Arc<dyn MobileMeshWakeListener>) {
+        self.wake.set_listener(Some(listener));
+    }
+
+    pub fn clear_wake_listener(&self) {
+        self.wake.set_listener(None);
+    }
+
     pub fn poll_update(&self) -> MobileMeshSessionUpdateRecord {
+        // Re-arm before draining: anything enqueued mid-drain triggers a
+        // fresh notification rather than being silently swallowed.
+        self.wake.drained();
         let mut outbound_frames = Vec::new();
         if let Ok(receiver) = self.outbound.lock() {
             outbound_frames.extend(receiver.try_iter());
@@ -900,10 +1003,27 @@ impl MobileMeshSession {
         virtual_time: bool,
     ) -> Result<Arc<Self>, MobileMeshError> {
         let (commands, command_rx) = mpsc::unbounded_channel();
+        let wake = Arc::new(WakeSignal::new());
         let (outbound_tx, outbound) = std_mpsc::channel();
         let (event_tx, events) = std_mpsc::channel();
         let (advertisement_tx, advertisements) = std_mpsc::channel();
         let (chat_event_tx, chat_events) = std_mpsc::channel();
+        let outbound_tx = NotifyingSender {
+            tx: outbound_tx,
+            wake: wake.clone(),
+        };
+        let event_tx = NotifyingSender {
+            tx: event_tx,
+            wake: wake.clone(),
+        };
+        let advertisement_tx = NotifyingSender {
+            tx: advertisement_tx,
+            wake: wake.clone(),
+        };
+        let chat_event_tx = NotifyingSender {
+            tx: chat_event_tx,
+            wake: wake.clone(),
+        };
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
         let transmit_completions = Arc::new(BridgeTransmitCompletions::new());
@@ -958,6 +1078,7 @@ impl MobileMeshSession {
             pending_chat_events: Mutex::new(None),
             next_chat_batch_id: Mutex::new(1),
             next_operation_id: Mutex::new(1),
+            wake,
         }))
     }
 }
@@ -1016,11 +1137,11 @@ async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
     mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
-    outbound: std_mpsc::Sender<MobileMeshOutboundFrameRecord>,
+    outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
-    events: std_mpsc::Sender<MobileMeshPingEventRecord>,
-    advertisements: std_mpsc::Sender<MobileMeshAdvertisementRecord>,
-    chat_events: std_mpsc::Sender<MobileChatWorkerEvent>,
+    events: NotifyingSender<MobileMeshPingEventRecord>,
+    advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
+    chat_events: NotifyingSender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
     let local_key = *identity.public_key();
@@ -1619,7 +1740,7 @@ fn service_chat_tickets(
 
 fn publish_chat_drain(
     drain: crate::mobile_chat::ChatDrain,
-    events: &std_mpsc::Sender<MobileChatWorkerEvent>,
+    events: &NotifyingSender<MobileChatWorkerEvent>,
 ) {
     for mutation in drain.mutations {
         let _ = events.send(MobileChatWorkerEvent::Mutation(mutation));
@@ -1640,7 +1761,7 @@ fn decode_peer(address: &str) -> Result<PublicKey, MobileError> {
     Ok(PublicKey(bytes))
 }
 
-fn emit_ping_failure(events: &std_mpsc::Sender<MobileMeshPingEventRecord>, operation_id: u64) {
+fn emit_ping_failure(events: &NotifyingSender<MobileMeshPingEventRecord>, operation_id: u64) {
     let _ = events.send(MobileMeshPingEventRecord {
         operation_id,
         outcome: MobileMeshPingOutcome::Failed,
@@ -1875,6 +1996,88 @@ mod tests {
             assert!(Instant::now() < deadline, "silent ping never timed out");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    struct TestWakeListener {
+        signal: std_mpsc::Sender<()>,
+    }
+
+    impl MobileMeshWakeListener for TestWakeListener {
+        fn on_update_pending(&self) {
+            let _ = self.signal.send(());
+        }
+    }
+
+    /// The wake listener replaces platform-side polling: it must fire when
+    /// data becomes pending without any poll_update call, coalesce while
+    /// pending, and re-arm after each drain.
+    #[tokio::test]
+    async fn wake_listener_fires_on_pending_data_and_rearms_after_drain() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(63);
+        let silent_peer = identity(64);
+        let store =
+            MobileCounterStore::new(directory.path().join("wake").display().to_string()).unwrap();
+        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        let (signal, wakes) = std_mpsc::channel();
+        session.set_wake_listener(Arc::new(TestWakeListener { signal }));
+
+        // The ping's outbound frame must announce itself with no polling.
+        let operation = session.ping(address(&silent_peer), 100).unwrap();
+        wakes
+            .recv_timeout(Duration::from_secs(5))
+            .expect("no wake for the outbound ping frame");
+
+        let update = session.poll_update();
+        assert!(
+            !update.outbound_frames.is_empty(),
+            "wake fired but nothing was pending"
+        );
+        for frame in update.outbound_frames {
+            session.complete_outbound_frame(frame.id, true).unwrap();
+        }
+
+        // The drain re-armed the signal: the ping-timeout event a moment
+        // later must produce a second wake.
+        wakes
+            .recv_timeout(Duration::from_secs(5))
+            .expect("no wake for the ping timeout event");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let update = session.poll_update();
+            if let Some(event) = update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
+                break;
+            }
+            assert!(Instant::now() < deadline, "timeout event never surfaced");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A listener registered after data is already pending is told
+    /// immediately instead of waiting for the next protocol event.
+    #[tokio::test]
+    async fn wake_listener_registered_late_fires_for_already_pending_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(65);
+        let silent_peer = identity(66);
+        let store = MobileCounterStore::new(directory.path().join("wake-late").display().to_string())
+            .unwrap();
+        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+
+        session.ping(address(&silent_peer), 5_000).unwrap();
+        // Give the worker time to enqueue the outbound frame first; even if
+        // it loses this race, the enqueue itself fires the listener, so the
+        // assertion below holds either way.
+        std::thread::sleep(Duration::from_millis(200));
+
+        let (signal, wakes) = std_mpsc::channel();
+        session.set_wake_listener(Arc::new(TestWakeListener { signal }));
+        wakes
+            .recv_timeout(Duration::from_secs(5))
+            .expect("late-registered listener never fired");
+        assert!(!session.poll_update().outbound_frames.is_empty());
     }
 
     #[tokio::test]
