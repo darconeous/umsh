@@ -1044,6 +1044,11 @@ Transcript / messaging:
   pending/established/failed.
 - Custom chat bubble color (local preference; consider mapping onto the
   protocol's bg/text color presentation options for outbound messages).
+- Paged message history: load only a recent window of the transcript;
+  scrolling to the top and pulling down fetches older pages. Note the
+  transcript deliberately uses a non-lazy VStack (layout-loop fix,
+  2026-07-20), so windowing at the query level (`chatMessages` LIMIT/
+  before-cursor) is also what keeps long histories cheap to lay out.
 
 Conversations / channels:
 - Add/join channels (channel key import/generation, channel list,
