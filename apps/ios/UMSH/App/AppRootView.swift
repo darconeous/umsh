@@ -173,11 +173,17 @@ struct AppRootView: View {
                 await openConversationFromNotification(peerAddress: peerAddress)
             }
         }
-        .onChange(of: openedConversation) { _, conversation in
-            notificationService.setVisibleConversation(
-                peerAddress: conversation?.peer.identity.canonicalAddress
+        .environment(
+            \.visibleConversationReporter,
+            VisibleConversationReporter(
+                appeared: { [notificationService] address in
+                    notificationService.setVisibleConversation(peerAddress: address)
+                },
+                disappeared: { [notificationService] address in
+                    notificationService.clearVisibleConversation(ifMatching: address)
+                }
             )
-        }
+        )
     }
 
     @MainActor
