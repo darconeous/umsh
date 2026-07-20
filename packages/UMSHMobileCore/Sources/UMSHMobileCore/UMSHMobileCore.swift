@@ -1400,6 +1400,20 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      */
     func completeOutboundFrame(frameId: UInt64, transmitted: Bool) throws
 
+    /**
+     * Compose a deletion (empty edit on the wire) of a previously sent
+     * message. Same original-reference rules as [`Self::compose_edit`].
+     */
+    func composeDelete(peerAddress: String, clientToken: UInt32, original: MobileChatOriginalRef) async throws  -> MobileChatComposeBatchRecord
+
+    /**
+     * Compose an edit of a previously sent message. The original may come
+     * from an earlier app launch: its persisted `(wire_id, epoch)` is used
+     * when the facade session no longer holds a live handle, and the engine
+     * rejects it (`ChatComposeFailed`) if stream continuity was lost since.
+     */
+    func composeEdit(peerAddress: String, clientToken: UInt32, original: MobileChatOriginalRef, body: String) async throws  -> MobileChatComposeBatchRecord
+
     func composeText(peerAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
@@ -1548,6 +1562,48 @@ open func completeOutboundFrame(frameId: UInt64, transmitted: Bool)throws   {try
         FfiConverterBool.lower(transmitted),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Compose a deletion (empty edit on the wire) of a previously sent
+     * message. Same original-reference rules as [`Self::compose_edit`].
+     */
+open func composeDelete(peerAddress: String, clientToken: UInt32, original: MobileChatOriginalRef)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_delete(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatOriginalRef_lower(original)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Compose an edit of a previously sent message. The original may come
+     * from an earlier app launch: its persisted `(wire_id, epoch)` is used
+     * when the facade session no longer holds a live handle, and the engine
+     * rejects it (`ChatComposeFailed`) if stream continuity was lost since.
+     */
+open func composeEdit(peerAddress: String, clientToken: UInt32, original: MobileChatOriginalRef, body: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_edit(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatOriginalRef_lower(original),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
 open func composeText(peerAddress: String, clientToken: UInt32, body: String)async throws  -> MobileChatComposeBatchRecord  {
@@ -2832,6 +2888,15 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
     public var backgroundColor: Data?
     public var textColor: Data?
     public var originalHandle: UInt32?
+    /**
+     * When an edit/delete references a message the engine no longer holds a
+     * live handle for (composed before a restart), these export the wire
+     * reference so the platform can resolve it against persisted rows:
+     * the original's wire ID within `original_direction`'s stream of the
+     * record's `peer_address` conversation.
+     */
+    public var originalWireId: UInt8?
+    public var originalDirection: MobileChatDirection?
     public var body: String?
     public var complete: Bool?
     public var presentFragments: UInt16?
@@ -2844,7 +2909,14 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         /**
          * A facade-session namespace prevents the engine's process-local u32
          * handles from colliding after restart.
-         */sessionId: UInt64, handle: UInt32, revision: UInt32, kind: MobileChatMutationKind, peerAddress: String?, senderAddress: String?, direction: MobileChatDirection?, messageType: UInt8?, wireId: UInt8?, epoch: UInt16?, clientToken: UInt32?, senderHandle: String?, regardingHandle: UInt32?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?, body: String?, complete: Bool?, presentFragments: UInt16?, fragmentCount: UInt8?, finalized: Bool?) {
+         */sessionId: UInt64, handle: UInt32, revision: UInt32, kind: MobileChatMutationKind, peerAddress: String?, senderAddress: String?, direction: MobileChatDirection?, messageType: UInt8?, wireId: UInt8?, epoch: UInt16?, clientToken: UInt32?, senderHandle: String?, regardingHandle: UInt32?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?,
+        /**
+         * When an edit/delete references a message the engine no longer holds a
+         * live handle for (composed before a restart), these export the wire
+         * reference so the platform can resolve it against persisted rows:
+         * the original's wire ID within `original_direction`'s stream of the
+         * record's `peer_address` conversation.
+         */originalWireId: UInt8?, originalDirection: MobileChatDirection?, body: String?, complete: Bool?, presentFragments: UInt16?, fragmentCount: UInt8?, finalized: Bool?) {
         self.sessionId = sessionId
         self.handle = handle
         self.revision = revision
@@ -2861,6 +2933,8 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         self.backgroundColor = backgroundColor
         self.textColor = textColor
         self.originalHandle = originalHandle
+        self.originalWireId = originalWireId
+        self.originalDirection = originalDirection
         self.body = body
         self.complete = complete
         self.presentFragments = presentFragments
@@ -2900,6 +2974,8 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
                 backgroundColor: FfiConverterOptionData.read(from: &buf),
                 textColor: FfiConverterOptionData.read(from: &buf),
                 originalHandle: FfiConverterOptionUInt32.read(from: &buf),
+                originalWireId: FfiConverterOptionUInt8.read(from: &buf),
+                originalDirection: FfiConverterOptionTypeMobileChatDirection.read(from: &buf),
                 body: FfiConverterOptionString.read(from: &buf),
                 complete: FfiConverterOptionBool.read(from: &buf),
                 presentFragments: FfiConverterOptionUInt16.read(from: &buf),
@@ -2925,6 +3001,8 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
         FfiConverterOptionData.write(value.backgroundColor, into: &buf)
         FfiConverterOptionData.write(value.textColor, into: &buf)
         FfiConverterOptionUInt32.write(value.originalHandle, into: &buf)
+        FfiConverterOptionUInt8.write(value.originalWireId, into: &buf)
+        FfiConverterOptionTypeMobileChatDirection.write(value.originalDirection, into: &buf)
         FfiConverterOptionString.write(value.body, into: &buf)
         FfiConverterOptionBool.write(value.complete, into: &buf)
         FfiConverterOptionUInt16.write(value.presentFragments, into: &buf)
@@ -2946,6 +3024,74 @@ public func FfiConverterTypeMobileChatMutationRecord_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileChatMutationRecord_lower(_ value: MobileChatMutationRecord) -> RustBuffer {
     return FfiConverterTypeMobileChatMutationRecord.lower(value)
+}
+
+
+/**
+ * Platform-persisted identity of a previously composed outbound message,
+ * used to target an edit or delete. `session_id`/`handle` identify it when
+ * composed by the current facade session; `wire_id`/`epoch` are the durable
+ * fallback for messages composed before a restart.
+ */
+public struct MobileChatOriginalRef: Equatable, Hashable {
+    public var sessionId: UInt64
+    public var handle: UInt32
+    public var wireId: UInt8?
+    public var epoch: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: UInt64, handle: UInt32, wireId: UInt8?, epoch: UInt16?) {
+        self.sessionId = sessionId
+        self.handle = handle
+        self.wireId = wireId
+        self.epoch = epoch
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatOriginalRef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatOriginalRef: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatOriginalRef {
+        return
+            try MobileChatOriginalRef(
+                sessionId: FfiConverterUInt64.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatOriginalRef, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatOriginalRef_lift(_ buf: RustBuffer) throws -> MobileChatOriginalRef {
+    return try FfiConverterTypeMobileChatOriginalRef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatOriginalRef_lower(_ value: MobileChatOriginalRef) -> RustBuffer {
+    return FfiConverterTypeMobileChatOriginalRef.lower(value)
 }
 
 
@@ -5398,6 +5544,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_complete_outbound_frame() != 48665) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_delete() != 30949) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_edit() != 57506) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 53284) {
