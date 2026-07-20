@@ -33,6 +33,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var snapshot = RadioSnapshot.idle
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
+    private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
     private var scanRequested = false
     private var scanAttempt = UUID()
     private var autoConnectRequested = false
@@ -51,6 +52,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var meshSession: MobileMeshSession?
     private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     private var meshPumpGeneration = UUID()
+    private var meshPumpScheduled = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -85,6 +87,23 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     continuation.onTermination = { [weak self] _ in
                         self?.bluetoothQueue.async { [weak self] in
                             self?.frameContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func chatUpdates() async -> AsyncStream<RadioChatUpdate> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                let stream = AsyncStream { continuation in
+                    let id = UUID()
+                    chatContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.chatContinuations[id] = nil
                         }
                     }
                 }
@@ -163,6 +182,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             bluetoothQueue.async { [self] in
                 meshSession = session
                 meshPumpGeneration = UUID()
+                meshPumpScheduled = false
                 result.resume()
             }
         }
@@ -259,6 +279,69 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 }
             }
         }
+    }
+
+    func prepareChat(
+        peerAddresses: [String],
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws {
+        let session = try await currentMeshSession()
+        try await session.registerPeers(peerAddresses: peerAddresses)
+        try await session.restoreChat(checkpoints: checkpoints)
+        bluetoothQueue.async { [weak self] in
+            self?.scheduleMeshPump(idlePolls: 40)
+        }
+    }
+
+    func registerChatPeers(_ peerAddresses: [String]) async throws {
+        let session = try await currentMeshSession()
+        try await session.registerPeers(peerAddresses: peerAddresses)
+    }
+
+    func composeText(
+        peerAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeText(
+            peerAddress: peerAddress,
+            clientToken: clientToken,
+            body: body
+        )
+    }
+
+    func commitChatBatch(_ batchID: UInt64) async throws {
+        let session = try await currentMeshSession()
+        try await session.commitChatBatch(batchId: batchID)
+        bluetoothQueue.async { [weak self] in
+            self?.scheduleMeshPump(idlePolls: 80)
+        }
+    }
+
+    func rejectChatBatch(
+        _ batchID: UInt64,
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws {
+        let session = try await currentMeshSession()
+        try await session.rejectChatBatch(batchId: batchID, checkpoints: checkpoints)
+    }
+
+    func applyChatArchiveResult(
+        requestID: UInt32,
+        kind: MobileChatArchiveResultKind,
+        payload: Data
+    ) async throws {
+        let session = try await currentMeshSession()
+        try session.applyChatArchiveResult(requestId: requestID, kind: kind, payload: payload)
+        bluetoothQueue.async { [weak self] in
+            self?.scheduleMeshPump(idlePolls: 40)
+        }
+    }
+
+    func acknowledgeChatBatch(_ batchID: UInt64) async throws {
+        let session = try await currentMeshSession()
+        try session.acknowledgeChatBatch(batchId: batchID)
     }
 
     func refresh() async throws -> RadioSnapshot {
@@ -601,6 +684,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 peripheral.identifier.uuidString,
                 forKey: PreferenceKey.lastAttachedPeripheral
             )
+            if meshSession != nil, !chatContinuations.isEmpty {
+                scheduleMeshPump(idlePolls: 40)
+            }
         }
         publish(snapshot)
 
@@ -626,11 +712,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    private func scheduleMeshPump(idlePolls: Int) {
+    private func scheduleMeshPump(idlePolls: Int, delay: TimeInterval = 0.025) {
+        guard !meshPumpScheduled else { return }
+        meshPumpScheduled = true
         let generation = meshPumpGeneration
-        bluetoothQueue.asyncAfter(deadline: .now() + 0.025) { [weak self] in
-            guard let self, self.meshPumpGeneration == generation else { return }
+        bluetoothQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.meshPumpScheduled = false
+            guard self.meshPumpGeneration == generation else { return }
             self.pumpMeshSession(idlePolls: idlePolls)
+        }
+    }
+
+    private func currentMeshSession() async throws -> MobileMeshSession {
+        try await withCheckedThrowingContinuation { result in
+            bluetoothQueue.async { [self] in
+                guard let meshSession else {
+                    result.resume(throwing: RadioConnectionError.identityUnavailable)
+                    return
+                }
+                result.resume(returning: meshSession)
+            }
         }
     }
 
@@ -672,8 +774,30 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
                 }
             }
+            if let chatBatchID = update.chatBatchId,
+               (!update.chatMutations.isEmpty
+                || !update.chatDeliveries.isEmpty
+                || !update.chatArchiveLookups.isEmpty
+                || !update.chatDiagnostics.isEmpty)
+            {
+                let chatUpdate = RadioChatUpdate(
+                    batchID: chatBatchID,
+                    mutations: update.chatMutations,
+                    deliveries: update.chatDeliveries,
+                    archiveLookups: update.chatArchiveLookups,
+                    diagnostics: update.chatDiagnostics
+                )
+                for continuation in chatContinuations.values {
+                    continuation.yield(chatUpdate)
+                }
+            }
             if !pingWaiters.isEmpty || idlePolls > 0 {
                 scheduleMeshPump(idlePolls: max(0, idlePolls - 1))
+            } else if !chatContinuations.isEmpty {
+                // The Rust reducer owns repair and delivery timers. Poll at a
+                // low active-app cadence so those effects reach persistence
+                // without keeping the 25 ms burst cadence alive forever.
+                scheduleMeshPump(idlePolls: 0, delay: 0.25)
             }
         } catch {
             for waiter in pingWaiters.values {

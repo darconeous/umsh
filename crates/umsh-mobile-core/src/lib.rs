@@ -17,6 +17,7 @@ use zeroize::Zeroize;
 
 mod companion;
 mod counter_store;
+mod mobile_chat;
 mod mobile_mesh;
 
 pub use companion::{
@@ -29,6 +30,11 @@ pub use companion::{
     inspect_companion_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
+pub use mobile_chat::{
+    MobileChatArchiveLookupRecord, MobileChatArchiveRecord, MobileChatArchiveResultKind,
+    MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
+    MobileChatDeliveryState, MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord,
+};
 pub use mobile_mesh::{
     MobileMeshError, MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRxRecord,
     MobileMeshSession, MobileMeshSessionUpdateRecord,
@@ -40,7 +46,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 16;
+pub const MOBILE_API_VERSION: u16 = 17;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

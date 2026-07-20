@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import UMSHMobileCore
 
 enum ApplicationStoreError: Error, Equatable, Sendable {
     case applicationSupportUnavailable
@@ -30,12 +31,23 @@ struct StoredDirectConversation: Equatable, Sendable {
     let draftText: String
 }
 
+struct StoredChatMessage: Equatable, Sendable, Identifiable {
+    var id: String { "\(sessionID):\(handle)" }
+    let sessionID: String
+    let handle: UInt32
+    let body: String
+    let outbound: Bool
+    let deliveryState: String?
+    let isDeleted: Bool
+    let createdAtMilliseconds: Int64
+}
+
 /// Phase 0 direct-SQLite prototype.
 ///
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 3
+    static let currentSchemaVersion: Int32 = 4
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -166,6 +178,21 @@ actor SQLiteApplicationStore {
             defer { sqlite3_finalize(conversations) }
             try bind(stableID, to: conversations, at: 1)
             try stepDone(conversations)
+
+            for table in [
+                "chat_stream_checkpoint",
+                "chat_outbound_archive",
+                "chat_message",
+                "chat_applied_mutation",
+                "chat_delivery_fragment",
+            ] {
+                let statement = try prepare(
+                    "UPDATE \(table) SET owner_identity_id = ? WHERE owner_identity_id = 'primary'"
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind(stableID, to: statement, at: 1)
+                try stepDone(statement)
+            }
 
         }
     }
@@ -330,6 +357,187 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
+    func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
+        let statement = try prepare(
+            """
+            SELECT peer_address, next_id, epoch FROM chat_stream_checkpoint
+            WHERE owner_identity_id = ? ORDER BY updated_at_ms ASC, peer_address ASC
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        var records: [MobileChatCheckpointRecord] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                records.append(
+                    MobileChatCheckpointRecord(
+                        peerAddress: Self.stringColumn(statement, at: 0),
+                        nextId: UInt8(sqlite3_column_int(statement, 1)),
+                        epoch: UInt16(sqlite3_column_int(statement, 2))
+                    )
+                )
+            case SQLITE_DONE: return records
+            case let code: throw ApplicationStoreError.sqliteFailure(code)
+            }
+        }
+    }
+
+    /// The checkpoint and exact resend material are one durable commit. The
+    /// caller may release the corresponding Rust batch only after this returns.
+    func commitChatComposeBatch(
+        ownerIdentityID: String,
+        batch: MobileChatComposeBatchRecord
+    ) throws {
+        try transaction {
+            try upsertChatCheckpoint(ownerIdentityID: ownerIdentityID, batch.checkpoint)
+            for archive in batch.archives {
+                try upsertChatArchive(ownerIdentityID: ownerIdentityID, archive)
+            }
+            for mutation in batch.mutations {
+                try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation)
+            }
+        }
+    }
+
+    func applyChatMutations(
+        ownerIdentityID: String,
+        mutations: [MobileChatMutationRecord]
+    ) throws {
+        try transaction {
+            for mutation in mutations {
+                try applyChatMutation(ownerIdentityID: ownerIdentityID, mutation)
+            }
+        }
+    }
+
+    func applyChatDeliveries(
+        ownerIdentityID: String,
+        deliveries: [MobileChatDeliveryRecord]
+    ) throws {
+        try transaction {
+            for delivery in deliveries {
+                let fragmentStatement = try prepare(
+                    """
+                    INSERT INTO chat_delivery_fragment (
+                        owner_identity_id, session_id, handle, fragment_index, state
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
+                    DO UPDATE SET state = CASE
+                        WHEN chat_delivery_fragment.state = 'failed'
+                            OR excluded.state = 'failed' THEN 'failed'
+                        WHEN chat_delivery_fragment.state = 'acknowledged'
+                            OR excluded.state = 'acknowledged' THEN 'acknowledged'
+                        ELSE 'sent'
+                    END
+                    """
+                )
+                defer { sqlite3_finalize(fragmentStatement) }
+                try bind(ownerIdentityID, to: fragmentStatement, at: 1)
+                try bind(String(delivery.sessionId), to: fragmentStatement, at: 2)
+                try check(sqlite3_bind_int64(fragmentStatement, 3, Int64(delivery.handle)))
+                try check(sqlite3_bind_int(
+                    fragmentStatement,
+                    4,
+                    delivery.fragmentIndex.map(Int32.init) ?? -1
+                ))
+                try bind(
+                    String(describing: delivery.state).lowercased(),
+                    to: fragmentStatement,
+                    at: 5
+                )
+                try stepDone(fragmentStatement)
+
+                let message = try prepare(
+                    """
+                    UPDATE chat_message SET delivery_state = CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM chat_delivery_fragment f
+                            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                                AND f.session_id = chat_message.session_id
+                                AND f.handle = chat_message.handle AND f.state = 'failed'
+                        ) THEN 'failed'
+                        WHEN (
+                            SELECT COUNT(*) FROM chat_delivery_fragment f
+                            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                                AND f.session_id = chat_message.session_id
+                                AND f.handle = chat_message.handle
+                                AND f.state = 'acknowledged'
+                        ) >= COALESCE(chat_message.fragment_count, 1) THEN 'acknowledged'
+                        WHEN EXISTS (
+                            SELECT 1 FROM chat_delivery_fragment f
+                            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                                AND f.session_id = chat_message.session_id
+                                AND f.handle = chat_message.handle
+                                AND f.state IN ('sent', 'acknowledged')
+                        ) THEN 'sent'
+                        ELSE 'pending'
+                    END
+                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    """
+                )
+                defer { sqlite3_finalize(message) }
+                try bind(ownerIdentityID, to: message, at: 1)
+                try bind(String(delivery.sessionId), to: message, at: 2)
+                try check(sqlite3_bind_int64(message, 3, Int64(delivery.handle)))
+                try stepDone(message)
+            }
+        }
+    }
+
+    func chatArchive(
+        ownerIdentityID: String,
+        lookup: MobileChatArchiveLookupRecord
+    ) throws -> Data? {
+        let statement = try prepare(
+            """
+            SELECT payload FROM chat_outbound_archive
+            WHERE owner_identity_id = ? AND peer_address = ?
+                AND message_id = ? AND fragment_index = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(lookup.peerAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int(statement, 3, Int32(lookup.messageId)))
+        try check(sqlite3_bind_int(statement, 4, lookup.fragmentIndex.map(Int32.init) ?? -1))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Self.dataColumn(statement, at: 0)
+    }
+
+    func chatMessages(ownerIdentityID: String, peerAddress: String) throws -> [StoredChatMessage] {
+        let statement = try prepare(
+            """
+            SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms
+            FROM chat_message
+            WHERE owner_identity_id = ? AND peer_address = ?
+            ORDER BY created_at_ms ASC, rowid ASC
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(peerAddress, to: statement, at: 2)
+        var messages: [StoredChatMessage] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                messages.append(
+                    StoredChatMessage(
+                        sessionID: Self.stringColumn(statement, at: 0),
+                        handle: UInt32(sqlite3_column_int64(statement, 1)),
+                        body: Self.stringColumn(statement, at: 2),
+                        outbound: sqlite3_column_int(statement, 3) == 1,
+                        deliveryState: Self.optionalStringColumn(statement, at: 4),
+                        isDeleted: sqlite3_column_int(statement, 5) != 0,
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 6)
+                    )
+                )
+            case SQLITE_DONE: return messages
+            case let code: throw ApplicationStoreError.sqliteFailure(code)
+            }
+        }
+    }
+
     func insertNodesAtomically(
         ownerIdentityID: String,
         nodes: [NewStoredNode]
@@ -433,6 +641,157 @@ actor SQLiteApplicationStore {
         )
     }
 
+    private func upsertChatCheckpoint(
+        ownerIdentityID: String,
+        _ checkpoint: MobileChatCheckpointRecord
+    ) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO chat_stream_checkpoint (
+                owner_identity_id, peer_address, next_id, epoch, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(owner_identity_id, peer_address) DO UPDATE SET
+                next_id = excluded.next_id,
+                epoch = excluded.epoch,
+                updated_at_ms = excluded.updated_at_ms
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(checkpoint.peerAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int(statement, 3, Int32(checkpoint.nextId)))
+        try check(sqlite3_bind_int(statement, 4, Int32(checkpoint.epoch)))
+        try check(sqlite3_bind_int64(statement, 5, Self.nowMilliseconds()))
+        try stepDone(statement)
+    }
+
+    private func upsertChatArchive(
+        ownerIdentityID: String,
+        _ archive: MobileChatArchiveRecord
+    ) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO chat_outbound_archive (
+                owner_identity_id, peer_address, message_id, fragment_index, payload
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(owner_identity_id, peer_address, message_id, fragment_index)
+            DO UPDATE SET payload = excluded.payload
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(archive.peerAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int(statement, 3, Int32(archive.messageId)))
+        try check(sqlite3_bind_int(statement, 4, archive.fragmentIndex.map(Int32.init) ?? -1))
+        try bind(archive.payload, to: statement, at: 5)
+        try stepDone(statement)
+    }
+
+    private func applyChatMutation(
+        ownerIdentityID: String,
+        _ mutation: MobileChatMutationRecord
+    ) throws {
+        let sessionID = String(mutation.sessionId)
+        let ledger = try prepare(
+            """
+            INSERT INTO chat_applied_mutation (owner_identity_id, session_id, handle, revision)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
+                revision = excluded.revision
+            WHERE excluded.revision > chat_applied_mutation.revision
+            """
+        )
+        defer { sqlite3_finalize(ledger) }
+        try bind(ownerIdentityID, to: ledger, at: 1)
+        try bind(sessionID, to: ledger, at: 2)
+        try check(sqlite3_bind_int64(ledger, 3, Int64(mutation.handle)))
+        try check(sqlite3_bind_int64(ledger, 4, Int64(mutation.revision)))
+        try stepDone(ledger)
+        guard sqlite3_changes(database) > 0 else { return }
+
+        switch mutation.kind {
+        case .insert:
+            guard let peerAddress = mutation.peerAddress,
+                  let direction = mutation.direction,
+                  let body = mutation.body
+            else { return }
+            let statement = try prepare(
+                """
+                INSERT INTO chat_message (
+                    owner_identity_id, session_id, handle, peer_address, sender_address,
+                    direction, message_type, wire_id, epoch, client_token,
+                    sender_handle, regarding_handle, background_color, text_color, body,
+                    complete, present_fragments, fragment_count, finalized,
+                    delivery_state, deleted, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
+                    body = excluded.body,
+                    complete = excluded.complete,
+                    present_fragments = excluded.present_fragments,
+                    fragment_count = excluded.fragment_count,
+                    finalized = excluded.finalized
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            try bind(sessionID, to: statement, at: 2)
+            try check(sqlite3_bind_int64(statement, 3, Int64(mutation.handle)))
+            try bind(peerAddress, to: statement, at: 4)
+            try bindOptional(mutation.senderAddress, to: statement, at: 5)
+            try check(sqlite3_bind_int(statement, 6, direction == .outbound ? 1 : 0))
+            try bindOptionalInt(mutation.messageType.map(Int64.init), to: statement, at: 7)
+            try bindOptionalInt(mutation.wireId.map(Int64.init), to: statement, at: 8)
+            try bindOptionalInt(mutation.epoch.map(Int64.init), to: statement, at: 9)
+            try bindOptionalInt(mutation.clientToken.map(Int64.init), to: statement, at: 10)
+            try bindOptional(mutation.senderHandle, to: statement, at: 11)
+            try bindOptionalInt(mutation.regardingHandle.map(Int64.init), to: statement, at: 12)
+            try bindOptional(mutation.backgroundColor, to: statement, at: 13)
+            try bindOptional(mutation.textColor, to: statement, at: 14)
+            try bind(body, to: statement, at: 15)
+            try bindOptionalBool(mutation.complete, to: statement, at: 16)
+            try bindOptionalInt(mutation.presentFragments.map(Int64.init), to: statement, at: 17)
+            try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 18)
+            try bindOptionalBool(mutation.finalized, to: statement, at: 19)
+            try bindOptional(direction == .outbound ? "pending" : nil, to: statement, at: 20)
+            try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds()))
+            try stepDone(statement)
+        case .updateBody:
+            guard let body = mutation.body else { return }
+            let statement = try prepare(
+                """
+                UPDATE chat_message SET body = ?, complete = ?, present_fragments = ?,
+                    fragment_count = ?, finalized = ?
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(body, to: statement, at: 1)
+            try bindOptionalBool(mutation.complete, to: statement, at: 2)
+            try bindOptionalInt(mutation.presentFragments.map(Int64.init), to: statement, at: 3)
+            try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 4)
+            try bindOptionalBool(mutation.finalized, to: statement, at: 5)
+            try bind(ownerIdentityID, to: statement, at: 6)
+            try bind(sessionID, to: statement, at: 7)
+            try check(sqlite3_bind_int64(statement, 8, Int64(mutation.handle)))
+            try stepDone(statement)
+        case .edit, .delete:
+            guard let original = mutation.originalHandle else { return }
+            let statement = try prepare(
+                """
+                UPDATE chat_message SET body = ?, deleted = ?
+                WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(mutation.kind == .delete ? "" : (mutation.body ?? ""), to: statement, at: 1)
+            try check(sqlite3_bind_int(statement, 2, mutation.kind == .delete ? 1 : 0))
+            try bind(ownerIdentityID, to: statement, at: 3)
+            try bind(sessionID, to: statement, at: 4)
+            try check(sqlite3_bind_int64(statement, 5, Int64(original)))
+            try stepDone(statement)
+        }
+    }
+
     private func transaction<T>(_ operation: () throws -> T) throws -> T {
         try Self.execute(database, sql: "BEGIN IMMEDIATE")
         do {
@@ -461,6 +820,13 @@ actor SQLiteApplicationStore {
         try check(status)
     }
 
+    private func bind(_ value: Data, to statement: OpaquePointer, at index: Int32) throws {
+        let status = value.withUnsafeBytes { bytes in
+            sqlite3_bind_blob(statement, index, bytes.baseAddress, Int32(bytes.count), Self.sqliteTransient)
+        }
+        try check(status)
+    }
+
     private func bindOptional(
         _ value: String?,
         to statement: OpaquePointer,
@@ -471,6 +837,38 @@ actor SQLiteApplicationStore {
         } else {
             try check(sqlite3_bind_null(statement, index))
         }
+    }
+
+    private func bindOptional(
+        _ value: Data?,
+        to statement: OpaquePointer,
+        at index: Int32
+    ) throws {
+        if let value {
+            try bind(value, to: statement, at: index)
+        } else {
+            try check(sqlite3_bind_null(statement, index))
+        }
+    }
+
+    private func bindOptionalInt(
+        _ value: Int64?,
+        to statement: OpaquePointer,
+        at index: Int32
+    ) throws {
+        if let value {
+            try check(sqlite3_bind_int64(statement, index, value))
+        } else {
+            try check(sqlite3_bind_null(statement, index))
+        }
+    }
+
+    private func bindOptionalBool(
+        _ value: Bool?,
+        to statement: OpaquePointer,
+        at index: Int32
+    ) throws {
+        try bindOptionalInt(value.map { $0 ? 1 : 0 }, to: statement, at: index)
     }
 
     private func stepDone(_ statement: OpaquePointer) throws {
@@ -574,6 +972,96 @@ actor SQLiteApplicationStore {
                 throw error
             }
         }
+
+
+        if version < 4 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    CREATE TABLE chat_stream_checkpoint (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        peer_address TEXT NOT NULL,
+                        next_id INTEGER NOT NULL,
+                        epoch INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (owner_identity_id, peer_address)
+                    );
+
+                    CREATE TABLE chat_outbound_archive (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        peer_address TEXT NOT NULL,
+                        message_id INTEGER NOT NULL,
+                        fragment_index INTEGER NOT NULL,
+                        payload BLOB NOT NULL,
+                        PRIMARY KEY (
+                            owner_identity_id, peer_address, message_id, fragment_index
+                        )
+                    );
+
+                    CREATE TABLE chat_message (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        handle INTEGER NOT NULL,
+                        peer_address TEXT NOT NULL,
+                        sender_address TEXT,
+                        direction INTEGER NOT NULL,
+                        message_type INTEGER,
+                        wire_id INTEGER,
+                        epoch INTEGER,
+                        client_token INTEGER,
+                        sender_handle TEXT,
+                        regarding_handle INTEGER,
+                        background_color BLOB,
+                        text_color BLOB,
+                        body TEXT NOT NULL,
+                        complete INTEGER,
+                        present_fragments INTEGER,
+                        fragment_count INTEGER,
+                        finalized INTEGER,
+                        delivery_state TEXT,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        created_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (owner_identity_id, session_id, handle)
+                    );
+
+                    CREATE INDEX chat_message_conversation_idx
+                        ON chat_message (owner_identity_id, peer_address, created_at_ms);
+
+                    CREATE TABLE chat_applied_mutation (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        handle INTEGER NOT NULL,
+                        revision INTEGER NOT NULL,
+                        PRIMARY KEY (owner_identity_id, session_id, handle)
+                    );
+
+                    CREATE TABLE chat_delivery_fragment (
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        handle INTEGER NOT NULL,
+                        fragment_index INTEGER NOT NULL,
+                        state TEXT NOT NULL,
+                        PRIMARY KEY (
+                            owner_identity_id, session_id, handle, fragment_index
+                        )
+                    );
+
+                    PRAGMA user_version = 4;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
     }
 
     private static func readSchemaVersion(_ database: OpaquePointer) throws -> Int32 {
@@ -606,6 +1094,15 @@ actor SQLiteApplicationStore {
     private static func stringColumn(_ statement: OpaquePointer, at index: Int32) -> String {
         guard let pointer = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: pointer)
+    }
+
+    private static func dataColumn(_ statement: OpaquePointer, at index: Int32) -> Data {
+        guard let bytes = sqlite3_column_blob(statement, index) else { return Data() }
+        return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, index)))
+    }
+
+    private static func nowMilliseconds() -> Int64 {
+        Int64(Date.now.timeIntervalSince1970 * 1_000)
     }
 
     private static func optionalStringColumn(

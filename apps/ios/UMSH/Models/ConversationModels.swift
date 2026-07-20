@@ -48,6 +48,15 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     let id: Int64
     let peer: PeerSummary
     var draftText: String
+    var messages: [ChatMessageSummary]
+}
+
+struct ChatMessageSummary: Identifiable, Hashable, Sendable {
+    let id: String
+    let body: String
+    let isOutbound: Bool
+    let deliveryState: String?
+    let isDeleted: Bool
 }
 
 struct PeerPingReply: Equatable, Sendable {

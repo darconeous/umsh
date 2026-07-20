@@ -4,6 +4,7 @@ import UMSHMobileCore
 protocol RadioConnection: AnyObject, Sendable {
     func snapshots() async -> AsyncStream<RadioSnapshot>
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame>
+    func chatUpdates() async -> AsyncStream<RadioChatUpdate>
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func useMeshSession(_ session: MobileMeshSession?) async
     func autoConnect() async
@@ -12,7 +13,36 @@ protocol RadioConnection: AnyObject, Sendable {
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
+    func prepareChat(
+        peerAddresses: [String],
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws
+    func registerChatPeers(_ peerAddresses: [String]) async throws
+    func composeText(
+        peerAddress: String,
+        clientToken: UInt32,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord
+    func commitChatBatch(_ batchID: UInt64) async throws
+    func rejectChatBatch(
+        _ batchID: UInt64,
+        checkpoints: [MobileChatCheckpointRecord]
+    ) async throws
+    func applyChatArchiveResult(
+        requestID: UInt32,
+        kind: MobileChatArchiveResultKind,
+        payload: Data
+    ) async throws
+    func acknowledgeChatBatch(_ batchID: UInt64) async throws
     func disconnect() async
+}
+
+struct RadioChatUpdate: Sendable {
+    let batchID: UInt64
+    let mutations: [MobileChatMutationRecord]
+    let deliveries: [MobileChatDeliveryRecord]
+    let archiveLookups: [MobileChatArchiveLookupRecord]
+    let diagnostics: [String]
 }
 
 struct RadioPingReply: Equatable, Sendable {

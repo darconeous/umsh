@@ -3403,6 +3403,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-sync",
+ "umsh-text",
  "umsh-uri",
  "uniffi",
  "zeroize",
