@@ -57,6 +57,7 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let isOutbound: Bool
     let deliveryState: String?
     let isDeleted: Bool
+    let isEdited: Bool
     /// Facade session that recorded the message plus its engine handle;
     /// paired with the durable wire identity below they let the Rust engine
     /// target this message for an edit/delete even after an app restart.

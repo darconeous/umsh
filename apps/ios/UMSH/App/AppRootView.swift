@@ -36,7 +36,8 @@ struct AppRootView: View {
                     savePeer: savePeer,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    deleteConversation: deleteConversation
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -365,6 +366,19 @@ struct AppRootView: View {
         }
     }
 
+    private func deleteConversation(_ conversation: DirectConversationSummary) async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            try await applicationStore.deleteDirectConversation(
+                ownerIdentityID: localIdentity.id,
+                conversationID: conversation.id
+            )
+            await reloadApplicationState()
+        } catch {
+            Self.logger.error("Could not delete conversation \(conversation.id): \(String(describing: error), privacy: .public)")
+        }
+    }
+
     private func startConversation(_ peer: PeerSummary) async -> DirectConversationSummary? {
         guard let applicationStore, let localIdentity else { return nil }
         do {
@@ -572,6 +586,7 @@ struct AppRootView: View {
                                 isOutbound: $0.outbound,
                                 deliveryState: $0.deliveryState,
                                 isDeleted: $0.isDeleted,
+                                isEdited: $0.isEdited,
                                 sessionID: $0.sessionID,
                                 handle: $0.handle,
                                 wireID: $0.wireID,

@@ -9,9 +9,11 @@ struct ConversationsView: View {
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
+    var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }
 
     @State private var showsImport = false
     @State private var openedConversation: DirectConversationSummary?
+    @State private var conversationPendingDeletion: DirectConversationSummary?
 
     var body: some View {
         List {
@@ -29,6 +31,11 @@ struct ConversationsView: View {
                     ForEach(conversations) { conversation in
                         NavigationLink(value: conversation.id) {
                             ConversationRow(conversation: conversation)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                conversationPendingDeletion = conversation
+                            }
                         }
                     }
                 }
@@ -61,6 +68,23 @@ struct ConversationsView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("New", systemImage: "square.and.pencil") { showsImport = true }
             }
+        }
+        .confirmationDialog(
+            "Delete this conversation?",
+            isPresented: Binding(
+                get: { conversationPendingDeletion != nil },
+                set: { if !$0 { conversationPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Conversation", role: .destructive) {
+                if let conversation = conversationPendingDeletion {
+                    conversationPendingDeletion = nil
+                    Task { await deleteConversation(conversation) }
+                }
+            }
+        } message: {
+            Text("The message history on this phone is removed. The peer keeps their copy.")
         }
         .sheet(isPresented: $showsImport) {
             NavigationStack {
@@ -102,12 +126,21 @@ private struct ConversationRow: View {
             PeerAvatar(hint: conversation.peer.identity.hint)
             VStack(alignment: .leading, spacing: 3) {
                 Text(conversation.peer.displayName)
-                Text(conversation.draftText.isEmpty ? "No messages yet" : "Draft: \(conversation.draftText)")
+                Text(preview)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+    }
+
+    private var preview: String {
+        if !conversation.draftText.isEmpty {
+            return "Draft: \(conversation.draftText)"
+        }
+        guard let last = conversation.messages.last else { return "No messages yet" }
+        if last.isDeleted { return "Message deleted" }
+        return last.isOutbound ? "You: \(last.body)" : last.body
     }
 }
 
@@ -265,9 +298,13 @@ struct DirectConversationView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 10) {
+                            let lastOutboundID = conversation.messages.last(
+                                where: { $0.isOutbound && !$0.isDeleted }
+                            )?.id
                             ForEach(conversation.messages) { message in
                                 ChatMessageBubble(
                                     message: message,
+                                    isMostRecentOutbound: message.id == lastOutboundID,
                                     onEdit: message.isOutbound && !message.isDeleted
                                         ? {
                                             editDraft = message.body
@@ -643,6 +680,9 @@ private struct MessageEditSheet: View {
 
 private struct ChatMessageBubble: View {
     let message: ChatMessageSummary
+    /// Quiet states (Delivered/Sent) only annotate the newest outbound
+    /// message; older ones would repeat the same information on every row.
+    var isMostRecentOutbound = false
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
 
@@ -651,67 +691,74 @@ private struct ChatMessageBubble: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom) {
-            if message.isOutbound { Spacer(minLength: 44) }
-            VStack(alignment: message.isOutbound ? .trailing : .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    bubble
-                    if isFailed {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.red)
-                            .accessibilityLabel("Message not delivered")
+        if message.isDeleted {
+            // A tombstone, not a message: no bubble, no menu, no captions.
+            Text(message.isOutbound ? "You deleted a message" : "Message deleted")
+                .font(.caption)
+                .italic()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: message.isOutbound ? .trailing : .leading)
+                .padding(.horizontal, 8)
+        } else {
+            HStack(alignment: .bottom) {
+                if message.isOutbound { Spacer(minLength: 44) }
+                VStack(alignment: message.isOutbound ? .trailing : .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        bubble
+                        if isFailed {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.red)
+                                .accessibilityLabel("Message not delivered")
+                        }
+                    }
+                    if let caption {
+                        Text(caption)
+                            .font(.caption2)
+                            .fontWeight(isFailed ? .semibold : .regular)
+                            .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                            .padding(.horizontal, 4)
                     }
                 }
-                if message.isOutbound, let label = deliveryLabel {
-                    Text(label)
-                        .font(.caption2)
-                        .fontWeight(isFailed ? .semibold : .regular)
-                        .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .padding(.horizontal, 4)
-                }
+                if !message.isOutbound { Spacer(minLength: 44) }
             }
-            if !message.isOutbound { Spacer(minLength: 44) }
         }
     }
 
     private var bubble: some View {
-        Group {
-            if message.isDeleted {
-                Text("Message deleted")
-                    .foregroundStyle(.secondary)
-                    .italic()
-            } else {
-                SelectableMessageText(text: message.body)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(message.isOutbound ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.14))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
-        .contextMenu {
-            if !message.isDeleted {
+        SelectableMessageText(text: message.body)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(message.isOutbound ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
+            .contextMenu {
                 Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = message.body
                 }
+                if let onEdit {
+                    Button("Edit", systemImage: "pencil", action: onEdit)
+                }
+                if let onDelete {
+                    Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+                }
             }
-            if let onEdit {
-                Button("Edit", systemImage: "pencil", action: onEdit)
-            }
-            if let onDelete {
-                Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
-            }
-        }
+    }
+
+    private var caption: String? {
+        var parts: [String] = []
+        if message.isEdited { parts.append("Edited") }
+        if message.isOutbound, let label = deliveryLabel { parts.append(label) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var deliveryLabel: String? {
         guard let state = message.deliveryState else { return nil }
-        return switch state.lowercased() {
-        case "acknowledged": "Delivered"
-        case "sent": "Sent"
-        case "failed": "Not Delivered"
-        default: "Sending…"
+        switch state.lowercased() {
+        case "failed": return "Not Delivered"
+        case "acknowledged": return isMostRecentOutbound ? "Delivered" : nil
+        case "sent": return isMostRecentOutbound ? "Sent" : nil
+        default: return "Sending…"
         }
     }
 }

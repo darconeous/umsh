@@ -1026,3 +1026,49 @@ No production UI code should be started until the design artifacts are
 approved enough to establish their nouns and primary navigation. Conversely,
 the integration and hardware spikes should begin early because their results
 may constrain honest UI behavior.
+
+## Requested feature backlog (2026-07-20 device-testing feedback)
+
+Captured verbatim intent from on-device testing; each row notes the layer
+that gates it. Transcript quick fixes from the same session (conversation
+deletion, last-message previews, tombstone rendering, delivered-caption
+gating, edited status) are already implemented and not repeated here.
+
+Transcript / messaging:
+- PFS indicator on individual messages (sent or received under a PFS
+  session). Gating: the mobile facade must export per-message security
+  context (engine envelope already knows the delivery path; plumb through
+  mutation records and persist a column).
+- Start a PFS session with a peer from the chat and from the peer sheet.
+  Gating: facade API over `umsh-node` PFS establishment + UI state for
+  pending/established/failed.
+- Custom chat bubble color (local preference; consider mapping onto the
+  protocol's bg/text color presentation options for outbound messages).
+
+Conversations / channels:
+- Add/join channels (channel key import/generation, channel list,
+  channel-group transcript). Gating: engine increment 6 direction; the
+  mobile facade currently accepts `ConversationKey::Direct` only.
+
+Network / routing:
+- Configurable default fallback flood count (settings + facade SendOptions
+  plumbing).
+- Per-contact routing info view/edit: route path, flood hop count, reset to
+  defaults. Gating: facade must expose umsh-node routing table entries.
+
+Peer sheet:
+- Identity QR code (canonical URI as QR; camera import elsewhere later).
+- Copy-identity-URI button.
+- Edit peer alias after import.
+- Show capabilities, location, and other advertised-identity fields (see
+  protocol `node-identity.md`); mark unauthenticated claims as such.
+- Advertise our own identity (Advertisement Request / identity broadcast —
+  device-node milestone already validated the frame on firmware).
+
+Platform:
+- Notifications + background running so messages arrive while the app is
+  closed. Gating: `bluetooth-central` background mode + rethinking the
+  25 ms/250 ms foreground poll cadence (have `pollUpdate` return a
+  next-wake deadline), local notifications from chat inserts, and an
+  eventual companion offline-queue drain on reconnect. Needs its own
+  design pass (see Principal risks: Background expectations).
