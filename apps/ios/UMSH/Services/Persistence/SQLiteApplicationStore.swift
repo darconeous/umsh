@@ -485,6 +485,32 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// The compose transaction is already durable at this point, but Rust
+    /// could not release its held transmissions (for example because the
+    /// fail-closed counter store became unavailable). Keep the optimistic row
+    /// honest instead of leaving it pending forever.
+    func markChatComposeBatchFailed(
+        ownerIdentityID: String,
+        batch: MobileChatComposeBatchRecord
+    ) throws {
+        try transaction {
+            for mutation in batch.mutations
+            where mutation.kind == .insert && mutation.direction == .outbound {
+                let statement = try prepare(
+                    """
+                    UPDATE chat_message SET delivery_state = 'failed'
+                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                    """
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind(ownerIdentityID, to: statement, at: 1)
+                try bind(String(mutation.sessionId), to: statement, at: 2)
+                try check(sqlite3_bind_int64(statement, 3, Int64(mutation.handle)))
+                try stepDone(statement)
+            }
+        }
+    }
+
     func chatArchive(
         ownerIdentityID: String,
         lookup: MobileChatArchiveLookupRecord

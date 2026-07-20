@@ -83,10 +83,34 @@ Review fixes (2026-07-17), from an independent review of increments 0–3:
 Each fix has a regression test (`tests/engine_tests.rs` review section,
 plus pool-level tests in `fragment.rs`).
 
-Remaining: Increment 4 (mobile facade / UniFFI and SQLite ingestion),
-Increment 5 (pager adapter and capacity measurement), and Increment 6 (chat
-rooms in `umsh-chat-room`, including extension-option retention through
-mutations and reassembly). The spec is authoritative for wire behavior.
+The direct-message portion of Increment 4 is implemented in the iOS mobile
+facade: the Rust worker owns the reducer and MAC path, SQLite gates outbound
+transmission on a durable checkpoint/archive commit, typed transcript effects
+are replayed until acknowledged, and the SwiftUI transcript sends and receives
+real messages. Its current boundary and follow-ups are explicit:
+
+- The facade accepts only `ConversationKey::Direct`. Channel and room
+  destinations are not silently reimplemented in Swift; exporting those
+  profiles belongs with their later mobile integration.
+- Engine handles and inbound reference maps are process-local. After an app
+  restart, an edit/delete whose wire reference resolves only to an older
+  SQLite row is currently retained by the engine as `ResolvedRef::Unresolved`
+  but cannot yet be applied by the mobile facade. The platform adapter must
+  export the unresolved wire reference and resolve it against persisted
+  `(wire_id, epoch)` aliases; until then such an edit/delete is omitted rather
+  than guessed.
+- The optional persisted-checkpoint compose hint is still pending coordination
+  with the engine API. Without it, conversations beyond the 8 active + 24 cold
+  continuity bound safely announce a Sequence Reset instead of continuing the
+  exact persisted stream.
+- A failed fragment is sticky in the current SQLite delivery projection.
+  Manual retry must define a new attempt/generation before it is added; it must
+  not overwrite failure with a late `Sent` event from the old attempt.
+
+Remaining: the Increment 4 follow-ups above, Increment 5 (pager adapter and
+capacity measurement), and Increment 6 (chat rooms in `umsh-chat-room`,
+including extension-option retention through mutations and reassembly). The
+spec is authoritative for wire behavior.
 
 ## Decision
 
