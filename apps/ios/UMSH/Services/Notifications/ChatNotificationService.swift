@@ -38,6 +38,18 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         visiblePeerAddress.withLock { $0 = peerAddress }
     }
 
+    /// Clear only if this conversation is still the visible one. When the
+    /// user switches transcripts, the new view's appearance can precede the
+    /// old view's disappearance; the stale disappearance must not erase the
+    /// fresh state.
+    func clearVisibleConversation(ifMatching peerAddress: String) {
+        visiblePeerAddress.withLock { visible in
+            if visible == peerAddress {
+                visible = nil
+            }
+        }
+    }
+
     /// Ask for notification permission the first time a radio attaches —
     /// the first moment a notification has concrete meaning. The system
     /// remembers the user's answer; a denied state is never re-prompted.

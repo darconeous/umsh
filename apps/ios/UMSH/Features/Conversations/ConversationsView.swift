@@ -270,6 +270,20 @@ struct NodeImportView: View {
     }
 }
 
+/// Reports which conversation transcript is on screen, so notification
+/// presentation can suppress banners for messages the user is already
+/// looking at. Injected from the app root; the transcript view reports its
+/// own visibility so every navigation path (conversation list, network
+/// peer sheet, programmatic opens) is covered.
+struct VisibleConversationReporter: Sendable {
+    var appeared: @Sendable (String) -> Void = { _ in }
+    var disappeared: @Sendable (String) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    @Entry var visibleConversationReporter = VisibleConversationReporter()
+}
+
 struct DirectConversationView: View {
     private static let bottomAnchorID = "chat-transcript-bottom"
     // Following the live edge is an explicit, sticky mode. Appending a row can
@@ -293,6 +307,7 @@ struct DirectConversationView: View {
     @State private var editingMessage: ChatMessageSummary?
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
+    @Environment(\.visibleConversationReporter) private var visibleConversationReporter
     @State private var followsLatestMessage = true
     @State private var userIsScrollingTranscript = false
     @State private var transcriptDistanceFromBottom: CGFloat = 0
@@ -458,6 +473,12 @@ struct DirectConversationView: View {
         }
         .navigationTitle(conversation.peer.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            visibleConversationReporter.appeared(conversation.peer.identity.canonicalAddress)
+        }
+        .onDisappear {
+            visibleConversationReporter.disappeared(conversation.peer.identity.canonicalAddress)
+        }
         .toolbar {
             // The avatar replaces the plain title, as in Messages; tapping it
             // opens the peer's profile. The navigation title above still
