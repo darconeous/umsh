@@ -685,6 +685,10 @@ pub mod software {
         }
     }
 
+    /// Cloning is deliberate: a holder that must both hand the identity to
+    /// the MAC and retain signing ability (e.g. standalone node-identity
+    /// bundles) keeps a clone rather than round-tripping secret bytes.
+    #[derive(Clone)]
     pub struct SoftwareIdentity {
         secret: SigningKey,
         public: PublicKey,
@@ -757,6 +761,21 @@ pub mod software {
     /// malformed peer keys before they can poison the peer registry.
     pub fn is_valid_ed25519_public_key(pk: &PublicKey) -> bool {
         CompressedEdwardsY(pk.0).decompress().is_some()
+    }
+
+    /// Verify a detached Ed25519 signature against `pk`. Used for standalone
+    /// node-identity bundles (QR codes, broadcasts) whose signed range must
+    /// verify before the bundle's claims are presented as authenticated.
+    pub fn verify_ed25519_signature(
+        pk: &PublicKey,
+        message: &[u8],
+        signature: &[u8; 64],
+    ) -> bool {
+        let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&pk.0) else {
+            return false;
+        };
+        key.verify_strict(message, &ed25519_dalek::Signature::from_bytes(signature))
+            .is_ok()
     }
 }
 

@@ -31,7 +31,10 @@ use umsh_crypto::{
 };
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
-use umsh_node::{Host, LocalNode, MacBackend, PacketFamily, SendProgressTicket};
+use umsh_node::{
+    Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeRole, PacketFamily,
+    SendProgressTicket, Transport,
+};
 use umsh_sync::AsyncRefCell;
 use umsh_text::engine::{ArchiveResult, DeliveryState};
 use umsh_text::model::{ConversationKey, SenderScope};
@@ -98,6 +101,18 @@ pub struct MobileMeshPingEventRecord {
     pub lqi: Option<u8>,
 }
 
+/// A node-identity advertisement received over the mesh. Only frames whose
+/// source address carried the full public key are surfaced; the platform
+/// verifies the embedded signature before trusting or persisting any claim.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshAdvertisementRecord {
+    /// Canonical Base58 address of the claimed sender.
+    pub peer_address: String,
+    /// Raw node-identity payload bytes (without the payload-type byte),
+    /// decodable with `decode_node_identity`.
+    pub payload: Vec<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshSessionUpdateRecord {
     /// Complete raw UMSH frames ready for the companion PHY transport. Each
@@ -105,6 +120,7 @@ pub struct MobileMeshSessionUpdateRecord {
     /// result; queue acceptance is not transmit completion.
     pub outbound_frames: Vec<MobileMeshOutboundFrameRecord>,
     pub ping_events: Vec<MobileMeshPingEventRecord>,
+    pub advertisement_events: Vec<MobileMeshAdvertisementRecord>,
     /// Chat effects remain in the facade until Swift durably applies them and
     /// acknowledges this batch. Repeated polls may return the same batch.
     pub chat_batch_id: Option<u64>,
@@ -161,6 +177,16 @@ enum WorkerCommand {
         request_id: u32,
         kind: MobileChatArchiveResultKind,
         payload: Vec<u8>,
+    },
+    Advertise {
+        name: Option<String>,
+        timestamp: Option<u32>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    SignIdentityBundle {
+        name: Option<String>,
+        timestamp: Option<u32>,
+        response: oneshot::Sender<Result<Vec<u8>, MobileMeshError>>,
     },
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
@@ -513,6 +539,7 @@ pub struct MobileMeshSession {
     outbound: Mutex<std_mpsc::Receiver<MobileMeshOutboundFrameRecord>>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
+    advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
     next_chat_batch_id: Mutex<u64>,
@@ -548,6 +575,48 @@ impl MobileMeshSession {
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         Ok(operation_id)
+    }
+
+    /// Broadcast a signed node-identity advertisement describing this phone.
+    ///
+    /// The bundle always carries the standalone EdDSA signature because a
+    /// broadcast frame has no MIC to authenticate it.
+    pub async fn advertise_identity(
+        &self,
+        name: Option<String>,
+        timestamp: Option<u32>,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::Advertise {
+                name,
+                timestamp,
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Build and sign this phone's node-identity bundle without transmitting
+    /// it, for embedding in the shareable `umsh:n:` URI and QR code.
+    pub async fn sign_identity_bundle(
+        &self,
+        name: Option<String>,
+        timestamp: Option<u32>,
+    ) -> Result<Vec<u8>, MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SignIdentityBundle {
+                name,
+                timestamp,
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
     pub async fn register_peers(&self, peer_addresses: Vec<String>) -> Result<(), MobileMeshError> {
@@ -741,6 +810,10 @@ impl MobileMeshSession {
         if let Ok(receiver) = self.events.lock() {
             ping_events.extend(receiver.try_iter());
         }
+        let mut advertisement_events = Vec::new();
+        if let Ok(receiver) = self.advertisements.lock() {
+            advertisement_events.extend(receiver.try_iter());
+        }
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
         let mut chat_archive_lookups = Vec::new();
@@ -776,6 +849,7 @@ impl MobileMeshSession {
         MobileMeshSessionUpdateRecord {
             outbound_frames,
             ping_events,
+            advertisement_events,
             chat_batch_id,
             chat_mutations,
             chat_deliveries,
@@ -828,6 +902,7 @@ impl MobileMeshSession {
         let (commands, command_rx) = mpsc::unbounded_channel();
         let (outbound_tx, outbound) = std_mpsc::channel();
         let (event_tx, events) = std_mpsc::channel();
+        let (advertisement_tx, advertisements) = std_mpsc::channel();
         let (chat_event_tx, chat_events) = std_mpsc::channel();
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
@@ -862,6 +937,7 @@ impl MobileMeshSession {
                         outbound_tx,
                         worker_transmit_completions,
                         event_tx,
+                        advertisement_tx,
                         chat_event_tx,
                         ready_tx,
                     ),
@@ -877,6 +953,7 @@ impl MobileMeshSession {
             outbound: Mutex::new(outbound),
             transmit_completions,
             events: Mutex::new(events),
+            advertisements: Mutex::new(advertisements),
             chat_events: Mutex::new(chat_events),
             pending_chat_events: Mutex::new(None),
             next_chat_batch_id: Mutex::new(1),
@@ -892,6 +969,49 @@ impl Drop for MobileMeshSession {
     }
 }
 
+/// Build the signed standalone node-identity bundle for this phone: role
+/// Chat, capabilities Mobile + Text messages, optional display name
+/// (truncated to the 24-byte wire limit on a character boundary). The
+/// result is ROLE through the trailing 64-byte signature, without the
+/// payload-type byte.
+async fn build_signed_identity_bundle(
+    signer: &SoftwareIdentity,
+    name: Option<&str>,
+    timestamp: Option<u32>,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let name = name
+        .map(|name| {
+            let mut end = name.len().min(24);
+            while !name.is_char_boundary(end) {
+                end -= 1;
+            }
+            name[..end].to_owned()
+        })
+        .filter(|name| !name.is_empty());
+    let payload = NodeIdentityPayload {
+        role: NodeRole::Chat,
+        capabilities: NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
+        name,
+        location: None,
+        altitude_m: None,
+        timestamp,
+        supported_regions: None,
+        nonce: None,
+        signature: None,
+    };
+    let mut buf = [0u8; 192];
+    let len = payload
+        .encode_for_signing(&mut buf)
+        .map_err(|_| MobileMeshError::SendFailed)?;
+    let signature = signer
+        .sign(&buf[..len])
+        .await
+        .map_err(|_| MobileMeshError::SendFailed)?;
+    let mut bundle = buf[..len].to_vec();
+    bundle.extend_from_slice(&signature);
+    Ok(bundle)
+}
+
 async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
@@ -899,10 +1019,14 @@ async fn run_worker(
     outbound: std_mpsc::Sender<MobileMeshOutboundFrameRecord>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: std_mpsc::Sender<MobileMeshPingEventRecord>,
+    advertisements: std_mpsc::Sender<MobileMeshAdvertisementRecord>,
     chat_events: std_mpsc::Sender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
     let local_key = *identity.public_key();
+    // The MAC takes ownership of the identity below; standalone bundle
+    // signing (advertisements, QR bundles) uses this retained clone.
+    let signer = identity.clone();
     let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
     let worker_completions = transmit_completions.clone();
     let radio = BridgeRadio {
@@ -954,6 +1078,26 @@ async fn run_worker(
         });
         true
     });
+    let advertisement_events = advertisements.clone();
+    let advertisement_subscription = node.on_receive(move |packet| {
+        if packet.payload_type() != PayloadType::NodeIdentity {
+            return false;
+        }
+        // Hint-only sources cannot name a key to verify the bundle's
+        // signature against, so they are not surfaced at all.
+        let Some(peer) = packet.from_key() else {
+            return false;
+        };
+        let peer_address: String = umsh_core::base58::encode(&peer.0)
+            .into_iter()
+            .map(char::from)
+            .collect();
+        let _ = advertisement_events.send(MobileMeshAdvertisementRecord {
+            peer_address,
+            payload: packet.payload().to_vec(),
+        });
+        true
+    });
     let mut in_flight_chat = Vec::<InFlightChatTransmission>::new();
     let mut chat_pipeline_ready = BTreeSet::<[u8; 32]>::new();
     let mut pending_chat_transmissions = VecDeque::<umsh_text::engine::Transmission>::new();
@@ -994,7 +1138,12 @@ async fn run_worker(
             });
         }
     });
-    let _subscriptions = (pong_subscription, timeout_subscription, text_subscription);
+    let _subscriptions = (
+        pong_subscription,
+        timeout_subscription,
+        text_subscription,
+        advertisement_subscription,
+    );
     let _ = ready.send(Ok(()));
     let mut protocol_timeout_tick = tokio::time::interval(Duration::from_millis(50));
     protocol_timeout_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1070,6 +1219,45 @@ async fn run_worker(
                             if result.is_err() {
                                 emit_ping_failure(&events, operation_id);
                             }
+                        }
+                        Some(WorkerCommand::Advertise { name, timestamp, response }) => {
+                            let result = match build_signed_identity_bundle(
+                                &signer,
+                                name.as_deref(),
+                                timestamp,
+                            )
+                            .await
+                            {
+                                Ok(bundle) => {
+                                    let mut frame = Vec::with_capacity(bundle.len() + 1);
+                                    frame.push(PayloadType::NodeIdentity as u8);
+                                    frame.extend_from_slice(&bundle);
+                                    node.send_all(
+                                        &frame,
+                                        &SendOptions::default().with_full_source(),
+                                    )
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|_| MobileMeshError::SendFailed)
+                                }
+                                Err(error) => Err(error),
+                            };
+                            if result.is_ok()
+                                && handle.service_counter_persistence().await.is_err()
+                            {
+                                let _ = response.send(Err(MobileMeshError::SendFailed));
+                                return;
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::SignIdentityBundle { name, timestamp, response }) => {
+                            let result = build_signed_identity_bundle(
+                                &signer,
+                                name.as_deref(),
+                                timestamp,
+                            )
+                            .await;
+                            let _ = response.send(result);
                         }
                         Some(WorkerCommand::RestoreChat { checkpoints, response }) => {
                             chat.restore(&checkpoints, handle.now_ms().await);
@@ -1557,6 +1745,64 @@ mod tests {
                     .unwrap();
             }
             assert!(Instant::now() < deadline, "ping did not complete");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_advertisement_reaches_peer_with_valid_signature() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(21);
+        let bob_identity = identity(23);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store).await.unwrap();
+
+        // The signed bundle used for QR/URI sharing verifies out of band.
+        let bundle = alice
+            .sign_identity_bundle(Some("Alice's Phone".to_owned()), Some(1_760_000_000))
+            .await
+            .unwrap();
+        let record =
+            crate::decode_node_identity(address(&alice_identity), bundle.clone()).unwrap();
+        assert_eq!(record.signature, crate::IdentitySignatureState::Valid);
+        assert_eq!(record.name.as_deref(), Some("Alice's Phone"));
+        assert_eq!(record.role_label, "Chat");
+        let uri = crate::node_uri_with_identity(address(&alice_identity), bundle).unwrap();
+        assert!(crate::inspect_node_uri(uri).unwrap().identity_payload.is_some());
+
+        alice
+            .advertise_identity(Some("Alice's Phone".to_owned()), None)
+            .await
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            for frame in alice.poll_update().outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-50),
+                    lqi: None,
+                    snr_cb: None,
+                })
+                .unwrap();
+            }
+            let bob_update = bob.poll_update();
+            if let Some(event) = bob_update.advertisement_events.into_iter().next() {
+                assert_eq!(event.peer_address, address(&alice_identity));
+                let received =
+                    crate::decode_node_identity(event.peer_address, event.payload).unwrap();
+                assert_eq!(received.signature, crate::IdentitySignatureState::Valid);
+                assert_eq!(received.name.as_deref(), Some("Alice's Phone"));
+                break;
+            }
+            assert!(Instant::now() < deadline, "advertisement not received");
             std::thread::sleep(Duration::from_millis(5));
         }
     }
