@@ -1,12 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct ConversationsView: View {
-    let conversations: [DirectConversationSummary]
+    @Binding var conversations: [DirectConversationSummary]
     let radioSnapshot: RadioSnapshot
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshPublicIdentity, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
-    let sendMessage: (DirectConversationSummary, String) async -> Bool
+    let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
 
     @State private var showsImport = false
     @State private var openedConversation: DirectConversationSummary?
@@ -34,7 +35,7 @@ struct ConversationsView: View {
         }
         .navigationTitle("Conversations")
         .navigationDestination(for: Int64.self) { conversationID in
-            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+            if let conversation = binding(for: conversationID) {
                 DirectConversationView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
@@ -44,12 +45,14 @@ struct ConversationsView: View {
             }
         }
         .navigationDestination(item: $openedConversation) { conversation in
-            DirectConversationView(
-                conversation: conversation,
-                radioSnapshot: radioSnapshot,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage
-            )
+            if let conversation = binding(for: conversation.id) {
+                DirectConversationView(
+                    conversation: conversation,
+                    radioSnapshot: radioSnapshot,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage
+                )
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -70,6 +73,21 @@ struct ConversationsView: View {
                 )
             }
         }
+    }
+
+    private func binding(for conversationID: Int64) -> Binding<DirectConversationSummary>? {
+        guard let fallback = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        return Binding(
+            get: {
+                conversations.first(where: { $0.id == conversationID }) ?? fallback
+            },
+            set: { updated in
+                guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else {
+                    return
+                }
+                conversations[index] = updated
+            }
+        )
     }
 }
 
@@ -190,32 +208,43 @@ struct NodeImportView: View {
 }
 
 struct DirectConversationView: View {
-    let conversation: DirectConversationSummary
+    private static let bottomAnchorID = "chat-transcript-bottom"
+    // Following the live edge is an explicit, sticky mode. Appending a row can
+    // temporarily increase the measured distance from the bottom before the
+    // compensating scroll runs; that layout change must not look like the user
+    // scrolled away. Only user-driven scrolling can leave follow mode.
+    private static let stopFollowingDistance: CGFloat = 360
+    private static let resumeFollowingDistance: CGFloat = 240
+
+    @Binding var conversation: DirectConversationSummary
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> Void
-    let sendMessage: (DirectConversationSummary, String) async -> Bool
+    let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
 
     @State private var draft: String
-    @State private var messages: [ChatMessageSummary]
     @State private var showsBlockedReason = false
+    @State private var sendFailureMessage: String?
+    @State private var followsLatestMessage = true
+    @State private var userIsScrollingTranscript = false
+    @State private var transcriptDistanceFromBottom: CGFloat = 0
+    @State private var outgoingScrollRequest = 0
 
     init(
-        conversation: DirectConversationSummary,
+        conversation: Binding<DirectConversationSummary>,
         radioSnapshot: RadioSnapshot,
         updateDraft: @escaping (Int64, String) async -> Void,
-        sendMessage: @escaping (DirectConversationSummary, String) async -> Bool
+        sendMessage: @escaping (DirectConversationSummary, String) async -> MessageSendResult
     ) {
-        self.conversation = conversation
+        _conversation = conversation
         self.radioSnapshot = radioSnapshot
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
-        _draft = State(initialValue: conversation.draftText)
-        _messages = State(initialValue: conversation.messages)
+        _draft = State(initialValue: conversation.wrappedValue.draftText)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if messages.isEmpty {
+            if conversation.messages.isEmpty {
                 ContentUnavailableView {
                     Label("No messages yet", systemImage: "bubble.left")
                 } description: {
@@ -223,13 +252,71 @@ struct DirectConversationView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(messages) { message in
-                            ChatMessageBubble(message: message)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(conversation.messages) { message in
+                                ChatMessageBubble(message: message)
+                                    .id(message.id)
+                            }
+                            Color.clear
+                                .frame(height: 1)
+                                .id(Self.bottomAnchorID)
+                        }
+                        .padding()
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .onAppear {
+                        guard !conversation.messages.isEmpty else { return }
+                        // Initial presentation always opens at the newest
+                        // message. Conditional auto-follow applies only after
+                        // the reader has had a chance to scroll upward.
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                         }
                     }
-                    .padding()
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                    } action: { _, distance in
+                        transcriptDistanceFromBottom = distance
+                        updateFollowState(
+                            distanceFromBottom: distance,
+                            userDriven: userIsScrollingTranscript
+                        )
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        switch phase {
+                        case .tracking, .interacting, .decelerating:
+                            userIsScrollingTranscript = true
+                            updateFollowState(
+                                distanceFromBottom: transcriptDistanceFromBottom,
+                                userDriven: true
+                            )
+                        case .idle, .animating:
+                            userIsScrollingTranscript = false
+                        }
+                    }
+                    .onChange(of: conversation.messages) { _, messages in
+                        guard !messages.isEmpty, followsLatestMessage else { return }
+                        // Follow inserts as well as live body/delivery-state
+                        // mutations. Deferring lets SwiftUI finish measuring
+                        // the changed final bubble before targeting the edge.
+                        DispatchQueue.main.async {
+                            withAnimation {
+                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                            }
+                        }
+                    }
+                    .onChange(of: outgoingScrollRequest) { _, _ in
+                        // Sending is an explicit navigation to the new item,
+                        // unlike a passive update while reading older history.
+                        followsLatestMessage = true
+                        DispatchQueue.main.async {
+                            withAnimation {
+                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                            }
+                        }
+                    }
                 }
                 .frame(maxHeight: .infinity)
             }
@@ -237,9 +324,23 @@ struct DirectConversationView: View {
             Divider()
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Message \(conversation.peer.displayName)", text: $draft, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...6)
+                    ZStack(alignment: .topLeading) {
+                        HardwareAwareMessageEditor(
+                            text: $draft,
+                            onHardwareReturn: { Task { await send() } }
+                        )
+                        if draft.isEmpty {
+                            Text("Message \(conversation.peer.displayName)")
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .background {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+                    }
                         .task(id: draft) {
                             try? await Task.sleep(for: .milliseconds(250))
                             guard !Task.isCancelled else { return }
@@ -263,26 +364,36 @@ struct DirectConversationView: View {
         }
         .navigationTitle(conversation.peer.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: conversation.messages) { _, newMessages in
-            messages = newMessages
-        }
         .alert("Message not sent", isPresented: $showsBlockedReason) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text((blockedReason ?? "The message could not be queued.") + " Your draft has been preserved.")
+            Text((sendFailureMessage ?? blockedReason ?? "The message could not be queued.") + " Your draft has been preserved.")
+        }
+    }
+
+    private func updateFollowState(distanceFromBottom: CGFloat, userDriven: Bool) {
+        if distanceFromBottom <= Self.resumeFollowingDistance {
+            followsLatestMessage = true
+        } else if userDriven && distanceFromBottom >= Self.stopFollowingDistance {
+            followsLatestMessage = false
         }
     }
 
     private func send() async {
+        sendFailureMessage = nil
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         guard blockedReason == nil else {
             showsBlockedReason = true
             return
         }
-        if await sendMessage(conversation, body) {
+        switch await sendMessage(conversation, body) {
+        case let .sent(updatedConversation):
+            conversation = updatedConversation
             draft = ""
-        } else {
+            outgoingScrollRequest += 1
+        case let .failed(message):
+            sendFailureMessage = message
             showsBlockedReason = true
         }
     }
@@ -298,6 +409,97 @@ struct DirectConversationView: View {
     }
 }
 
+/// UITextView keeps the software keyboard's Return key as a newline while
+/// making physical-keyboard Return a send shortcut. SwiftUI's multiline
+/// TextField consumes physical Return before `onKeyPress`, so it cannot
+/// reliably express this distinction on its own.
+private struct HardwareAwareMessageEditor: UIViewRepresentable {
+    @Binding var text: String
+    let onHardwareReturn: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> HardwareAwareTextView {
+        let textView = HardwareAwareTextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = UIEdgeInsets(top: 7, left: 4, bottom: 7, right: 4)
+        textView.isScrollEnabled = true
+        textView.onHardwareReturn = onHardwareReturn
+        return textView
+    }
+
+    func updateUIView(_ textView: HardwareAwareTextView, context: Context) {
+        if textView.text != text {
+            textView.text = text
+        }
+        textView.onHardwareReturn = onHardwareReturn
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: HardwareAwareTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let measured = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let lineHeight = uiView.font?.lineHeight ?? 17
+        let minimumHeight = lineHeight + 14
+        let maximumHeight = lineHeight * 6 + 14
+        return CGSize(
+            width: width,
+            height: min(max(measured.height, minimumHeight), maximumHeight)
+        )
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            text = textView.text
+        }
+    }
+}
+
+private final class HardwareAwareTextView: UITextView {
+    var onHardwareReturn: (() -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        let send = UIKeyCommand(
+            input: "\r",
+            modifierFlags: [],
+            action: #selector(sendFromHardwareKeyboard)
+        )
+        send.wantsPriorityOverSystemBehavior = true
+
+        let newline = UIKeyCommand(
+            input: "\r",
+            modifierFlags: [.shift],
+            action: #selector(insertNewlineFromHardwareKeyboard)
+        )
+        newline.wantsPriorityOverSystemBehavior = true
+        return [send, newline]
+    }
+
+    @objc private func sendFromHardwareKeyboard() {
+        onHardwareReturn?()
+    }
+
+    @objc private func insertNewlineFromHardwareKeyboard() {
+        insertText("\n")
+    }
+}
+
 private struct ChatMessageBubble: View {
     let message: ChatMessageSummary
 
@@ -308,6 +510,7 @@ private struct ChatMessageBubble: View {
                 Text(message.isDeleted ? "Message deleted" : message.body)
                     .foregroundStyle(message.isDeleted ? .secondary : .primary)
                     .italic(message.isDeleted)
+                    .textSelection(.enabled)
                 if message.isOutbound, let deliveryState = message.deliveryState {
                     Text(deliveryLabel(deliveryState))
                         .font(.caption2)
@@ -324,10 +527,10 @@ private struct ChatMessageBubble: View {
 
     private func deliveryLabel(_ state: String) -> String {
         switch state.lowercased() {
-        case "acknowledged": "Acknowledged by radio"
+        case "acknowledged": "Delivered"
         case "sent": "Sent"
         case "failed": "Failed"
-        default: "Pending"
+        default: "Sending"
         }
     }
 }

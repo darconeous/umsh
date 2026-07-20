@@ -660,6 +660,13 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
 
     /**
+     * Abandon raw transactions whose GATT writes were rejected locally.
+     * Their late correlated responses are ignored once; the attachment and
+     * all non-raw session state remain intact.
+     */
+    func abandonRawTransmits(transactionIds: Data)  -> CompanionSessionUpdateRecord
+
+    /**
      * Begin post-attach synchronization for a new transport generation.
      */
     func begin(selectedHostKey: Data?) throws  -> CompanionSessionUpdateRecord
@@ -770,6 +777,21 @@ public convenience init() {
 
 
 
+
+    /**
+     * Abandon raw transactions whose GATT writes were rejected locally.
+     * Their late correlated responses are ignored once; the attachment and
+     * all non-raw session state remain intact.
+     */
+open func abandonRawTransmits(transactionIds: Data) -> CompanionSessionUpdateRecord  {
+    return try!  FfiConverterTypeCompanionSessionUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_abandon_raw_transmits(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(transactionIds),uniffiCallStatus
+    )
+})
+}
 
     /**
      * Begin post-attach synchronization for a new transport generation.
@@ -1371,7 +1393,22 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func commitChatBatch(batchId: UInt64) async throws
 
+    /**
+     * Report the actual physical companion-radio result for an outbound
+     * frame. This is intentionally distinct from accepting the frame into the
+     * BLE/CRP queue: the MAC starts ACK and retry timing only after success.
+     */
+    func completeOutboundFrame(frameId: UInt64, transmitted: Bool) throws
+
     func composeText(peerAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
+     * Fail every chat transmission currently owned by the mobile radio
+     * bridge. The platform calls this when companion-link delivery failed
+     * after the MAC had accepted the frames, ensuring optimistic UI rows do
+     * not remain in `Sending` indefinitely.
+     */
+    func failOutboundTransmissions() throws
 
     func ping(peerAddress: String, timeoutMs: UInt64) throws  -> UInt64
 
@@ -1498,6 +1535,21 @@ open func commitChatBatch(batchId: UInt64)async throws   {
         )
 }
 
+    /**
+     * Report the actual physical companion-radio result for an outbound
+     * frame. This is intentionally distinct from accepting the frame into the
+     * BLE/CRP queue: the MAC starts ACK and retry timing only after success.
+     */
+open func completeOutboundFrame(frameId: UInt64, transmitted: Bool)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_complete_outbound_frame(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(frameId),
+        FfiConverterBool.lower(transmitted),uniffiCallStatus
+    )
+}
+}
+
 open func composeText(peerAddress: String, clientToken: UInt32, body: String)async throws  -> MobileChatComposeBatchRecord  {
     return
         try  await uniffiRustCallAsync(
@@ -1512,6 +1564,20 @@ open func composeText(peerAddress: String, clientToken: UInt32, body: String)asy
             liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
+}
+
+    /**
+     * Fail every chat transmission currently owned by the mobile radio
+     * bridge. The platform calls this when companion-link delivery failed
+     * after the MAC had accepted the frames, ensuring optimistic UI rows do
+     * not remain in `Sending` indefinitely.
+     */
+open func failOutboundTransmissions()throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_fail_outbound_transmissions(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
 }
 
 open func ping(peerAddress: String, timeoutMs: UInt64)throws  -> UInt64  {
@@ -1697,6 +1763,69 @@ public func FfiConverterTypeCompanionBatteryRecord_lower(_ value: CompanionBatte
 
 
 /**
+ * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
+ * This is an operation failure, never evidence that the transport framing is
+ * corrupt or that the BLE connection should be closed.
+ */
+public struct CompanionOperationErrorRecord: Equatable, Hashable {
+    public var operation: String
+    public var statusCode: UInt32
+    public var statusName: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operation: String, statusCode: UInt32, statusName: String) {
+        self.operation = operation
+        self.statusCode = statusCode
+        self.statusName = statusName
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionOperationErrorRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionOperationErrorRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionOperationErrorRecord {
+        return
+            try CompanionOperationErrorRecord(
+                operation: FfiConverterString.read(from: &buf),
+                statusCode: FfiConverterUInt32.read(from: &buf),
+                statusName: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionOperationErrorRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.operation, into: &buf)
+        FfiConverterUInt32.write(value.statusCode, into: &buf)
+        FfiConverterString.write(value.statusName, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionOperationErrorRecord_lift(_ buf: RustBuffer) throws -> CompanionOperationErrorRecord {
+    return try FfiConverterTypeCompanionOperationErrorRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionOperationErrorRecord_lower(_ value: CompanionOperationErrorRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionOperationErrorRecord.lower(value)
+}
+
+
+/**
  * A validated property-bearing companion frame.
  */
 public struct CompanionPropertyFrameRecord: Equatable, Hashable {
@@ -1767,6 +1896,7 @@ public func FfiConverterTypeCompanionPropertyFrameRecord_lower(_ value: Companio
  */
 public struct CompanionRadioSettingsRecord: Equatable, Hashable {
     public var deviceName: String?
+    public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
     public var bandwidthHz: UInt32?
@@ -1776,8 +1906,9 @@ public struct CompanionRadioSettingsRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceName: String?, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleLimit: UInt16?) {
+    public init(deviceName: String?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleLimit: UInt16?) {
         self.deviceName = deviceName
+        self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
         self.bandwidthHz = bandwidthHz
@@ -1803,6 +1934,7 @@ public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuff
         return
             try CompanionRadioSettingsRecord(
                 deviceName: FfiConverterOptionString.read(from: &buf),
+                phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
                 bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
@@ -1814,6 +1946,7 @@ public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuff
 
     public static func write(_ value: CompanionRadioSettingsRecord, into buf: inout [UInt8]) {
         FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
         FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
@@ -1836,6 +1969,71 @@ public func FfiConverterTypeCompanionRadioSettingsRecord_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeCompanionRadioSettingsRecord_lower(_ value: CompanionRadioSettingsRecord) -> RustBuffer {
     return FfiConverterTypeCompanionRadioSettingsRecord.lower(value)
+}
+
+
+/**
+ * Typed completion of one host-requested raw PHY transmission.
+ */
+public struct CompanionRawTransmitResultRecord: Equatable, Hashable {
+    public var transactionId: UInt8
+    public var statusCode: UInt32
+    public var statusName: String
+    public var disposition: CompanionRawTransmitDisposition
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(transactionId: UInt8, statusCode: UInt32, statusName: String, disposition: CompanionRawTransmitDisposition) {
+        self.transactionId = transactionId
+        self.statusCode = statusCode
+        self.statusName = statusName
+        self.disposition = disposition
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionRawTransmitResultRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionRawTransmitResultRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRawTransmitResultRecord {
+        return
+            try CompanionRawTransmitResultRecord(
+                transactionId: FfiConverterUInt8.read(from: &buf),
+                statusCode: FfiConverterUInt32.read(from: &buf),
+                statusName: FfiConverterString.read(from: &buf),
+                disposition: FfiConverterTypeCompanionRawTransmitDisposition.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CompanionRawTransmitResultRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.transactionId, into: &buf)
+        FfiConverterUInt32.write(value.statusCode, into: &buf)
+        FfiConverterString.write(value.statusName, into: &buf)
+        FfiConverterTypeCompanionRawTransmitDisposition.write(value.disposition, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRawTransmitResultRecord_lift(_ buf: RustBuffer) throws -> CompanionRawTransmitResultRecord {
+    return try FfiConverterTypeCompanionRawTransmitResultRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRawTransmitResultRecord_lower(_ value: CompanionRawTransmitResultRecord) -> RustBuffer {
+    return FfiConverterTypeCompanionRawTransmitResultRecord.lower(value)
 }
 
 
@@ -2003,14 +2201,54 @@ public struct CompanionSessionUpdateRecord: Equatable, Hashable {
     public var receivedFrames: [CompanionReceivedFrameRecord]
     public var snapshot: CompanionSessionSnapshotRecord
     public var waitingForResponses: Bool
+    /**
+     * True while one host-requested raw PHY transmission is awaiting the
+     * radio's `PROP_LAST_STATUS` completion.
+     */
+    public var rawTransmitPending: Bool
+    /**
+     * Transaction allocated by `transmit_raw` in this update, if any.
+     */
+    public var rawTransmitStartedTransactionId: UInt8?
+    /**
+     * Completion for the raw PHY transmission consumed by this update.
+     * Rejections are ordinary radio-level send failures, not malformed
+     * companion frames.
+     */
+    public var rawTransmitResult: CompanionRawTransmitResultRecord?
+    /**
+     * Non-transmit operation error consumed by this update. The companion
+     * session has already recovered to a stable stage and remains usable.
+     */
+    public var operationError: CompanionOperationErrorRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(outboundFrames: [Data], receivedFrames: [CompanionReceivedFrameRecord], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool) {
+    public init(outboundFrames: [Data], receivedFrames: [CompanionReceivedFrameRecord], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool,
+        /**
+         * True while one host-requested raw PHY transmission is awaiting the
+         * radio's `PROP_LAST_STATUS` completion.
+         */rawTransmitPending: Bool,
+        /**
+         * Transaction allocated by `transmit_raw` in this update, if any.
+         */rawTransmitStartedTransactionId: UInt8?,
+        /**
+         * Completion for the raw PHY transmission consumed by this update.
+         * Rejections are ordinary radio-level send failures, not malformed
+         * companion frames.
+         */rawTransmitResult: CompanionRawTransmitResultRecord?,
+        /**
+         * Non-transmit operation error consumed by this update. The companion
+         * session has already recovered to a stable stage and remains usable.
+         */operationError: CompanionOperationErrorRecord?) {
         self.outboundFrames = outboundFrames
         self.receivedFrames = receivedFrames
         self.snapshot = snapshot
         self.waitingForResponses = waitingForResponses
+        self.rawTransmitPending = rawTransmitPending
+        self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
+        self.rawTransmitResult = rawTransmitResult
+        self.operationError = operationError
     }
 
 
@@ -2032,7 +2270,11 @@ public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuff
                 outboundFrames: FfiConverterSequenceData.read(from: &buf),
                 receivedFrames: FfiConverterSequenceTypeCompanionReceivedFrameRecord.read(from: &buf),
                 snapshot: FfiConverterTypeCompanionSessionSnapshotRecord.read(from: &buf),
-                waitingForResponses: FfiConverterBool.read(from: &buf)
+                waitingForResponses: FfiConverterBool.read(from: &buf),
+                rawTransmitPending: FfiConverterBool.read(from: &buf),
+                rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
+                rawTransmitResult: FfiConverterOptionTypeCompanionRawTransmitResultRecord.read(from: &buf),
+                operationError: FfiConverterOptionTypeCompanionOperationErrorRecord.read(from: &buf)
         )
     }
 
@@ -2041,6 +2283,10 @@ public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuff
         FfiConverterSequenceTypeCompanionReceivedFrameRecord.write(value.receivedFrames, into: &buf)
         FfiConverterTypeCompanionSessionSnapshotRecord.write(value.snapshot, into: &buf)
         FfiConverterBool.write(value.waitingForResponses, into: &buf)
+        FfiConverterBool.write(value.rawTransmitPending, into: &buf)
+        FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
+        FfiConverterOptionTypeCompanionRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)
+        FfiConverterOptionTypeCompanionOperationErrorRecord.write(value.operationError, into: &buf)
     }
 }
 
@@ -2703,6 +2949,60 @@ public func FfiConverterTypeMobileChatMutationRecord_lower(_ value: MobileChatMu
 }
 
 
+public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
+    public var id: UInt64
+    public var data: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt64, data: Data) {
+        self.id = id
+        self.data = data
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshOutboundFrameRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshOutboundFrameRecord {
+        return
+            try MobileMeshOutboundFrameRecord(
+                id: FfiConverterUInt64.read(from: &buf),
+                data: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshOutboundFrameRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterData.write(value.data, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshOutboundFrameRecord_lift(_ buf: RustBuffer) throws -> MobileMeshOutboundFrameRecord {
+    return try FfiConverterTypeMobileMeshOutboundFrameRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshOutboundFrameRecord_lower(_ value: MobileMeshOutboundFrameRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshOutboundFrameRecord.lower(value)
+}
+
+
 public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var operationId: UInt64
     public var outcome: MobileMeshPingOutcome
@@ -2867,9 +3167,11 @@ public func FfiConverterTypeMobileMeshRxRecord_lower(_ value: MobileMeshRxRecord
 
 public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     /**
-     * Complete raw UMSH frames ready for the companion PHY transport.
+     * Complete raw UMSH frames ready for the companion PHY transport. Each
+     * frame must be completed after the companion reports the physical radio
+     * result; queue acceptance is not transmit completion.
      */
-    public var outboundFrames: [Data]
+    public var outboundFrames: [MobileMeshOutboundFrameRecord]
     public var pingEvents: [MobileMeshPingEventRecord]
     /**
      * Chat effects remain in the facade until Swift durably applies them and
@@ -2885,8 +3187,10 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Complete raw UMSH frames ready for the companion PHY transport.
-         */outboundFrames: [Data], pingEvents: [MobileMeshPingEventRecord],
+         * Complete raw UMSH frames ready for the companion PHY transport. Each
+         * frame must be completed after the companion reports the physical radio
+         * result; queue acceptance is not transmit completion.
+         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord],
         /**
          * Chat effects remain in the facade until Swift durably applies them and
          * acknowledges this batch. Repeated polls may return the same batch.
@@ -2916,7 +3220,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshSessionUpdateRecord {
         return
             try MobileMeshSessionUpdateRecord(
-                outboundFrames: FfiConverterSequenceData.read(from: &buf),
+                outboundFrames: FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.read(from: &buf),
                 pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf),
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
                 chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
@@ -2927,7 +3231,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
     }
 
     public static func write(_ value: MobileMeshSessionUpdateRecord, into buf: inout [UInt8]) {
-        FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
+        FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.write(value.outboundFrames, into: &buf)
         FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
@@ -3239,6 +3543,82 @@ public func FfiConverterTypeCompanionHostOwnership_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeCompanionHostOwnership_lower(_ value: CompanionHostOwnership) -> RustBuffer {
     return FfiConverterTypeCompanionHostOwnership.lower(value)
+}
+
+
+
+/**
+ * What the platform adapter should do after a completed raw PHY request.
+ */
+
+public enum CompanionRawTransmitDisposition: Equatable, Hashable {
+
+    case sent
+    case retry
+    case rejected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CompanionRawTransmitDisposition: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCompanionRawTransmitDisposition: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionRawTransmitDisposition
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRawTransmitDisposition {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .sent
+
+        case 2: return .retry
+
+        case 3: return .rejected
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CompanionRawTransmitDisposition, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .sent:
+            writeInt(&buf, Int32(1))
+
+
+        case .retry:
+            writeInt(&buf, Int32(2))
+
+
+        case .rejected:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRawTransmitDisposition_lift(_ buf: RustBuffer) throws -> CompanionRawTransmitDisposition {
+    return try FfiConverterTypeCompanionRawTransmitDisposition.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCompanionRawTransmitDisposition_lower(_ value: CompanionRawTransmitDisposition) -> RustBuffer {
+    return FfiConverterTypeCompanionRawTransmitDisposition.lower(value)
 }
 
 
@@ -4249,6 +4629,54 @@ fileprivate struct FfiConverterOptionTypeCompanionBatteryRecord: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeCompanionOperationErrorRecord: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionOperationErrorRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCompanionOperationErrorRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCompanionOperationErrorRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeCompanionRawTransmitResultRecord: FfiConverterRustBuffer {
+    typealias SwiftType = CompanionRawTransmitResultRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCompanionRawTransmitResultRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCompanionRawTransmitResultRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeCompanionSyncRecord: FfiConverterRustBuffer {
     typealias SwiftType = CompanionSyncRecord?
 
@@ -4564,6 +4992,31 @@ fileprivate struct FfiConverterSequenceTypeMobileChatMutationRecord: FfiConverte
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileChatMutationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshOutboundFrameRecord]
+
+    public static func write(_ value: [MobileMeshOutboundFrameRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshOutboundFrameRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshOutboundFrameRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshOutboundFrameRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshOutboundFrameRecord.read(from: &buf))
         }
         return seq
     }
@@ -4899,6 +5352,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_abandon_raw_transmits() != 13298) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_begin() != 29892) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4941,7 +5397,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_commit_chat_batch() != 61370) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_complete_outbound_frame() != 48665) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 53284) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 29846) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 52427) {

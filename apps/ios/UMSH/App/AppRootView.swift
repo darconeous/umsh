@@ -1,7 +1,9 @@
 import SwiftUI
+import OSLog
 
 @MainActor
 struct AppRootView: View {
+    private static let logger = Logger(subsystem: "com.umsh.ios", category: "AppRoot")
     @State private var selectedTab: AppTab = .conversations
     @State private var radioSnapshot = RadioSnapshot.idle
     @State private var showsRadioDetail = false
@@ -27,7 +29,7 @@ struct AppRootView: View {
         TabView(selection: $selectedTab) {
             NavigationStack {
                 ConversationsView(
-                    conversations: conversations,
+                    conversations: $conversations,
                     radioSnapshot: radioSnapshot,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
@@ -46,6 +48,7 @@ struct AppRootView: View {
             NavigationStack {
                 NetworkView(
                     radioSnapshot: $radioSnapshot,
+                    conversations: $conversations,
                     peers: peers,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: { identity, details in
@@ -242,11 +245,16 @@ struct AppRootView: View {
         }
     }
 
-    private func sendMessage(_ conversation: DirectConversationSummary, _ body: String) async -> Bool {
-        guard let applicationStore, let localIdentity else { return false }
+    private func sendMessage(
+        _ conversation: DirectConversationSummary,
+        _ body: String
+    ) async -> MessageSendResult {
+        guard let applicationStore, let localIdentity else {
+            return .failed("The local identity or message database is unavailable.")
+        }
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity
-        else { return false }
+        else { return .failed("Connect a companion radio configured for this phone before sending.") }
         do {
             let batch = try await radioConnection.composeText(
                 peerAddress: conversation.peer.identity.canonicalAddress,
@@ -258,7 +266,13 @@ struct AppRootView: View {
                     ownerIdentityID: localIdentity.id,
                     batch: batch
                 )
+                // The compose mutation is now durable. Publish that optimistic
+                // row immediately; radio transmission and delivery evidence
+                // can update its state afterward without making the user
+                // refresh or wait for the transport round trip.
+                await reloadApplicationState()
             } catch {
+                Self.logger.error("Could not persist chat compose batch: \(String(describing: error), privacy: .public)")
                 let checkpoints = (try? await applicationStore.chatCheckpoints(
                     ownerIdentityID: localIdentity.id
                 )) ?? []
@@ -266,17 +280,18 @@ struct AppRootView: View {
                     batch.batchId,
                     checkpoints: checkpoints
                 )
-                return false
+                return .failed("The message could not be saved locally: \(error)")
             }
             do {
                 try await radioConnection.commitChatBatch(batch.batchId)
             } catch {
+                Self.logger.error("Could not release chat batch to radio: \(String(describing: error), privacy: .public)")
                 try? await applicationStore.markChatComposeBatchFailed(
                     ownerIdentityID: localIdentity.id,
                     batch: batch
                 )
                 await reloadApplicationState()
-                return false
+                return .failed("The message could not be queued for transmission: \(error)")
             }
             try await applicationStore.updateDraft(
                 ownerIdentityID: localIdentity.id,
@@ -284,9 +299,13 @@ struct AppRootView: View {
                 text: ""
             )
             await reloadApplicationState()
-            return true
+            guard let updated = conversations.first(where: { $0.id == conversation.id }) else {
+                return .failed("The message was saved, but the conversation could not be refreshed.")
+            }
+            return .sent(updated)
         } catch {
-            return false
+            Self.logger.error("Could not compose chat message: \(String(describing: error), privacy: .public)")
+            return .failed("The message could not be composed: \(error)")
         }
     }
 
@@ -363,6 +382,9 @@ struct AppRootView: View {
 
     private func applyChatUpdate(_ update: RadioChatUpdate) async {
         guard let applicationStore, let localIdentity else { return }
+        for diagnostic in update.diagnostics {
+            Self.logger.warning("Rust chat diagnostic: \(diagnostic, privacy: .public)")
+        }
         do {
             if !update.mutations.isEmpty {
                 try await applicationStore.applyChatMutations(
@@ -400,6 +422,9 @@ struct AppRootView: View {
         } catch {
             // Effects remain idempotent and can safely be applied again if
             // the Rust facade re-emits them.
+            Self.logger.error(
+                "Could not apply chat update batch \(update.batchID, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
         }
     }
 

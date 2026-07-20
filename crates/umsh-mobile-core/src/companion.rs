@@ -82,6 +82,7 @@ pub enum CompanionSessionPhase {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CompanionRadioSettingsRecord {
     pub device_name: Option<String>,
+    pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
     pub bandwidth_hz: Option<u32>,
@@ -113,6 +114,33 @@ pub struct CompanionSessionSnapshotRecord {
     pub provisioning: Option<CompanionSyncRecord>,
 }
 
+/// What the platform adapter should do after a completed raw PHY request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum CompanionRawTransmitDisposition {
+    Sent,
+    Retry,
+    Rejected,
+}
+
+/// Typed completion of one host-requested raw PHY transmission.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionRawTransmitResultRecord {
+    pub transaction_id: u8,
+    pub status_code: u32,
+    pub status_name: String,
+    pub disposition: CompanionRawTransmitDisposition,
+}
+
+/// A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
+/// This is an operation failure, never evidence that the transport framing is
+/// corrupt or that the BLE connection should be closed.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CompanionOperationErrorRecord {
+    pub operation: String,
+    pub status_code: u32,
+    pub status_name: String,
+}
+
 /// Work produced by the Rust companion session. Frames are complete companion
 /// frames; the platform adapter remains responsible for GATT segmentation and
 /// write backpressure.
@@ -122,6 +150,18 @@ pub struct CompanionSessionUpdateRecord {
     pub received_frames: Vec<CompanionReceivedFrameRecord>,
     pub snapshot: CompanionSessionSnapshotRecord,
     pub waiting_for_responses: bool,
+    /// True while one host-requested raw PHY transmission is awaiting the
+    /// radio's `PROP_LAST_STATUS` completion.
+    pub raw_transmit_pending: bool,
+    /// Transaction allocated by `transmit_raw` in this update, if any.
+    pub raw_transmit_started_transaction_id: Option<u8>,
+    /// Completion for the raw PHY transmission consumed by this update.
+    /// Rejections are ordinary radio-level send failures, not malformed
+    /// companion frames.
+    pub raw_transmit_result: Option<CompanionRawTransmitResultRecord>,
+    /// Non-transmit operation error consumed by this update. The companion
+    /// session has already recovered to a stable stage and remains usable.
+    pub operation_error: Option<CompanionOperationErrorRecord>,
 }
 
 /// One validated raw mesh frame delivered by the companion radio.
@@ -170,10 +210,12 @@ struct CompanionSessionState {
     host_key_unsupported: bool,
     responses: HashMap<u32, CompanionPropertyFrameRecord>,
     inspection_queue: VecDeque<u32>,
+    configuration_queue: VecDeque<(u32, Vec<u8>)>,
     device_key: Option<Vec<u8>>,
     device_name: Option<String>,
     battery: Option<CompanionBatteryRecord>,
     provisioning: Option<CompanionSyncRecord>,
+    stage_failure_pending: bool,
 }
 
 impl Default for CompanionSessionState {
@@ -188,10 +230,12 @@ impl Default for CompanionSessionState {
             host_key_unsupported: false,
             responses: HashMap::new(),
             inspection_queue: VecDeque::new(),
+            configuration_queue: VecDeque::new(),
             device_key: None,
             device_name: None,
             battery: None,
             provisioning: None,
+            stage_failure_pending: false,
         }
     }
 }
@@ -288,6 +332,11 @@ impl MobileCompanionSession {
         state.stage = SessionStage::Configuring;
         state.expected.clear();
         let mut values = Vec::new();
+        // Disable before changing live PHY parameters, but enable only after
+        // the complete new profile is in place.
+        if !settings.phy_enabled {
+            values.push((prop::PHY_ENABLED, vec![0]));
+        }
         if let Some(name) = settings.device_name {
             values.push((prop::DEV_NAME, name.into_bytes()));
         }
@@ -312,16 +361,13 @@ impl MobileCompanionSession {
         if let Some(limit) = settings.duty_cycle_limit {
             values.push((prop::PHY_DUTY_LIMIT, limit.to_le_bytes().to_vec()));
         }
-
-        let mut outbound = Vec::with_capacity(values.len());
-        for (property, value) in values {
-            let tid = state.allocate_tid();
-            state.expected.insert(
-                tid,
-                ExpectedResponse::ConfigurationProperty(property, value.clone()),
-            );
-            outbound.push(companion_prop_set(tid, property, value)?);
+        if settings.phy_enabled {
+            values.push((prop::PHY_ENABLED, vec![1]));
         }
+
+        state.configuration_queue = values.into();
+        let mut outbound = Vec::new();
+        state.start_configuration(&mut outbound)?;
         Ok(state.update(outbound))
     }
 
@@ -353,10 +399,22 @@ impl MobileCompanionSession {
     /// confirmation matching.
     pub fn transmit_raw(&self, data: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("companion session mutex poisoned");
-        if state.stage != SessionStage::Attached || data.is_empty() {
+        let raw_pipeline_active = state
+            .expected
+            .values()
+            .all(|expected| matches!(expected, ExpectedResponse::RawTransmit));
+        if state.stage != SessionStage::Attached || !raw_pipeline_active || data.is_empty() {
             return Err(MobileError::InvalidCompanionFrame);
         }
-        let tid = state.allocate_tid();
+        let mut available_tid = None;
+        for _ in 0..usize::from(frame::TID_MAX) {
+            let candidate = state.allocate_tid();
+            if !state.expected.contains_key(&candidate) {
+                available_tid = Some(candidate);
+                break;
+            }
+        }
+        let tid = available_tid.ok_or(MobileError::InvalidCompanionFrame)?;
         state.expected.insert(tid, ExpectedResponse::RawTransmit);
         let mut metadata = [0u8; umsh_companion::TxMeta::WIRE_LEN];
         umsh_companion::TxMeta::default()
@@ -372,7 +430,9 @@ impl MobileCompanionSession {
         )
         .map_err(|_| MobileError::InvalidCompanionFrame)?;
         frame.truncate(len);
-        Ok(state.update(vec![frame]))
+        let mut update = state.update(vec![frame]);
+        update.raw_transmit_started_transaction_id = Some(tid);
+        Ok(update)
     }
 
     /// Consume one complete companion frame and advance the session reducer.
@@ -408,6 +468,8 @@ impl MobileCompanionSession {
         let response = inspect_companion_property_frame(frame)?;
         let mut state = self.inner.lock().expect("companion session mutex poisoned");
         let mut outbound = Vec::new();
+        let mut raw_transmit_result = None;
+        let mut operation_error = None;
 
         if response.transaction_id == frame::TID_UNSOLICITED {
             if response.command == Cmd::PropIs as u8 {
@@ -427,14 +489,18 @@ impl MobileCompanionSession {
         match expected {
             ExpectedResponse::Property(property) => {
                 if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
-                    if state.stage == SessionStage::Initial
-                        && matches!(property, prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY)
-                    {
-                        // Optional device properties may be absent on minimal radios.
-                    } else if state.stage == SessionStage::Initial && property == prop::HOST_KEY {
+                    operation_error = Some(companion_operation_error(
+                        format!("read property {property}"),
+                        response.value.as_slice(),
+                    )?);
+                    let optional_initial_property = state.stage == SessionStage::Initial
+                        && matches!(
+                            property,
+                            prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY | prop::HOST_KEY
+                        );
+                    state.stage_failure_pending |= !optional_initial_property;
+                    if state.stage == SessionStage::Initial && property == prop::HOST_KEY {
                         state.host_key_unsupported = true;
-                    } else {
-                        return Err(MobileError::InvalidCompanionFrame);
                     }
                 } else {
                     if response.property_id != property || response.command != Cmd::PropIs as u8 {
@@ -445,24 +511,34 @@ impl MobileCompanionSession {
                 }
             }
             ExpectedResponse::Claim => {
-                if response.property_id != prop::HOST_KEY || response.command != Cmd::PropIs as u8 {
-                    return Err(MobileError::InvalidCompanionFrame);
-                }
-                let selected = state
-                    .selected_host_key
-                    .ok_or(MobileError::InvalidCompanionFrame)?;
-                if response.value.as_slice() != selected {
-                    return Err(MobileError::InvalidCompanionFrame);
-                }
-                state.radio_host_key = Some(response.value.clone());
-                state.responses.insert(prop::HOST_KEY, response);
-                if state.has_capability(cap::SAVE)? {
-                    state.stage = SessionStage::Saving;
-                    let tid = state.allocate_tid();
-                    state.expected.insert(tid, ExpectedResponse::Save);
-                    outbound.push(companion_save(tid)?);
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error = Some(companion_operation_error(
+                        "claim host identity".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                    state.stage_failure_pending = true;
                 } else {
-                    state.start_inspection(&mut outbound)?;
+                    if response.property_id != prop::HOST_KEY
+                        || response.command != Cmd::PropIs as u8
+                    {
+                        return Err(MobileError::InvalidCompanionFrame);
+                    }
+                    let selected = state
+                        .selected_host_key
+                        .ok_or(MobileError::InvalidCompanionFrame)?;
+                    if response.value.as_slice() != selected {
+                        return Err(MobileError::InvalidCompanionFrame);
+                    }
+                    state.radio_host_key = Some(response.value.clone());
+                    state.responses.insert(prop::HOST_KEY, response);
+                    if state.has_capability(cap::SAVE)? {
+                        state.stage = SessionStage::Saving;
+                        let tid = state.allocate_tid();
+                        state.expected.insert(tid, ExpectedResponse::Save);
+                        outbound.push(companion_save(tid)?);
+                    } else {
+                        state.start_inspection(&mut outbound)?;
+                    }
                 }
             }
             ExpectedResponse::Save => {
@@ -471,13 +547,24 @@ impl MobileCompanionSession {
                 {
                     return Err(MobileError::InvalidCompanionFrame);
                 }
-                if inspect_companion_status(response.value)? != 0 {
-                    return Err(MobileError::InvalidCompanionFrame);
+                if inspect_companion_status(response.value.clone())? != 0 {
+                    operation_error = Some(companion_operation_error(
+                        "save claimed host identity".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                    state.stage_failure_pending = true;
+                } else {
+                    state.start_inspection(&mut outbound)?;
                 }
-                state.start_inspection(&mut outbound)?;
             }
             ExpectedResponse::ConfigurationProperty(property, expected_value) => {
-                if response.property_id != property
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error = Some(companion_operation_error(
+                        format!("set property {property}"),
+                        response.value.as_slice(),
+                    )?);
+                    state.stage_failure_pending = true;
+                } else if response.property_id != property
                     || response.command != Cmd::PropIs as u8
                     || response.value != expected_value
                 {
@@ -489,26 +576,51 @@ impl MobileCompanionSession {
             ExpectedResponse::SaveConfiguration => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
-                    || inspect_companion_status(response.value)? != 0
                 {
                     return Err(MobileError::InvalidCompanionFrame);
                 }
-                state.finish_configuration()?;
+                if inspect_companion_status(response.value.clone())? != 0 {
+                    operation_error = Some(companion_operation_error(
+                        "save radio configuration".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                    state.stage_failure_pending = true;
+                } else {
+                    state.finish_configuration()?;
+                }
             }
             ExpectedResponse::RawTransmit => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
-                    || inspect_companion_status(response.value)? != 0
                 {
                     return Err(MobileError::InvalidCompanionFrame);
                 }
+                let status_code = inspect_companion_status(response.value)?;
+                let status = umsh_companion::Status(status_code);
+                raw_transmit_result = Some(CompanionRawTransmitResultRecord {
+                    transaction_id: response.transaction_id,
+                    status_code,
+                    status_name: format!("{status:?}"),
+                    disposition: if status == umsh_companion::Status::OK {
+                        CompanionRawTransmitDisposition::Sent
+                    } else if status == umsh_companion::Status::BUSY {
+                        CompanionRawTransmitDisposition::Retry
+                    } else {
+                        CompanionRawTransmitDisposition::Rejected
+                    },
+                });
             }
         }
 
         if state.expected.is_empty() {
-            state.advance_completed_stage(&mut outbound)?;
+            if state.stage_failure_pending {
+                state.stage_failure_pending = false;
+                state.recover_from_operation_failure(&mut outbound)?;
+            } else {
+                state.advance_completed_stage(&mut outbound)?;
+            }
         }
-        Ok(state.update(outbound))
+        Ok(state.update_with(outbound, Vec::new(), raw_transmit_result, operation_error))
     }
 
     /// Invalidate all outstanding transactions for a disconnected transport.
@@ -519,6 +631,22 @@ impl MobileCompanionSession {
             generation,
             ..CompanionSessionState::default()
         };
+        state.update(Vec::new())
+    }
+
+    /// Abandon raw transactions whose GATT writes were rejected locally.
+    /// Their late correlated responses are ignored once; the attachment and
+    /// all non-raw session state remain intact.
+    pub fn abandon_raw_transmits(&self, transaction_ids: Vec<u8>) -> CompanionSessionUpdateRecord {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        for tid in transaction_ids {
+            if matches!(
+                state.expected.get(&tid),
+                Some(ExpectedResponse::RawTransmit)
+            ) {
+                state.expected.remove(&tid);
+            }
+        }
         state.update(Vec::new())
     }
 }
@@ -571,21 +699,27 @@ impl CompanionSessionState {
     }
 
     fn update(&self, outbound_frames: Vec<Vec<u8>>) -> CompanionSessionUpdateRecord {
-        self.update_with(outbound_frames, Vec::new())
+        self.update_with(outbound_frames, Vec::new(), None, None)
     }
 
     fn update_with_received(
         &self,
         received_frames: Vec<CompanionReceivedFrameRecord>,
     ) -> CompanionSessionUpdateRecord {
-        self.update_with(Vec::new(), received_frames)
+        self.update_with(Vec::new(), received_frames, None, None)
     }
 
     fn update_with(
         &self,
         outbound_frames: Vec<Vec<u8>>,
         received_frames: Vec<CompanionReceivedFrameRecord>,
+        raw_transmit_result: Option<CompanionRawTransmitResultRecord>,
+        operation_error: Option<CompanionOperationErrorRecord>,
     ) -> CompanionSessionUpdateRecord {
+        let raw_transmit_pending = self
+            .expected
+            .values()
+            .any(|expected| matches!(expected, ExpectedResponse::RawTransmit));
         CompanionSessionUpdateRecord {
             outbound_frames,
             received_frames,
@@ -599,6 +733,10 @@ impl CompanionSessionState {
                 provisioning: self.provisioning.clone(),
             },
             waiting_for_responses: !self.expected.is_empty(),
+            raw_transmit_pending,
+            raw_transmit_started_transaction_id: None,
+            raw_transmit_result,
+            operation_error,
         }
     }
 
@@ -678,7 +816,9 @@ impl CompanionSessionState {
             SessionStage::Inspection => self.start_inspection(outbound)?,
             SessionStage::Refreshing => self.start_refresh(outbound)?,
             SessionStage::Configuring => {
-                if self.has_capability(cap::SAVE)? {
+                if !self.configuration_queue.is_empty() {
+                    self.start_configuration(outbound)?;
+                } else if self.has_capability(cap::SAVE)? {
                     self.stage = SessionStage::SavingConfiguration;
                     let tid = self.allocate_tid();
                     self.expected
@@ -698,10 +838,63 @@ impl CompanionSessionState {
         Ok(())
     }
 
+    /// Abort only the failed operation stage. A correlated CRP status error
+    /// never invalidates GATT framing and therefore never resets the session.
+    fn recover_from_operation_failure(
+        &mut self,
+        outbound: &mut Vec<Vec<u8>>,
+    ) -> Result<(), MobileError> {
+        self.configuration_queue.clear();
+        self.inspection_queue.clear();
+        match self.stage {
+            SessionStage::Claiming => self.stage = SessionStage::AwaitingHost,
+            SessionStage::Saving => {
+                // The host-key write succeeded even if persistence did not.
+                // Continue attaching while reporting that SAVE failed.
+                self.start_inspection(outbound)?;
+            }
+            SessionStage::Refreshing
+            | SessionStage::Configuring
+            | SessionStage::SavingConfiguration => {
+                // Retain the last authoritative snapshot. Property echoes that
+                // completed before the failed operation remain available for
+                // the next explicit refresh.
+                self.stage = SessionStage::Attached;
+            }
+            SessionStage::Inspection if self.provisioning.is_some() => {
+                self.stage = SessionStage::Attached;
+            }
+            SessionStage::Initial | SessionStage::Inspection => {
+                // The transport is healthy but the initial snapshot is not
+                // trustworthy enough to attach. Stay connected and report the
+                // operation error; reconnect/refresh may retry synchronization.
+                self.stage = SessionStage::Initial;
+            }
+            SessionStage::Attached | SessionStage::AwaitingHost | SessionStage::Idle => {}
+        }
+        Ok(())
+    }
+
     fn finish_configuration(&mut self) -> Result<(), MobileError> {
         let responses = self.responses.values().cloned().collect();
         self.provisioning = Some(inspect_companion_sync(responses)?);
         self.stage = SessionStage::Attached;
+        Ok(())
+    }
+
+    fn start_configuration(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
+        self.stage = SessionStage::Configuring;
+        for _ in 0..usize::from(frame::TID_MAX) {
+            let Some((property, value)) = self.configuration_queue.pop_front() else {
+                break;
+            };
+            let tid = self.allocate_tid();
+            self.expected.insert(
+                tid,
+                ExpectedResponse::ConfigurationProperty(property, value.clone()),
+            );
+            outbound.push(companion_prop_set(tid, property, value)?);
+        }
         Ok(())
     }
 
@@ -1102,6 +1295,25 @@ pub fn companion_save(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
 #[uniffi::export]
 pub fn inspect_companion_status(value: Vec<u8>) -> Result<u32, MobileError> {
     decode_exact_pui(&value)
+}
+
+fn companion_operation_error(
+    operation: String,
+    value: &[u8],
+) -> Result<CompanionOperationErrorRecord, MobileError> {
+    let status_code = inspect_companion_status(value.to_vec())?;
+    let status = umsh_companion::Status(status_code);
+    if status == umsh_companion::Status::OK {
+        // A property operation that promised an echoed value cannot silently
+        // substitute status-only success. That is a real session violation,
+        // not a reported operation error.
+        return Err(MobileError::InvalidCompanionFrame);
+    }
+    Ok(CompanionOperationErrorRecord {
+        operation,
+        status_code,
+        status_name: format!("{status:?}"),
+    })
 }
 
 /// Parse and validate a property notification or response.
@@ -1594,6 +1806,144 @@ mod tests {
     }
 
     #[test]
+    fn mobile_session_reports_raw_transmit_rejection_without_ending_session() {
+        let session = MobileCompanionSession::new();
+        let begin = session.begin(None).unwrap();
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, vec![cap::WRITABLE_RAW_STREAM as u8]),
+                prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
+
+        let transmit = session.transmit_raw(vec![1, 2, 3]).unwrap();
+        assert!(transmit.raw_transmit_pending);
+        assert_eq!(transmit.raw_transmit_result, None);
+        assert_eq!(transmit.outbound_frames.len(), 1);
+        let second_transmit = session.transmit_raw(vec![4]).unwrap();
+        assert_ne!(
+            transmit.raw_transmit_started_transaction_id,
+            second_transmit.raw_transmit_started_transaction_id
+        );
+
+        let request = Frame::parse(&transmit.outbound_frames[0]).unwrap();
+        let rejected = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_companion::Status::INVALID_STATE.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(rejected.snapshot.phase, CompanionSessionPhase::Attached);
+        assert!(rejected.raw_transmit_pending);
+        assert_eq!(
+            rejected.raw_transmit_result,
+            Some(CompanionRawTransmitResultRecord {
+                transaction_id: request.header.tid(),
+                status_code: umsh_companion::Status::INVALID_STATE.0,
+                status_name: "Status::INVALID_STATE".into(),
+                disposition: CompanionRawTransmitDisposition::Rejected,
+            })
+        );
+        let second_request = Frame::parse(&second_transmit.outbound_frames[0]).unwrap();
+        let completed = session
+            .consume(property_response(
+                second_request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_companion::Status::OK.0 as u8],
+            ))
+            .unwrap();
+        assert!(!completed.raw_transmit_pending);
+
+        // A radio-level rejection completes only that send; the attached
+        // session remains usable for the next raw frame.
+        let retryable = session.transmit_raw(vec![5]).unwrap();
+        let request = Frame::parse(&retryable.outbound_frames[0]).unwrap();
+        let busy = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_companion::Status::BUSY.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            busy.raw_transmit_result.unwrap().disposition,
+            CompanionRawTransmitDisposition::Retry
+        );
+
+        let abandoned = session.transmit_raw(vec![6]).unwrap();
+        let abandoned_request = Frame::parse(&abandoned.outbound_frames[0]).unwrap();
+        assert!(
+            !session
+                .abandon_raw_transmits(vec![abandoned_request.header.tid()])
+                .raw_transmit_pending
+        );
+
+        // A status error for an ordinary property operation is also
+        // nonfatal. Finish the rest of the bounded batch, recover to Attached,
+        // and prove the same session can issue another raw transmission.
+        let configured = session
+            .configure(CompanionRadioSettingsRecord {
+                device_name: None,
+                phy_enabled: true,
+                frequency_khz: 915_000,
+                transmit_power_dbm: 14,
+                bandwidth_hz: None,
+                spreading_factor: None,
+                coding_rate_denom: None,
+                duty_cycle_limit: None,
+            })
+            .unwrap();
+        let mut final_update = None;
+        for (index, request) in configured.outbound_frames.into_iter().enumerate() {
+            let parsed = Frame::parse(&request).unwrap();
+            let payload = PropPayload::parse(parsed.payload).unwrap();
+            let response = if index == 0 {
+                property_response(
+                    parsed.header.tid(),
+                    prop::LAST_STATUS,
+                    &[umsh_companion::Status::INVALID_ARGUMENT.0 as u8],
+                )
+            } else {
+                property_response(parsed.header.tid(), payload.key, payload.value)
+            };
+            let update = session.consume(response).unwrap();
+            if index == 0 {
+                assert_eq!(
+                    update.operation_error,
+                    Some(CompanionOperationErrorRecord {
+                        operation: format!("set property {}", payload.key),
+                        status_code: umsh_companion::Status::INVALID_ARGUMENT.0,
+                        status_name: "Status::INVALID_ARGUMENT".into(),
+                    })
+                );
+            }
+            final_update = Some(update);
+        }
+        assert_eq!(
+            final_update.unwrap().snapshot.phase,
+            CompanionSessionPhase::Attached
+        );
+        assert!(session.transmit_raw(vec![6]).is_ok());
+    }
+
+    #[test]
     fn mobile_session_verifies_radio_configuration_then_saves() {
         let session = MobileCompanionSession::new();
         let begin = session.begin(None).unwrap();
@@ -1645,6 +1995,7 @@ mod tests {
         let configured = session
             .configure(CompanionRadioSettingsRecord {
                 device_name: Some("Trail radio".into()),
+                phy_enabled: true,
                 frequency_khz: 868_100,
                 transmit_power_dbm: 20,
                 bandwidth_hz: Some(250_000),
@@ -1657,32 +2008,38 @@ mod tests {
             configured.snapshot.phase,
             CompanionSessionPhase::Configuring
         );
-
-        let mut saving = None;
-        for request in configured.outbound_frames {
+        assert_eq!(
+            configured.outbound_frames.len(),
+            usize::from(frame::TID_MAX)
+        );
+        let mut pending = VecDeque::from(configured.outbound_frames);
+        let mut configured_properties = Vec::new();
+        let save_tid = loop {
+            let request = pending.pop_front().unwrap();
             let parsed = Frame::parse(&request).unwrap();
+            if parsed.command() == Some(Cmd::Save) {
+                break parsed.header.tid();
+            }
             assert_eq!(parsed.command(), Some(Cmd::PropSet));
             let payload = PropPayload::parse(parsed.payload).unwrap();
-            saving = Some(
-                session
-                    .consume(property_response(
-                        parsed.header.tid(),
-                        payload.key,
-                        payload.value,
-                    ))
-                    .unwrap(),
-            );
-        }
-        let saving = saving.unwrap();
-        assert_eq!(saving.outbound_frames.len(), 1);
-        let save = Frame::parse(&saving.outbound_frames[0]).unwrap();
-        assert_eq!(save.command(), Some(Cmd::Save));
+            configured_properties.push(payload.key);
+            let update = session
+                .consume(property_response(
+                    parsed.header.tid(),
+                    payload.key,
+                    payload.value,
+                ))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "configuration response for property {} failed: {error:?}",
+                        payload.key
+                    )
+                });
+            pending.extend(update.outbound_frames);
+        };
+        assert_eq!(configured_properties.last(), Some(&prop::PHY_ENABLED));
         let attached = session
-            .consume(property_response(
-                save.header.tid(),
-                prop::LAST_STATUS,
-                &[0],
-            ))
+            .consume(property_response(save_tid, prop::LAST_STATUS, &[0]))
             .unwrap();
         assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
         assert_eq!(

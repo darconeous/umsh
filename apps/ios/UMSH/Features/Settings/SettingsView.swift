@@ -378,6 +378,7 @@ private struct RadioSettingsEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var deviceName: String
+    @State private var radioEnabled: Bool
     @State private var frequencyKHz: String
     @State private var transmitPowerDBm: String
     @State private var bandwidthHz: UInt32
@@ -402,6 +403,7 @@ private struct RadioSettingsEditor: View {
         self.refresh = refresh
         self.configure = configure
         _deviceName = State(initialValue: radioName ?? "")
+        _radioEnabled = State(initialValue: provisioning.phyEnabled)
         _frequencyKHz = State(initialValue: String(provisioning.frequencyKHz))
         _transmitPowerDBm = State(initialValue: String(provisioning.transmitPowerDBm))
         _bandwidthHz = State(initialValue: provisioning.bandwidthHz ?? 125_000)
@@ -436,6 +438,7 @@ private struct RadioSettingsEditor: View {
             }
 
             Section {
+                Toggle("Radio enabled", isOn: $radioEnabled)
                 LabeledContent("Frequency") {
                     HStack(spacing: 5) {
                         TextField("Frequency", text: $frequencyKHz)
@@ -535,6 +538,7 @@ private struct RadioSettingsEditor: View {
         }
         return RadioSettings(
             deviceName: provisioning.supportsDeviceName ? trimmedName : nil,
+            phyEnabled: radioEnabled,
             frequencyKHz: frequency,
             transmitPowerDBm: power,
             bandwidthHz: provisioning.supportsLoRa ? bandwidthHz : nil,
@@ -553,6 +557,7 @@ private struct RadioSettingsEditor: View {
                 guard let preset = RadioPreset.vetted.first(where: { $0.id == identifier }) else {
                     return
                 }
+                radioEnabled = true
                 frequencyKHz = String(preset.frequencyKHz)
                 transmitPowerDBm = String(preset.transmitPowerDBm)
                 bandwidthHz = preset.bandwidthHz
@@ -609,6 +614,9 @@ private struct RadioSettingsEditor: View {
         }
         if force || latest.frequencyKHz != lastAuthoritativeProvisioning.frequencyKHz {
             frequencyKHz = String(latest.frequencyKHz)
+        }
+        if force || latest.phyEnabled != lastAuthoritativeProvisioning.phyEnabled {
+            radioEnabled = latest.phyEnabled
         }
         if force || latest.transmitPowerDBm != lastAuthoritativeProvisioning.transmitPowerDBm {
             transmitPowerDBm = String(latest.transmitPowerDBm)

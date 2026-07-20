@@ -3,12 +3,13 @@ import SwiftUI
 
 struct NetworkView: View {
     @Binding var radioSnapshot: RadioSnapshot
+    @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshPublicIdentity, PeerImportDetails) async -> Void
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
-    let sendMessage: ((DirectConversationSummary, String) async -> Bool)?
+    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
@@ -97,6 +98,7 @@ struct NetworkView: View {
             PeerDetailView(
                 peer: peer,
                 radioSnapshot: $radioSnapshot,
+                conversations: $conversations,
                 startConversation: startConversation,
                 updateDraft: updateDraft,
                 sendMessage: sendMessage,
@@ -121,9 +123,10 @@ struct NetworkView: View {
 struct PeerDetailView: View {
     let peer: PeerSummary
     @Binding var radioSnapshot: RadioSnapshot
+    @Binding var conversations: [DirectConversationSummary]
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
-    let sendMessage: ((DirectConversationSummary, String) async -> Bool)?
+    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
 
     @State private var openedConversation: DirectConversationSummary?
@@ -137,13 +140,15 @@ struct PeerDetailView: View {
     init(
         peer: PeerSummary,
         radioSnapshot: Binding<RadioSnapshot>,
+        conversations: Binding<[DirectConversationSummary]> = .constant([]),
         startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil,
         updateDraft: ((Int64, String) async -> Void)? = nil,
-        sendMessage: ((DirectConversationSummary, String) async -> Bool)? = nil,
+        sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
         pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil
     ) {
         self.peer = peer
         _radioSnapshot = radioSnapshot
+        _conversations = conversations
         self.startConversation = startConversation
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
@@ -228,18 +233,35 @@ struct PeerDetailView: View {
         }
         .navigationTitle(peer.displayName)
         .navigationDestination(item: $openedConversation) { conversation in
-            DirectConversationView(
-                conversation: conversation,
-                radioSnapshot: radioSnapshot,
-                updateDraft: updateDraft ?? { _, _ in },
-                sendMessage: sendMessage ?? { _, _ in false }
-            )
+            if let conversation = binding(for: conversation.id) {
+                DirectConversationView(
+                    conversation: conversation,
+                    radioSnapshot: radioSnapshot,
+                    updateDraft: updateDraft ?? { _, _ in },
+                    sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") }
+                )
+            }
         }
         .alert(feedbackTitle, isPresented: $showsFeedback) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(feedbackMessage)
         }
+    }
+
+    private func binding(for conversationID: Int64) -> Binding<DirectConversationSummary>? {
+        guard let fallback = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        return Binding(
+            get: {
+                conversations.first(where: { $0.id == conversationID }) ?? fallback
+            },
+            set: { updated in
+                guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else {
+                    return
+                }
+                conversations[index] = updated
+            }
+        )
     }
 
     private func openConversation() async {
