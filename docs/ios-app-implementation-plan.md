@@ -1107,9 +1107,17 @@ Peer sheet:
   with firmware device-node behavior).
 
 Platform:
-- Notifications + background running so messages arrive while the app is
-  closed. Gating: `bluetooth-central` background mode + rethinking the
-  25 ms/250 ms foreground poll cadence (have `pollUpdate` return a
-  next-wake deadline), local notifications from chat inserts, and an
-  eventual companion offline-queue drain on reconnect. Needs its own
-  design pass (see Principal risks: Background expectations).
+- Notifications + background running: increments 1–3 IMPLEMENTED
+  2026-07-20 (push pump, bluetooth-central + restoration + Keychain
+  AfterFirstUnlock migration, local notifications); the hardware
+  measurement pass (increment 4) remains and gates the honest-UI copy.
+  Design pass DONE 2026-07-20:
+  `docs/ios-background-notifications-design.md`. Headlines: replace the
+  25 ms/250 ms poll cadence with a worker wake callback (the Rust worker
+  already runs real tokio timers; the earlier next-wake-deadline sketch is
+  rejected there with rationale), `bluetooth-central` + state restoration,
+  Keychain accessibility migration to AfterFirstUnlockThisDeviceOnly
+  (required for locked-phone relaunch; stays within custody constraints),
+  local notifications posted only after durable persistence, and a
+  hardware measurement checklist that gates the UI copy. Companion
+  offline-queue drain remains future/out of scope.

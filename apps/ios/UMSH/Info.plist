@@ -5,6 +5,10 @@
 	<!-- Merged with the build-setting-generated Info.plist
 	     (GENERATE_INFOPLIST_FILE stays enabled). Only keys that cannot be
 	     expressed as INFOPLIST_KEY_* settings belong here. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

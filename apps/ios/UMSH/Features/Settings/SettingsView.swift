@@ -444,6 +444,19 @@ struct RadioDetailView: View {
             Button("Disconnect", role: .destructive) {
                 Task { await disconnect() }
             }
+        case .waitingForRadio:
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Waiting for the radio to appear")
+                Text("Connects automatically when the radio is powered on nearby, even while the app is in the background.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Stop Waiting", role: .destructive) {
+                Task { await disconnect() }
+            }
+            Button("Find another companion radio") {
+                Task { await connect() }
+            }
         case .idle, .unavailable, .discovered, .failed:
             if snapshot.localIdentifier != nil {
                 Button("Reconnect") {

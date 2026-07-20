@@ -36,6 +36,7 @@ actor KeychainIdentityVault: IdentityVault {
             kSecAttrAccount: Self.account,
             kSecAttrSynchronizable: kCFBooleanFalse as Any,
             kSecReturnData: kCFBooleanTrue as Any,
+            kSecReturnAttributes: kCFBooleanTrue as Any,
             kSecMatchLimit: kSecMatchLimitOne,
         ]
 
@@ -44,11 +45,38 @@ actor KeychainIdentityVault: IdentityVault {
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let secret = result as? Data else {
+        guard status == errSecSuccess,
+              let item = result as? [CFString: Any],
+              let secret = item[kSecValueData] as? Data
+        else {
             throw mapKeychainStatus(status)
         }
 
+        migrateAccessibilityIfNeeded(item: item, secret: secret)
         return try await snapshot(secretKey: secret)
+    }
+
+    /// Items written before background support used WhenUnlocked, which a
+    /// locked-phone background relaunch cannot read. Rewrite them as
+    /// AfterFirstUnlock (still device-only, non-synchronizing). Best-effort:
+    /// the secret is already in hand, so a failed migration only means the
+    /// next locked-phone relaunch cannot attach — same as before.
+    private func migrateAccessibilityIfNeeded(item: [CFString: Any], secret: Data) {
+        let accessible = item[kSecAttrAccessible] as? String
+        guard accessible != (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String) else {
+            return
+        }
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Self.service,
+            kSecAttrAccount: Self.account,
+            kSecAttrSynchronizable: kCFBooleanFalse as Any,
+        ]
+        let update: [CFString: Any] = [
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData: secret,
+        ]
+        _ = SecItemUpdate(query as CFDictionary, update as CFDictionary)
     }
 
     func createIdentity() async throws -> LocalIdentitySnapshot {
@@ -66,7 +94,10 @@ actor KeychainIdentityVault: IdentityVault {
             kSecAttrService: Self.service,
             kSecAttrAccount: Self.account,
             kSecAttrSynchronizable: kCFBooleanFalse as Any,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            // AfterFirstUnlock (not WhenUnlocked): a background BLE relaunch
+            // while the phone is locked must still be able to rebuild the
+            // mesh session. Device-only and non-synchronizing are unchanged.
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData: secret,
         ]
         let status = SecItemAdd(item as CFDictionary, nil)

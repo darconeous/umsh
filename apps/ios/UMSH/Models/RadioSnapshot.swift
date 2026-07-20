@@ -101,6 +101,11 @@ enum RadioLinkState: String, Equatable, Sendable {
     case discovered
     case connecting
     case reconnecting
+    /// A saved radio is out of reach, but a standing system connection
+    /// request remains armed: the moment the radio powers on and
+    /// advertises, iOS completes the connection — waking or relaunching
+    /// the app in the background if needed.
+    case waitingForRadio
     case pairing
     case attaching
     case synchronizing
@@ -120,6 +125,7 @@ enum RadioLinkState: String, Equatable, Sendable {
         case .discovered: "Radio discovered"
         case .connecting: "Radio connecting"
         case .reconnecting: "Reconnecting to saved radio"
+        case .waitingForRadio: "Waiting for the radio to appear"
         case .pairing: "Radio pairing"
         case .attaching: "Radio attaching"
         case .synchronizing: "Radio synchronizing"
@@ -136,7 +142,8 @@ enum RadioLinkState: String, Equatable, Sendable {
     var symbolName: String {
         switch self {
         case .attached, .ready: "antenna.radiowaves.left.and.right"
-        case .scanning, .connecting, .reconnecting, .pairing, .attaching, .synchronizing, .provisioning, .configuring:
+        case .scanning, .connecting, .reconnecting, .waitingForRadio, .pairing, .attaching,
+             .synchronizing, .provisioning, .configuring:
             "antenna.radiowaves.left.and.right.circle"
         case .failed: "exclamationmark.triangle.fill"
         default: "antenna.radiowaves.left.and.right.slash"
