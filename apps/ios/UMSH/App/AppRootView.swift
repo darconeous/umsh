@@ -262,7 +262,16 @@ struct AppRootView: View {
                 )
                 return false
             }
-            try await radioConnection.commitChatBatch(batch.batchId)
+            do {
+                try await radioConnection.commitChatBatch(batch.batchId)
+            } catch {
+                try? await applicationStore.markChatComposeBatchFailed(
+                    ownerIdentityID: localIdentity.id,
+                    batch: batch
+                )
+                await reloadApplicationState()
+                return false
+            }
             try await applicationStore.updateDraft(
                 ownerIdentityID: localIdentity.id,
                 conversationID: conversation.id,

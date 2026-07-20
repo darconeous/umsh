@@ -1,4 +1,8 @@
 //! Owned mobile facade records for the sans-I/O text engine.
+//!
+//! This first mobile surface intentionally supports direct conversations only.
+//! Channel and room profiles must be exported as typed destinations rather
+//! than falling through or requiring Swift to interpret wire options.
 
 use std::collections::BTreeMap;
 
@@ -116,6 +120,12 @@ pub(crate) struct PendingChatBatch {
     pub transmissions: Vec<Transmission>,
 }
 
+pub(crate) struct ComposedChatBatch {
+    pub record: MobileChatComposeBatchRecord,
+    pub deliveries: Vec<MobileChatDeliveryRecord>,
+    pub diagnostics: Vec<String>,
+}
+
 pub(crate) struct ChatDrain {
     pub checkpoint: Option<MobileChatCheckpointRecord>,
     pub transmissions: Vec<Transmission>,
@@ -180,7 +190,7 @@ impl MobileChatState {
         client_token: u32,
         body: &str,
         now_ms: u64,
-    ) -> Result<MobileChatComposeBatchRecord, ()> {
+    ) -> Result<ComposedChatBatch, ()> {
         self.engine
             .compose(
                 ConversationKey::Direct { peer },
@@ -210,11 +220,15 @@ impl MobileChatState {
                 transmissions: drain.transmissions,
             },
         );
-        Ok(MobileChatComposeBatchRecord {
-            batch_id,
-            checkpoint,
-            archives: drain.archives,
-            mutations: drain.mutations,
+        Ok(ComposedChatBatch {
+            record: MobileChatComposeBatchRecord {
+                batch_id,
+                checkpoint,
+                archives: drain.archives,
+                mutations: drain.mutations,
+            },
+            deliveries: drain.deliveries,
+            diagnostics: drain.diagnostics,
         })
     }
 

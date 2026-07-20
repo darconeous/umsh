@@ -161,7 +161,7 @@ struct InboundFrame {
 struct InboundText {
     peer: PublicKey,
     payload: Vec<u8>,
-    received_at_ms: u64,
+    received_at_ms: Option<u64>,
 }
 
 struct InFlightChatTransmission {
@@ -679,7 +679,7 @@ async fn run_worker(
         inbound_text_callback.borrow_mut().push(InboundText {
             peer,
             payload: packet.payload().to_vec(),
-            received_at_ms: packet.received_at_ms().unwrap_or_default(),
+            received_at_ms: packet.received_at_ms(),
         });
         true
     });
@@ -784,9 +784,34 @@ async fn run_worker(
                         body,
                         response,
                     }) => {
-                        let result = chat
-                            .compose_text(peer, client_token, &body, handle.now_ms().await)
-                            .map_err(|_| MobileMeshError::ChatComposeFailed);
+                        // Rejecting a persisted batch rebuilds the reducer from
+                        // durable checkpoints. Keep that recovery operation
+                        // unambiguous by allowing only one uncommitted compose.
+                        let result = if chat.pending_batches.is_empty() {
+                            match chat.compose_text(
+                                peer,
+                                client_token,
+                                &body,
+                                handle.now_ms().await,
+                            ) {
+                                Ok(composed) => {
+                                    for delivery in composed.deliveries {
+                                        let _ = chat_events.send(
+                                            MobileChatWorkerEvent::Delivery(delivery),
+                                        );
+                                    }
+                                    for diagnostic in composed.diagnostics {
+                                        let _ = chat_events.send(
+                                            MobileChatWorkerEvent::Diagnostic(diagnostic),
+                                        );
+                                    }
+                                    Ok(composed.record)
+                                }
+                                Err(()) => Err(MobileMeshError::ChatComposeFailed),
+                            }
+                        } else {
+                            Err(MobileMeshError::OperationInProgress)
+                        };
                         let _ = response.send(result);
                     }
                     Some(WorkerCommand::CommitChatBatch { batch_id, response }) => {
@@ -897,6 +922,10 @@ async fn run_worker(
                 if result.is_err() { return; }
                 let received = inbound_text.borrow_mut().drain(..).collect::<Vec<_>>();
                 for text in received {
+                    let received_at_ms = match text.received_at_ms {
+                        Some(value) => value,
+                        None => handle.now_ms().await,
+                    };
                     let envelope = Envelope {
                         path: DeliveryPath::Unicast,
                         conversation: ConversationKey::Direct { peer: text.peer },
@@ -906,7 +935,7 @@ async fn run_worker(
                         &envelope,
                         Some(text.peer),
                         &text.payload,
-                        text.received_at_ms,
+                        received_at_ms,
                     );
                     let drain = chat.drain();
                     let transmissions = drain.transmissions.clone();
@@ -917,7 +946,7 @@ async fn run_worker(
                             transmissions,
                             &mut in_flight_chat,
                             &mut chat,
-                            text.received_at_ms,
+                            received_at_ms,
                         )
                         .await;
                         publish_chat_drain(chat.drain(), &chat_events);
@@ -1219,6 +1248,12 @@ mod tests {
         assert_eq!(batch.mutations.len(), 1);
         assert_eq!(batch.mutations[0].body.as_deref(), Some("hello from Rust"));
         assert_eq!(batch.mutations[0].fragment_count, Some(1));
+        assert_eq!(
+            alice
+                .compose_text(address(&bob_identity), 78, "second".to_owned())
+                .await,
+            Err(MobileMeshError::OperationInProgress)
+        );
         assert!(alice.poll_update().outbound_frames.is_empty());
         assert!(
             !alice_root.exists(),
