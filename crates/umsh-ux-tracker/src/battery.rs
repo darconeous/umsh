@@ -195,7 +195,9 @@ impl LevelEstimator {
                 self.disturb(s.now_ms);
                 self.charged_since_anchor = true;
             }
-            BatteryState::BatteryOnly | BatteryState::BatteryLow | BatteryState::BatteryCritical => {
+            BatteryState::BatteryOnly
+            | BatteryState::BatteryLow
+            | BatteryState::BatteryCritical => {
                 if s.load_since_last {
                     // Sagged sample: not OCV, restart the quiet window.
                     self.disturb(s.now_ms);
