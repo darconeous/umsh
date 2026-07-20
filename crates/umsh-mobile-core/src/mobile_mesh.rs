@@ -11,11 +11,15 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     rc::Rc,
-    sync::{Arc, Mutex, mpsc as std_mpsc},
-    time::{Duration, Instant},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc as std_mpsc,
+    },
+    time::Duration,
 };
 
 use embedded_hal_async::delay::DelayNs;
@@ -96,8 +100,10 @@ pub struct MobileMeshPingEventRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshSessionUpdateRecord {
-    /// Complete raw UMSH frames ready for the companion PHY transport.
-    pub outbound_frames: Vec<Vec<u8>>,
+    /// Complete raw UMSH frames ready for the companion PHY transport. Each
+    /// frame must be completed after the companion reports the physical radio
+    /// result; queue acceptance is not transmit completion.
+    pub outbound_frames: Vec<MobileMeshOutboundFrameRecord>,
     pub ping_events: Vec<MobileMeshPingEventRecord>,
     /// Chat effects remain in the facade until Swift durably applies them and
     /// acknowledges this batch. Repeated polls may return the same batch.
@@ -106,6 +112,12 @@ pub struct MobileMeshSessionUpdateRecord {
     pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
     pub chat_archive_lookups: Vec<MobileChatArchiveLookupRecord>,
     pub chat_diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshOutboundFrameRecord {
+    pub id: u64,
+    pub data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -150,6 +162,7 @@ enum WorkerCommand {
         kind: MobileChatArchiveResultKind,
         payload: Vec<u8>,
     },
+    FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
     Shutdown,
 }
@@ -166,6 +179,7 @@ struct InboundText {
 
 struct InFlightChatTransmission {
     transmission_id: u32,
+    peer: PublicKey,
     ticket: SendProgressTicket,
     sent_reported: bool,
 }
@@ -189,9 +203,86 @@ enum BridgeRadioError {
     FrameTooLarge,
 }
 
+struct BridgeTransmitCompletions {
+    next_id: AtomicU64,
+    failure_generation: AtomicU64,
+    /// A link-wide failure was declared and its `FailOutboundTransmissions`
+    /// command has not yet been processed by the worker. While set, no new
+    /// transmission may reach the platform: the MAC's in-progress drain loop
+    /// would otherwise keep dispatching the frames queued behind the one the
+    /// failure caught mid-flight, because each later `transmit` call samples
+    /// the generation only after the bump. The worker clears the flag when
+    /// it processes the queued command and cancels the affected tickets.
+    poisoned: AtomicBool,
+    pending: Mutex<BTreeMap<u64, oneshot::Sender<bool>>>,
+}
+
+impl BridgeTransmitCompletions {
+    fn new() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            failure_generation: AtomicU64::new(0),
+            poisoned: AtomicBool::new(false),
+            pending: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.failure_generation.load(Ordering::SeqCst)
+    }
+
+    fn allocate(
+        &self,
+        generation: u64,
+        completion: oneshot::Sender<bool>,
+    ) -> Result<Option<u64>, BridgeRadioError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed).max(1);
+        let mut pending = self.pending.lock().map_err(|_| BridgeRadioError::Closed)?;
+        if self.poisoned.load(Ordering::SeqCst)
+            || generation != self.failure_generation.load(Ordering::SeqCst)
+        {
+            return Ok(None);
+        }
+        pending.insert(id, completion);
+        Ok(Some(id))
+    }
+
+    /// Declare a link-wide failure: refuse new platform dispatches until the
+    /// worker processes the corresponding cancellation command.
+    fn poison(&self) {
+        self.poisoned.store(true, Ordering::SeqCst);
+        self.failure_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn clear_poison(&self) {
+        self.poisoned.store(false, Ordering::SeqCst);
+    }
+
+    fn complete(&self, id: u64, transmitted: bool) -> bool {
+        self.pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(&id))
+            .is_some_and(|completion| completion.send(transmitted).is_ok())
+    }
+
+    fn fail_all(&self) {
+        self.failure_generation.fetch_add(1, Ordering::SeqCst);
+        let completions = self
+            .pending
+            .lock()
+            .map(|mut pending| core::mem::take(&mut *pending))
+            .unwrap_or_default();
+        for completion in completions.into_values() {
+            let _ = completion.send(false);
+        }
+    }
+}
+
 struct BridgeRadio {
     inbound: mpsc::UnboundedReceiver<InboundFrame>,
-    outbound: std_mpsc::Sender<Vec<u8>>,
+    outbound: std_mpsc::Sender<MobileMeshOutboundFrameRecord>,
+    completions: Arc<BridgeTransmitCompletions>,
 }
 
 impl Radio for BridgeRadio {
@@ -205,9 +296,46 @@ impl Radio for BridgeRadio {
         if data.len() > MAX_FRAME_SIZE {
             return Err(TxError::Io(BridgeRadioError::FrameTooLarge));
         }
-        self.outbound
-            .send(data.to_vec())
-            .map_err(|_| TxError::Io(BridgeRadioError::Closed))
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let generation = self.completions.generation();
+        let Some(id) = self
+            .completions
+            .allocate(generation, completion_tx)
+            .map_err(TxError::Io)?
+        else {
+            // A link-wide failure raced this send before it reached the
+            // platform. Its queued cancellation owns the ticket outcome.
+            return Ok(());
+        };
+        if self
+            .outbound
+            .send(MobileMeshOutboundFrameRecord {
+                id,
+                data: data.to_vec(),
+            })
+            .is_err()
+        {
+            let _ = self.completions.complete(id, false);
+            return Err(TxError::Io(BridgeRadioError::Closed));
+        }
+
+        // Awaiting here is deliberate: Radio::transmit completes only after
+        // the frame has actually left the companion PHY. Returning at
+        // bridge-queue acceptance starts MAC ACK timers too early and causes
+        // fragmented sends to retransmit frames that are still waiting in
+        // the companion queue. This is an async wait, not a thread block, so
+        // the worker keeps servicing commands and timers while the frame is
+        // in flight; the MAC itself stays serialized behind its own borrow.
+        match completion_rx.await {
+            Ok(true) => Ok(()),
+            // The public completion API poisons the bridge and queues
+            // FailOutboundTransmissions before releasing this wait. Return
+            // success here solely to keep an ordinary rejected frame from
+            // terminating the long-lived MAC driver; the queued command
+            // cancels its ACK ticket immediately.
+            Ok(false) => Ok(()),
+            Err(_) => Err(TxError::Io(BridgeRadioError::Closed)),
+        }
     }
 
     fn poll_receive(
@@ -299,16 +427,20 @@ impl KeyValueStore for MemoryKeyValueStore {
     }
 }
 
+/// MAC clock backed by tokio's time source. Using `tokio::time::Instant`
+/// (rather than `std::time::Instant`) means a runtime started with paused
+/// time drives this clock too, so every MAC deadline can be fast-forwarded
+/// deterministically in tests.
 #[derive(Clone)]
 struct MobileClock {
-    origin: Instant,
+    origin: tokio::time::Instant,
     sleep: Rc<RefCell<Option<Pin<Box<tokio::time::Sleep>>>>>,
 }
 
 impl MobileClock {
     fn new() -> Self {
         Self {
-            origin: Instant::now(),
+            origin: tokio::time::Instant::now(),
             sleep: Rc::new(RefCell::new(None)),
         }
     }
@@ -320,11 +452,10 @@ impl Clock for MobileClock {
     }
 
     fn poll_delay_until(&self, cx: &mut Context<'_>, deadline_ms: u64) -> Poll<()> {
-        let now = self.now_ms();
-        if now >= deadline_ms {
+        let deadline = self.origin + Duration::from_millis(deadline_ms);
+        if tokio::time::Instant::now() >= deadline {
             return Poll::Ready(());
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(deadline_ms - now);
         let mut slot = self.sleep.borrow_mut();
         let sleep = slot.get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
         sleep.as_mut().reset(deadline);
@@ -356,6 +487,7 @@ impl umsh_mac::Platform for MobilePlatform {
 }
 
 type MobileMac = Mac<MobilePlatform>;
+const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 
 /// Long-lived Rust protocol engine used by the mobile app.
 ///
@@ -365,7 +497,8 @@ type MobileMac = Mac<MobilePlatform>;
 #[derive(uniffi::Object)]
 pub struct MobileMeshSession {
     commands: mpsc::UnboundedSender<WorkerCommand>,
-    outbound: Mutex<std_mpsc::Receiver<Vec<u8>>>,
+    outbound: Mutex<std_mpsc::Receiver<MobileMeshOutboundFrameRecord>>,
+    transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
@@ -380,54 +513,7 @@ impl MobileMeshSession {
         identity: Arc<MobileIdentity>,
         counter_store: Arc<MobileCounterStore>,
     ) -> Result<Arc<Self>, MobileMeshError> {
-        let (commands, command_rx) = mpsc::unbounded_channel();
-        let (outbound_tx, outbound) = std_mpsc::channel();
-        let (event_tx, events) = std_mpsc::channel();
-        let (chat_event_tx, chat_events) = std_mpsc::channel();
-        let (ready_tx, ready_rx) = oneshot::channel();
-        let worker_identity = identity.take_for_session()?;
-
-        std::thread::Builder::new()
-            .name("umsh-mobile-mesh".to_owned())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_time()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(_) => {
-                        let _ = ready_tx.send(Err(MobileMeshError::SessionUnavailable));
-                        return;
-                    }
-                };
-                let local = tokio::task::LocalSet::new();
-                local.block_on(
-                    &runtime,
-                    run_worker(
-                        worker_identity,
-                        SharedCounterStore(counter_store),
-                        command_rx,
-                        outbound_tx,
-                        event_tx,
-                        chat_event_tx,
-                        ready_tx,
-                    ),
-                );
-            })
-            .map_err(|_| MobileMeshError::SessionUnavailable)?;
-
-        ready_rx
-            .await
-            .map_err(|_| MobileMeshError::SessionUnavailable)??;
-        Ok(Arc::new(Self {
-            commands,
-            outbound: Mutex::new(outbound),
-            events: Mutex::new(events),
-            chat_events: Mutex::new(chat_events),
-            pending_chat_events: Mutex::new(None),
-            next_chat_batch_id: Mutex::new(1),
-            next_operation_id: Mutex::new(1),
-        }))
+        Self::build(identity, counter_store, false).await
     }
 
     pub fn ping(&self, peer_address: String, timeout_ms: u64) -> Result<u64, MobileMeshError> {
@@ -472,6 +558,29 @@ impl MobileMeshSession {
         self.commands
             .send(WorkerCommand::Receive(frame))
             .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
+    /// Report the actual physical companion-radio result for an outbound
+    /// frame. This is intentionally distinct from accepting the frame into the
+    /// BLE/CRP queue: the MAC starts ACK and retry timing only after success.
+    pub fn complete_outbound_frame(
+        &self,
+        frame_id: u64,
+        transmitted: bool,
+    ) -> Result<(), MobileMeshError> {
+        if !transmitted {
+            // A rejected frame fails the whole outbound batch. Poison before
+            // releasing this frame's wait so the MAC drain cannot dispatch
+            // the frames queued behind it (see fail_outbound_transmissions).
+            self.transmit_completions.poison();
+            self.commands
+                .send(WorkerCommand::FailOutboundTransmissions)
+                .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        }
+        self.transmit_completions
+            .complete(frame_id, transmitted)
+            .then_some(())
+            .ok_or(MobileMeshError::SessionUnavailable)
     }
 
     pub async fn restore_chat(
@@ -565,6 +674,27 @@ impl MobileMeshSession {
         Ok(())
     }
 
+    /// Fail every chat transmission currently owned by the mobile radio
+    /// bridge. The platform calls this when companion-link delivery failed
+    /// after the MAC had accepted the frames, ensuring optimistic UI rows do
+    /// not remain in `Sending` indefinitely.
+    pub fn fail_outbound_transmissions(&self) -> Result<(), MobileMeshError> {
+        // Poison before anything else: from this instant until the worker
+        // processes the command below (the sole clearer), every frame the
+        // MAC's in-progress drain loop tries to hand to the platform is
+        // suppressed instead of dispatched. Without this, releasing the
+        // blocked transmit lets the drain advance to the next queued frame,
+        // which samples the post-bump generation and goes out as if healthy.
+        self.transmit_completions.poison();
+        self.commands
+            .send(WorkerCommand::FailOutboundTransmissions)
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        // Release a transmit wait already in progress; the drain it unblocks
+        // is defused by the poison above.
+        self.transmit_completions.fail_all();
+        Ok(())
+    }
+
     pub fn poll_update(&self) -> MobileMeshSessionUpdateRecord {
         let mut outbound_frames = Vec::new();
         if let Ok(receiver) = self.outbound.lock() {
@@ -618,8 +748,88 @@ impl MobileMeshSession {
     }
 }
 
+impl MobileMeshSession {
+    /// Construct a session whose worker runtime starts with tokio's clock
+    /// paused (test builds only). Timers auto-advance whenever the worker is
+    /// otherwise idle, so multi-second protocol deadlines — MAC ACK
+    /// timeouts, ping timeouts, repair timers — resolve in wall-clock
+    /// milliseconds without changing any production code path.
+    #[cfg(test)]
+    async fn new_with_virtual_time(
+        identity: Arc<MobileIdentity>,
+        counter_store: Arc<MobileCounterStore>,
+    ) -> Result<Arc<Self>, MobileMeshError> {
+        Self::build(identity, counter_store, true).await
+    }
+
+    async fn build(
+        identity: Arc<MobileIdentity>,
+        counter_store: Arc<MobileCounterStore>,
+        virtual_time: bool,
+    ) -> Result<Arc<Self>, MobileMeshError> {
+        let (commands, command_rx) = mpsc::unbounded_channel();
+        let (outbound_tx, outbound) = std_mpsc::channel();
+        let (event_tx, events) = std_mpsc::channel();
+        let (chat_event_tx, chat_events) = std_mpsc::channel();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let worker_identity = identity.take_for_session()?;
+        let transmit_completions = Arc::new(BridgeTransmitCompletions::new());
+        let worker_transmit_completions = transmit_completions.clone();
+
+        std::thread::Builder::new()
+            .name("umsh-mobile-mesh".to_owned())
+            .spawn(move || {
+                let mut builder = tokio::runtime::Builder::new_current_thread();
+                builder.enable_time();
+                #[cfg(test)]
+                if virtual_time {
+                    builder.start_paused(true);
+                }
+                #[cfg(not(test))]
+                let _ = virtual_time;
+                let runtime = match builder.build() {
+                    Ok(runtime) => runtime,
+                    Err(_) => {
+                        let _ = ready_tx.send(Err(MobileMeshError::SessionUnavailable));
+                        return;
+                    }
+                };
+                let local = tokio::task::LocalSet::new();
+                local.block_on(
+                    &runtime,
+                    run_worker(
+                        worker_identity,
+                        SharedCounterStore(counter_store),
+                        command_rx,
+                        outbound_tx,
+                        worker_transmit_completions,
+                        event_tx,
+                        chat_event_tx,
+                        ready_tx,
+                    ),
+                );
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+
+        ready_rx
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)??;
+        Ok(Arc::new(Self {
+            commands,
+            outbound: Mutex::new(outbound),
+            transmit_completions,
+            events: Mutex::new(events),
+            chat_events: Mutex::new(chat_events),
+            pending_chat_events: Mutex::new(None),
+            next_chat_batch_id: Mutex::new(1),
+            next_operation_id: Mutex::new(1),
+        }))
+    }
+}
+
 impl Drop for MobileMeshSession {
     fn drop(&mut self) {
+        self.transmit_completions.fail_all();
         let _ = self.commands.send(WorkerCommand::Shutdown);
     }
 }
@@ -628,16 +838,19 @@ async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
     mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
-    outbound: std_mpsc::Sender<Vec<u8>>,
+    outbound: std_mpsc::Sender<MobileMeshOutboundFrameRecord>,
+    transmit_completions: Arc<BridgeTransmitCompletions>,
     events: std_mpsc::Sender<MobileMeshPingEventRecord>,
     chat_events: std_mpsc::Sender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
     let local_key = *identity.public_key();
     let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+    let worker_completions = transmit_completions.clone();
     let radio = BridgeRadio {
         inbound: inbound_rx,
         outbound,
+        completions: transmit_completions,
     };
     let mac = MobileMac::new(
         radio,
@@ -684,6 +897,8 @@ async fn run_worker(
         true
     });
     let mut in_flight_chat = Vec::<InFlightChatTransmission>::new();
+    let mut chat_pipeline_ready = BTreeSet::<[u8; 32]>::new();
+    let mut pending_chat_transmissions = VecDeque::<umsh_text::engine::Transmission>::new();
     let pending = Rc::new(RefCell::new(BTreeMap::<[u8; 32], u64>::new()));
     let pong_pending = pending.clone();
     let pong_events = events.clone();
@@ -726,184 +941,280 @@ async fn run_worker(
     let mut protocol_timeout_tick = tokio::time::interval(Duration::from_millis(50));
     protocol_timeout_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    loop {
-        tokio::select! {
-            biased;
-            command = commands.recv() => {
-                match command {
-                    Some(WorkerCommand::RegisterPeers { peers, response }) => {
-                        let mut result = Ok(());
-                        for peer in peers {
-                            if node.peer(peer).await.is_err() {
-                                result = Err(MobileMeshError::SendFailed);
-                                break;
+    // The worker runs as two sibling loops polled by one outer select.
+    //
+    // `Radio::transmit` awaits the companion's physical TX completion while
+    // `MacHandle` holds the coordinator borrow, so the pump must keep being
+    // polled while a command arm waits on that borrow — a single select
+    // whose arm bodies suspend the task would deadlock: the arm waits on
+    // the borrow, and the pump future that owns it is never re-polled to
+    // release it. As sibling futures of the outer select, the pump makes
+    // progress whenever the command loop is waiting.
+    let inbound_ready = tokio::sync::Notify::new();
+    let timeout_servicer = host.protocol_timeout_servicer();
+
+    let pump_loop = async {
+        loop {
+            if host.pump_once().await.is_err() {
+                return;
+            }
+            if !inbound_text.borrow().is_empty() {
+                inbound_ready.notify_one();
+            }
+        }
+    };
+
+    let command_loop = async {
+        loop {
+            tokio::select! {
+                biased;
+                command = commands.recv() => {
+                    match command {
+                        Some(WorkerCommand::RegisterPeers { peers, response }) => {
+                            let mut result = Ok(());
+                            for peer in peers {
+                                if node.peer(peer).await.is_err() {
+                                    result = Err(MobileMeshError::SendFailed);
+                                    break;
+                                }
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::Ping { operation_id, peer, timeout_ms }) => {
+                            if pending.borrow().contains_key(&peer.0) {
+                                emit_ping_failure(&events, operation_id);
+                                continue;
+                            }
+                            let result = match node.peer(peer).await {
+                                Ok(connection) => connection
+                                    .ping(
+                                        6,
+                                        &SendOptions::default()
+                                            .with_flood_hops(5)
+                                            .with_trace_route(),
+                                        timeout_ms,
+                                    )
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|_| MobileMeshError::SendFailed),
+                                Err(_) => Err(MobileMeshError::SendFailed),
+                            };
+                            if result.is_ok() {
+                                pending.borrow_mut().insert(peer.0, operation_id);
+                                // This write is caused by a real authenticated send. It is
+                                // deliberately not performed during startup. Do not move it
+                                // into session construction: reboot loops must remain read-only.
+                                if handle.service_counter_persistence().await.is_err() {
+                                    emit_ping_failure(&events, operation_id);
+                                    return;
+                                }
+                            }
+                            if result.is_err() {
+                                emit_ping_failure(&events, operation_id);
                             }
                         }
-                        let _ = response.send(result);
-                    }
-                    Some(WorkerCommand::Ping { operation_id, peer, timeout_ms }) => {
-                        if pending.borrow().contains_key(&peer.0) {
-                            emit_ping_failure(&events, operation_id);
-                            continue;
+                        Some(WorkerCommand::RestoreChat { checkpoints, response }) => {
+                            chat.restore(&checkpoints, handle.now_ms().await);
+                            let _ = response.send(());
                         }
-                        let result = match node.peer(peer).await {
-                            Ok(connection) => connection
-                                .ping(
-                                    6,
-                                    &SendOptions::default()
-                                        .with_flood_hops(5)
-                                        .with_trace_route(),
-                                    timeout_ms,
-                                )
-                                .await
-                                .map(|_| ())
-                                .map_err(|_| MobileMeshError::SendFailed),
-                            Err(_) => Err(MobileMeshError::SendFailed),
-                        };
-                        if result.is_ok() {
-                            pending.borrow_mut().insert(peer.0, operation_id);
-                            // This write is caused by a real authenticated send. It is
-                            // deliberately not performed during startup. Do not move it
-                            // into session construction: reboot loops must remain read-only.
-                            if handle.service_counter_persistence().await.is_err() {
-                                emit_ping_failure(&events, operation_id);
+                        Some(WorkerCommand::ComposeText {
+                            peer,
+                            client_token,
+                            body,
+                            response,
+                        }) => {
+                            // Rejecting a persisted batch rebuilds the reducer from
+                            // durable checkpoints. Keep that recovery operation
+                            // unambiguous by allowing only one uncommitted compose.
+                            let result = if chat.pending_batches.is_empty() {
+                                match chat.compose_text(
+                                    peer,
+                                    client_token,
+                                    &body,
+                                    handle.now_ms().await,
+                                ) {
+                                    Ok(composed) => {
+                                        for delivery in composed.deliveries {
+                                            let _ = chat_events.send(
+                                                MobileChatWorkerEvent::Delivery(delivery),
+                                            );
+                                        }
+                                        for diagnostic in composed.diagnostics {
+                                            let _ = chat_events.send(
+                                                MobileChatWorkerEvent::Diagnostic(diagnostic),
+                                            );
+                                        }
+                                        Ok(composed.record)
+                                    }
+                                    Err(()) => Err(MobileMeshError::ChatComposeFailed),
+                                }
+                            } else {
+                                Err(MobileMeshError::OperationInProgress)
+                            };
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::CommitChatBatch { batch_id, response }) => {
+                            let result = match chat.pending_batches.remove(&batch_id) {
+                                Some(batch) => {
+                                    let now_ms = handle.now_ms().await;
+                                    let sent = queue_chat_transmissions(
+                                        &node,
+                                        batch.transmissions,
+                                        &mut pending_chat_transmissions,
+                                        &mut in_flight_chat,
+                                        &chat_pipeline_ready,
+                                        &mut chat,
+                                        now_ms,
+                                    )
+                                    .await;
+                                    publish_chat_drain(chat.drain(), &chat_events);
+                                    if sent > 0
+                                        && handle.service_counter_persistence().await.is_err()
+                                    {
+                                        Err(MobileMeshError::CounterPersistenceFailed)
+                                    } else {
+                                        Ok(())
+                                    }
+                                }
+                                None => Err(MobileMeshError::ChatBatchMissing),
+                            };
+                            let fatal = result == Err(MobileMeshError::CounterPersistenceFailed);
+                            let _ = response.send(result);
+                            if fatal {
                                 return;
                             }
                         }
-                        if result.is_err() {
-                            emit_ping_failure(&events, operation_id);
-                        }
-                    }
-                    Some(WorkerCommand::RestoreChat { checkpoints, response }) => {
-                        chat.restore(&checkpoints, handle.now_ms().await);
-                        let _ = response.send(());
-                    }
-                    Some(WorkerCommand::ComposeText {
-                        peer,
-                        client_token,
-                        body,
-                        response,
-                    }) => {
-                        // Rejecting a persisted batch rebuilds the reducer from
-                        // durable checkpoints. Keep that recovery operation
-                        // unambiguous by allowing only one uncommitted compose.
-                        let result = if chat.pending_batches.is_empty() {
-                            match chat.compose_text(
-                                peer,
-                                client_token,
-                                &body,
-                                handle.now_ms().await,
-                            ) {
-                                Ok(composed) => {
-                                    for delivery in composed.deliveries {
-                                        let _ = chat_events.send(
-                                            MobileChatWorkerEvent::Delivery(delivery),
+                        Some(WorkerCommand::RejectChatBatch {
+                            batch_id,
+                            checkpoints,
+                            response,
+                        }) => {
+                            let result = match chat.pending_batches.remove(&batch_id) {
+                                Some(batch) => {
+                                    for transmission in batch.transmissions {
+                                        chat.engine.transmit_update(
+                                            transmission.transmission_id,
+                                            DeliveryState::Failed,
+                                            handle.now_ms().await,
                                         );
                                     }
-                                    for diagnostic in composed.diagnostics {
-                                        let _ = chat_events.send(
-                                            MobileChatWorkerEvent::Diagnostic(diagnostic),
-                                        );
-                                    }
-                                    Ok(composed.record)
+                                    publish_chat_drain(chat.drain(), &chat_events);
+                                    chat = MobileChatState::new(local_key);
+                                    chat.restore(&checkpoints, handle.now_ms().await);
+                                    Ok(())
                                 }
-                                Err(()) => Err(MobileMeshError::ChatComposeFailed),
+                                None => Err(MobileMeshError::ChatBatchMissing),
+                            };
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::ChatArchiveResult {
+                            request_id,
+                            kind,
+                            payload,
+                        }) => {
+                            let now_ms = handle.now_ms().await;
+                            match kind {
+                                MobileChatArchiveResultKind::Found => chat.engine.archive_result(
+                                    request_id,
+                                    ArchiveResult::Found { payload: &payload },
+                                    now_ms,
+                                ),
+                                MobileChatArchiveResultKind::Deleted => chat.engine.archive_result(
+                                    request_id,
+                                    ArchiveResult::Deleted,
+                                    now_ms,
+                                ),
+                                MobileChatArchiveResultKind::Evicted => chat.engine.archive_result(
+                                    request_id,
+                                    ArchiveResult::Evicted,
+                                    now_ms,
+                                ),
+                                MobileChatArchiveResultKind::Unknown => chat.engine.archive_result(
+                                    request_id,
+                                    ArchiveResult::Unknown,
+                                    now_ms,
+                                ),
                             }
-                        } else {
-                            Err(MobileMeshError::OperationInProgress)
-                        };
-                        let _ = response.send(result);
-                    }
-                    Some(WorkerCommand::CommitChatBatch { batch_id, response }) => {
-                        let result = match chat.pending_batches.remove(&batch_id) {
-                            Some(batch) => {
-                                let now_ms = handle.now_ms().await;
+                            let drain = chat.drain();
+                            let transmissions = drain.transmissions.clone();
+                            publish_chat_drain(drain, &chat_events);
+                            if !transmissions.is_empty() || !pending_chat_transmissions.is_empty() {
                                 let sent = queue_chat_transmissions(
                                     &node,
-                                    batch.transmissions,
+                                    transmissions,
+                                    &mut pending_chat_transmissions,
                                     &mut in_flight_chat,
+                                    &chat_pipeline_ready,
                                     &mut chat,
                                     now_ms,
                                 )
                                 .await;
                                 publish_chat_drain(chat.drain(), &chat_events);
-                                if sent > 0
-                                    && handle.service_counter_persistence().await.is_err()
-                                {
-                                    Err(MobileMeshError::CounterPersistenceFailed)
-                                } else {
-                                    Ok(())
+                                if sent > 0 && handle.service_counter_persistence().await.is_err() {
+                                    return;
                                 }
                             }
-                            None => Err(MobileMeshError::ChatBatchMissing),
-                        };
-                        let fatal = result == Err(MobileMeshError::CounterPersistenceFailed);
-                        let _ = response.send(result);
-                        if fatal {
-                            return;
                         }
-                    }
-                    Some(WorkerCommand::RejectChatBatch {
-                        batch_id,
-                        checkpoints,
-                        response,
-                    }) => {
-                        let result = match chat.pending_batches.remove(&batch_id) {
-                            Some(batch) => {
-                                for transmission in batch.transmissions {
-                                    chat.engine.transmit_update(
-                                        transmission.transmission_id,
-                                        DeliveryState::Failed,
-                                        handle.now_ms().await,
-                                    );
-                                }
-                                publish_chat_drain(chat.drain(), &chat_events);
-                                chat = MobileChatState::new(local_key);
-                                chat.restore(&checkpoints, handle.now_ms().await);
-                                Ok(())
+                        Some(WorkerCommand::FailOutboundTransmissions) => {
+                            let now_ms = handle.now_ms().await;
+                            for transmission in pending_chat_transmissions.drain(..) {
+                                chat.engine.transmit_update(
+                                    transmission.transmission_id,
+                                    DeliveryState::Failed,
+                                    now_ms,
+                                );
                             }
-                            None => Err(MobileMeshError::ChatBatchMissing),
-                        };
-                        let _ = response.send(result);
-                    }
-                    Some(WorkerCommand::ChatArchiveResult {
-                        request_id,
-                        kind,
-                        payload,
-                    }) => {
-                        let now_ms = handle.now_ms().await;
-                        match kind {
-                            MobileChatArchiveResultKind::Found => chat.engine.archive_result(
-                                request_id,
-                                ArchiveResult::Found { payload: &payload },
-                                now_ms,
-                            ),
-                            MobileChatArchiveResultKind::Deleted => chat.engine.archive_result(
-                                request_id,
-                                ArchiveResult::Deleted,
-                                now_ms,
-                            ),
-                            MobileChatArchiveResultKind::Evicted => chat.engine.archive_result(
-                                request_id,
-                                ArchiveResult::Evicted,
-                                now_ms,
-                            ),
-                            MobileChatArchiveResultKind::Unknown => chat.engine.archive_result(
-                                request_id,
-                                ArchiveResult::Unknown,
-                                now_ms,
-                            ),
+                            for transmission in in_flight_chat.drain(..) {
+                                if let Some(receipt) = transmission.ticket.receipt() {
+                                    let _ = handle.cancel_pending_ack(identity_id, receipt).await;
+                                }
+                                chat.engine.transmit_update(
+                                    transmission.transmission_id,
+                                    DeliveryState::Failed,
+                                    now_ms,
+                                );
+                            }
+                            publish_chat_drain(chat.drain(), &chat_events);
+                            // Every frame the failure covered is now cancelled;
+                            // new transmissions may reach the platform again.
+                            worker_completions.clear_poison();
                         }
+                        Some(WorkerCommand::Receive(record)) => {
+                            let _ = inbound_tx.send(InboundFrame { record });
+                        }
+                        Some(WorkerCommand::Shutdown) | None => return,
+                    }
+                }
+                _ = inbound_ready.notified() => {
+                    let received = inbound_text.borrow_mut().drain(..).collect::<Vec<_>>();
+                    for text in received {
+                        let received_at_ms = match text.received_at_ms {
+                            Some(value) => value,
+                            None => handle.now_ms().await,
+                        };
+                        let envelope = Envelope {
+                            path: DeliveryPath::Unicast,
+                            conversation: ConversationKey::Direct { peer: text.peer },
+                            sender: SenderScope::Peer(text.peer),
+                        };
+                        let _ = chat.engine.receive(
+                            &envelope,
+                            Some(text.peer),
+                            &text.payload,
+                            received_at_ms,
+                        );
                         let drain = chat.drain();
                         let transmissions = drain.transmissions.clone();
                         publish_chat_drain(drain, &chat_events);
-                        if !transmissions.is_empty() {
+                        if !transmissions.is_empty() || !pending_chat_transmissions.is_empty() {
                             let sent = queue_chat_transmissions(
                                 &node,
                                 transmissions,
+                                &mut pending_chat_transmissions,
                                 &mut in_flight_chat,
+                                &chat_pipeline_ready,
                                 &mut chat,
-                                now_ms,
+                                received_at_ms,
                             )
                             .await;
                             publish_chat_drain(chat.drain(), &chat_events);
@@ -912,41 +1223,29 @@ async fn run_worker(
                             }
                         }
                     }
-                    Some(WorkerCommand::Receive(record)) => {
-                        let _ = inbound_tx.send(InboundFrame { record });
-                    }
-                    Some(WorkerCommand::Shutdown) | None => return,
                 }
-            }
-            result = host.pump_once() => {
-                if result.is_err() { return; }
-                let received = inbound_text.borrow_mut().drain(..).collect::<Vec<_>>();
-                for text in received {
-                    let received_at_ms = match text.received_at_ms {
-                        Some(value) => value,
-                        None => handle.now_ms().await,
-                    };
-                    let envelope = Envelope {
-                        path: DeliveryPath::Unicast,
-                        conversation: ConversationKey::Direct { peer: text.peer },
-                        sender: SenderScope::Peer(text.peer),
-                    };
-                    let _ = chat.engine.receive(
-                        &envelope,
-                        Some(text.peer),
-                        &text.payload,
-                        received_at_ms,
+                _ = protocol_timeout_tick.tick() => {
+                    timeout_servicer.service().await;
+                    let now_ms = handle.now_ms().await;
+                    chat.engine.tick(now_ms);
+                    service_chat_tickets(
+                        &mut chat,
+                        &mut in_flight_chat,
+                        &mut chat_pipeline_ready,
+                        now_ms,
                     );
                     let drain = chat.drain();
                     let transmissions = drain.transmissions.clone();
                     publish_chat_drain(drain, &chat_events);
-                    if !transmissions.is_empty() {
+                    if !transmissions.is_empty() || !pending_chat_transmissions.is_empty() {
                         let sent = queue_chat_transmissions(
                             &node,
                             transmissions,
+                            &mut pending_chat_transmissions,
                             &mut in_flight_chat,
+                            &chat_pipeline_ready,
                             &mut chat,
-                            received_at_ms,
+                            now_ms,
                         )
                         .await;
                         publish_chat_drain(chat.drain(), &chat_events);
@@ -956,42 +1255,35 @@ async fn run_worker(
                     }
                 }
             }
-            _ = protocol_timeout_tick.tick() => {
-                host.service_protocol_timeouts().await;
-                let now_ms = handle.now_ms().await;
-                chat.engine.tick(now_ms);
-                service_chat_tickets(&mut chat, &mut in_flight_chat, now_ms);
-                let drain = chat.drain();
-                let transmissions = drain.transmissions.clone();
-                publish_chat_drain(drain, &chat_events);
-                if !transmissions.is_empty() {
-                    let sent = queue_chat_transmissions(
-                        &node,
-                        transmissions,
-                        &mut in_flight_chat,
-                        &mut chat,
-                        now_ms,
-                    )
-                    .await;
-                    publish_chat_drain(chat.drain(), &chat_events);
-                    if sent > 0 && handle.service_counter_persistence().await.is_err() {
-                        return;
-                    }
-                }
-            }
         }
+    };
+
+    // Either loop ending (pump error, shutdown command, fatal persistence
+    // failure) ends the session.
+    tokio::select! {
+        _ = pump_loop => {}
+        _ = command_loop => {}
     }
 }
 
 async fn queue_chat_transmissions<M: MacBackend>(
     node: &LocalNode<M>,
     transmissions: Vec<umsh_text::engine::Transmission>,
+    pending: &mut VecDeque<umsh_text::engine::Transmission>,
     in_flight: &mut Vec<InFlightChatTransmission>,
+    pipeline_ready: &BTreeSet<[u8; 32]>,
     chat: &mut MobileChatState,
     now_ms: u64,
 ) -> usize {
+    pending.extend(transmissions);
+    // Keep a bounded pipeline aligned with the companion NCP's target-selected
+    // TX queue. The durable pending queue below handles messages larger than
+    // this window without imposing the mobile RAM choice on embedded MACs.
+    if in_flight.len() >= MOBILE_CHAT_TRANSMIT_WINDOW {
+        return 0;
+    }
     let mut queued = 0;
-    for transmission in transmissions {
+    while let Some(transmission) = pending.pop_front() {
         let Some(peer) = transmission_peer(&transmission) else {
             chat.engine.transmit_update(
                 transmission.transmission_id,
@@ -1000,6 +1292,12 @@ async fn queue_chat_transmissions<M: MacBackend>(
             );
             continue;
         };
+        if !pipeline_ready.contains(&peer.0) && in_flight.iter().any(|entry| entry.peer == peer) {
+            // First contact may require counter synchronization. Confirm one
+            // authenticated frame before opening this peer's full pipeline.
+            pending.push_front(transmission);
+            break;
+        }
         let mut payload = Vec::with_capacity(transmission.payload.len() + 1);
         payload.push(PayloadType::TextMessage as u8);
         payload.extend_from_slice(transmission.payload.as_slice());
@@ -1011,23 +1309,29 @@ async fn queue_chat_transmissions<M: MacBackend>(
             );
             continue;
         };
-        let Ok(ticket) = connection
+        let ticket = match connection
             .send(&payload, &SendOptions::default().with_ack_requested(true))
             .await
-        else {
-            chat.engine.transmit_update(
-                transmission.transmission_id,
-                DeliveryState::Failed,
-                now_ms,
-            );
-            continue;
+        {
+            Ok(ticket) => ticket,
+            Err(_) => {
+                // With a registered peer and an engine-bounded payload, the
+                // expected failure here is temporary MAC queue / pending-ACK
+                // capacity. Preserve ordering and retry after tickets advance.
+                pending.push_front(transmission);
+                break;
+            }
         };
         in_flight.push(InFlightChatTransmission {
             transmission_id: transmission.transmission_id,
+            peer,
             ticket,
             sent_reported: false,
         });
         queued += 1;
+        if in_flight.len() >= MOBILE_CHAT_TRANSMIT_WINDOW {
+            break;
+        }
     }
     queued
 }
@@ -1035,6 +1339,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
 fn service_chat_tickets(
     chat: &mut MobileChatState,
     in_flight: &mut Vec<InFlightChatTransmission>,
+    pipeline_ready: &mut BTreeSet<[u8; 32]>,
     now_ms: u64,
 ) {
     let mut index = 0;
@@ -1046,6 +1351,7 @@ fn service_chat_tickets(
             entry.sent_reported = true;
         }
         if entry.ticket.was_acked() {
+            pipeline_ready.insert(entry.peer.0);
             chat.engine
                 .transmit_update(entry.transmission_id, DeliveryState::Acked, now_ms);
             in_flight.swap_remove(index);
@@ -1098,6 +1404,8 @@ fn emit_ping_failure(events: &std_mpsc::Sender<MobileMeshPingEventRecord>, opera
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MobileChatDeliveryState;
+    use std::time::Instant;
     use umsh_crypto::NodeIdentity;
 
     fn identity(seed: u8) -> Arc<MobileIdentity> {
@@ -1139,7 +1447,7 @@ mod tests {
         // through the same public Rust API without test-only MAC access.
         let operation = alice.ping(address(&bob_identity), 2_000).unwrap();
         let _ = bob.ping(address(&alice_identity), 2_000).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
             for frame in alice_update.outbound_frames {
@@ -1147,8 +1455,9 @@ mod tests {
                     alice_root.exists(),
                     "Alice released a frame before persisting its reservation"
                 );
+                alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
-                    data: frame,
+                    data: frame.data,
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
@@ -1173,9 +1482,10 @@ mod tests {
                     bob_root.exists(),
                     "Bob released a frame before persisting its reservation"
                 );
+                bob.complete_outbound_frame(frame.id, true).unwrap();
                 alice
                     .receive(MobileMeshRxRecord {
-                        data: frame,
+                        data: frame.data,
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
@@ -1185,6 +1495,46 @@ mod tests {
             assert!(Instant::now() < deadline, "ping did not complete");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The virtual-time seam: with the worker runtime's clock paused, a
+    /// 30-second protocol timeout resolves in wall-clock milliseconds. This
+    /// is the harness for exercising MAC ACK timeouts, repair timers, and
+    /// retry cadences deterministically without real sleeps.
+    #[tokio::test]
+    async fn virtual_time_fast_forwards_protocol_timeouts() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(61);
+        let silent_peer = identity(62);
+        let store = MobileCounterStore::new(directory.path().join("virtual").display().to_string())
+            .unwrap();
+        let session = MobileMeshSession::new_with_virtual_time(local_identity, store)
+            .await
+            .unwrap();
+        let started = Instant::now();
+        let operation = session.ping(address(&silent_peer), 30_000).unwrap();
+
+        let deadline = started + Duration::from_secs(5);
+        loop {
+            let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+            }
+            if let Some(event) = update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "virtual-time ping timeout never fired"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a 30s virtual timeout must not take real-time seconds"
+        );
     }
 
     #[tokio::test]
@@ -1200,6 +1550,9 @@ mod tests {
 
         loop {
             let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+            }
             if let Some(event) = update.ping_events.into_iter().next() {
                 assert_eq!(event.operation_id, operation);
                 assert_eq!(event.outcome, MobileMeshPingOutcome::TimedOut);
@@ -1263,12 +1616,15 @@ mod tests {
         alice.commit_chat_batch(batch.batch_id).await.unwrap();
         assert!(alice_root.exists());
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // First-contact counter synchronization plus the acknowledged fragment
+        // pipeline can cross several scheduler ticks under loaded CI.
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let alice_update = alice.poll_update();
             for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
                 bob.receive(MobileMeshRxRecord {
-                    data: frame,
+                    data: frame.data,
                     rssi_dbm: Some(-55),
                     lqi: Some(200),
                     snr_cb: Some(70),
@@ -1276,6 +1632,17 @@ mod tests {
                 .unwrap();
             }
             let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames.iter().cloned() {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-55),
+                        lqi: Some(200),
+                        snr_cb: Some(70),
+                    })
+                    .unwrap();
+            }
             if let Some(mutation) = bob_update.chat_mutations.first() {
                 assert_eq!(mutation.body.as_deref(), Some("hello from Rust"));
                 assert_eq!(
@@ -1297,6 +1664,310 @@ mod tests {
                 break;
             }
             assert!(Instant::now() < deadline, "chat frame did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn fragmented_chat_message_crosses_mobile_radio_bridge() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(31);
+        let bob_identity = identity(32);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("long-alice").display().to_string())
+                .unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("long-bob").display().to_string())
+                .unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+        let alice_address = address(&alice_identity);
+        let bob_address = address(&bob_identity);
+        alice
+            .register_peers(vec![bob_address.clone()])
+            .await
+            .unwrap();
+        bob.register_peers(vec![alice_address.clone()])
+            .await
+            .unwrap();
+
+        let body = "fragmented mobile message ".repeat(16);
+        let batch = alice
+            .compose_text(bob_address, 91, body.clone())
+            .await
+            .unwrap();
+        let fragment_count = usize::from(batch.mutations[0].fragment_count.unwrap_or(1));
+        assert!(fragment_count > 1);
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        // First-contact counter synchronization plus the acknowledged fragment
+        // pipeline can cross several scheduler ticks under loaded CI.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut outbound_lengths = Vec::new();
+        let mut return_lengths = Vec::new();
+        let mut receiver_complete = false;
+        let mut sender_delivered = false;
+        loop {
+            let alice_update = alice.poll_update();
+            let alice_frames = alice_update.outbound_frames;
+            assert!(
+                alice_frames.len() <= 1,
+                "the mobile bridge must wait for physical TX completion"
+            );
+            for frame in alice_frames {
+                outbound_lengths.push(frame.data.len());
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-55),
+                    lqi: Some(200),
+                    snr_cb: Some(70),
+                })
+                .unwrap();
+            }
+            sender_delivered |= alice_update
+                .chat_deliveries
+                .iter()
+                .any(|delivery| delivery.state == MobileChatDeliveryState::Acknowledged);
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames.iter().cloned() {
+                return_lengths.push(frame.data.len());
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-55),
+                        lqi: Some(200),
+                        snr_cb: Some(70),
+                    })
+                    .unwrap();
+            }
+            if let Some(mutation) = bob_update
+                .chat_mutations
+                .iter()
+                .find(|mutation| mutation.complete == Some(true))
+            {
+                assert_eq!(mutation.body.as_deref(), Some(body.as_str()));
+                receiver_complete = true;
+            }
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if receiver_complete && sender_delivered {
+                assert!(
+                    outbound_lengths.len() <= fragment_count * 2 + 4,
+                    "fragment delivery was unexpectedly amplified: {outbound_lengths:?}"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fragmented chat did not complete at both endpoints; receiver_complete={receiver_complete}, sender_delivered={sender_delivered}, outbound lengths: {outbound_lengths:?}; return lengths: {return_lengths:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn companion_link_failure_terminates_pending_chat_delivery() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(41);
+        let peer_identity = identity(42);
+        let store =
+            MobileCounterStore::new(directory.path().join("failed-send").display().to_string())
+                .unwrap();
+        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+        session
+            .register_peers(vec![address(&peer_identity)])
+            .await
+            .unwrap();
+        let batch = session
+            .compose_text(address(&peer_identity), 17, "will fail".into())
+            .await
+            .unwrap();
+        session.commit_chat_batch(batch.batch_id).await.unwrap();
+        session.fail_outbound_transmissions().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let update = session.poll_update();
+            if update
+                .chat_deliveries
+                .iter()
+                .any(|delivery| delivery.state == MobileChatDeliveryState::Failed)
+            {
+                break;
+            }
+            if let Some(batch_id) = update.chat_batch_id {
+                session.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "companion failure did not terminate chat delivery"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A companion-link failure declared while one fragment awaits physical
+    /// TX completion must also stop the fragments queued behind it in the
+    /// MAC: without the poisoned window, the drain loop keeps handing them
+    /// to the platform after `fail_all` bumps the generation, so a single
+    /// BLE hiccup fans out into several wasted physical transmissions.
+    #[tokio::test]
+    async fn mid_batch_failure_suppresses_fragments_queued_behind_the_blocked_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(51);
+        let bob_identity = identity(52);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("mid-alice").display().to_string())
+                .unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("mid-bob").display().to_string())
+                .unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+        let bob_address = address(&bob_identity);
+        alice
+            .register_peers(vec![bob_address.clone()])
+            .await
+            .unwrap();
+        bob.register_peers(vec![address(&alice_identity)])
+            .await
+            .unwrap();
+
+        // Warmup: one acknowledged message opens the fragment pipeline, so a
+        // later multi-fragment commit enqueues every fragment into the MAC.
+        let warmup = alice
+            .compose_text(bob_address.clone(), 1, "warmup".to_owned())
+            .await
+            .unwrap();
+        alice.commit_chat_batch(warmup.batch_id).await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-50),
+                    lqi: None,
+                    snr_cb: Some(80),
+                })
+                .unwrap();
+            }
+            let acked = alice_update
+                .chat_deliveries
+                .iter()
+                .any(|delivery| delivery.state == MobileChatDeliveryState::Acknowledged);
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames.iter().cloned() {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-50),
+                        lqi: None,
+                        snr_cb: Some(80),
+                    })
+                    .unwrap();
+            }
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if acked {
+                break;
+            }
+            assert!(Instant::now() < deadline, "warmup exchange never acked");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Fragmented message: all fragments enter the MAC queue; the drain
+        // blocks on the first fragment's physical completion.
+        let body = "storm test payload ".repeat(24);
+        let batch = alice
+            .compose_text(bob_address, 2, body.clone())
+            .await
+            .unwrap();
+        assert!(batch.mutations[0].fragment_count.unwrap_or(1) > 1);
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        // Wait for the first fragment to reach the platform (the worker is
+        // now blocked awaiting its completion), then declare link failure
+        // without completing it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let update = alice.poll_update();
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if !update.outbound_frames.is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "first fragment never reached the platform"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let fail_at = Instant::now();
+        alice.fail_outbound_transmissions().unwrap();
+
+        // The queued fragments behind the blocked one must not surface as
+        // new platform transmissions, and every fragment must fail promptly
+        // (the failure report must not wait out MAC listen/ack windows).
+        let mut saw_failed = false;
+        let quiet_deadline = fail_at + Duration::from_millis(1_000);
+        while Instant::now() < quiet_deadline {
+            let update = alice.poll_update();
+            assert!(
+                update.outbound_frames.is_empty(),
+                "fragments queued behind a failed batch were still dispatched"
+            );
+            saw_failed |= update
+                .chat_deliveries
+                .iter()
+                .any(|delivery| delivery.state == MobileChatDeliveryState::Failed);
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(saw_failed, "batch failure never reported to the transcript");
+
+        // Recovery: once the cancellation is processed, new sends flow again.
+        let retry = alice
+            .compose_text(address(&bob_identity), 3, "after failure".to_owned())
+            .await
+            .unwrap();
+        alice.commit_chat_batch(retry.batch_id).await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let update = alice.poll_update();
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if !update.outbound_frames.is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "transmissions never resumed after failure recovery"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }

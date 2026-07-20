@@ -28,3 +28,5 @@ zeroize.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+# test-util enables tokio's paused/virtual time for deterministic timer tests.
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "test-util"] }
