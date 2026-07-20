@@ -331,6 +331,11 @@ struct DirectConversationView: View {
                         .padding()
                     }
                     .defaultScrollAnchor(.bottom)
+                    // Keyboard show/hide resizes the container; keep the
+                    // reader's distance from the bottom constant instead of
+                    // the default top-anchored offset, which hides the
+                    // newest messages behind the keyboard.
+                    .defaultScrollAnchor(.bottom, for: .sizeChanges)
                     .onAppear {
                         guard !conversation.messages.isEmpty else { return }
                         // Initial presentation always opens at the newest
