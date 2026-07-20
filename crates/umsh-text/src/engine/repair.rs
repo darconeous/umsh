@@ -17,11 +17,13 @@ pub struct PendingLookup {
     pub sequence: MessageSequence,
 }
 
-/// Ring of recently answered resend requests, for coalescing duplicate
-/// requests from multiple group members.
+/// Ring of recently transmitted or answered frames, for coalescing resend
+/// requests: duplicate requests from multiple group members, and requests
+/// for a frame whose original transmission just left this node (a slow
+/// serialized link can deliver frames later than the requester's patience).
 #[derive(Clone, Debug, Default)]
 pub struct CoalesceRing {
-    entries: heapless::Vec<(ConversationKey, u8, Option<u8>, u64), 8>,
+    entries: heapless::Vec<(ConversationKey, u8, Option<u8>, u64), 16>,
 }
 
 impl CoalesceRing {
@@ -49,12 +51,27 @@ impl CoalesceRing {
         now_ms: u64,
     ) {
         let fragment = sequence.fragment.map(|fragment| fragment.index);
+        self.record_frame(conversation, sequence.message_id, fragment, now_ms);
+    }
+
+    /// Record one frame by its archive coordinates, refreshing any existing
+    /// entry for the same frame.
+    pub fn record_frame(
+        &mut self,
+        conversation: ConversationKey,
+        message_id: u8,
+        fragment: Option<u8>,
+        now_ms: u64,
+    ) {
+        self.entries.retain(|(conv, id, frag, _)| {
+            !(*conv == conversation && *id == message_id && *frag == fragment)
+        });
         if self.entries.is_full() {
             self.entries.remove(0);
         }
         let _ = self
             .entries
-            .push((conversation, sequence.message_id, fragment, now_ms));
+            .push((conversation, message_id, fragment, now_ms));
     }
 }
 

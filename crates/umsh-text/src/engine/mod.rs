@@ -45,6 +45,12 @@ const ARENA_SIZE: usize = 4096;
 pub struct EngineConfig {
     /// Grace period before acting on an inferred gap, absorbing reordering.
     pub reorder_grace_ms: u64,
+    /// Minimum quiet time after the newest stored fragment before repair of
+    /// that reassembly may begin. Every fragment arrival defers repair by at
+    /// least this much (and by twice the observed inter-fragment gap when
+    /// that is larger), so an actively delivering message is never repaired
+    /// mid-flight. Platforms should set this to several frame airtimes.
+    pub fragment_grace_ms: u64,
     /// Maximum extra randomized delay for channel-group repair requests.
     pub group_jitter_ms: u64,
     /// Largest forward gap repaired automatically (spec bound: 8).
@@ -68,11 +74,12 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             reorder_grace_ms: 2_000,
+            fragment_grace_ms: 8_000,
             group_jitter_ms: 4_000,
             max_auto_repair_gap: 8,
             min_request_interval_ms: 2_000,
             max_requests_per_tick: 4,
-            max_repair_attempts: 2,
+            max_repair_attempts: 4,
             reassembly_ttl_ms: 90_000,
             request_retry_ms: 8_000,
             coalesce_window_ms: 10_000,
@@ -419,8 +426,24 @@ pub struct Engine<P: TextProfile, const SLOTS: usize = 4, const PAGES: usize = 2
     revision: u32,
     lookups: heapless::Vec<PendingLookup, 8>,
     coalesce: CoalesceRing,
-    in_flight: heapless::Vec<(u32, MessageHandle, Option<u8>), 16>,
+    in_flight: heapless::Vec<InFlightFrame, 16>,
+    /// The platform has reported transport progress at least once, so
+    /// `in_flight` reflects real frame lifecycles rather than merely
+    /// emissions that were never confirmed either way.
+    saw_transmit_report: bool,
     lost_outputs: u32,
+}
+
+/// A tracked outbound frame between `Transmit` emission and its terminal
+/// delivery report.
+#[derive(Clone, Copy, Debug)]
+struct InFlightFrame {
+    transmission_id: u32,
+    handle: MessageHandle,
+    fragment: Option<u8>,
+    /// Archive coordinates, used to coalesce resend requests that arrive
+    /// around this frame's own transmission.
+    archive: Option<ArchiveKey>,
 }
 
 impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PAGES> {
@@ -446,6 +469,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             lookups: heapless::Vec::new(),
             coalesce: CoalesceRing::default(),
             in_flight: heapless::Vec::new(),
+            saw_transmit_report: false,
             lost_outputs: 0,
         }
     }
@@ -675,23 +699,25 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     }
 
     /// Report transport progress for a previously emitted transmission.
-    pub fn transmit_update(&mut self, transmission_id: u32, state: DeliveryState, _now_ms: u64) {
+    pub fn transmit_update(&mut self, transmission_id: u32, state: DeliveryState, now_ms: u64) {
+        self.saw_transmit_report = true;
         let Some(position) = self
             .in_flight
             .iter()
-            .position(|(id, _, _)| *id == transmission_id)
+            .position(|frame| frame.transmission_id == transmission_id)
         else {
             return;
         };
-        let (_, handle, fragment) = self.in_flight[position];
+        let frame = self.in_flight[position];
         self.push_output(Output::Event(Event::DeliveryStateChanged {
-            handle,
-            fragment,
+            handle: frame.handle,
+            fragment: frame.fragment,
             state,
         }));
         if matches!(state, DeliveryState::Acked | DeliveryState::Failed) {
             self.in_flight.remove(position);
         }
+        let _ = now_ms;
     }
 
     /// Answer a previously emitted `LookupOutbound` effect.
@@ -776,14 +802,25 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }
         }
 
+        let sequence = content.sequence;
         if content.sequence_reset {
-            let stream = self.inbound.get_mut(&key).expect("present");
-            // The arriving message itself establishes the new baseline below.
-            stream.reset_epoch(None);
-            self.pool.drop_stream(&key);
+            let repeated_id = sequence.is_some_and(|sequence| {
+                self.inbound
+                    .get(&key)
+                    .is_some_and(|stream| stream.seen.contains(sequence.message_id))
+            });
+            if !repeated_id {
+                let stream = self.inbound.get_mut(&key).expect("present");
+                // The arriving message itself establishes the new baseline
+                // below. A retransmitted reset-bearing ID is still a
+                // duplicate; applying its reset again would erase the very
+                // state needed to suppress it.
+                stream.reset_epoch(None);
+                self.pool.drop_stream(&key);
+            }
         }
 
-        let Some(sequence) = content.sequence else {
+        let Some(sequence) = sequence else {
             // Unsequenced: display-only, unreferencable, no dedup possible.
             self.insert_content(envelope, content, None, CompletionStatus::Complete, now_ms);
             return;
@@ -848,6 +885,22 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     stream.seen.insert(id);
                 }
             },
+        }
+
+        // A fragmented ID may legitimately appear many times while its slot
+        // is open, once per distinct fragment and again for repairs. After
+        // completion, expiry, or eviction closes that slot, however, any
+        // already-seen fragment is late duplicate traffic. Never let it open
+        // a second slot and render the same logical message again.
+        if let Some(fragment) = sequence.fragment {
+            let epoch = self.inbound.get(&key).expect("present").epoch;
+            if !first_sighting && self.pool.find_slot(&key, epoch, id).is_none() {
+                self.push_output(Output::Diagnostic(Diagnostic::DuplicateFragment {
+                    message_id: id,
+                    fragment: fragment.index,
+                }));
+                return;
+            }
         }
 
         // An arrival satisfies pending repair for its frame.
@@ -977,7 +1030,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 } else {
                     0
                 };
-                slot.repair_at_ms = now_ms + self.config.reorder_grace_ms + jitter;
+                slot.repair_at_ms = now_ms + self.config.fragment_grace_ms + jitter;
                 match self.pool.open_slot(slot.clone()) {
                     Some(index) => index,
                     None => {
@@ -1085,6 +1138,27 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 }));
                 return;
             }
+        }
+
+        // A stored fragment is proof the sender is still delivering: defer
+        // repair by at least the configured grace, and by twice the observed
+        // inter-fragment gap when the link is slower than that. Requesting a
+        // resend of a frame the sender has merely not reached yet duplicates
+        // it on air and delays the frames behind it — the repair timer must
+        // only fire once arrivals actually stall.
+        {
+            let group = matches!(key.conversation, ConversationKey::ChannelGroup { .. });
+            let jitter = if group {
+                self.jitter.jitter_ms(self.config.group_jitter_ms)
+            } else {
+                0
+            };
+            let grace = self.config.fragment_grace_ms;
+            let slot = self.pool.slots[slot_index].as_mut().expect("occupied");
+            let gap = now_ms.saturating_sub(slot.last_fragment_ms);
+            slot.last_fragment_ms = now_ms;
+            let holdoff = grace.max(gap.saturating_mul(2));
+            slot.repair_at_ms = slot.repair_at_ms.max(now_ms + holdoff + jitter);
         }
 
         self.publish_slot(envelope, content, slot_index, now_ms);
@@ -1334,6 +1408,44 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             return;
         }
 
+        // The requested frame is still in flight on this node's own radio —
+        // queued behind earlier frames or awaiting its delivery report. On a
+        // slow serialized link the requester's patience can lapse before the
+        // original arrives; answering now would duplicate the frame on air
+        // and delay everything queued behind it. A genuinely lost frame
+        // leaves `in_flight` with its failure report, after which requests
+        // are served normally. Only meaningful on platforms that report
+        // transport progress; without reports, emission tells us nothing
+        // about whether the frame is still queued.
+        let requested_fragment = sequence.fragment.map(|fragment| fragment.index);
+        if self.saw_transmit_report
+            && self.in_flight.iter().any(|frame| {
+                frame.archive.is_some_and(|archive| {
+                    archive.conversation == conversation
+                        && archive.message_id == sequence.message_id
+                        && archive.fragment == requested_fragment
+                })
+            })
+        {
+            self.push_output(Output::Diagnostic(Diagnostic::CoalescedResend {
+                message_id: sequence.message_id,
+            }));
+            return;
+        }
+
+        // A lookup for the same frame is already outstanding: one response
+        // will serve both requesters.
+        if self
+            .lookups
+            .iter()
+            .any(|lookup| lookup.conversation == conversation && lookup.sequence == sequence)
+        {
+            self.push_output(Output::Diagnostic(Diagnostic::CoalescedResend {
+                message_id: sequence.message_id,
+            }));
+            return;
+        }
+
         let request_id = self.next_request;
         self.next_request = self.next_request.wrapping_add(1);
         if self.lookups.is_full() {
@@ -1441,26 +1553,33 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }
             let key = slot.stream;
             let id = slot.message_id;
-            let missing: heapless::Vec<u8, { FRAGMENT_COUNT_MAX as usize }> =
-                slot.missing().collect();
-            if let Some(slot) = self.pool.slots[index].as_mut() {
-                slot.repair_at_ms = now_ms + self.config.request_retry_ms;
-            }
             if let Some(stream) = self.inbound.get_mut(&key) {
                 if stream.collided {
                     continue;
                 }
-                for fragment in missing {
-                    let already = stream.pending.iter().any(|pending| {
-                        pending.message_id == id && pending.fragment == Some(fragment)
+                // A fragmented message advances through missing fragments
+                // serially. Do not queue an entire missing bitmap at once:
+                // one request receives its full retry budget before repair
+                // moves to the next fragment.
+                if stream
+                    .pending
+                    .iter()
+                    .any(|pending| pending.message_id == id)
+                {
+                    continue;
+                }
+                let next = self.pool.slots[index]
+                    .as_ref()
+                    .and_then(|slot| slot.repairable_missing().next());
+                if let Some(fragment) = next {
+                    let _ = stream.pending.push(PendingRepair {
+                        message_id: id,
+                        fragment: Some(fragment),
+                        deadline_ms: now_ms,
+                        attempts: 0,
                     });
-                    if !already {
-                        let _ = stream.pending.push(PendingRepair {
-                            message_id: id,
-                            fragment: Some(fragment),
-                            deadline_ms: now_ms,
-                            attempts: 0,
-                        });
+                    if let Some(slot) = self.pool.slots[index].as_mut() {
+                        slot.repair_at_ms = now_ms + self.config.request_retry_ms;
                     }
                 }
             }
@@ -1572,7 +1691,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             entry.attempts += 1;
             if entry.attempts >= max_attempts {
                 let message_id = entry.message_id;
+                let fragment = entry.fragment;
                 stream.pending.remove(position);
+                if let Some(fragment) = fragment
+                    && let Some(slot_index) = self.pool.find_slot(&key, stream.epoch, message_id)
+                    && let Some(slot) = self.pool.slots[slot_index].as_mut()
+                {
+                    slot.repair_exhausted |= 1u16 << fragment;
+                }
                 self.push_output(Output::Event(Event::RepairFinished {
                     conversation: key.conversation,
                     sender: key.sender,
@@ -1724,7 +1850,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if self.in_flight.is_full() {
                 self.in_flight.remove(0);
             }
-            let _ = self.in_flight.push((transmission_id, handle, fragment));
+            let _ = self.in_flight.push(InFlightFrame {
+                transmission_id,
+                handle,
+                fragment,
+                archive,
+            });
         }
         self.push_output(Output::Transmit(Transmission {
             transmission_id,

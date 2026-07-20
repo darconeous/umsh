@@ -7,8 +7,8 @@ use umsh_core::{ChannelId, NodeHint, PublicKey};
 use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    ArchiveResult, CompletionStatus, ComposeIntent, Destination, Diagnostic, Engine, EngineConfig,
-    Event, MutationKind, Output, RepairOutcome, ResolvedRef, destination_for,
+    ArchiveResult, CompletionStatus, ComposeIntent, DeliveryState, Destination, Diagnostic, Engine,
+    EngineConfig, Event, MutationKind, Output, RepairOutcome, ResolvedRef, destination_for,
 };
 use umsh_text::validate::{DeliveryPath, DirectChannelProfile, Envelope};
 use umsh_text::{
@@ -508,6 +508,50 @@ fn duplicate_message_is_suppressed() {
 }
 
 #[test]
+fn message_id_is_reusable_only_after_modulo_wrap() {
+    let mut engine = engine();
+    let envelope = direct_envelope();
+    feed(&mut engine, &envelope, None, &sequenced(0, "first zero"), 0);
+    drain(&mut engine);
+
+    feed(
+        &mut engine,
+        &envelope,
+        None,
+        &sequenced(0, "duplicate zero"),
+        1,
+    );
+    assert!(
+        !drain(&mut engine)
+            .iter()
+            .any(|output| matches!(output, Drained::Insert { .. }))
+    );
+
+    for id in 1u8..=u8::MAX {
+        feed(
+            &mut engine,
+            &envelope,
+            None,
+            &sequenced(id, "advance"),
+            u64::from(id) + 1,
+        );
+        drain(&mut engine);
+    }
+    feed(
+        &mut engine,
+        &envelope,
+        None,
+        &sequenced(0, "wrapped zero"),
+        300,
+    );
+    assert!(
+        drain(&mut engine)
+            .iter()
+            .any(|output| matches!(output, Drained::Insert { body, .. } if body == "wrapped zero"))
+    );
+}
+
+#[test]
 fn gap_triggers_bounded_repair_after_grace() {
     let mut engine = engine();
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
@@ -839,8 +883,66 @@ fn fragmented_message_partial_render_then_completion() {
 }
 
 #[test]
-fn stalled_fragment_repair_requests_specific_fragment() {
+fn late_fragments_cannot_reopen_a_completed_message() {
     let mut engine = engine();
+    let envelope = direct_envelope();
+    for (index, body) in [(0, b"one ".as_slice()), (1, b"two "), (2, b"three")] {
+        let mut message = TextMessage::basic("");
+        message.sequence = Some(MessageSequence {
+            message_id: 5,
+            fragment: Some(Fragment { index, count: 3 }),
+        });
+        message.sequence_reset = index == 0;
+        message.body = body;
+        feed(&mut engine, &envelope, None, &message, 10);
+        drain(&mut engine);
+    }
+
+    let mut duplicate_outputs = Vec::new();
+    for (index, body) in [(1, b"two ".as_slice()), (0, b"one "), (2, b"three")] {
+        let mut message = TextMessage::basic("");
+        message.sequence = Some(MessageSequence {
+            message_id: 5,
+            fragment: Some(Fragment { index, count: 3 }),
+        });
+        message.sequence_reset = index == 0;
+        message.body = body;
+        feed(&mut engine, &envelope, None, &message, 20);
+        duplicate_outputs.extend(drain(&mut engine));
+    }
+    engine.tick(80_000);
+    duplicate_outputs.extend(drain(&mut engine));
+
+    assert!(duplicate_outputs.iter().all(|output| !matches!(
+        output,
+        Drained::Insert { .. } | Drained::UpdateBody { .. } | Drained::Transmit { .. }
+    )));
+    assert_eq!(
+        duplicate_outputs
+            .iter()
+            .filter(|output| matches!(
+                output,
+                Drained::Diagnostic(Diagnostic::DuplicateFragment { message_id: 5, .. })
+            ))
+            .count(),
+        3
+    );
+}
+
+/// Engine with the fragment-repair holdoff pinned to the historical 2 s so
+/// the repair-cadence tests keep their timing constants (the default is
+/// deliberately larger to cover slow serialized links).
+fn repair_test_engine() -> TestEngine {
+    let config = EngineConfig {
+        fragment_grace_ms: 2_000,
+        ..EngineConfig::default()
+    };
+    Engine::new(DirectChannelProfile, LOCAL, config, 42)
+}
+
+#[test]
+fn stalled_fragment_repair_requests_specific_fragment() {
+    let mut engine = repair_test_engine();
     let envelope = direct_envelope();
     engine
         .receive(&envelope, None, &fragment_msg(5, 0, 3, b"a"), 0)
@@ -866,6 +968,70 @@ fn stalled_fragment_repair_requests_specific_fragment() {
         Some(MessageSequence {
             message_id: 5,
             fragment: Some(Fragment { index: 1, count: 3 }),
+        })
+    );
+}
+
+#[test]
+fn fragmented_repair_serializes_four_attempts_before_advancing() {
+    let mut engine = repair_test_engine();
+    let envelope = direct_envelope();
+    engine
+        .receive(&envelope, None, &fragment_msg(5, 0, 4, b"a"), 0)
+        .unwrap();
+    engine
+        .receive(&envelope, None, &fragment_msg(5, 3, 4, b"d"), 10)
+        .unwrap();
+    drain(&mut engine);
+
+    for now_ms in [2_500, 10_500, 18_500, 26_500] {
+        engine.tick(now_ms);
+        let outputs = drain(&mut engine);
+        let requests: Vec<_> = outputs
+            .iter()
+            .filter_map(|output| match output {
+                Drained::Transmit { payload, .. } => Some(parse_payload(payload)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 1, "one repair may be outstanding");
+        assert_eq!(
+            requests[0].sequence,
+            Some(MessageSequence {
+                message_id: 5,
+                fragment: Some(Fragment { index: 1, count: 4 }),
+            })
+        );
+        if now_ms == 26_500 {
+            assert!(outputs.iter().any(|output| matches!(
+                output,
+                Drained::Event(Event::RepairFinished {
+                    message_id: 5,
+                    outcome: RepairOutcome::Exhausted,
+                    ..
+                })
+            )));
+        }
+    }
+
+    // After fragment 1 consumes its lifetime budget, the cursor advances to
+    // fragment 2. Fragment 1 must not be recreated with a reset attempt count.
+    engine.tick(26_501);
+    assert!(drain(&mut engine).is_empty());
+    engine.tick(28_500);
+    let outputs = drain(&mut engine);
+    let request = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Transmit { payload, .. } => Some(parse_payload(payload)),
+            _ => None,
+        })
+        .expect("repair should advance to the next missing fragment");
+    assert_eq!(
+        request.sequence,
+        Some(MessageSequence {
+            message_id: 5,
+            fragment: Some(Fragment { index: 2, count: 4 }),
         })
     );
 }
@@ -1661,4 +1827,112 @@ fn feed_fragment(engine: &mut TestEngine, id: u8, index: u8, count: u8, body: &[
     engine
         .receive(&direct_envelope(), None, &payload, now_ms)
         .expect("fragment should validate");
+}
+
+// ---------------------------------------------------------------------
+// Resend coalescing around this node's own transmissions
+// ---------------------------------------------------------------------
+
+/// A resend request for a frame that just physically left this node is
+/// coalesced instead of answered: on a slow serialized link, the requester's
+/// patience can lapse while the original is still queued or in flight.
+#[test]
+fn resend_request_for_recently_transmitted_frame_is_coalesced() {
+    let mut engine = engine();
+    let body = "z".repeat(400); // three fragments
+    engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: &body,
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let mut frames = Vec::new();
+    while let Some(output) = engine.poll_output() {
+        if let Output::Transmit(tx) = output
+            && let Some(archive) = tx.archive
+        {
+            frames.push((tx.transmission_id, archive));
+        }
+    }
+    assert_eq!(frames.len(), 3);
+
+    // Fragment 1 physically leaves the radio at t=5s but has no delivery
+    // report yet: it is still in flight.
+    let (transmission_id, archive) = frames[1];
+    engine.transmit_update(transmission_id, DeliveryState::Sent, 5_000);
+    drain(&mut engine);
+
+    let mut request = TextMessage::basic("");
+    request.message_type = MessageType::ResendRequest;
+    request.sequence = Some(MessageSequence {
+        message_id: archive.message_id,
+        fragment: Some(Fragment { index: 1, count: 3 }),
+    });
+
+    // While the frame is in flight: no archive lookup.
+    feed(&mut engine, &direct_envelope(), None, &request, 6_000);
+    let outputs = drain(&mut engine);
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::LookupOutbound { .. })),
+        "request for a just-transmitted frame must be coalesced: {outputs:?}"
+    );
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::CoalescedResend { .. })
+    )));
+
+    // Once the delivery report retires the frame, the request is served.
+    engine.transmit_update(transmission_id, DeliveryState::Acked, 7_000);
+    drain(&mut engine);
+    feed(&mut engine, &direct_envelope(), None, &request, 60_000);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::LookupOutbound { .. })),
+        "a late request must still reach the archive: {outputs:?}"
+    );
+}
+
+/// Concurrent resend requests for one frame share a single outstanding
+/// archive lookup.
+#[test]
+fn duplicate_resend_requests_share_one_lookup() {
+    let mut engine = engine();
+    engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "hello",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    let request = resend_request(0, false);
+    feed(&mut engine, &direct_envelope(), None, &request, 1_000);
+    feed(&mut engine, &direct_envelope(), None, &request, 1_100);
+    let outputs = drain(&mut engine);
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|output| matches!(output, Drained::LookupOutbound { .. }))
+            .count(),
+        1,
+        "second request must coalesce onto the outstanding lookup: {outputs:?}"
+    );
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::CoalescedResend { .. })
+    )));
 }
