@@ -6,12 +6,13 @@ struct NetworkView: View {
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let savePeer: (MeshPublicIdentity, PeerImportDetails) async -> Void
+    let savePeer: (MeshNodeURIPreview, PeerImportDetails) async -> Void
     let startConversation: ((PeerSummary) async -> DirectConversationSummary?)?
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
+    var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
 
@@ -44,8 +45,8 @@ struct NetworkView: View {
             NavigationStack {
                 NodeImportView(
                     inspectPeerIdentity: inspectPeerIdentity,
-                    save: { identity, details, _ in
-                        await savePeer(identity, details)
+                    save: { preview, details, _ in
+                        await savePeer(preview, details)
                         showsAddPeer = false
                     }
                 )
@@ -104,7 +105,8 @@ struct NetworkView: View {
                 updateDraft: updateDraft,
                 sendMessage: sendMessage,
                 messageActions: messageActions,
-                pingPeer: pingPeer
+                pingPeer: pingPeer,
+                updateAlias: updateAlias
             )
         } label: {
             HStack(spacing: 12) {
@@ -131,6 +133,7 @@ struct PeerDetailView: View {
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
+    let updateAlias: ((PeerSummary, String?) async -> Bool)?
 
     @State private var openedConversation: DirectConversationSummary?
     @State private var isOpeningConversation = false
@@ -139,6 +142,11 @@ struct PeerDetailView: View {
     @State private var feedbackTitle = ""
     @State private var feedbackMessage = ""
     @State private var showsFeedback = false
+    // The pushed view keeps its own copy so a saved alias is visible
+    // immediately even though the parent's peer list refreshes later.
+    @State private var currentAlias: String?
+    @State private var isEditingAlias = false
+    @State private var aliasDraft = ""
 
     init(
         peer: PeerSummary,
@@ -148,7 +156,8 @@ struct PeerDetailView: View {
         updateDraft: ((Int64, String) async -> Void)? = nil,
         sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
         messageActions: ChatMessageActions = .unavailable,
-        pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil
+        pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil,
+        updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
     ) {
         self.peer = peer
         _radioSnapshot = radioSnapshot
@@ -158,6 +167,8 @@ struct PeerDetailView: View {
         self.sendMessage = sendMessage
         self.messageActions = messageActions
         self.pingPeer = pingPeer
+        self.updateAlias = updateAlias
+        _currentAlias = State(initialValue: peer.alias)
     }
 
     var body: some View {
@@ -166,17 +177,45 @@ struct PeerDetailView: View {
                 HStack(spacing: 16) {
                     PeerAvatar(hint: peer.identity.hint, diameter: 64)
                     VStack(alignment: .leading) {
-                        Text(peer.displayName).font(.title2.bold())
+                        Text(displayedName).font(.title2.bold())
                         Text(peer.isCompanionRadio ? "Companion radio identity" : "UMSH peer")
                             .foregroundStyle(.secondary)
                     }
                 }
                 LabeledContent("Type", value: peer.isCompanionRadio ? "Companion radio identity" : peer.kind.label)
                 LabeledContent("Node hint", value: peer.identity.hint.text)
+                if updateAlias != nil {
+                    LabeledContent("Alias") {
+                        Button {
+                            aliasDraft = currentAlias ?? ""
+                            isEditingAlias = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(currentAlias ?? "None")
+                                    .foregroundStyle(currentAlias == nil ? .secondary : .primary)
+                                Image(systemName: "pencil")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
             }
 
             Section("Identity") {
+                IdentityShareView(uri: peer.identity.nodeURI)
                 CanonicalAddressView(address: peer.identity.canonicalAddress)
+            }
+
+            if let advertised = peer.advertisedIdentity {
+                Section {
+                    AdvertisedIdentityRows(identity: advertised)
+                } header: {
+                    Text("Advertised identity")
+                } footer: {
+                    Text(advertised.signature == .valid
+                         ? "These details were published and signed by the peer."
+                         : "These details were published by the peer but are not authenticated.")
+                }
             }
 
             if startConversation != nil, pingPeer != nil {
@@ -236,7 +275,23 @@ struct PeerDetailView: View {
                 }
             }
         }
-        .navigationTitle(peer.displayName)
+        .navigationTitle(displayedName)
+        .alert("Alias", isPresented: $isEditingAlias) {
+            TextField("Alias", text: $aliasDraft)
+                .textInputAutocapitalization(.words)
+            Button("Save") {
+                Task { await saveAlias() }
+            }
+            if currentAlias != nil {
+                Button("Remove Alias", role: .destructive) {
+                    aliasDraft = ""
+                    Task { await saveAlias() }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The alias is a private name stored only on this phone.")
+        }
         .navigationDestination(item: $openedConversation) { conversation in
             if let conversation = binding(for: conversation.id) {
                 DirectConversationView(
@@ -244,7 +299,8 @@ struct PeerDetailView: View {
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft ?? { _, _ in },
                     sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") },
-                    messageActions: messageActions
+                    messageActions: messageActions,
+                    updateAlias: updateAlias
                 )
             }
         }
@@ -252,6 +308,25 @@ struct PeerDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(feedbackMessage)
+        }
+    }
+
+    private var displayedName: String {
+        currentAlias
+            ?? peer.advertisedName
+            ?? (peer.isCompanionRadio ? "Companion radio" : peer.identity.hint.text)
+    }
+
+    private func saveAlias() async {
+        guard let updateAlias else { return }
+        let trimmed = aliasDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newAlias = trimmed.isEmpty ? nil : trimmed
+        if await updateAlias(peer, newAlias) {
+            currentAlias = newAlias
+        } else {
+            feedbackTitle = "Alias not saved"
+            feedbackMessage = "The alias could not be stored. Try again."
+            showsFeedback = true
         }
     }
 
@@ -302,6 +377,79 @@ struct PeerDetailView: View {
 
     private static func decibels(_ centibels: Int16) -> String {
         String(format: "%.1f dB", Double(centibels) / 10)
+    }
+}
+
+/// Rows describing a decoded advertised node identity. Shared by the peer
+/// sheet and the import preview.
+struct AdvertisedIdentityRows: View {
+    let identity: MeshNodeIdentity
+
+    var body: some View {
+        if let name = identity.name {
+            LabeledContent("Name", value: name)
+        }
+        LabeledContent("Role", value: identity.roleLabel)
+        if !identity.capabilities.isEmpty {
+            LabeledContent("Capabilities") {
+                Text(identity.capabilities.joined(separator: ", "))
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+        if let latitude = identity.latitude, let longitude = identity.longitude {
+            LabeledContent("Location") {
+                VStack(alignment: .trailing) {
+                    Text(Self.coordinate(latitude, longitude))
+                        .textSelection(.enabled)
+                    if let precision = identity.locationPrecision {
+                        Text("within \(Self.precisionLabel(precision))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        if let altitude = identity.altitudeMeters {
+            LabeledContent("Altitude", value: "\(altitude) m")
+        }
+        if let timestamp = identity.timestamp {
+            LabeledContent("Reported") {
+                Text(
+                    Date(timeIntervalSince1970: TimeInterval(timestamp)),
+                    format: .dateTime.year().month().day().hour().minute()
+                )
+            }
+        }
+        LabeledContent("Authenticity") {
+            switch identity.signature {
+            case .valid:
+                Label("Signed by this node", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+            case .unsigned:
+                Label("Not signed", systemImage: "seal")
+                    .foregroundStyle(.secondary)
+            case .invalid:
+                Label("Signature invalid", systemImage: "xmark.seal.fill")
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private static func coordinate(_ latitude: Double, _ longitude: Double) -> String {
+        String(format: "%.4f°, %.4f°", latitude, longitude)
+    }
+
+    /// Approximate equator cell size for each grid-code precision.
+    private static func precisionLabel(_ precision: UInt8) -> String {
+        switch precision {
+        case 1: "about 2,500 km"
+        case 2: "about 156 km"
+        case 3: "about 10 km"
+        case 4: "about 610 m"
+        case 5: "about 38 m"
+        case 6: "about 2.4 m"
+        default: "about 15 cm"
+        }
     }
 }
 

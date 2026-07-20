@@ -43,6 +43,18 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
+    func advertisementEvents() -> AsyncStream<RadioAdvertisementEvent> {
+        AsyncStream { _ in }
+    }
+
+    func advertiseIdentity(name: String?) async throws {
+        throw RadioConnectionError.identityUnavailable
+    }
+
+    func signIdentityBundle(name: String?) async throws -> Data {
+        throw RadioConnectionError.identityUnavailable
+    }
+
     func connect() async throws {
         publish(.previewReady)
     }

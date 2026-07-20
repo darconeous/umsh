@@ -18,6 +18,9 @@ struct StoredNode: Equatable, Sendable {
     let isContact: Bool
     let systemRole: String?
     let nodeKind: String?
+    /// Raw advertised-identity payload bytes (node-identity.md wire form),
+    /// decoded for display through the Rust facade on load.
+    let advertisement: Data?
 }
 
 struct NewStoredNode: Equatable, Sendable {
@@ -52,7 +55,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 5
+    static let currentSchemaVersion: Int32 = 7
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -210,14 +213,16 @@ actor SQLiteApplicationStore {
         isContact: Bool,
         nodeKind: String? = nil,
         systemRole: String? = nil,
-        radioIdentifier: String? = nil
+        radioIdentifier: String? = nil,
+        advertisement: Data? = nil
     ) throws {
         let statement = try prepare(
             """
             INSERT INTO node (
                 owner_identity_id, public_address, alias, alias_search,
-                advertised_name, is_contact, system_role, radio_identifier, node_kind
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                advertised_name, is_contact, system_role, radio_identifier, node_kind,
+                advertisement
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
                 alias = COALESCE(excluded.alias, node.alias),
                 alias_search = CASE WHEN excluded.alias IS NULL
@@ -226,7 +231,8 @@ actor SQLiteApplicationStore {
                 is_contact = MAX(node.is_contact, excluded.is_contact),
                 system_role = COALESCE(excluded.system_role, node.system_role),
                 radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier),
-                node_kind = COALESCE(excluded.node_kind, node.node_kind)
+                node_kind = COALESCE(excluded.node_kind, node.node_kind),
+                advertisement = COALESCE(excluded.advertisement, node.advertisement)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -239,7 +245,63 @@ actor SQLiteApplicationStore {
         try bindOptional(systemRole, to: statement, at: 7)
         try bindOptional(radioIdentifier, to: statement, at: 8)
         try bindOptional(nodeKind, to: statement, at: 9)
+        try bindOptional(advertisement, to: statement, at: 10)
         try stepDone(statement)
+    }
+
+    func localAdvertisedName(ownerIdentityID: String) throws -> String? {
+        let statement = try prepare(
+            "SELECT advertised_name FROM local_identity WHERE id = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Self.optionalStringColumn(statement, at: 0)
+    }
+
+    func updateLocalAdvertisedName(ownerIdentityID: String, name: String?) throws {
+        let statement = try prepare(
+            "UPDATE local_identity SET advertised_name = ? WHERE id = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bindOptional(name, to: statement, at: 1)
+        try bind(ownerIdentityID, to: statement, at: 2)
+        try stepDone(statement)
+    }
+
+    func updateNodeAlias(
+        ownerIdentityID: String,
+        publicAddress: String,
+        alias: String?
+    ) throws {
+        try transaction {
+            // The prefix-search key falls back to the advertised name when
+            // the alias is cleared, matching upsertPeer's initial insert.
+            let select = try prepare(
+                """
+                SELECT advertised_name FROM node
+                WHERE owner_identity_id = ? AND public_address = ?
+                """
+            )
+            defer { sqlite3_finalize(select) }
+            try bind(ownerIdentityID, to: select, at: 1)
+            try bind(publicAddress, to: select, at: 2)
+            guard sqlite3_step(select) == SQLITE_ROW else { return }
+            let advertisedName = Self.optionalStringColumn(select, at: 0)
+
+            let update = try prepare(
+                """
+                UPDATE node SET alias = ?, alias_search = ?
+                WHERE owner_identity_id = ? AND public_address = ?
+                """
+            )
+            defer { sqlite3_finalize(update) }
+            try bindOptional(alias, to: update, at: 1)
+            try bind(Self.normalizeSearch(alias ?? advertisedName ?? ""), to: update, at: 2)
+            try bind(ownerIdentityID, to: update, at: 3)
+            try bind(publicAddress, to: update, at: 4)
+            try stepDone(update)
+        }
     }
 
     func upsertCompanionRadioPeer(
@@ -276,7 +338,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind
+                   is_contact, system_role, node_kind, advertisement
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
                      alias_search, id
@@ -325,7 +387,7 @@ actor SQLiteApplicationStore {
             """
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
                    n.advertised_name, n.is_contact, n.system_role, n.node_kind,
-                   c.draft_text
+                   n.advertisement, c.draft_text
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
@@ -340,7 +402,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 9)
+                        draftText: Self.stringColumn(statement, at: 10)
                     )
                 )
             case SQLITE_DONE:
@@ -666,7 +728,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind
+                   is_contact, system_role, node_kind, advertisement
             FROM node
             WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
             ORDER BY alias_search, id
@@ -748,7 +810,8 @@ actor SQLiteApplicationStore {
             advertisedName: Self.optionalStringColumn(statement, at: offset + 4),
             isContact: sqlite3_column_int(statement, offset + 5) != 0,
             systemRole: Self.optionalStringColumn(statement, at: offset + 6),
-            nodeKind: Self.optionalStringColumn(statement, at: offset + 7)
+            nodeKind: Self.optionalStringColumn(statement, at: offset + 7),
+            advertisement: Self.optionalDataColumn(statement, at: offset + 8)
         )
     }
 
@@ -1225,6 +1288,40 @@ actor SQLiteApplicationStore {
                 throw error
             }
         }
+
+        if version < 6 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node ADD COLUMN advertisement BLOB;
+                    PRAGMA user_version = 6;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 7 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE local_identity ADD COLUMN advertised_name TEXT;
+                    PRAGMA user_version = 7;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
     }
 
     private static func readSchemaVersion(_ database: OpaquePointer) throws -> Int32 {
@@ -1274,6 +1371,14 @@ actor SQLiteApplicationStore {
     ) -> String? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return stringColumn(statement, at: index)
+    }
+
+    private static func optionalDataColumn(
+        _ statement: OpaquePointer,
+        at index: Int32
+    ) -> Data? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return dataColumn(statement, at: index)
     }
 
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

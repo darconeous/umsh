@@ -1042,8 +1042,12 @@ Transcript / messaging:
 - Start a PFS session with a peer from the chat and from the peer sheet.
   Gating: facade API over `umsh-node` PFS establishment + UI state for
   pending/established/failed.
-- Custom chat bubble color (local preference; consider mapping onto the
-  protocol's bg/text color presentation options for outbound messages).
+- Custom chat bubble color (decided 2026-07-20: NOT a local preference —
+  the chosen color is carried on the wire with outbound messages via the
+  text protocol's presentation options, so peers render the sender's
+  messages in the sender's chosen color; it never restyles received
+  bubbles locally). Gating: text-protocol presentation option plumbing
+  through the engine and facade.
 - Paged message history: load only a recent window of the transcript;
   scrolling to the top and pulling down fetches older pages. Note the
   transcript deliberately uses a non-lazy VStack (layout-loop fix,
@@ -1062,13 +1066,45 @@ Network / routing:
   defaults. Gating: facade must expose umsh-node routing table entries.
 
 Peer sheet:
-- Identity QR code (canonical URI as QR; camera import elsewhere later).
-- Copy-identity-URI button.
-- Edit peer alias after import.
-- Show capabilities, location, and other advertised-identity fields (see
-  protocol `node-identity.md`); mark unauthenticated claims as such.
-- Advertise our own identity (Advertisement Request / identity broadcast —
-  device-node milestone already validated the frame on firmware).
+- DONE 2026-07-20: identity QR code + copy-identity-URI (peer sheet and
+  Settings identity sheet; `umsh` URL scheme registered so Camera-scanned
+  QRs open the prefilled import sheet via onOpenURL).
+- DONE 2026-07-20: edit peer alias after import (store `updateNodeAlias`
+  clears or sets; alias-search falls back to advertised name).
+- DONE 2026-07-20: advertised-identity display. URI identity bundles are
+  Base58 (variable-length codec in `umsh-uri`), decoded + signature-verified
+  in the facade (`NodeIdentityRecord`, `decode_node_identity`); raw payload
+  persisted in `node.advertisement` (schema v6) except when the signature
+  fails verification (tampered bundles are shown Invalid but never stored);
+  peer sheet + import preview render role/caps/name/location/altitude/
+  timestamp with an Authenticity row (Signed/Not signed/Signature invalid).
+  NOTE: this pinned uri-formats.md's "suitable representation" for the
+  identity-data segment to variable-length Base58 (matches the spec
+  example); spec wording should be tightened to say so explicitly.
+- DONE 2026-07-20: advertise our own identity. Worker retains a
+  SoftwareIdentity clone as signer (MAC takes the original);
+  `advertise_identity` broadcasts `[PayloadType::NodeIdentity] + bundle`
+  via `send_all` with `with_full_source()` (hint-only sources are
+  unverifiable, so receivers require the full key), always self-signed
+  (broadcasts have no MIC); role Chat, caps Mobile+Text, optional name
+  (24-byte cap on a char boundary), Unix timestamp. Settings → Your
+  identity gains a persisted advertised name (`local_identity
+  .advertised_name`, schema v7) and an Advertise Identity button.
+- DONE 2026-07-20: OTA advertisement capture. Worker surfaces NodeIdentity
+  receptions with a full-key source as `advertisement_events` in
+  `poll_update`; the app persists only bundles whose signature VERIFIES
+  against the claimed key (unsigned/invalid OTA claims are spoofable and
+  are dropped, unlike user-initiated URI imports where unsigned is kept
+  and labeled). Valid ones upsert the peer (discovery) + advertisement
+  bytes.
+- DONE 2026-07-20: own QR/URI carries the signed bundle
+  (`sign_identity_bundle` worker command + `node_uri_with_identity`
+  facade fn) when the mesh session is available; falls back to the bare
+  key URI otherwise, with an explanatory footer.
+- Remaining: solicit a peer's advertisement from the peer sheet
+  (Advertisement Request MAC command TX is not exposed to the phone yet);
+  respond to received Advertisement Requests (phone-as-responder parity
+  with firmware device-node behavior).
 
 Platform:
 - Notifications + background running so messages arrive while the app is

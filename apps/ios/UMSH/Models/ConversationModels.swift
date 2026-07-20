@@ -8,6 +8,9 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     let isContact: Bool
     let systemRole: String?
     let kind: PeerKind
+    /// Decoded advertised identity, when a bundle has been imported or
+    /// received for this peer.
+    var advertisedIdentity: MeshNodeIdentity? = nil
 
     var displayName: String {
         alias ?? advertisedName ?? (isCompanionRadio ? "Companion radio" : identity.hint.text)

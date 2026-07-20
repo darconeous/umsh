@@ -52,6 +52,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
+    private var advertisementContinuations:
+        [UUID: AsyncStream<RadioAdvertisementEvent>.Continuation] = [:]
     private var scanRequested = false
     private var scanExcludesRememberedRadio = false
     private var scanAttempt = UUID()
@@ -145,6 +147,44 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 result.resume(returning: stream)
             }
         }
+    }
+
+    func advertisementEvents() async -> AsyncStream<RadioAdvertisementEvent> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                // Advertisements are sparse; a small bounded buffer rides out
+                // a briefly busy consumer without unbounded growth.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+                    let id = UUID()
+                    advertisementContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.advertisementContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func advertiseIdentity(name: String?) async throws {
+        let session = try await currentMeshSession()
+        try await session.advertiseIdentity(
+            name: name,
+            timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
+        )
+        bluetoothQueue.async { [self] in
+            scheduleMeshPump(idlePolls: 4, delay: 0)
+        }
+    }
+
+    func signIdentityBundle(name: String?) async throws -> Data {
+        let session = try await currentMeshSession()
+        return try await session.signIdentityBundle(
+            name: name,
+            timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
+        )
     }
 
     func connect() async throws {
@@ -1011,6 +1051,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     waiter.resume(returning: .timedOut)
                 case .failed:
                     waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
+                }
+            }
+            for event in update.advertisementEvents {
+                let advertisement = RadioAdvertisementEvent(
+                    peerAddress: event.peerAddress,
+                    payload: event.payload
+                )
+                for continuation in advertisementContinuations.values {
+                    continuation.yield(advertisement)
                 }
             }
             if let chatBatchID = update.chatBatchId,

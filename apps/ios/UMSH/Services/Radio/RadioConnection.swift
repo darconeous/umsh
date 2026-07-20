@@ -5,6 +5,9 @@ protocol RadioConnection: AnyObject, Sendable {
     func snapshots() async -> AsyncStream<RadioSnapshot>
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame>
     func chatUpdates() async -> AsyncStream<RadioChatUpdate>
+    func advertisementEvents() async -> AsyncStream<RadioAdvertisementEvent>
+    func advertiseIdentity(name: String?) async throws
+    func signIdentityBundle(name: String?) async throws -> Data
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func useMeshSession(_ session: MobileMeshSession?) async
     func autoConnect() async
@@ -47,6 +50,13 @@ protocol RadioConnection: AnyObject, Sendable {
     ) async throws
     func acknowledgeChatBatch(_ batchID: UInt64) async throws
     func disconnect() async
+}
+
+/// A node-identity advertisement received over the mesh. The payload is the
+/// raw bundle; consumers verify its signature before trusting any claim.
+struct RadioAdvertisementEvent: Equatable, Sendable {
+    let peerAddress: String
+    let payload: Data
 }
 
 struct RadioChatUpdate: Sendable {
