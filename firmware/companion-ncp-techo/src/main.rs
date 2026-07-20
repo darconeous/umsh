@@ -194,7 +194,13 @@ mod firmware {
     /// The NCP session instantiated with this firmware's crypto
     /// providers (software AES/SHA; Ed25519 comes in only through the
     /// device-identity provisioning path).
-    type Session = umsh_companion_ncp::Session<SoftwareAes, SoftwareSha256>;
+    // The physical radio remains single-flight, but the protocol session can
+    // retain several host frames. This target-specific const generic avoids a
+    // LoRa completion round trip between fragments without imposing the RAM
+    // cost on smaller/default Session users.
+    const COMPANION_TX_QUEUE_CAPACITY: usize = 8;
+    type Session =
+        umsh_companion_ncp::Session<SoftwareAes, SoftwareSha256, COMPANION_TX_QUEUE_CAPACITY>;
 
     /// Deterministic CSPRNG for device-identity generation, seeded from
     /// the hardware TRNG at boot: the RNG peripheral itself is owned by
@@ -2604,10 +2610,12 @@ mod firmware {
                 }
                 Either3::Third(result) => {
                     let now_ms = Instant::now().as_millis();
-                    session.on_tx_result(result.is_ok(), now_ms, &mut |frame: &[u8]| {
-                        emitter.push(frame)
-                    });
+                    let effect =
+                        session.on_tx_result(result.is_ok(), now_ms, &mut |frame: &[u8]| {
+                            emitter.push(frame)
+                        });
                     emitter.flush(arbitration.destination()).await;
+                    apply_effect(&session, effect).await;
                 }
             }
             // Any of the arms may have moved the device-domain tables

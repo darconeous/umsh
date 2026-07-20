@@ -59,6 +59,11 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let isDeleted: Bool
 }
 
+enum MessageSendResult: Sendable {
+    case sent(DirectConversationSummary)
+    case failed(String)
+}
+
 struct PeerPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
     let hopCount: UInt8?

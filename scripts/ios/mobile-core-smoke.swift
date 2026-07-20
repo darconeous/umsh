@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 12)
+        precondition(mobileApiVersion() == 23)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))

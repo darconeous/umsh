@@ -200,6 +200,7 @@ struct RadioProvisioningSummary: Equatable, Sendable {
 
 struct RadioSettings: Equatable, Sendable {
     let deviceName: String?
+    let phyEnabled: Bool
     let frequencyKHz: UInt32
     let transmitPowerDBm: Int8
     let bandwidthHz: UInt32?

@@ -11,6 +11,7 @@ umsh-companion = { path = "../umsh-companion" }
 umsh-core = { path = "../umsh-core", default-features = false }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
+heapless.workspace = true
 
 [dev-dependencies]
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = [

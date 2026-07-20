@@ -78,7 +78,7 @@ actor FakeRadioConnection: RadioConnection {
                 supportsDeviceName: provisioning.supportsDeviceName,
                 supportsLoRa: provisioning.supportsLoRa,
                 supportsDutyCycleLimit: provisioning.supportsDutyCycleLimit,
-                phyEnabled: provisioning.phyEnabled,
+                phyEnabled: settings.phyEnabled,
                 frequencyKHz: settings.frequencyKHz,
                 transmitPowerDBm: settings.transmitPowerDBm,
                 bandwidthHz: settings.bandwidthHz,

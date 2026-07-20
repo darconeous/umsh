@@ -77,4 +77,5 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case identityUnavailable
     case takeoverNotAllowed
     case operationInProgress
+    case operationRejected(String)
 }

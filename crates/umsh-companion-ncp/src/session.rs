@@ -1,5 +1,6 @@
 //! The NCP protocol session state machine.
 
+use heapless::{Deque, Vec as HeaplessVec};
 use umsh_companion::Status;
 use umsh_companion::airtime::lora_airtime_ms;
 use umsh_companion::battery::{self, BatteryStatus};
@@ -198,6 +199,7 @@ pub enum IdentitySource {
 }
 
 struct PendingTx {
+    data: HeaplessVec<u8, MAX_MTU>,
     tid: u8,
     airtime_ms: u32,
     power: TxPower,
@@ -1144,11 +1146,13 @@ impl Reader<'_> {
 /// State that exists only while a host is attached (spec §State
 /// Classes): transaction correlation and session-scoped properties.
 /// Reset on every attach without touching the radio.
-#[derive(Default)]
-struct SessionState {
+struct SessionState<const TX: usize> {
     /// `PROP_MAC_PROMISCUOUS` — the only session-scoped property.
     promiscuous: bool,
-    pending: Option<PendingTx>,
+    /// Accepted host transmissions, including the one currently owned by the
+    /// physical radio. Keeping this queue in the NCP lets a host pipeline
+    /// fragmented messages without waiting one LoRa round trip per fragment.
+    pending: Deque<PendingTx, TX>,
     /// Host replacement awaiting its durable wipe
     /// ([`Effect::WipeHostDomain`]). The new key is installed only when
     /// the wipe completes; a detach mid-flight abandons the
@@ -1163,6 +1167,18 @@ struct SessionState {
     /// the transaction; flash remains the source of truth either way
     /// (see [`Session::respond_identity`]).
     pending_identity: Option<PendingIdentity>,
+}
+
+impl<const TX: usize> Default for SessionState<TX> {
+    fn default() -> Self {
+        Self {
+            promiscuous: false,
+            pending: Deque::new(),
+            pending_host: None,
+            drain: None,
+            pending_identity: None,
+        }
+    }
 }
 
 struct PendingHostKey {
@@ -1181,7 +1197,7 @@ struct DrainState {
     remaining: usize,
 }
 
-pub struct Session<A: AesProvider, S: Sha256Provider> {
+pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     config: SessionConfig,
     /// Protocol crypto (channel-identifier derivation now; packet
     /// authentication and delegated acknowledgement with
@@ -1189,7 +1205,7 @@ pub struct Session<A: AesProvider, S: Sha256Provider> {
     engine: CryptoEngine<A, S>,
     device: DeviceDomain,
     host: HostDomain,
-    session: SessionState,
+    session: SessionState<TX>,
     /// Whether a host is currently attached: accepted frames are
     /// delivered live when true and queued when false. Starts detached;
     /// the transport binding reports attach/detach edges.
@@ -1221,12 +1237,10 @@ pub struct Session<A: AesProvider, S: Sha256Provider> {
     /// 3); the session stays authoritative for the property surface and
     /// the firmware applies the change to its `MacHandle`.
     dev_domain_version: u32,
-    tx_buf: [u8; MAX_MTU],
-    tx_len: usize,
     scratch: [u8; SCRATCH],
 }
 
-impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
+impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `boot_status` is the retained hardware reset cause, reported by
     /// the first `PROP_LAST_STATUS` get of the first session.
     pub fn new(config: SessionConfig, boot_status: Status, engine: CryptoEngine<A, S>) -> Self {
@@ -1245,8 +1259,6 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             dev_key_persisted: None,
             last_status: boot_status,
             dev_domain_version: 0,
-            tx_buf: [0; MAX_MTU],
-            tx_len: 0,
             scratch: [0; SCRATCH],
         }
     }
@@ -1264,21 +1276,25 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
 
     /// Payload of the transmit requested by [`Effect::StartTransmit`].
     pub fn tx_data(&self) -> &[u8] {
-        &self.tx_buf[..self.tx_len]
+        self.session
+            .pending
+            .front()
+            .map(|pending| pending.data.as_slice())
+            .unwrap_or_default()
     }
 
     /// Power selection for the pending transmit.
     pub fn tx_power(&self) -> TxPower {
         self.session
             .pending
-            .as_ref()
+            .front()
             .map(|pending| pending.power)
             .unwrap_or(TxPower::Default)
     }
 
     /// Whether a transmit is awaiting [`Session::on_tx_result`].
     pub fn has_pending_tx(&self) -> bool {
-        self.session.pending.is_some()
+        !self.session.pending.is_empty()
     }
 
     /// Number of received frames currently waiting for the host.
@@ -1829,7 +1845,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
     /// simply remains unacknowledged). `ack_for` names the queue entry
     /// that earns `RX_FLAG_ACKED` when the transmission completes.
     fn stage_ack(&mut self, plan: AckPlan, ack_for: Option<u16>, now_ms: u64) -> Option<Effect> {
-        if !self.host.auto_ack || self.session.pending.is_some() {
+        if !self.host.auto_ack || !self.session.pending.is_empty() {
             return None;
         }
         let mut buf = [0u8; 24];
@@ -1850,23 +1866,32 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         if self.config.duty.would_exceed(now_ms, airtime_ms) {
             return None;
         }
-        self.tx_buf[..frame_len].copy_from_slice(&buf[..frame_len]);
-        self.tx_len = frame_len;
-        self.session.pending = Some(PendingTx {
-            tid: TID_UNSOLICITED,
-            airtime_ms,
-            power: TxPower::Default,
-            autonomous: true,
-            ack_for,
-        });
+        let mut data = HeaplessVec::new();
+        data.extend_from_slice(&buf[..frame_len]).ok()?;
+        self.session
+            .pending
+            .push_back(PendingTx {
+                data,
+                tid: TID_UNSOLICITED,
+                airtime_ms,
+                power: TxPower::Default,
+                autonomous: true,
+                ack_for,
+            })
+            .ok()?;
         Some(Effect::StartTransmit)
     }
 
     /// Report completion of the transmit started by
     /// [`Effect::StartTransmit`].
-    pub fn on_tx_result(&mut self, success: bool, now_ms: u64, emit: &mut impl FnMut(&[u8])) {
-        let Some(pending) = self.session.pending.take() else {
-            return;
+    pub fn on_tx_result(
+        &mut self,
+        success: bool,
+        now_ms: u64,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        let Some(pending) = self.session.pending.pop_front() else {
+            return None;
         };
         if success {
             self.config.duty.record(now_ms, pending.airtime_ms);
@@ -1886,6 +1911,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         } else if !pending.autonomous {
             self.complete(pending.tid, Status::FAILURE, emit);
         }
+        (!self.session.pending.is_empty()).then_some(Effect::StartTransmit)
     }
 
     // ─── Command implementations ─────────────────────────────────────
@@ -2641,7 +2667,7 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.complete(tid, Status::PARSE_ERROR, emit);
             return None;
         };
-        if self.session.pending.is_some() {
+        if self.session.pending.is_full() {
             self.complete(tid, Status::BUSY, emit);
             return None;
         }
@@ -2652,8 +2678,15 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             self.device.settings.cr_denom,
             payload.data.len(),
         );
+        let projected_airtime_ms = self
+            .session
+            .pending
+            .iter()
+            .fold(airtime_ms, |total, pending| {
+                total.saturating_add(pending.airtime_ms)
+            });
         if tx_meta.flags & meta::TX_FLAG_NODUTY == 0
-            && self.config.duty.would_exceed(now_ms, airtime_ms)
+            && self.config.duty.would_exceed(now_ms, projected_airtime_ms)
         {
             self.complete(tid, Status::DUTY_LIMIT, emit);
             return None;
@@ -2661,9 +2694,13 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
         // v0: the CCA flag is ignored — this firmware's radio path has
         // no CAD gate, so every transmit behaves as NOCCA.
 
-        self.tx_buf[..payload.data.len()].copy_from_slice(payload.data);
-        self.tx_len = payload.data.len();
-        self.session.pending = Some(PendingTx {
+        let was_empty = self.session.pending.is_empty();
+        let mut data = HeaplessVec::new();
+        // The MTU check above proves this fixed-capacity copy can succeed.
+        data.extend_from_slice(payload.data)
+            .expect("payload bounded by MAX_MTU");
+        let queued = self.session.pending.push_back(PendingTx {
+            data,
             tid,
             airtime_ms,
             power: match tx_meta.power {
@@ -2674,7 +2711,8 @@ impl<A: AesProvider, S: Sha256Provider> Session<A, S> {
             autonomous: false,
             ack_for: None,
         });
-        Some(Effect::StartTransmit)
+        debug_assert!(queued.is_ok(), "queue fullness checked above");
+        was_empty.then_some(Effect::StartTransmit)
     }
 
     // ─── Property encoding ───────────────────────────────────────────
@@ -3039,8 +3077,8 @@ mod tests {
     }
 
     /// Drive `handle_frame` and collect emitted frames.
-    fn dispatch(
-        session: &mut TestSession,
+    fn dispatch<const TX: usize>(
+        session: &mut Session<SoftwareAes, SoftwareSha256, TX>,
         request: &[u8],
         now_ms: u64,
     ) -> (Vec<Vec<u8>>, Option<Effect>) {
@@ -3082,8 +3120,8 @@ mod tests {
         dispatch(session, &buf[..len], 0)
     }
 
-    fn send_packet(
-        session: &mut TestSession,
+    fn send_packet<const TX: usize>(
+        session: &mut Session<SoftwareAes, SoftwareSha256, TX>,
         tid: u8,
         data: &[u8],
         meta: &[u8],
@@ -3604,6 +3642,36 @@ mod tests {
         assert!(!session.has_pending_tx());
         let duty = get(&mut session, prop::PHY_DUTY_NOW);
         assert!(u16::from_le_bytes([duty[0], duty[1]]) > 0);
+    }
+
+    #[test]
+    fn target_selected_transmit_queue_pipelines_frames() {
+        type PipelinedSession = Session<SoftwareAes, SoftwareSha256, 3>;
+        let mut session: PipelinedSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        let mut request = [0u8; 16];
+        let len = frame::prop_set(&mut request, 1, prop::PHY_ENABLED, &[1]).unwrap();
+        let (_, effect) = dispatch(&mut session, &request[..len], 0);
+        assert!(matches!(effect, Some(Effect::ApplyRadio(settings)) if settings.enabled));
+
+        for tid in 2..=4 {
+            let (emitted, effect) = send_packet(&mut session, tid, &[tid; 8], &[], 0);
+            assert!(emitted.is_empty());
+            assert_eq!(effect, (tid == 2).then_some(Effect::StartTransmit));
+        }
+        let (emitted, effect) = send_packet(&mut session, 5, &[5; 8], &[], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 5, Status::BUSY);
+
+        for tid in 2..=4 {
+            assert_eq!(session.tx_data(), &[tid; 8]);
+            let mut emitted = Vec::new();
+            let effect = session.on_tx_result(true, 0, &mut |bytes| emitted.push(bytes.to_vec()));
+            expect_status(&emitted[0], tid, Status::OK);
+            assert_eq!(effect, (tid != 4).then_some(Effect::StartTransmit));
+        }
+        assert!(!session.has_pending_tx());
     }
 
     #[test]
@@ -5123,7 +5191,8 @@ mod tests {
         // A fresh session boots from those bytes into the saved
         // configuration, with the PHY re-enabled, before any host
         // command.
-        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         let effect = booted.restore_at_boot(&bytes[..len]).unwrap();
         assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 906_875));
         assert_eq!(booted.device_name(), "saved name");
@@ -5264,7 +5333,8 @@ mod tests {
         // domain.
         let mut wiped = [0u8; SNAPSHOT_MAX];
         let wiped_len = session.encode_wiped_snapshot(&mut wiped).unwrap();
-        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&wiped[..wiped_len]).unwrap();
         booted.attach(true);
         assert_eq!(booted.device_name(), "saved name");
@@ -5741,7 +5811,8 @@ mod tests {
         save(&mut session);
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();
-        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         assert_eq!(booted.dev_domain_version(), 0);
         booted.restore_at_boot(&bytes[..len]).unwrap();
         assert_ne!(booted.dev_domain_version(), 0);
@@ -5794,7 +5865,8 @@ mod tests {
         // identity, which is persisted (and installed) independently.
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();
-        let mut booted = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
         booted.attach(true);
         assert_eq!(get(&mut booted, prop::DEV_CHANNEL_KEYS), dev_id);

@@ -1,5 +1,6 @@
 @preconcurrency import CoreBluetooth
 import Foundation
+import OSLog
 import UMSHMobileCore
 
 /// Discovers and attaches the GATT transport for a companion radio.
@@ -10,6 +11,23 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     /// Long enough for a several-hop LoRa round trip, but short enough that a
     /// silent peer does not leave the peer page waiting for half a minute.
     private static let peerPingTimeoutMilliseconds: UInt64 = 8_000
+    private static let logger = Logger(subsystem: "com.umsh.ios", category: "CompanionRadio")
+    private static let maximumRawTransmitBusyRetries = 20
+    // The current mobile MAC needs the companion's physical TX completion
+    // before starting its ACK clock. A larger CRP window is unsafe until the
+    // companion itself owns the inter-frame receive/ACK window.
+    private static let maximumRawTransmitsInFlight = 1
+
+    private struct PendingRawFrame {
+        var data: Data
+        var meshFrameID: UInt64
+        var busyRetries = 0
+    }
+
+    private struct PendingGattWrite {
+        var value: Data
+        var rawTransactionID: UInt8?
+    }
 
     private enum PreferenceKey {
         static let lastAttachedPeripheral = "radio.lastAttachedPeripheral"
@@ -43,8 +61,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var intentionalDisconnect = false
     private let reassembler = MobileGattReassembler()
     private let companionSession = MobileCompanionSession()
-    private var pendingWrites: [Data] = []
+    private var pendingWrites: [PendingGattWrite] = []
     private var writeInProgress = false
+    private var currentWriteRawTransactionID: UInt8?
     private var syncAttempt = UUID()
     private var selectedHostKey: Data?
     private var preservesFailureOnDisconnect = false
@@ -55,6 +74,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     private var meshPumpGeneration = UUID()
     private var meshPumpScheduled = false
+    private var pendingRawFrames: [PendingRawFrame] = []
+    private var rawTransmitsInFlight: [UInt8: PendingRawFrame] = [:]
+    private var autoEnableAttemptedGeneration: UInt64?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -237,7 +259,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 from: peripheral
             )
         } catch {
-            publishFailure("The radio could not replace its configured host", name: peripheral.name)
+            reportOperationFailure("The radio could not replace its configured host", name: peripheral.name)
             throw RadioConnectionError.incompatibleProtocol
         }
     }
@@ -257,6 +279,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 do {
                     let record = CompanionRadioSettingsRecord(
                         deviceName: settings.deviceName,
+                        phyEnabled: settings.phyEnabled,
                         frequencyKhz: settings.frequencyKHz,
                         transmitPowerDbm: settings.transmitPowerDBm,
                         bandwidthHz: settings.bandwidthHz,
@@ -551,10 +574,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
     }
 
-    private func publishFailure(_ message: String, name: String? = nil) {
+    /// Tear down a companion link only when its framing or session state is
+    /// no longer trustworthy. Ordinary CRP status failures and rejected
+    /// operations must never come through this path.
+    private func terminateConnectionForFatalProtocolError(_ message: String, name: String? = nil) {
+        Self.logger.fault("Fatal companion protocol error: \(message, privacy: .public)")
         finishPendingOperations(throwing: RadioConnectionError.incompatibleProtocol)
         pendingWrites.removeAll()
         writeInProgress = false
+        currentWriteRawTransactionID = nil
+        pendingRawFrames.removeAll()
+        rawTransmitsInFlight.removeAll()
         syncAttempt = UUID()
         _ = companionSession.reset()
         snapshot.linkState = .failed
@@ -566,6 +596,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             preservesFailureOnDisconnect = true
             central?.cancelPeripheralConnection(peripheral)
         }
+    }
+
+    /// Report a failed operation without disturbing the BLE transport or the
+    /// companion session. A connected radio remains connected.
+    private func reportOperationFailure(_ message: String, name: String? = nil) {
+        Self.logger.error("Companion operation failed: \(message, privacy: .public)")
+        snapshot.name = name ?? snapshot.name
+        snapshot.problemDescription = message
+        publish(snapshot)
     }
 
     private var rememberedPeripheralIdentifier: UUID? {
@@ -592,42 +631,55 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func beginSynchronization(on peripheral: CBPeripheral) {
         guard let frameIn else {
-            publishFailure("The radio has no writable companion endpoint", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has no writable companion endpoint", name: peripheral.name)
             return
         }
         guard frameIn.properties.contains(.write) else {
-            publishFailure("The radio requires an unsupported write mode", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio requires an unsupported write mode", name: peripheral.name)
             return
         }
 
         reassembler.reset()
         pendingWrites.removeAll(keepingCapacity: true)
         writeInProgress = false
+        currentWriteRawTransactionID = nil
         do {
             try applySessionUpdate(
                 companionSession.begin(selectedHostKey: selectedHostKey),
                 from: peripheral
             )
         } catch {
-            publishFailure("The companion session could not start", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The companion session could not start", name: peripheral.name)
         }
     }
 
     private func writeNext(on peripheral: CBPeripheral) {
         guard !writeInProgress, !pendingWrites.isEmpty, let frameIn else { return }
         writeInProgress = true
-        peripheral.writeValue(pendingWrites.removeFirst(), for: frameIn, type: .withResponse)
+        let write = pendingWrites.removeFirst()
+        currentWriteRawTransactionID = write.rawTransactionID
+        peripheral.writeValue(write.value, for: frameIn, type: .withResponse)
     }
 
-    private func enqueue(frame: Data, on peripheral: CBPeripheral) throws {
+    private func enqueue(
+        frame: Data,
+        rawTransactionID: UInt8? = nil,
+        on peripheral: CBPeripheral
+    ) throws {
+        // CoreBluetooth's with-response maximum may advertise the size of an
+        // ATT long write. CRP GATT SAR requires ordinary single-write values;
+        // the without-response maximum is the negotiated ATT payload bound
+        // even though we deliberately send each segment with a response.
         let maximumLength = UInt16(
-            min(peripheral.maximumWriteValueLength(for: .withResponse), Int(UInt16.max))
+            min(peripheral.maximumWriteValueLength(for: .withoutResponse), Int(UInt16.max))
         )
         let segments = try UMSHMobileCore.companionGattSegments(
             frame: frame,
             maximumValueLength: maximumLength
         )
-        pendingWrites.append(contentsOf: segments.map(\.value))
+        pendingWrites.append(contentsOf: segments.map {
+            PendingGattWrite(value: $0.value, rawTransactionID: rawTransactionID)
+        })
     }
 
     private func receive(_ value: Data, from peripheral: CBPeripheral) {
@@ -635,7 +687,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             guard let frame = try reassembler.push(segment: value) else { return }
             try applySessionUpdate(companionSession.consume(frame: frame), from: peripheral)
         } catch {
-            publishFailure("The radio sent an invalid companion frame", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio sent an invalid companion frame", name: peripheral.name)
         }
     }
 
@@ -703,6 +755,62 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         snapshot.problemDescription = nil
 
+        let operationErrorMessage = update.operationError.map {
+            "\($0.operation) failed: \($0.statusName) (\($0.statusCode))"
+        }
+        if let operationErrorMessage {
+            Self.logger.error("Companion operation rejected: \(operationErrorMessage, privacy: .public)")
+            snapshot.problemDescription = operationErrorMessage
+        }
+
+        let shouldAutoEnable = update.snapshot.phase == .attached
+            && update.snapshot.provisioning?.phyEnabled == false
+            && (update.snapshot.hostOwnership == .ours
+                || update.snapshot.hostOwnership == .unsupported)
+            && !update.waitingForResponses
+            && autoEnableAttemptedGeneration != update.snapshot.generation
+        if shouldAutoEnable {
+            autoEnableAttemptedGeneration = update.snapshot.generation
+        }
+
+        var rawTransmitDelay: TimeInterval?
+        if let result = update.rawTransmitResult {
+            guard var submission = rawTransmitsInFlight.removeValue(
+                forKey: result.transactionId
+            ) else {
+                throw RadioConnectionError.incompatibleProtocol
+            }
+            switch result.disposition {
+            case .sent:
+                completeMeshFrame(submission.meshFrameID, transmitted: true)
+                rawTransmitDelay = 0
+            case .retry:
+                submission.busyRetries += 1
+                if submission.busyRetries <= Self.maximumRawTransmitBusyRetries {
+                    Self.logger.notice(
+                        "Companion raw transmit temporarily busy; retry \(submission.busyRetries, privacy: .public)"
+                    )
+                    pendingRawFrames.insert(submission, at: 0)
+                    rawTransmitDelay = 0.1
+                } else {
+                    completeMeshFrame(submission.meshFrameID, transmitted: false)
+                    let message = "Radio remained busy; send was not transmitted"
+                    Self.logger.error(
+                        "Companion raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                    )
+                    snapshot.problemDescription = message
+                    rawTransmitDelay = 0
+                }
+            case .rejected:
+                completeMeshFrame(submission.meshFrameID, transmitted: false)
+                Self.logger.error(
+                    "Companion raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                )
+                snapshot.problemDescription = "Radio rejected the transmission: \(result.statusName)"
+                rawTransmitDelay = 0
+            }
+        }
+
         for received in update.receivedFrames {
             if let meshSession {
                 try meshSession.receive(
@@ -730,7 +838,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
 
         for frame in update.outboundFrames {
-            try enqueue(frame: frame, on: peripheral)
+            try enqueue(
+                frame: frame,
+                rawTransactionID: update.outboundFrames.count == 1
+                    ? update.rawTransmitStartedTransactionId
+                    : nil,
+                on: peripheral
+            )
         }
         writeNext(on: peripheral)
         if update.snapshot.phase == .attached {
@@ -744,22 +858,53 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         publish(snapshot)
 
-        if !update.waitingForResponses, update.snapshot.phase == .attached {
-            if refreshInProgress {
-                finishRefresh(throwing: nil)
-            }
-            if configurationWaiter != nil {
-                finishConfiguration(throwing: nil)
+        if shouldAutoEnable, let provisioning = update.snapshot.provisioning {
+            bluetoothQueue.async { [weak self] in
+                self?.enableAttachedPhy(
+                    provisioning: provisioning,
+                    deviceName: update.snapshot.deviceName,
+                    on: peripheral
+                )
             }
         }
 
-        guard update.waitingForResponses else { return }
+        if let rawTransmitDelay {
+            bluetoothQueue.asyncAfter(deadline: .now() + rawTransmitDelay) { [weak self] in
+                guard let self, self.peripheral === peripheral else { return }
+                do {
+                    try self.startRawTransmits(on: peripheral)
+                } catch {
+                    self.dropPendingRawFrame(
+                        reason: "The companion session rejected an outbound frame before transmission",
+                        name: peripheral.name
+                    )
+                }
+            }
+        }
+
+        if !update.waitingForResponses, update.snapshot.phase == .attached {
+            if refreshInProgress {
+                finishRefresh(
+                    throwing: operationErrorMessage.map(RadioConnectionError.operationRejected)
+                )
+            }
+            if configurationWaiter != nil {
+                finishConfiguration(
+                    throwing: operationErrorMessage.map(RadioConnectionError.operationRejected)
+                )
+            }
+        }
+
+        // Raw PHY completion can legitimately take longer than the control
+        // plane's synchronization timeout at slow LoRa settings. It has its
+        // own ordered queue and must never tear down a healthy BLE session.
+        guard update.waitingForResponses, !update.rawTransmitPending else { return }
         let attempt = syncAttempt
         bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self, let peripheral = self.peripheral, self.syncAttempt == attempt else {
                 return
             }
-            self.publishFailure(
+            self.reportOperationFailure(
                 "The companion radio did not finish synchronizing",
                 name: peripheral.name
             )
@@ -798,12 +943,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         else { return }
         do {
             let update = meshSession.pollUpdate()
-            for frame in update.outboundFrames {
-                try applySessionUpdate(
-                    companionSession.transmitRaw(data: frame),
-                    from: peripheral
-                )
-            }
+            pendingRawFrames.append(contentsOf: update.outboundFrames.map {
+                PendingRawFrame(data: $0.data, meshFrameID: $0.id)
+            })
+            try startRawTransmits(on: peripheral)
             for event in update.pingEvents {
                 guard let waiter = pingWaiters.removeValue(forKey: event.operationId) else {
                     continue
@@ -858,7 +1001,108 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
             }
             pingWaiters.removeAll()
-            publishFailure("The Rust mesh session could not use the companion radio", name: peripheral.name)
+            reportOperationFailure(
+                "The Rust mesh session could not use the companion radio: \(error)",
+                name: peripheral.name
+            )
+        }
+    }
+
+    /// Fill the companion NCP's target-sized transmit window. The NCP retains
+    /// complete frames and serializes the physical LoRa radio; transaction IDs
+    /// correlate completions even when a later submission is rejected early.
+    private func startRawTransmits(on peripheral: CBPeripheral) throws {
+        while rawTransmitsInFlight.count < Self.maximumRawTransmitsInFlight,
+              let submission = pendingRawFrames.first
+        {
+            let update = try companionSession.transmitRaw(data: submission.data)
+            guard let transactionID = update.rawTransmitStartedTransactionId,
+                  rawTransmitsInFlight[transactionID] == nil
+            else {
+                throw RadioConnectionError.incompatibleProtocol
+            }
+            pendingRawFrames.removeFirst()
+            rawTransmitsInFlight[transactionID] = submission
+            do {
+                try applySessionUpdate(update, from: peripheral)
+            } catch {
+                rawTransmitsInFlight.removeValue(forKey: transactionID)
+                pendingRawFrames.insert(submission, at: 0)
+                throw error
+            }
+        }
+    }
+
+    /// Drop one unsendable frame and keep the BLE link/session intact. The
+    /// Rust delivery ticket will time out as failed; later queued frames may
+    /// still proceed.
+    private func dropPendingRawFrame(reason: String, name: String?) {
+        if !pendingRawFrames.isEmpty {
+            let dropped = pendingRawFrames.removeFirst()
+            completeMeshFrame(dropped.meshFrameID, transmitted: false)
+        }
+        reportOperationFailure(reason, name: name)
+        guard let peripheral, peripheral.state == .connected else { return }
+        do {
+            try startRawTransmits(on: peripheral)
+        } catch {
+            // Continue draining without turning an unsendable frame into a
+            // recursive transport failure.
+            bluetoothQueue.async { [weak self] in
+                self?.dropPendingRawFrame(
+                    reason: "The companion session rejected an outbound frame before transmission",
+                    name: peripheral.name
+                )
+            }
+        }
+    }
+
+    private func completeMeshFrame(_ frameID: UInt64, transmitted: Bool) {
+        do {
+            try meshSession?.completeOutboundFrame(
+                frameId: frameID,
+                transmitted: transmitted
+            )
+        } catch {
+            // A stale completion is diagnostic, never a reason to tear down a
+            // healthy BLE attachment.
+            Self.logger.error(
+                "Could not complete mesh frame \(frameID, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// A companion attachment is intended to provide a usable radio. Preserve
+    /// the radio's authoritative profile and enable only the PHY bit after the
+    /// initial inspection discovers it disabled.
+    private func enableAttachedPhy(
+        provisioning: CompanionSyncRecord,
+        deviceName: String?,
+        on peripheral: CBPeripheral
+    ) {
+        guard self.peripheral === peripheral,
+              peripheral.state == .connected,
+              snapshot.linkState == .attached
+        else { return }
+        let settings = CompanionRadioSettingsRecord(
+            deviceName: provisioning.supportsDeviceName ? deviceName : nil,
+            phyEnabled: true,
+            frequencyKhz: provisioning.frequencyKhz,
+            transmitPowerDbm: provisioning.transmitPowerDbm,
+            bandwidthHz: provisioning.bandwidthHz,
+            spreadingFactor: provisioning.spreadingFactor,
+            codingRateDenom: provisioning.codingRateDenom,
+            dutyCycleLimit: provisioning.dutyCycleLimit
+        )
+        do {
+            try applySessionUpdate(
+                companionSession.configure(settings: settings),
+                from: peripheral
+            )
+        } catch {
+            Self.logger.error("Could not automatically enable companion PHY")
+            snapshot.problemDescription = "The companion radio could not be enabled automatically"
+            publish(snapshot)
         }
     }
 
@@ -914,6 +1158,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         _ = companionSession.reset()
         pendingWrites.removeAll()
         writeInProgress = false
+        currentWriteRawTransactionID = nil
+        pendingRawFrames.removeAll()
+        rawTransmitsInFlight.removeAll()
+        autoEnableAttemptedGeneration = nil
         syncAttempt = UUID()
         preservesFailureOnDisconnect = false
         automaticConnectionInProgress = false
@@ -979,7 +1227,10 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
             )
             return
         }
-        publishFailure(error?.localizedDescription ?? "The companion radio connection failed", name: peripheral.name)
+        terminateConnectionForFatalProtocolError(
+            error?.localizedDescription ?? "The companion radio connection failed",
+            name: peripheral.name
+        )
         clearPeripheral()
     }
 
@@ -1010,11 +1261,11 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
 extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
             return
         }
         guard let service = peripheral.services?.first(where: { $0.uuid == UUIDs.service }) else {
-            publishFailure("The radio does not expose the companion service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio does not expose the companion service", name: peripheral.name)
             return
         }
         peripheral.discoverCharacteristics([UUIDs.frameIn, UUIDs.frameOut], for: service)
@@ -1026,13 +1277,13 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         error: (any Error)?
     ) {
         if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
             return
         }
         frameIn = service.characteristics?.first(where: { $0.uuid == UUIDs.frameIn })
         frameOut = service.characteristics?.first(where: { $0.uuid == UUIDs.frameOut })
         guard frameIn != nil, let frameOut else {
-            publishFailure("The radio has an incompatible companion service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has an incompatible companion service", name: peripheral.name)
             return
         }
         publish(
@@ -1050,11 +1301,11 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     ) {
         guard characteristic.uuid == UUIDs.frameOut else { return }
         if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
             return
         }
         guard characteristic.isNotifying else {
-            publishFailure("The radio refused the companion attachment", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio refused the companion attachment", name: peripheral.name)
             return
         }
         beginSynchronization(on: peripheral)
@@ -1067,8 +1318,33 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     ) {
         guard characteristic.uuid == UUIDs.frameIn else { return }
         writeInProgress = false
+        let failedCurrentRawTransactionID = currentWriteRawTransactionID
+        currentWriteRawTransactionID = nil
         if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
+            let failedRawTransactionIDs = Set(
+                pendingWrites.compactMap(\.rawTransactionID)
+                    + [failedCurrentRawTransactionID].compactMap { $0 }
+            )
+            pendingWrites.removeAll()
+            pendingRawFrames.removeAll()
+            for transactionID in failedRawTransactionIDs {
+                rawTransmitsInFlight.removeValue(forKey: transactionID)
+            }
+            _ = companionSession.abandonRawTransmits(
+                transactionIds: Data(failedRawTransactionIDs.sorted())
+            )
+            do {
+                try meshSession?.failOutboundTransmissions()
+                scheduleMeshPump(idlePolls: 40)
+            } catch {
+                Self.logger.error(
+                    "Could not publish companion write failure to Rust mesh session"
+                )
+            }
+            reportOperationFailure(
+                "The companion write was not accepted: \(error.localizedDescription)",
+                name: peripheral.name
+            )
             return
         }
         writeNext(on: peripheral)
@@ -1081,11 +1357,14 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     ) {
         guard characteristic.uuid == UUIDs.frameOut else { return }
         if let error {
-            publishFailure(error.localizedDescription, name: peripheral.name)
+            reportOperationFailure(
+                "The companion notification could not be read: \(error.localizedDescription)",
+                name: peripheral.name
+            )
             return
         }
         guard let value = characteristic.value else {
-            publishFailure("The radio sent an empty GATT notification", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio sent an empty GATT notification", name: peripheral.name)
             return
         }
         receive(value, from: peripheral)
