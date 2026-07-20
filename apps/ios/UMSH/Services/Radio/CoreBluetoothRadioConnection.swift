@@ -76,6 +76,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var meshPumpScheduled = false
     private var pendingRawFrames: [PendingRawFrame] = []
     private var rawTransmitsInFlight: [UInt8: PendingRawFrame] = [:]
+    private var lastYieldedChatBatchID: UInt64?
+    private var lastChatBatchYield = DispatchTime.distantFuture
     private var autoEnableAttemptedGeneration: UInt64?
 
     init(defaults: UserDefaults = .standard) {
@@ -84,11 +86,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         snapshot.localIdentifier = rememberedPeripheralIdentifier
     }
 
+    // All streams use bounded buffering. A slow consumer must never turn a
+    // periodic producer into unbounded memory growth (the default AsyncStream
+    // policy buffers everything ever yielded until read).
+
     func snapshots() async -> AsyncStream<RadioSnapshot> {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
                 let initial = snapshot
-                let stream = AsyncStream { continuation in
+                // Snapshots are absolute state: only the newest matters.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
                     let id = UUID()
                     continuations[id] = continuation
                     continuation.yield(initial)
@@ -106,7 +113,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame> {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
-                let stream = AsyncStream { continuation in
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
                     let id = UUID()
                     frameContinuations[id] = continuation
                     continuation.onTermination = { [weak self] _ in
@@ -123,7 +130,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func chatUpdates() async -> AsyncStream<RadioChatUpdate> {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
-                let stream = AsyncStream { continuation in
+                // The Rust facade replays an unacknowledged batch on every
+                // poll, so a dropped element is always re-delivered; only the
+                // newest pending batch needs to sit in the buffer.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
                     let id = UUID()
                     chatContinuations[id] = continuation
                     continuation.onTermination = { [weak self] _ in
@@ -226,6 +236,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 meshSession = session
                 meshPumpGeneration = UUID()
                 meshPumpScheduled = false
+                // Batch IDs restart per session; the delivery gate must not
+                // suppress a fresh session's first batches.
+                lastYieldedChatBatchID = nil
+                lastChatBatchYield = .distantFuture
                 result.resume()
             }
         }
@@ -1005,15 +1019,28 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 || !update.chatArchiveLookups.isEmpty
                 || !update.chatDiagnostics.isEmpty)
             {
-                let chatUpdate = RadioChatUpdate(
-                    batchID: chatBatchID,
-                    mutations: update.chatMutations,
-                    deliveries: update.chatDeliveries,
-                    archiveLookups: update.chatArchiveLookups,
-                    diagnostics: update.chatDiagnostics
-                )
-                for continuation in chatContinuations.values {
-                    continuation.yield(chatUpdate)
+                // The facade replays a batch until it is acknowledged, and
+                // this poll runs several times a second. Deliver a given
+                // batch once, with a slow retry in case the consumer failed
+                // to apply it — never at the poll cadence, which floods the
+                // consumer with duplicate SQLite work.
+                let now = DispatchTime.now()
+                let isRetryDue = lastChatBatchYield < now
+                    && now.uptimeNanoseconds - lastChatBatchYield.uptimeNanoseconds
+                        > 2_000_000_000
+                if chatBatchID != lastYieldedChatBatchID || isRetryDue {
+                    lastYieldedChatBatchID = chatBatchID
+                    lastChatBatchYield = now
+                    let chatUpdate = RadioChatUpdate(
+                        batchID: chatBatchID,
+                        mutations: update.chatMutations,
+                        deliveries: update.chatDeliveries,
+                        archiveLookups: update.chatArchiveLookups,
+                        diagnostics: update.chatDiagnostics
+                    )
+                    for continuation in chatContinuations.values {
+                        continuation.yield(chatUpdate)
+                    }
                 }
             }
             if !pingWaiters.isEmpty || idlePolls > 0 {
