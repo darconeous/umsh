@@ -10,7 +10,7 @@ repository.workspace = true
 default = []
 # Exactly one chip feature must be enabled by the board BSP.
 esp32 = ["esp-hal/esp32", "esp-println/esp32"]
-# esp32s3 lands with the T-Lora Pager port.
+esp32s3 = ["esp-hal/esp32s3", "esp-println/esp32s3"]
 #
 # Install this crate's panic handler (print over UART0, capture to RTC RAM,
 # software reset). Enable from the firmware crate, not from library crates.

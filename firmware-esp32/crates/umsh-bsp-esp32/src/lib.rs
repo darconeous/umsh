@@ -1,5 +1,4 @@
-//! Chip-level BSP for Espressif SoCs (classic ESP32 now, ESP32-S3 when the
-//! T-Lora Pager lands).
+//! Chip-level BSP for Espressif SoCs (classic ESP32 and ESP32-S3).
 //!
 //! Chip-generic building blocks live here: the flash storage backend, the
 //! RF-gated `CryptoRng` wrapper, deep-sleep helpers, and panic capture to

@@ -1,10 +1,18 @@
-# Workspace-wide target selection: everything in this workspace is ESP32
-# firmware, so unlike the root workspace (host-default, per-crate overrides)
-# the cross target is set once here.
-[build]
-target = "xtensa-esp32-none-elf"
-
+# Chip-agnostic workspace defaults. Each firmware crate selects its own
+# target triple in a per-firmware `.cargo/config.toml` ([build] target,
+# plus any chip-quirk env overrides — the Heltec V2's ancient-silicon
+# revision floor lives there, not here). Per-directory configs only apply
+# when cargo runs from inside the firmware directory, so build from there
+# (the Makefile targets do); `-p` from the workspace root picks a wrong or
+# missing target.
 [target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor"
+rustflags = [
+    "-C", "link-arg=-nostartfiles",
+    "-C", "link-arg=-Wl,-Tlinkall.x",
+]
+
+[target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor"
 rustflags = [
     "-C", "link-arg=-nostartfiles",
@@ -13,11 +21,6 @@ rustflags = [
 
 [env]
 ESP_LOG = "info"
-# esp-hal's default minimum chip revision for esp32 is v3.0 (value is
-# major*100+minor). Heltec V2 boards ship old silicon — the reference unit
-# is rev v1.1 — so accept anything from v1.0 up. None of the rev-gated
-# errata paths matter here: no PSRAM on this board and no dual-core use.
-ESP_HAL_CONFIG_MIN_CHIP_REVISION = "100"
 
 [unstable]
 build-std = ["core", "alloc"]

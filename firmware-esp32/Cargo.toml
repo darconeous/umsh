@@ -1,4 +1,5 @@
-# Sibling workspace for classic-ESP32 (Xtensa) targets. Excluded from the
+# Sibling workspace for Espressif (Xtensa) targets — classic ESP32 and
+# ESP32-S3. Excluded from the
 # root workspace because the Xtensa Rust fork (`espup`, channel = "esp")
 # cannot coexist with the root `rust-toolchain.toml`, and esp-hal's embassy
 # driver constraints must not enter the root Cargo.lock. Shared UMSH crates
@@ -9,8 +10,11 @@
 members = [
     "crates/umsh-bsp-esp32",
     "crates/umsh-bsp-heltec-lora32-v2",
+    "crates/umsh-bsp-heltec-lora32-v3",
     "firmware/hello-heltec-v2",
     "firmware/ble-spike-heltec-v2",
+    "firmware/hello-heltec-v3",
+    "firmware/ble-spike-heltec-v3",
 ]
 resolver = "2"
 
