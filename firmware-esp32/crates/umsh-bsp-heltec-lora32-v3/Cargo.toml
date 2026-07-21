@@ -15,3 +15,10 @@ ssd1306 = { version = "0.10", default-features = false, features = ["async", "gr
 # SX1262 driver; resolves to ../../lora-rs via the workspace [patch].
 lora-phy = { version = "3.0.2-alpha", default-features = false }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+
+# `platform` module: the concrete `umsh_mac::Platform` bundle.
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
+umsh-mac = { path = "../../../crates/umsh-mac", default-features = false }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }

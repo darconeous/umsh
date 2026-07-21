@@ -6,4 +6,6 @@
 //! per-board BSP crates.
 #![no_std]
 
+pub mod flash_store;
 pub mod panic_capture;
+pub mod rng;

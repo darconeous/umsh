@@ -1,0 +1,25 @@
+[package]
+name = "umsh-flash-store"
+description = "Chip-agnostic sequential-storage-backed UMSH storage: generic over any async MultiwriteNorFlash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-independent flash storage backend for UMSH. Holds the entire
+# `sequential-storage` map logic (identity, peers, channels, counters,
+# key-value) that used to live in `umsh-bsp-nrf52840::flash_store`,
+# generic over `F: MultiwriteNorFlash` (the async flash driver) and
+# `M: RawMutex` (the sharing mutex). Chip BSPs alias concrete backings:
+# nRF52840 uses `BlockingAsync<Nvmc>` + `ThreadModeRawMutex`; the ESP32
+# uses `BlockingAsync<esp_storage::FlashStorage>` + `CriticalSectionRawMutex`.
+#
+# See docs/firmware-storage-plan.md for the storage-region rationale and
+# docs/firmware-architecture.md for the BSP / App / Binary triad.
+
+[dependencies]
+umsh-hal = { path = "../umsh-hal", default-features = false, features = ["embassy"] }
+embassy-sync = { version = "0.8", default-features = false }
+sequential-storage = { version = "7.2", default-features = false, features = ["heapless"] }
+embedded-storage-async = "0.4"
+heapless = { workspace = true }

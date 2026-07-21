@@ -1,0 +1,27 @@
+# ESP-IDF partition table for UMSH ESP32 firmware (shared by every board
+# in this workspace). Pass with `espflash flash --partition-table`; the
+# Makefile targets do this for you.
+#
+# The `umsh` row is what `umsh_bsp_esp32::flash_store` looks up by label at
+# boot to derive its `sequential-storage` range — it is never hardcoded in
+# firmware, so this file is the single source of truth for the region.
+# 64 KB matches the nRF52840 reservation (docs/firmware-storage-plan.md).
+#
+# Sized for the 4 MB the bootloader assumes (the Heltec V3 physically has
+# 8 MB; claiming the rest is a separate, deliberate change). The factory
+# partition gets ~2.94 MB so the NCP firmware has room — the BLE spike
+# alone is ~500 KB, and the espflash default table only offered 1 MB.
+#
+# Layout:
+#   0x008000  partition table (0xC00)
+#   0x009000  nvs        24 KB
+#   0x00F000  phy_init    4 KB
+#   0x010000  factory  2.94 MB
+#   0x300000  umsh       64 KB   <- UMSH sequential-storage region
+#   0x310000  (unused)
+#
+# Name,     Type, SubType,   Offset,   Size,     Flags
+nvs,        data, nvs,       0x9000,   0x6000,
+phy_init,   data, phy,       0xF000,   0x1000,
+factory,    app,  factory,   0x10000,  0x2F0000,
+umsh,       data, undefined, 0x300000, 0x10000,

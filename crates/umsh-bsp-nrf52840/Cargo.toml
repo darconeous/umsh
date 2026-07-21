@@ -20,6 +20,9 @@ default = []
 
 [dependencies]
 umsh-hal = { path = "../umsh-hal", default-features = false, features = ["embassy"] }
+# The chip-agnostic sequential-storage engine; `flash_store` only supplies
+# the NVMC backing and the storage region.
+umsh-flash-store = { path = "../umsh-flash-store" }
 
 # Embedded-only deps. Gated on `target_os = "none"` so this crate still
 # parses and unit-tests cleanly on host (the rescue watchers are pure
@@ -33,7 +36,6 @@ embassy-sync = { version = "0.8", default-features = false }
 embassy-embedded-hal = { version = "0.3", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 cortex-m = { version = "0.7" }
-sequential-storage = { version = "7.2", default-features = false, features = ["heapless"] }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
 heapless = { workspace = true }

@@ -22,6 +22,7 @@
 
 pub mod battery;
 pub mod display;
+pub mod platform;
 pub mod radio;
 pub mod vext;
 

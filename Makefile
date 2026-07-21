@@ -85,6 +85,12 @@ ESP32_TARGET_DIR := firmware-esp32/target/xtensa-esp32-none-elf/release
 ESP32S3_TARGET_DIR := firmware-esp32/target/xtensa-esp32s3-none-elf/release
 ESPFLASH_PORT ?=
 ESPFLASH_PORT_ARG = $(if $(ESPFLASH_PORT),--port $(ESPFLASH_PORT),)
+# Shared UMSH partition table. Carries the 64 KB `umsh` data partition that
+# umsh_bsp_esp32::flash_store looks up by label at boot; without it the
+# firmware cannot find its storage region. Flashing the table rewrites the
+# layout, so a board previously flashed with the espflash default table
+# loses whatever lived past the old factory partition.
+ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 
 build-hello-heltec-v2:
 	cd firmware-esp32/firmware/hello-heltec-v2 && cargo build --release
@@ -104,14 +110,14 @@ build-hello-heltec-v3:
 	cd firmware-esp32/firmware/hello-heltec-v3 && cargo build --release
 
 flash-hello-heltec-v3: build-hello-heltec-v3
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-hello-heltec-v3
 
 build-ble-spike-heltec-v3:
 	cd firmware-esp32/firmware/ble-spike-heltec-v3 && cargo build --release
 
 flash-ble-spike-heltec-v3: build-ble-spike-heltec-v3
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-ble-spike-heltec-v3
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
