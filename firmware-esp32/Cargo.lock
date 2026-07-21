@@ -728,6 +728,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-hal-bus"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513e0b3a8fb7d3013a8ae17a834283f170deaf7d0eeab0a7c1a36ad4dd356d22"
+dependencies = [
+ "critical-section",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1203,13 +1214,16 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal-bus",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
  "esp-rtos",
- "heapless 0.9.3",
+ "heapless 0.8.0",
+ "lora-phy",
  "umsh-bsp-esp32",
  "umsh-bsp-heltec-lora32-v2",
+ "umsh-radio-loraphy",
  "umsh-ux-tracker",
 ]
 
@@ -1560,6 +1574,21 @@ dependencies = [
  "scoped-tls",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lora-modulation"
+version = "0.1.5"
+
+[[package]]
+name = "lora-phy"
+version = "3.0.2-alpha"
+dependencies = [
+ "document-features",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "lora-modulation",
+ "num-traits",
 ]
 
 [[package]]
@@ -2391,10 +2420,29 @@ name = "umsh-bsp-heltec-lora32-v2"
 version = "0.1.0"
 dependencies = [
  "embassy-time",
+ "embedded-hal-async",
+ "embedded-hal-bus",
  "esp-hal",
+ "lora-phy",
  "nb 1.1.0",
  "ssd1306",
  "umsh-bsp-esp32",
+]
+
+[[package]]
+name = "umsh-hal"
+version = "0.1.0"
+
+[[package]]
+name = "umsh-radio-loraphy"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embedded-hal-async",
+ "heapless 0.8.0",
+ "lora-phy",
+ "umsh-hal",
 ]
 
 [[package]]
@@ -2605,11 +2653,3 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
-
-[[patch.unused]]
-name = "lora-modulation"
-version = "0.1.5"
-
-[[patch.unused]]
-name = "lora-phy"
-version = "3.0.2-alpha"
