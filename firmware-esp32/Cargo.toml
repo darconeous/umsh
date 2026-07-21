@@ -1,0 +1,57 @@
+# Sibling workspace for classic-ESP32 (Xtensa) targets. Excluded from the
+# root workspace because the Xtensa Rust fork (`espup`, channel = "esp")
+# cannot coexist with the root `rust-toolchain.toml`, and esp-hal's embassy
+# driver constraints must not enter the root Cargo.lock. Shared UMSH crates
+# come in as path dependencies from ../crates.
+#
+# See docs/firmware-plan-heltec-lora32-v2.md and docs/firmware-architecture.md.
+[workspace]
+members = [
+    "crates/umsh-bsp-esp32",
+    "crates/umsh-bsp-heltec-lora32-v2",
+    "firmware/hello-heltec-v2",
+    "firmware/ble-spike-heltec-v2",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/darconeous/umsh"
+
+# Replicated from the root workspace manifest — [patch] tables do not cross
+# workspace boundaries. The trouble-host rev must stay in lockstep with the
+# root workspace pin (audited fork).
+[patch.crates-io]
+lora-phy        = { path = "../../lora-rs/lora-phy" }
+lora-modulation = { path = "../../lora-rs/lora-modulation" }
+trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "fef9a7a95283be3103e638463a08d355077e2500" }
+
+# The whole esp-hal family is pinned to a single repo rev instead of the
+# crates.io releases: the published esp-radio 1.0.0-beta.0 implements the
+# bt-hci 0.8 transport traits, but the audited trouble-host fork requires
+# bt-hci 0.9. main carries the bt-hci 0.9 bump at unchanged crate versions.
+# Drop this whole block in favor of crates.io once esp-radio > beta.0 ships.
+# The rev is the Phase 0 version-pinning-spike outcome (2026-07-20); all
+# family members must stay on the SAME rev (they share in-repo path deps).
+esp-hal                = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-rtos               = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-radio              = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-alloc              = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-println            = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+
+# Xtensa needs optimization even in dev builds; unoptimized images are too
+# slow to meet radio/BLE timing and blow past IRAM budgets.
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = 3
+overflow-checks = false

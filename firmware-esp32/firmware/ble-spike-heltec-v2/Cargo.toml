@@ -1,0 +1,29 @@
+[package]
+name = "firmware-ble-spike-heltec-v2"
+description = "Version-pinning spike: esp-radio BLE controller + trouble-host on classic ESP32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "firmware-ble-spike-heltec-v2"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32", "panic-handler"] }
+umsh-bsp-heltec-lora32-v2 = { path = "../../crates/umsh-bsp-heltec-lora32-v2" }
+
+bt-hci = { version = "0.9", default-features = false }
+heapless = { version = "0.9", default-features = false }
+embassy-executor = { version = "0.10", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+esp-alloc = { version = "0.10" }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32"] }
+esp-hal = { version = "1.1", features = ["esp32", "unstable"] }
+esp-println = { version = "0.17", features = ["esp32"] }
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32", "ble", "unstable"] }
+esp-rtos = { version = "0.3", features = ["esp32", "embassy", "esp-radio", "esp-alloc"] }
+static_cell = "2"
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }

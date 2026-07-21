@@ -1,0 +1,10 @@
+[package]
+name = "umsh-bsp-heltec-lora32-v2"
+description = "Board BSP for the Heltec WiFi LoRa 32 V2: pin map, Vext power domain, SSD1306, SX1276 wiring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32"] }
