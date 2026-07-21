@@ -1,0 +1,21 @@
+[package]
+name = "umsh-bsp-esp32"
+description = "Chip-level BSP for Espressif targets: storage backend, RNG gating, deep-sleep and panic-capture helpers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Exactly one chip feature must be enabled by the board BSP.
+esp32 = ["esp-hal/esp32", "esp-println/esp32"]
+# esp32s3 lands with the T-Lora Pager port.
+#
+# Install this crate's panic handler (print over UART0, capture to RTC RAM,
+# software reset). Enable from the firmware crate, not from library crates.
+panic-handler = []
+
+[dependencies]
+esp-hal = { version = "1.1", default-features = false, features = ["rt", "unstable"] }
+esp-println = { version = "0.17" }

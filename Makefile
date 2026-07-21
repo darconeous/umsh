@@ -4,7 +4,9 @@
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
 	flash-companion-cli-t1000e-serial \
 	build-companion-ncp-t1000e flash-companion-ncp-t1000e-serial \
-	build-companion-ncp-techo flash-companion-ncp-techo
+	build-companion-ncp-techo flash-companion-ncp-techo \
+	build-hello-heltec-v2 flash-hello-heltec-v2 \
+	build-ble-spike-heltec-v2 flash-ble-spike-heltec-v2
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -64,6 +66,34 @@ build-companion-ncp-t1000e:
 flash-companion-ncp-t1000e-serial: build-companion-ncp-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
 		$(TARGET_DIR)/firmware-companion-ncp-t1000e
+
+# ─── ESP32 firmware (firmware-esp32/ sibling workspace) ──────────────────────
+#
+# Classic-ESP32 boards build from the excluded sibling workspace, which
+# carries its own `rust-toolchain.toml` (channel = "esp", via espup) and
+# workspace-level `.cargo/config.toml` (xtensa target + espflash runner).
+# Flashing goes through the ROM serial bootloader via espflash over the
+# CP2102 port — no UF2/DFU machinery, and the flasher cannot be bricked.
+# `flash-*` targets stay attached as a serial monitor after flashing;
+# override port autodetection with: make ... ESPFLASH_PORT=/dev/cu.usbserial-<N>
+
+ESP32_TARGET_DIR := firmware-esp32/target/xtensa-esp32-none-elf/release
+ESPFLASH_PORT ?=
+ESPFLASH_PORT_ARG = $(if $(ESPFLASH_PORT),--port $(ESPFLASH_PORT),)
+
+build-hello-heltec-v2:
+	cd firmware-esp32 && cargo build --release -p firmware-hello-heltec-v2
+
+flash-hello-heltec-v2: build-hello-heltec-v2
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
+		$(ESP32_TARGET_DIR)/firmware-hello-heltec-v2
+
+build-ble-spike-heltec-v2:
+	cd firmware-esp32 && cargo build --release -p firmware-ble-spike-heltec-v2
+
+flash-ble-spike-heltec-v2: build-ble-spike-heltec-v2
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
+		$(ESP32_TARGET_DIR)/firmware-ble-spike-heltec-v2
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
