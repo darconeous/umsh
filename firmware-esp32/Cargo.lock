@@ -1223,6 +1223,7 @@ dependencies = [
  "lora-phy",
  "umsh-bsp-esp32",
  "umsh-bsp-heltec-lora32-v2",
+ "umsh-hal",
  "umsh-radio-loraphy",
  "umsh-ux-tracker",
 ]

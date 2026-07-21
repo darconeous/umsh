@@ -1,5 +1,33 @@
 # Heltec WiFi LoRa 32 V2 Firmware Plan
 
+> **Status (2026-07-21): parked after Phase 2 — possibly defective
+> reference unit; no second unit available to disambiguate.** Phases 0–1 are hardware-complete (toolchain,
+> safety floor, BLE spike, full board I/O). Phase 2 wired the SX1276
+> through lora-phy and is code-complete, but the only available unit
+> failed on-air validation with a consistent three-way signature:
+> TX frames reach an adjacent LR1110 listener at a healthy −29 dBm
+> yet demodulate at SNR −1 dB with near-deterministic payload
+> corruption; RX is deaf to strong local traffic (only −114…−128 dBm
+> frames at SNR ≈ −11 ever decode); and the idle noise floor measures
+> ≈ −102 dBm, ~24 dB above thermal for BW 62.5 kHz. Digital health is
+> fine (RegVersion, IRQs, TxDone). The register file was dump-verified
+> byte-for-byte against a RadioLib/MeshCore node, and the measured
+> carrier offset (FEI) was only +5.8 kHz. The leading hypothesis is a
+> defective RF section / reference oscillator (reciprocal mixing
+> would explain all three symptoms at once), but with a single unit
+> and no independent RF instrumentation this is unproven — an
+> unmodeled board-level cause is not ruled out. The debugging
+> yielded four real sx127x driver fixes
+> now in the lora-rs fork (exact PLL-step rounding for fractional
+> carriers, errata 2.3 manual-IF programming, AGC-auto parity with
+> RadioLib, and a real HF-band image calibration replacing a no-op) —
+> worth upstreaming regardless. Everything through Phase 2, including
+> the diagnostic firmware (register dump, per-frame FEI, periodic
+> noise-floor print), is committed and ready if another V2 unit ever
+> materializes. The ESP32 workspace, esp-rtos generation choices, and
+> the BSP layering carry forward to the Heltec **V3** port
+> (ESP32-S3 + SX1262), which supersedes this effort.
+
 The first non-nRF52840 UMSH target: classic ESP32 (dual Xtensa LX6)
 plus an SX1276/SX1278 radio and an SSD1306 OLED. The device posture
 is a battery-powered tracker with a screen — closest in spirit to the
