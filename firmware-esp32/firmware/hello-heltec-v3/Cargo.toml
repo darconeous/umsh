@@ -29,7 +29,12 @@ esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 # embedded-alloc for the same reason).
 esp-alloc = { version = "0.10" }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
-esp-rtos = { version = "0.3", features = ["esp32s3", "embassy"] }
+esp-rtos = { version = "0.3", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+# The BLE controller is brought up as the RF entropy source that makes the
+# hardware TRNG a true noise source (see umsh_bsp_esp32::rng).
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "ble", "unstable"] }
+# Ed25519 identity derived from the persisted secret scalar.
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 esp-println = { version = "0.17", features = ["esp32s3"] }
 # 0.8 to match umsh-radio-loraphy's frame Vec type.
 heapless = { version = "0.8", default-features = false }

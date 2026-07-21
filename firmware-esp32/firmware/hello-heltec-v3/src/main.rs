@@ -53,8 +53,12 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use lora_phy::LoRa;
 use lora_phy::mod_params::{ModulationParams, PacketParams};
+use esp_radio::ble::controller::BleConnector;
 use static_cell::StaticCell;
 use umsh_bsp_esp32::flash_store;
+use umsh_bsp_esp32::rng::EspCryptoRng;
+use umsh_crypto::NodeIdentity as _;
+use umsh_crypto::software::SoftwareIdentity;
 use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::radio::{self, Radio};
@@ -111,19 +115,49 @@ async fn main(spawner: Spawner) {
         println!("previous boot panicked: {msg}");
     }
 
+    // ── RF entropy source ────────────────────────────────────────────────
+    // The ESP32 TRNG is only a true noise source while the RF subsystem is
+    // clocked, and it degrades to pseudo-random *silently* otherwise. The
+    // ADC entropy source is unusable on this board — it would claim ADC1,
+    // which the battery sampler owns — so the BLE controller is what makes
+    // the RNG trustworthy.
+    //
+    // Binding this by name rather than `_` is load-bearing: `BleConnector`
+    // runs `ble_deinit` on drop, which takes the entropy with it, and a
+    // bare `_` pattern would drop it immediately.
+    let _ble = match BleConnector::new(peripherals.BT, Default::default()) {
+        Ok(connector) => {
+            println!("ble: controller up (RF entropy source)");
+            Some(connector)
+        }
+        Err(e) => {
+            println!("ble: init failed: {e:?} — crypto RNG unavailable");
+            None
+        }
+    };
+
     // ── Flash storage ────────────────────────────────────────────────────
     // Resolves the `umsh` data partition from the on-flash partition
     // table (see firmware-esp32/partitions-umsh.csv). A board flashed
     // with the espflash default table has no such partition and lands in
     // `PartitionNotFound` — that is the expected failure, not a hang.
+    let storage: Option<&'static flash_store::EspStorage> =
+        match flash_store::new_storage(peripherals.FLASH) {
+            Ok(storage) => {
+                static STORAGE: StaticCell<flash_store::EspStorage> = StaticCell::new();
+                Some(STORAGE.init(storage))
+            }
+            Err(e) => {
+                println!("storage: init failed: {e:?}");
+                None
+            }
+        };
+
     let mut boot_count: Option<u32> = None;
-    match flash_store::new_storage(peripherals.FLASH) {
-        Ok(storage) => {
-            static STORAGE: StaticCell<flash_store::EspStorage> = StaticCell::new();
-            let storage: &'static flash_store::EspStorage = STORAGE.init(storage);
-            boot_count = Some(bump_boot_count(flash_store::EspKeyValueStore::new(storage)).await);
-        }
-        Err(e) => println!("storage: init failed: {e:?}"),
+    let mut identity_hint: Option<heapless::String<8>> = None;
+    if let Some(storage) = storage {
+        boot_count = Some(bump_boot_count(flash_store::EspKeyValueStore::new(storage)).await);
+        identity_hint = load_or_create_identity(storage).await;
     }
 
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
@@ -160,6 +194,7 @@ async fn main(spawner: Spawner) {
 
     let mut ui = UiState {
         boot_count,
+        identity_hint,
         ..UiState::default()
     };
 
@@ -341,6 +376,49 @@ async fn bump_boot_count(kv: flash_store::EspKeyValueStore) -> u32 {
     next
 }
 
+/// Load the long-term Ed25519 identity, generating and persisting one on
+/// first boot. Returns the node hint for display.
+///
+/// There is deliberately no PRNG fallback. If the RF entropy source is
+/// missing we refuse to generate a key rather than mint a predictable
+/// long-term identity — the same posture the nRF firmware takes, and the
+/// reason `EspCryptoRng::new` is fallible in the first place.
+async fn load_or_create_identity(
+    storage: &'static flash_store::EspStorage,
+) -> Option<heapless::String<8>> {
+    let sk = match storage.load_sk().await {
+        Ok(Some(sk)) => sk,
+        Ok(None) => {
+            let mut rng = match EspCryptoRng::new() {
+                Ok(rng) => rng,
+                Err(e) => {
+                    println!("identity: no RF entropy ({e:?}) — refusing to generate a key");
+                    return None;
+                }
+            };
+            let mut sk = [0u8; 32];
+            rng.fill_bytes(&mut sk);
+            if let Err(e) = storage.store_sk(&sk).await {
+                println!("identity: persist failed: {e:?}");
+                return None;
+            }
+            println!("identity: generated a new key on first boot");
+            sk
+        }
+        Err(e) => {
+            println!("identity: load failed: {e:?}");
+            return None;
+        }
+    };
+
+    let identity = SoftwareIdentity::from_secret_bytes(&sk);
+    let hint = identity.hint();
+    let mut rendered: heapless::String<8> = heapless::String::new();
+    let _ = write!(rendered, "{hint}");
+    println!("identity: {rendered} (pk {:02x?})", &identity.public_key().0);
+    Some(rendered)
+}
+
 #[derive(Default)]
 struct UiState {
     battery_mv: u16,
@@ -351,6 +429,9 @@ struct UiState {
     last_rssi: Option<i16>,
     /// Persisted boot counter; `None` when storage failed to initialize.
     boot_count: Option<u32>,
+    /// Rendered node hint for the persisted identity; `None` when no
+    /// identity could be loaded or generated.
+    identity_hint: Option<heapless::String<8>>,
 }
 
 async fn redraw(display: &mut Display, ui: &UiState) {
@@ -363,7 +444,17 @@ async fn redraw(display: &mut Display, ui: &UiState) {
     display.clear_buffer();
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let mut line: heapless::String<24> = heapless::String::new();
-    let _ = write!(line, "{}", env!("CARGO_PKG_NAME"));
+    match &ui.identity_hint {
+        Some(hint) => {
+            let _ = write!(line, "id {hint}");
+        }
+        None => {
+            let _ = write!(line, "id --");
+        }
+    }
+    if let Some(n) = ui.boot_count {
+        let _ = write!(line, "  b{n}");
+    }
     draw_line(display, &line, 0, style);
 
     line.clear();
@@ -380,13 +471,8 @@ async fn redraw(display: &mut Display, ui: &UiState) {
     } else {
         let _ = write!(line, "sx1262 FAIL");
     }
-    match ui.boot_count {
-        Some(n) => {
-            let _ = write!(line, " b{n}");
-        }
-        None => {
-            let _ = write!(line, " nvFAIL");
-        }
+    if ui.boot_count.is_none() {
+        let _ = write!(line, "  nvFAIL");
     }
     draw_line(display, &line, 3, style);
 
