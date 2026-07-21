@@ -45,6 +45,7 @@ esp-radio              = { git = "https://github.com/esp-rs/esp-hal.git", rev = 
 esp-alloc              = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
 esp-println            = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
+esp-storage            = { git = "https://github.com/esp-rs/esp-hal.git", rev = "fbd054ad96d73fccf5ce1b8a24f11bced95e0de4" }
 
 # Xtensa needs optimization even in dev builds; unoptimized images are too
 # slow to meet radio/BLE timing and blow past IRAM budgets.

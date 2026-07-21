@@ -94,6 +94,7 @@ mod firmware {
     use lora_phy::sx126x::{Config as LoraConfig, Sx126x, Sx1262, TcxoCtrlVoltage};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
+    use umsh_bsp_nrf52840::flash_store;
     use umsh_bsp_nrf52840::flash_store::{
         NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage,
     };
@@ -431,7 +432,7 @@ mod firmware {
         }
 
         // ── NV storage ────────────────────────────────────────────────────────
-        let storage: &'static NvmcStorage = STORAGE.init(NvmcStorage::new(Nvmc::new(p.NVMC)));
+        let storage: &'static NvmcStorage = STORAGE.init(flash_store::new_storage(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this

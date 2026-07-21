@@ -53,10 +53,13 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use lora_phy::LoRa;
 use lora_phy::mod_params::{ModulationParams, PacketParams};
+use static_cell::StaticCell;
+use umsh_bsp_esp32::flash_store;
 use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::radio::{self, Radio};
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
+use umsh_hal::KeyValueStore as _;
 use umsh_radio_loraphy::{Channels, TxRequest};
 use umsh_ux_tracker::battery::{BatteryState, BatteryThresholds, classify, soc_from_ocv};
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
@@ -100,9 +103,27 @@ async fn main(spawner: Spawner) {
         umsh_bsp_heltec_lora32_v3::BOARD_NAME,
     );
 
+    // The MAC/crypto stack allocates; sized to match the BLE spike.
+    esp_alloc::heap_allocator!(size: 72 * 1024);
+
     let mut panic_buf = [0u8; umsh_bsp_esp32::panic_capture::MSG_CAPACITY];
     if let Some(msg) = umsh_bsp_esp32::panic_capture::take_panic_message(&mut panic_buf) {
         println!("previous boot panicked: {msg}");
+    }
+
+    // ── Flash storage ────────────────────────────────────────────────────
+    // Resolves the `umsh` data partition from the on-flash partition
+    // table (see firmware-esp32/partitions-umsh.csv). A board flashed
+    // with the espflash default table has no such partition and lands in
+    // `PartitionNotFound` — that is the expected failure, not a hang.
+    let mut boot_count: Option<u32> = None;
+    match flash_store::new_storage(peripherals.FLASH) {
+        Ok(storage) => {
+            static STORAGE: StaticCell<flash_store::EspStorage> = StaticCell::new();
+            let storage: &'static flash_store::EspStorage = STORAGE.init(storage);
+            boot_count = Some(bump_boot_count(flash_store::EspKeyValueStore::new(storage)).await);
+        }
+        Err(e) => println!("storage: init failed: {e:?}"),
     }
 
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
@@ -137,7 +158,10 @@ async fn main(spawner: Spawner) {
         Err(e) => println!("oled: init failed: {e:?}"),
     }
 
-    let mut ui = UiState::default();
+    let mut ui = UiState {
+        boot_count,
+        ..UiState::default()
+    };
 
     // ── SX1262 ───────────────────────────────────────────────────────────
     // SPI bus: SCK=GPIO9, MOSI=GPIO10, MISO=GPIO11, NSS=GPIO8 as managed
@@ -289,6 +313,34 @@ async fn radio_task(
     umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await
 }
 
+/// Key holding the persistent boot counter.
+const BOOT_COUNT_KEY: &[u8] = b"hello.boots";
+
+/// Read, increment, and persist the boot counter.
+///
+/// This is the Phase 3 storage proof: a value that survives a power
+/// cycle demonstrates that the partition lookup, the `sequential-storage`
+/// map, and the flash write path all work end to end. Returns the new
+/// count (1 on a freshly erased region).
+async fn bump_boot_count(kv: flash_store::EspKeyValueStore) -> u32 {
+    let mut buf = [0u8; 4];
+    let previous = match kv.load(BOOT_COUNT_KEY, &mut buf).await {
+        Ok(Some(4)) => u32::from_le_bytes(buf),
+        // Absent (first boot after erase) or an unexpected length — start over.
+        Ok(_) => 0,
+        Err(e) => {
+            println!("storage: boot-count load failed: {e:?}");
+            0
+        }
+    };
+    let next = previous.wrapping_add(1);
+    match kv.store(BOOT_COUNT_KEY, &next.to_le_bytes()).await {
+        Ok(()) => println!("storage: boot {next} (previous {previous})"),
+        Err(e) => println!("storage: boot-count store failed: {e:?}"),
+    }
+    next
+}
+
 #[derive(Default)]
 struct UiState {
     battery_mv: u16,
@@ -297,6 +349,8 @@ struct UiState {
     rx_count: u32,
     tx_count: u32,
     last_rssi: Option<i16>,
+    /// Persisted boot counter; `None` when storage failed to initialize.
+    boot_count: Option<u32>,
 }
 
 async fn redraw(display: &mut Display, ui: &UiState) {
@@ -325,6 +379,14 @@ async fn redraw(display: &mut Display, ui: &UiState) {
         let _ = write!(line, "sx1262 ok");
     } else {
         let _ = write!(line, "sx1262 FAIL");
+    }
+    match ui.boot_count {
+        Some(n) => {
+            let _ = write!(line, " b{n}");
+        }
+        None => {
+            let _ = write!(line, " nvFAIL");
+        }
     }
     draw_line(display, &line, 3, style);
 

@@ -9,8 +9,18 @@ repository.workspace = true
 [features]
 default = []
 # Exactly one chip feature must be enabled by the board BSP.
-esp32 = ["esp-hal/esp32", "esp-println/esp32"]
-esp32s3 = ["esp-hal/esp32s3", "esp-println/esp32s3"]
+esp32 = [
+    "esp-hal/esp32",
+    "esp-println/esp32",
+    "esp-storage/esp32",
+    "esp-bootloader-esp-idf/esp32",
+]
+esp32s3 = [
+    "esp-hal/esp32s3",
+    "esp-println/esp32s3",
+    "esp-storage/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+]
 #
 # Install this crate's panic handler (print over UART0, capture to RTC RAM,
 # software reset). Enable from the firmware crate, not from library crates.
@@ -19,3 +29,16 @@ panic-handler = []
 [dependencies]
 esp-hal = { version = "1.1", default-features = false, features = ["rt", "unstable"] }
 esp-println = { version = "0.17" }
+
+# Flash storage. `esp-storage` provides the raw NorFlash over internal
+# flash; `esp-bootloader-esp-idf` reads the partition table so the storage
+# region is discovered rather than hardcoded (default features keep MD5
+# `validation` on). The map logic itself is chip-agnostic.
+esp-storage = { version = "0.9", default-features = false, features = ["critical-section", "embedded-storage"] }
+esp-bootloader-esp-idf = { version = "0.5" }
+umsh-flash-store = { path = "../../../crates/umsh-flash-store" }
+embassy-embedded-hal = { version = "0.3", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+# `rand 0.10` synchronous traits, so the RF-gated TRNG satisfies
+# `rand::CryptoRng` and can be handed straight to `Mac` as `Platform::Rng`.
+rand = { version = "0.10.1", default-features = false }
