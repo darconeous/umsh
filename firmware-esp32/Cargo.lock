@@ -1349,17 +1349,20 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-time",
+ "embedded-graphics",
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
  "esp-radio",
  "esp-rtos",
+ "esp-storage",
  "heapless 0.9.3",
  "static_cell",
  "trouble-host",
  "umsh-bsp-esp32",
  "umsh-bsp-heltec-lora32-v3",
+ "umsh-journal-store",
 ]
 
 [[package]]
@@ -2778,6 +2781,13 @@ name = "umsh-hal"
 version = "0.1.0"
 dependencies = [
  "embassy-time",
+]
+
+[[package]]
+name = "umsh-journal-store"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.8.0",
 ]
 
 [[package]]

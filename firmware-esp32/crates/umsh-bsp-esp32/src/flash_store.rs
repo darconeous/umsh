@@ -86,23 +86,62 @@ pub enum StorageInitError {
     /// always means the board was flashed with the default partition
     /// table instead of the board's `partitions.csv`.
     PartitionNotFound,
-    /// The partition exists but is smaller than the two pages
-    /// `sequential-storage` needs to operate.
+    /// The partition exists but cannot hold both the [`JOURNAL_RESERVED`]
+    /// tail and the two pages `sequential-storage` needs to operate.
     TooSmall {
         /// Actual partition length in bytes.
         len: u32,
     },
 }
 
+/// Bytes at the TOP of the `umsh` partition reserved for the record
+/// journals (`umsh_journal_store`) and therefore excluded from the
+/// `sequential-storage` map range.
+///
+/// The map's garbage collector rotates writes through its entire range,
+/// so the journal pages MUST be carved out here, at the single place the
+/// range is derived — otherwise map GC would eventually wrap into the
+/// journal and erase the BLE bonds. Both [`new_storage`] (map, bottom of
+/// the partition) and journal placement (top of the partition, growing
+/// downward) derive from this one constant.
+///
+/// Currently two pages: the BLE security journal. Grows in page pairs as
+/// more journals (protocol snapshot, counters) move to the ESP32 in
+/// Phase 5.
+pub const JOURNAL_RESERVED: u32 = 2 * FlashStorage::SECTOR_SIZE;
+
 /// Locate the UMSH data partition and build the store over it.
 ///
 /// Reads the partition table, resolves [`STORAGE_PARTITION_LABEL`] to a
 /// flash range, and mounts the map lazily — nothing is erased or
-/// formatted here.
+/// formatted here. The map receives the partition minus the
+/// [`JOURNAL_RESERVED`] tail. Shrinking the range on boards written by
+/// earlier firmware is safe: `sequential-storage` fills from the bottom
+/// of its range, so the excluded tail pages hold no map data.
 pub fn new_storage(flash: FLASH<'static>) -> Result<EspStorage, StorageInitError> {
     let mut flash_storage = FlashStorage::new(flash);
     let range = storage_range(&mut flash_storage)?;
-    Ok(EspStorage::new(BlockingAsync::new(flash_storage), range))
+    Ok(EspStorage::new(
+        BlockingAsync::new(flash_storage),
+        range.start..range.end - JOURNAL_RESERVED,
+    ))
+}
+
+/// Open the raw flash driver and resolve the UMSH partition's absolute
+/// range, without mounting the `sequential-storage` map.
+///
+/// Used by firmware that needs raw byte-addressed access into the
+/// partition — the record journals (`umsh_journal_store`) live in the
+/// [`JOURNAL_RESERVED`] tail of this range rather than in the map.
+/// Discovering the range here keeps the journal region tied to the
+/// partition table, never hardcoded, exactly as [`new_storage`] does for
+/// the map.
+pub fn open_partition(
+    flash: FLASH<'static>,
+) -> Result<(FlashStorage<'static>, Range<u32>), StorageInitError> {
+    let mut flash_storage = FlashStorage::new(flash);
+    let range = storage_range(&mut flash_storage)?;
+    Ok((flash_storage, range))
 }
 
 /// Resolve [`STORAGE_PARTITION_LABEL`] to an absolute flash range.
@@ -121,8 +160,9 @@ fn storage_range(flash: &mut FlashStorage<'static>) -> Result<Range<u32>, Storag
 
     let offset = entry.offset();
     let len = entry.len();
-    // `sequential-storage` needs at least two pages to garbage-collect.
-    if len < 2 * FlashStorage::SECTOR_SIZE {
+    // The map needs at least two pages to garbage-collect, after the
+    // journal reservation is carved off the top.
+    if len < 2 * FlashStorage::SECTOR_SIZE + JOURNAL_RESERVED {
         return Err(StorageInitError::TooSmall { len });
     }
     Ok(offset..offset + len)
