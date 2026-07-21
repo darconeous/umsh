@@ -1,0 +1,22 @@
+[package]
+name = "umsh-journal-store"
+description = "Chip-agnostic power-loss-safe record journals: BLE bonds/PIN, protocol snapshots, frame-counter maps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-independent journal machinery extracted from the nRF companion
+# NCP firmware (companion-ncp-techo's ble_store / proto_store /
+# counter_map modules), so the ESP32-S3 companion port shares the same
+# tested record engine. Generic over the flash driver via the
+# `RecordWriter` / `PageEraser` traits; flash *addresses* are memory-map
+# facts and stay with each firmware (the nRF map lives in the T-Echo
+# shim modules, the ESP32 map with the V3 firmware).
+#
+# See docs/firmware-architecture.md for the BSP / App / Binary triad and
+# umsh-flash-store for the sibling sequential-storage engine this crate's
+# extraction mirrors.
+
+[dependencies]
+heapless = { workspace = true }

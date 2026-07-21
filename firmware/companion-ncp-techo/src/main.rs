@@ -369,7 +369,27 @@ mod firmware {
     type BleStoreMutex = Mutex<ThreadModeRawMutex, BleStore>;
     /// The one MPSL-coordinated flash driver, shared between the BLE
     /// bond/PIN journal and the protocol snapshot journal.
-    type SharedFlash = Mutex<ThreadModeRawMutex, nrf_mpsl::Flash<'static>>;
+    type SharedFlash = Mutex<ThreadModeRawMutex, JournalFlash>;
+
+    /// Local wrapper carrying the `umsh-journal-store` trait impls for
+    /// the MPSL-coordinated flash (both trait and driver are foreign
+    /// since the journal extraction, so the impls need a local type).
+    /// Derefs to the driver for the blocking read paths.
+    struct JournalFlash(nrf_mpsl::Flash<'static>);
+
+    impl core::ops::Deref for JournalFlash {
+        type Target = nrf_mpsl::Flash<'static>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl core::ops::DerefMut for JournalFlash {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
 
     struct BleStore {
         flash: &'static SharedFlash,
@@ -377,7 +397,7 @@ mod firmware {
         slot: Option<u32>,
     }
 
-    impl ble_store::RecordWriter for nrf_mpsl::Flash<'static> {
+    impl ble_store::RecordWriter for JournalFlash {
         type Error = ();
 
         async fn write_record(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error> {
@@ -393,7 +413,7 @@ mod firmware {
         }
     }
 
-    impl ble_store::PageEraser for nrf_mpsl::Flash<'static> {
+    impl ble_store::PageEraser for JournalFlash {
         type Error = ();
 
         async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
@@ -410,7 +430,7 @@ mod firmware {
 
     /// Scan a two-page journal's slot range for a fully erased slot.
     fn erased_journal_slot(
-        flash: &mut nrf_mpsl::Flash<'static>,
+        flash: &mut JournalFlash,
         start: u32,
         end: u32,
         slot_size: usize,
@@ -450,7 +470,7 @@ mod firmware {
     /// `page0`: the next erased slot after the current record, or the
     /// opposite page after erasing it.
     async fn journal_write_target(
-        flash: &mut nrf_mpsl::Flash<'static>,
+        flash: &mut JournalFlash,
         current: Option<u32>,
         page0: u32,
         slot_size: usize,
@@ -3496,7 +3516,7 @@ mod firmware {
         };
         super::panic::breadcrumb_mark(5);
         static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
-        let flash = SHARED_FLASH.init(Mutex::new(nrf_mpsl::Flash::take(mpsl, p.NVMC)));
+        let flash = SHARED_FLASH.init(Mutex::new(JournalFlash(nrf_mpsl::Flash::take(mpsl, p.NVMC))));
         // Mount the protocol journals before the NCP session starts: a
         // stored snapshot must be restored (and the PHY re-applied) and
         // the persisted device identity installed before the first host

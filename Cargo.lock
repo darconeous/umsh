@@ -1446,6 +1446,7 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-journal-store",
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
@@ -1487,6 +1488,7 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
+ "umsh-journal-store",
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
@@ -3383,6 +3385,13 @@ name = "umsh-hal"
 version = "0.1.0"
 dependencies = [
  "embassy-time",
+]
+
+[[package]]
+name = "umsh-journal-store"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.8.0",
 ]
 
 [[package]]
