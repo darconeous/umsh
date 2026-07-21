@@ -49,13 +49,15 @@ use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
-use lora_phy::LoRa;
 use lora_phy::mod_params::{ModulationParams, PacketParams, RadioError};
+use lora_phy::mod_traits::IrqState;
+use lora_phy::{LoRa, RxMode};
 use umsh_bsp_heltec_lora32_v2::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v2::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v2::radio::{self, Radio, RadioSpi};
 use umsh_bsp_heltec_lora32_v2::vext::Vext;
-use umsh_radio_loraphy::{Channels, TxRequest};
+use umsh_hal::{RxInfo, Snr};
+use umsh_radio_loraphy::{Channels, RxFrame, TxRequest};
 use umsh_ux_tracker::battery::{BatteryState, BatteryThresholds, classify, soc_from_ocv};
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
 use umsh_ux_tracker::led::{LedEngine, LedSequence, LedTimings};
@@ -167,7 +169,10 @@ async fn main(spawner: Spawner) {
             InputConfig::default().with_pull(Pull::None),
         );
         match init_radio(radio_spi, radio_reset, dio0).await {
-            Ok((lora, mdltn, rx_pkt, tx_pkt)) => {
+            Ok((mut lora, mdltn, rx_pkt, tx_pkt)) => {
+                if let Err(e) = dump_radio_state(&mut lora, &mdltn, &rx_pkt).await {
+                    println!("radio: state dump failed: {e:?}");
+                }
                 spawner.spawn(radio_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
                 ui.radio_ok = true;
                 println!("radio: RX (MeshCore US params, private sync word)");
@@ -260,6 +265,35 @@ async fn main(spawner: Spawner) {
     }
 }
 
+/// Bring-up diagnostic: run one full `prepare_for_rx` + `start_rx`
+/// cycle (identical to the runner's) and dump every LoRa-page register
+/// so the chip's live RX configuration can be compared against a
+/// known-good RadioLib/MeshCore node. The runner re-prepares RX when it
+/// takes over, so this leaves no lasting state behind.
+async fn dump_radio_state(
+    lora: &mut Radio,
+    mdltn: &ModulationParams,
+    rx_pkt: &PacketParams,
+) -> Result<(), RadioError> {
+    lora.prepare_for_rx(RxMode::Continuous, mdltn, rx_pkt).await?;
+    lora.start_rx().await?;
+    Timer::after_millis(5).await;
+
+    println!("radio: register dump (live RX state):");
+    let kind = lora.radio_kind_mut();
+    // Skip 0x00 (RegFifo — reading it disturbs the FIFO pointer).
+    for base in (0x01u8..=0x42).step_by(8) {
+        let mut line: heapless::String<64> = heapless::String::new();
+        let _ = write!(line, "  0x{base:02x}:");
+        for addr in base..(base + 8).min(0x43) {
+            let val = kind.read_register_raw(addr).await?;
+            let _ = write!(line, " {val:02x}");
+        }
+        println!("{}", line.as_str());
+    }
+    Ok(())
+}
+
 /// Bring the SX1276 up through lora-phy and build the MeshCore US
 /// parameter set. `false` in `LoRa::new` selects the private sync word
 /// (0x12 — the byte the SX126x boards expand to 0x1424).
@@ -347,16 +381,119 @@ fn state_name(state: BatteryState) -> &'static str {
     }
 }
 
-/// Owns the lora-phy driver: continuous RX with TX interleaved, feeding
-/// the static [`RADIO_CH`] bundle.
+/// Read the SX1276's frequency-error indicator for the last received
+/// packet and convert to Hz (positive = the remote carrier is above our
+/// local tuning). Datasheet §4.1.5: FreqError = FEI × 2²⁴ / FXOSC ×
+/// BW/500 kHz — at BW 62.5 that reduces to FEI × 65536 / 10⁶.
+async fn read_freq_error_hz(lora: &mut Radio) -> i32 {
+    let kind = lora.radio_kind_mut();
+    let msb = kind.read_register_raw(0x28).await.unwrap_or(0);
+    let mid = kind.read_register_raw(0x29).await.unwrap_or(0);
+    let lsb = kind.read_register_raw(0x2a).await.unwrap_or(0);
+    let mut fei = (((msb as u32 & 0x0f) << 16) | ((mid as u32) << 8) | lsb as u32) as i32;
+    if msb & 0x08 != 0 {
+        fei -= 1 << 20; // sign-extend the 20-bit value
+    }
+    ((fei as i64 * 65_536) / 1_000_000) as i32
+}
+
+/// Diagnostic stand-in for `umsh_radio_loraphy::runner`: the identical
+/// RX/TX state machine and cancellation discipline (only `wait_for_irq`
+/// and the TX-channel receive are cancel-safe), plus a raw FEI read on
+/// every completed frame so carrier offset between the transmitter and
+/// this board's crystal is measured, not guessed. Swap back to the
+/// shared runner once the RF path is proven.
 #[embassy_executor::task]
 async fn radio_task(
-    lora: Radio,
+    mut lora: Radio,
     mdltn: ModulationParams,
     rx_pkt: PacketParams,
-    tx_pkt: PacketParams,
+    mut tx_pkt: PacketParams,
 ) -> ! {
-    umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await
+    let mut rx_buf = [0u8; umsh_radio_loraphy::MAX_PAYLOAD];
+
+    'outer: loop {
+        if lora
+            .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        if lora.start_rx().await.is_err() {
+            continue;
+        }
+
+        loop {
+            match select3(
+                lora.wait_for_irq(),
+                RADIO_CH.tx.receive(),
+                Timer::after_secs(2),
+            )
+            .await
+            {
+                Either3::Third(()) => {
+                    // Noise-floor diagnostic: instantaneous RSSI while
+                    // no packet is in flight. BW 62.5 kHz thermal floor
+                    // is ≈ −125 dBm; a reading tens of dB above that
+                    // means the front end is being jammed or the
+                    // antenna path is broken.
+                    let raw = lora.radio_kind_mut().read_register_raw(0x1b).await;
+                    if let Ok(raw) = raw {
+                        println!("radio: noise floor {} dBm", -157 + raw as i16);
+                    }
+                    continue;
+                }
+                Either3::First(Ok(())) => {
+                    // process_irq_event is NOT cancel-safe — run to
+                    // completion, then clear latched flags.
+                    let irq_result = lora.process_irq_event().await;
+                    let _ = lora.clear_irq_status().await;
+
+                    match irq_result {
+                        Ok(Some(IrqState::Done)) => {
+                            if let Ok((len, status)) =
+                                lora.get_rx_result(&rx_pkt, &mut rx_buf).await
+                            {
+                                let freq_err = read_freq_error_hz(&mut lora).await;
+                                println!("radio: freq error {freq_err} Hz");
+                                let mut data: heapless::Vec<
+                                    u8,
+                                    { umsh_radio_loraphy::MAX_PAYLOAD },
+                                > = heapless::Vec::new();
+                                let _ = data.extend_from_slice(&rx_buf[..len as usize]);
+                                let info = RxInfo {
+                                    len: len as usize,
+                                    rssi: status.rssi,
+                                    snr: Snr::from_decibels(status.snr as i8),
+                                    lqi: None,
+                                };
+                                if RADIO_CH.rx.try_send(RxFrame { data, info }).is_ok() {
+                                    RADIO_CH.rx_waker.wake();
+                                }
+                            }
+                            continue 'outer;
+                        }
+                        Ok(_) => continue,
+                        Err(_) => continue 'outer,
+                    }
+                }
+                Either3::First(Err(_)) => continue 'outer,
+                Either3::Second(tx_req) => {
+                    // TX is also NOT cancel-safe — run to completion.
+                    let power = tx_req.power_dbm.unwrap_or(TX_POWER_DBM);
+                    let result = async {
+                        lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
+                            .await?;
+                        lora.tx().await
+                    }
+                    .await;
+                    RADIO_CH.tx_done.signal(result);
+                    continue 'outer;
+                }
+            }
+        }
+    }
 }
 
 /// Drives the status LED from the UX engine's heartbeat plus one-shot
