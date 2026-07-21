@@ -5,14 +5,18 @@
 //! reference and `docs/firmware-plan-heltec-lora32-v2.md` for the bring-up
 //! plan. Pin numbers here are GPIO numbers.
 //!
-//! Shared-resource constraints this crate must end up encoding in types,
-//! not comments:
+//! Shared-resource constraints encoded in types:
 //! - `Vext` (GPIO21, active high) gates BOTH the OLED supply and the battery
-//!   divider — one owned handle, not two pins.
+//!   divider — [`vext::Vext`] is the one owned handle, and both
+//!   [`display`] bring-up and [`battery::BatterySampler`] borrow it.
 //! - GPIO34/35 are input-only.
 //! - GPIO0 is a strapping pin shared with the user button.
 //! - UART0 (GPIO1/3) is shared with the CP2102 USB bridge.
 #![no_std]
+
+pub mod battery;
+pub mod display;
+pub mod vext;
 
 pub const BOARD_NAME: &str = "Heltec WiFi LoRa 32 V2";
 
