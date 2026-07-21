@@ -1363,6 +1363,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-companion-cli-heltec-v3"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "heapless 0.8.0",
+ "lora-phy",
+ "static_cell",
+ "umsh-bsp-esp32",
+ "umsh-bsp-heltec-lora32-v3",
+ "umsh-cli",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "firmware-hello-heltec-v2"
 version = "0.1.0"
 dependencies = [
@@ -2694,6 +2726,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-cli"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "heapless 0.8.0",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-sync",
+ "umsh-text",
+]
+
+[[package]]
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [
@@ -2748,6 +2795,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-node"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "heapless 0.8.0",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+]
+
+[[package]]
 name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
@@ -2764,6 +2823,16 @@ name = "umsh-sync"
 version = "0.1.0"
 dependencies = [
  "slab",
+]
+
+[[package]]
+name = "umsh-text"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.8.0",
+ "umsh-core",
+ "umsh-mac",
+ "umsh-node",
 ]
 
 [[package]]
