@@ -1,0 +1,49 @@
+[package]
+name = "firmware-companion-cli-heltec-v3"
+description = "Heltec WiFi LoRa 32 V3 companion firmware: UMSH MAC + interactive CLI on UART0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Phase 3 of docs/firmware-plan-heltec-lora32-v3.md: the CLI-parity
+# counterpart to `companion-cli-wio-tracker-l1`, with UART0/CP2102 in
+# place of USB-CDC.
+
+[[bin]]
+name = "firmware-companion-cli-heltec-v3"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
+umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
+umsh-cli = { path = "../../../crates/umsh-cli", default-features = false, features = ["alloc"] }
+umsh-core = { path = "../../../crates/umsh-core", default-features = false }
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
+umsh-mac = { path = "../../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../../crates/umsh-sync", default-features = false }
+static_cell = "2"
+
+embassy-executor = { version = "0.10", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+# umsh-cli / umsh-node / umsh-sync use `alloc`.
+esp-alloc = { version = "0.10" }
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-rtos = { version = "0.3", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+# The BLE controller is the RF entropy source that makes the hardware TRNG
+# a true noise source (see umsh_bsp_esp32::rng).
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "ble", "unstable"] }
+esp-println = { version = "0.17", features = ["esp32s3"] }
+# 0.8 to match umsh-radio-loraphy's frame Vec type.
+heapless = { version = "0.8", default-features = false }
+# Resolves to ../../lora-rs via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }

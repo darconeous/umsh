@@ -14,6 +14,7 @@ members = [
     "firmware/hello-heltec-v2",
     "firmware/ble-spike-heltec-v2",
     "firmware/hello-heltec-v3",
+    "firmware/companion-cli-heltec-v3",
     "firmware/ble-spike-heltec-v3",
 ]
 resolver = "2"
