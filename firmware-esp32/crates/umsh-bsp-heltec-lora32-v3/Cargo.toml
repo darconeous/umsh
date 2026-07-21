@@ -1,0 +1,17 @@
+[package]
+name = "umsh-bsp-heltec-lora32-v3"
+description = "Board BSP for the Heltec WiFi LoRa 32 V3: pin map, Vext power domain, SSD1306, SX1262 wiring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
+esp-hal = { version = "1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+embassy-time = { version = "0.5", default-features = false }
+nb = "1"
+ssd1306 = { version = "0.10", default-features = false, features = ["async", "graphics"] }
+# SX1262 driver; resolves to ../../lora-rs via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }

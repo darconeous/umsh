@@ -1,0 +1,14 @@
+# Classic-ESP32 target selection. Build from inside this directory so
+# this file is picked up (the Makefile targets do); runner and rustflags
+# come from the workspace-level `.cargo/config.toml`.
+[build]
+target = "xtensa-esp32-none-elf"
+
+[env]
+# esp-hal's default minimum chip revision for esp32 is v3.0 (value is
+# major*100+minor). Heltec V2 boards ship old silicon — the reference unit
+# is rev v1.1 — so accept anything from v1.0 up. None of the rev-gated
+# errata paths matter here: no PSRAM on this board and no dual-core use.
+# This is a V2-only quirk; it must not leak into other chips' builds
+# (the key is chip-agnostic and would reject typical ESP32-S3 silicon).
+ESP_HAL_CONFIG_MIN_CHIP_REVISION = "100"

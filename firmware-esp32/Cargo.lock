@@ -671,6 +671,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "embassy-usb-driver"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa675c5f4349b6aa0fcffc4bf9b241f18cd11b97c1f8323273fb9a5449937fbd"
+dependencies = [
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
+]
+
+[[package]]
+name = "embassy-usb-synopsys-otg"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efd0c0e0b21bcf91b475b8fa47347c1df32c9a99728ae1e1b0e6625862dfd1a"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb-driver",
+ "portable-atomic",
+]
+
+[[package]]
 name = "embedded-can"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -866,6 +889,8 @@ dependencies = [
  "embassy-futures",
  "embassy-net-driver",
  "embassy-sync 0.8.0",
+ "embassy-usb-driver",
+ "embassy-usb-synopsys-otg",
  "embedded-can",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -917,6 +942,7 @@ version = "0.22.0"
 source = "git+https://github.com/esp-rs/esp-hal.git?rev=fbd054ad96d73fccf5ce1b8a24f11bced95e0de4#fbd054ad96d73fccf5ce1b8a24f11bced95e0de4"
 dependencies = [
  "document-features",
+ "object",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -941,7 +967,9 @@ dependencies = [
  "esp-metadata-generated",
  "esp-sync",
  "esp-wifi-sys-esp32",
+ "esp-wifi-sys-esp32s3",
  "esp32",
+ "esp32s3",
 ]
 
 [[package]]
@@ -980,7 +1008,9 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp-wifi-sys-esp32",
+ "esp-wifi-sys-esp32s3",
  "esp32",
+ "esp32s3",
  "heapless 0.9.3",
  "instability",
  "num-derive",
@@ -1017,6 +1047,7 @@ dependencies = [
  "document-features",
  "esp-metadata-generated",
  "esp32",
+ "esp32s3",
 ]
 
 [[package]]
@@ -1056,6 +1087,7 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp32",
+ "esp32s3",
 ]
 
 [[package]]
@@ -1077,6 +1109,12 @@ name = "esp-wifi-sys-esp32"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2556f38f5292d9735d4e156e276815fc001c9a0a2be0544a575c5fb867129d24"
+
+[[package]]
+name = "esp-wifi-sys-esp32s3"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d8321f44b57d8112cbd8607cc83b85783b9195289acb45532728e3e229e7786"
 
 [[package]]
 name = "esp32"
@@ -1206,6 +1244,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-ble-spike-heltec-v3"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-time",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "heapless 0.9.3",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-esp32",
+ "umsh-bsp-heltec-lora32-v3",
+]
+
+[[package]]
 name = "firmware-hello-heltec-v2"
 version = "0.1.0"
 dependencies = [
@@ -1224,6 +1283,28 @@ dependencies = [
  "umsh-bsp-esp32",
  "umsh-bsp-heltec-lora32-v2",
  "umsh-hal",
+ "umsh-radio-loraphy",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-hello-heltec-v3"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "heapless 0.8.0",
+ "lora-phy",
+ "umsh-bsp-esp32",
+ "umsh-bsp-heltec-lora32-v3",
  "umsh-radio-loraphy",
  "umsh-ux-tracker",
 ]
@@ -1668,6 +1749,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -2422,6 +2512,19 @@ version = "0.1.0"
 dependencies = [
  "embassy-time",
  "embedded-hal-async",
+ "embedded-hal-bus",
+ "esp-hal",
+ "lora-phy",
+ "nb 1.1.0",
+ "ssd1306",
+ "umsh-bsp-esp32",
+]
+
+[[package]]
+name = "umsh-bsp-heltec-lora32-v3"
+version = "0.1.0"
+dependencies = [
+ "embassy-time",
  "embedded-hal-bus",
  "esp-hal",
  "lora-phy",
