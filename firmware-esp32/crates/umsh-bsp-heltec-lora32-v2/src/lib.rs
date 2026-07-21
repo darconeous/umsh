@@ -16,6 +16,7 @@
 
 pub mod battery;
 pub mod display;
+pub mod radio;
 pub mod vext;
 
 pub const BOARD_NAME: &str = "Heltec WiFi LoRa 32 V2";

@@ -1,4 +1,5 @@
-//! Phase 1 bringup for the Heltec WiFi LoRa 32 V2: board I/O.
+//! Phase 1+2 bringup for the Heltec WiFi LoRa 32 V2: board I/O and the
+//! SX1276 on the air.
 //!
 //! On top of the Phase 0 floor (embassy on esp-rtos, UART0 banner, RWDT,
 //! panic capture) this exercises the whole board-I/O surface:
@@ -11,12 +12,15 @@
 //!   through `umsh_ux_tracker::led::LedEngine` (heartbeat + one-shots).
 //! - Battery sampling on GPIO13/ADC2 with
 //!   `umsh_ux_tracker::battery` classification.
+//! - SX1276 via `lora-phy` + the `umsh-radio-loraphy` runner:
+//!   `RegVersion` probe on boot (shown on OLED), then continuous RX with
+//!   MeshCore US parameters, counting received frames on screen.
 //!
 //! Controls: single-click resamples the battery and confirms on the LED;
-//! double-click plays the location-advert blink; a 3 s hold power-cycles
-//! `Vext` and re-initializes the display (the Phase 1 exit-criteria
-//! round-trip); quad-click panics, exercising the Phase 0
-//! capture → reset → report-on-next-boot path.
+//! double-click plays the location-advert blink; triple-click transmits
+//! a test frame; a 3 s hold power-cycles `Vext` and re-initializes the
+//! display (the Phase 1 exit-criteria round-trip); quad-click panics,
+//! exercising the Phase 0 capture → reset → report-on-next-boot path.
 
 #![no_std]
 #![no_main]
@@ -24,27 +28,34 @@
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Delay, Duration, Instant, Timer};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage};
+use esp_hal::spi::Mode;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
+use lora_phy::LoRa;
+use lora_phy::mod_params::{ModulationParams, PacketParams, RadioError};
 use umsh_bsp_heltec_lora32_v2::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v2::display::{self, Display, DisplayConfigAsync as _};
+use umsh_bsp_heltec_lora32_v2::radio::{self, Radio, RadioSpi};
 use umsh_bsp_heltec_lora32_v2::vext::Vext;
+use umsh_radio_loraphy::{Channels, TxRequest};
 use umsh_ux_tracker::battery::{BatteryState, BatteryThresholds, classify, soc_from_ocv};
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
 use umsh_ux_tracker::led::{LedEngine, LedSequence, LedTimings};
@@ -56,9 +67,13 @@ const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(
 const REFRESH_PERIOD: Duration = Duration::from_secs(30);
 /// How long Vext stays off during the long-press round-trip test.
 const VEXT_OFF_DWELL: Duration = Duration::from_secs(2);
+/// Bring-up TX power. PA_BOOST floor — deliberately low until the RF
+/// path is proven.
+const TX_POWER_DBM: i32 = 2;
 
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, ButtonEvent, 4> = Channel::new();
 static LED_PLAY: Signal<CriticalSectionRawMutex, LedSequence> = Signal::new();
+static RADIO_CH: Channels<CriticalSectionRawMutex, 4, 2> = Channels::new();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -95,7 +110,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(button_task(button).unwrap());
 
     // Battery before anything radio-shaped ever exists: ADC2 claiming
-    // panics once a radio controller owns it.
+    // panics once a radio controller owns it. (The SX1276 is on SPI and
+    // doesn't touch ADC2 — this ordering guards against the Phase 4 BLE
+    // controller, not the LoRa chip.)
     let mut battery = BatterySampler::new(peripherals.ADC2, peripherals.GPIO13);
 
     let mut vext = Vext::new(peripherals.GPIO21);
@@ -118,23 +135,93 @@ async fn main(spawner: Spawner) {
     }
 
     let mut ui = UiState::default();
+
+    // ── SX1276 ───────────────────────────────────────────────────────────
+    // SPI bus: SCK=GPIO5, MOSI=GPIO27, MISO=GPIO19, NSS=GPIO18 as
+    // managed CS. SX1276 datasheet caps SCK at 10 MHz; Mode 0.
+    let spi = Spi::new(
+        peripherals.SPI2,
+        SpiConfig::default()
+            .with_frequency(Rate::from_mhz(8))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO5)
+    .with_mosi(peripherals.GPIO27)
+    .with_miso(peripherals.GPIO19)
+    .into_async();
+    let radio_cs = Output::new(peripherals.GPIO18, Level::High, OutputConfig::default());
+    let mut radio_spi = ExclusiveDevice::new(spi, radio_cs, Delay).unwrap();
+    let mut radio_reset = Output::new(peripherals.GPIO14, Level::High, OutputConfig::default());
+
+    match radio::probe_version(&mut radio_spi, &mut radio_reset).await {
+        Ok(v) => {
+            println!("radio: RegVersion {v:#04x}");
+            ui.radio_version = Some(v);
+        }
+        Err(e) => println!("radio: version probe failed: {e:?}"),
+    }
+    if ui.radio_version == Some(radio::EXPECTED_VERSION) {
+        let dio0 = Input::new(
+            peripherals.GPIO26,
+            InputConfig::default().with_pull(Pull::None),
+        );
+        match init_radio(radio_spi, radio_reset, dio0).await {
+            Ok((lora, mdltn, rx_pkt, tx_pkt)) => {
+                spawner.spawn(radio_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
+                ui.radio_ok = true;
+                println!("radio: RX (MeshCore US params, private sync word)");
+            }
+            Err(e) => println!("radio: init failed: {e:?}"),
+        }
+    } else {
+        println!("radio: not an SX1276, radio disabled");
+    }
+
     ui.battery_mv = battery.sample_mv(&mut vext).await;
     redraw(&mut display, &ui).await;
     println!("battery: {} mV", ui.battery_mv);
 
     loop {
-        match select(BUTTON_EVENTS.receive(), Timer::after(REFRESH_PERIOD)).await {
-            Either::First(ButtonEvent::Single) => {
+        match select3(
+            BUTTON_EVENTS.receive(),
+            RADIO_CH.rx.receive(),
+            Timer::after(REFRESH_PERIOD),
+        )
+        .await
+        {
+            Either3::First(ButtonEvent::Single) => {
                 LED_PLAY.signal(LedSequence::ActionConfirm);
-                ui.clicks = ui.clicks.wrapping_add(1);
                 ui.battery_mv = battery.sample_mv(&mut vext).await;
                 redraw(&mut display, &ui).await;
                 println!("battery: {} mV", ui.battery_mv);
             }
-            Either::First(ButtonEvent::Double) => {
+            Either3::First(ButtonEvent::Double) => {
                 LED_PLAY.signal(LedSequence::LocationAdvert);
             }
-            Either::First(ButtonEvent::Long) => {
+            Either3::First(ButtonEvent::Triple) => {
+                if ui.radio_ok {
+                    let mut data: heapless::Vec<u8, { umsh_radio_loraphy::MAX_PAYLOAD }> =
+                        heapless::Vec::new();
+                    let _ = data.extend_from_slice(b"heltec-v2 phase2 tx test");
+                    RADIO_CH
+                        .tx
+                        .send(TxRequest {
+                            data,
+                            power_dbm: None,
+                        })
+                        .await;
+                    match RADIO_CH.tx_done.wait().await {
+                        Ok(()) => {
+                            ui.tx_count = ui.tx_count.wrapping_add(1);
+                            println!("radio: tx ok");
+                        }
+                        Err(e) => println!("radio: tx failed: {e:?}"),
+                    }
+                    redraw(&mut display, &ui).await;
+                }
+            }
+            Either3::First(ButtonEvent::Long) => {
                 // Phase 1 exit criterion: a full Vext power cycle must
                 // come back with a working display via reset + re-init.
                 println!("vext: power cycling");
@@ -150,11 +237,22 @@ async fn main(spawner: Spawner) {
                 ui.battery_mv = battery.sample_mv(&mut vext).await;
                 redraw(&mut display, &ui).await;
             }
-            Either::First(ButtonEvent::Quad) => {
+            Either3::First(ButtonEvent::Quad) => {
                 panic!("quad-click (panic-capture test hook)");
             }
-            Either::First(ButtonEvent::Triple | ButtonEvent::VeryLong) => {}
-            Either::Second(()) => {
+            Either3::First(ButtonEvent::VeryLong) => {}
+            Either3::Second(frame) => {
+                ui.rx_count = ui.rx_count.wrapping_add(1);
+                ui.last_rssi = Some(frame.info.rssi);
+                println!(
+                    "radio: rx {} bytes rssi {} snr {}",
+                    frame.info.len,
+                    frame.info.rssi,
+                    frame.info.snr.as_decibels(),
+                );
+                redraw(&mut display, &ui).await;
+            }
+            Either3::Third(()) => {
                 ui.battery_mv = battery.sample_mv(&mut vext).await;
                 redraw(&mut display, &ui).await;
             }
@@ -162,11 +260,29 @@ async fn main(spawner: Spawner) {
     }
 }
 
+/// Bring the SX1276 up through lora-phy and build the MeshCore US
+/// parameter set. `false` in `LoRa::new` selects the private sync word
+/// (0x12 — the byte the SX126x boards expand to 0x1424).
+async fn init_radio(
+    spi: RadioSpi,
+    reset: Output<'static>,
+    dio0: Input<'static>,
+) -> Result<(Radio, ModulationParams, PacketParams, PacketParams), RadioError> {
+    let kind = radio::new_radio_kind(spi, reset, dio0)?;
+    let mut lora = LoRa::new(kind, false, Delay).await?;
+    let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)?;
+    Ok((lora, mdltn, rx_pkt, tx_pkt))
+}
+
 #[derive(Default)]
 struct UiState {
     battery_mv: u16,
     vext_cycles: u32,
-    clicks: u32,
+    radio_version: Option<u8>,
+    radio_ok: bool,
+    rx_count: u32,
+    tx_count: u32,
+    last_rssi: Option<i16>,
 }
 
 async fn redraw(display: &mut Display, ui: &UiState) {
@@ -187,15 +303,28 @@ async fn redraw(display: &mut Display, ui: &UiState) {
     draw_line(display, &line, 1, style);
 
     line.clear();
-    let _ = write!(line, "state {}", state_name(state));
+    let _ = write!(line, "{}  vx {}", state_name(state), ui.vext_cycles);
     draw_line(display, &line, 2, style);
 
     line.clear();
-    let _ = write!(line, "vext cycles {}", ui.vext_cycles);
+    match (ui.radio_version, ui.radio_ok) {
+        (Some(v), true) => {
+            let _ = write!(line, "sx1276 v{v:02x} ok");
+        }
+        (Some(v), false) => {
+            let _ = write!(line, "sx1276 v{v:02x} FAIL");
+        }
+        (None, _) => {
+            let _ = write!(line, "sx1276 no spi");
+        }
+    }
     draw_line(display, &line, 3, style);
 
     line.clear();
-    let _ = write!(line, "clicks {}", ui.clicks);
+    let _ = write!(line, "rx {} tx {}", ui.rx_count, ui.tx_count);
+    if let Some(rssi) = ui.last_rssi {
+        let _ = write!(line, " {rssi}");
+    }
     draw_line(display, &line, 4, style);
 
     if let Err(e) = display.flush().await {
@@ -216,6 +345,18 @@ fn state_name(state: BatteryState) -> &'static str {
         BatteryState::BatteryCharging => "charging",
         BatteryState::BatteryCharged => "charged",
     }
+}
+
+/// Owns the lora-phy driver: continuous RX with TX interleaved, feeding
+/// the static [`RADIO_CH`] bundle.
+#[embassy_executor::task]
+async fn radio_task(
+    lora: Radio,
+    mdltn: ModulationParams,
+    rx_pkt: PacketParams,
+    tx_pkt: PacketParams,
+) -> ! {
+    umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await
 }
 
 /// Drives the status LED from the UX engine's heartbeat plus one-shot

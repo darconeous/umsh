@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32", "panic-handler"] }
 umsh-bsp-heltec-lora32-v2 = { path = "../../crates/umsh-bsp-heltec-lora32-v2" }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
 
 embassy-executor = { version = "0.10", default-features = false }
@@ -24,4 +25,8 @@ esp-bootloader-esp-idf = { version = "0.5", features = ["esp32"] }
 esp-hal = { version = "1.1", features = ["esp32", "unstable"] }
 esp-rtos = { version = "0.3", features = ["esp32", "embassy"] }
 esp-println = { version = "0.17", features = ["esp32"] }
-heapless = "0.9"
+# 0.8 to match umsh-radio-loraphy's frame Vec type.
+heapless = { version = "0.8", default-features = false }
+# Resolves to ../../lora-rs via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
