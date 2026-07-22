@@ -64,7 +64,7 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 |---:|---|---|
 | 0 | Node Name | UTF-8 string |
 | 1 | Node Location | 1-7 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
-| 2 | Altitude in Meters | The altitude in meters. | 
+| 2 | Altitude in Meters | signed integer, meters above mean sea level |
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
 | 4 | Supported Regions | one or more concatenated 2-byte region codes |
 | 5 | Nonce | 4 bytes, echoed from a soliciting Identity Request |
@@ -107,7 +107,7 @@ The first byte subdivides the entire globe (longitude in 16 slices of 22.5°, la
 
 #### Encoding a Location
 
-Given latitude `LAT` in degrees (-90..+90) and longitude `LON` in degrees (-180..+180), an N-byte code can be derived either in a single step or byte by byte.
+Given latitude `LAT` in degrees (-90..+90) and longitude `LON` in degrees (-180..+180), an N-byte code can be derived either in a single step or byte by byte. The direct form is normative; where floating-point rounding makes the iterative form disagree at the final nibble, the direct form's result is the correct code.
 
 ##### Direct form
 
@@ -137,14 +137,16 @@ For byte 0 (`k = 0`), `lon_step = 22.5°` and `lat_step = 11.25°`, so the modul
 - `high_nibble = floor((LON + 180) / 22.5)`
 - `low_nibble  = floor((LAT +  90) / 11.25)`
 
+The same edge cases apply as in the direct form: `LON = +180°` wraps to nibble 0 naturally via the modulus, but `LAT = +90°` must be clamped to nibble `0xF` at every position — the modulus would otherwise wrap it to nibble 0.
+
 ##### Worked Example
 
 Encode `(LAT, LON) = (37.331°, −121.883°)` (San Jose, CA) at 3-byte precision.
 
 Direct form:
 
-- `lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.13) = 661 = 0x295`
-- `lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.22) = 2897 = 0xB51`
+- `lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295`
+- `lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.49) = 2897 = 0xB51`
 
 Reading nibbles most-significant first:
 
@@ -155,6 +157,10 @@ Reading nibbles most-significant first:
 |   2  |    `0x5`   |   `0x1`   | `0x51` |
 
 Final code: `2B 95 51`.
+
+#### Decoding a Location
+
+An N-byte code denotes the entire cell it selects, not a point. When a single coordinate is needed (e.g. to plot on a map), decoders use the center of the cell, with an uncertainty of ± half a cell in each axis. Using any other point (such as the cell's south-west corner) would place decoded positions up to half a cell apart between implementations.
 
 #### Precision Scaling
 
@@ -172,14 +178,48 @@ Each additional byte divides both the longitude and latitude spans by 16. The sp
 
 Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.
 
-> **Comparison with float32:** Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes, the cell shrinks to ~9 × 5 mm, better than float32 everywhere.
+> **Comparison with float32:** Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~9 × 5 mm, better than float32 everywhere.
 
 #### Properties
 
-- **Simple encoding.** Two nibble divisions per byte; no floating-point math required to decode.
+- **Simple encoding.** Two nibble divisions per byte; comparison and truncation are pure integer operations, and decoding needs only integer or fixed-point arithmetic.
 - **Arbitrary precision.** Any desired accuracy is reachable by adding bytes.
 - **Compact.** Scales linearly with precision: one byte per factor-of-16 refinement in both axes.
 - **Free coarsening.** Reducing precision is just truncation; no recomputation is needed. This makes it trivial to publish, say, a 2-byte location in a broadcast and a 5-byte location in a private message, both derived from the same underlying position.
+
+#### Caveats
+
+- **Prefix locality is one-way.** Codes sharing a prefix select nearby cells, but nearby positions straddling a cell boundary may share no prefix at all. Prefix comparison alone is therefore suitable only for coarse filtering; proximity queries must also check neighboring cells.
+- **Coarseness is angular, not metric.** Because longitude cells narrow with latitude, a given byte count discloses a physically smaller area at high latitudes. When truncating for privacy, choose the precision by the physical extent of the resulting cell rather than by byte count alone.
+
+#### Location Privacy
+
+This section is non-normative implementation guidance for senders, with one exception noted below. Receivers cannot distinguish a diluted position from a true one, so nothing here affects the wire format or interoperability.
+
+Truncation is the first privacy tool: dropping bytes discloses only a cell. But a cell is a *set*, and an observer with context can shrink it. If a cell is mostly water and the tip of an isthmus barely pokes into it, reporting that cell effectively reports the isthmus tip, no matter how large the cell is. Truncation alone cannot defend against such priors, because the disclosed region is always aligned to the fixed cell lattice.
+
+The defense is to add a deliberate position offset before encoding, so that the feasible region becomes the reported cell dilated by the offset's magnitude — spilling across cell boundaries and decoupling the disclosure from the lattice. Done naively, however, this mechanism leaks *more* than plain truncation. The recommended construction and the pitfalls it avoids follow.
+
+##### Recommended Construction
+
+1. **Offset in meters, not degrees.** Draw a planar offset (east and north components in meters) and convert to degrees at the current latitude. An offset specified in degrees gives latitude-dependent, anisotropic protection.
+2. **Uniform distribution.** Draw the offset uniformly, over either a disk of radius `R` (isotropic) or a box of half-width `R` (simplest: two independent uniform components taken directly from a keyed hash). A uniform offset makes every position within `R` of the report equally plausible. A peaked distribution such as a Gaussian defeats the purpose: its density gradient leaves the reported position the single most probable true position, so the report still points at the sender, just fuzzily. The cost of bounded support is that an observer knows the true position is certainly within `R` of the report — but every bounded distribution shares this, and unbounded tails trade it for occasionally reporting positions an absurd distance away.
+3. **Magnitude matched to the published precision.** Choose `R` between roughly 0.5× and 2× the extent of the cell at the coarsest precision being protected. Much below that range the reported cell almost never differs from the true one and the offset is a placebo; much above it the reports are useless. Note that the offset and truncation are complementary: truncation coarsens in 16× steps, while `R` tunes ambiguity continuously between those steps.
+4. **Deterministic per place.** Derive the offset from a keyed hash of a secret location-privacy key and the true position quantized to a coarse derivation cell (comparable in extent to `R`). The same place then always yields the same offset — across reports, reboots, and revisits — with no random-number state to persist and no re-draw event to observe or provoke.
+5. **Hysteresis at derivation boundaries.** A device straddling a derivation-cell boundary must not flap between the two derived offsets: keep the current offset until the true position moves well inside a neighboring derivation cell. Flapping hands an observer two independent samples of nearly the same position, and the flapping pattern itself localizes the device to the boundary.
+6. **One diluted position feeds all encodings.** Apply the offset once, to the underlying position, and derive every published precision by truncating that single result. If a coarse broadcast and a fine private message are diluted independently, comparing them yields two samples of the same position.
+
+##### The Resampling Trap
+
+The offset MUST NOT be re-drawn per report. This is the one normative statement in this section, because the failure is worse than doing nothing: fresh noise per report combined with quantization is a dithering scheme. The expected value of the reported cell is a continuous, monotone function of the true position, so an observer averaging repeated reports recovers the position to a precision limited only by the number of samples — below the cell size, without bound. A stationary node adding fresh noise to every identity broadcast discloses *more* over time than one publishing its true cell.
+
+The intuition that quantization backstops the noise is exactly backwards: deterministic truncation has a hard resolution floor; truncation of freshly-noised input has a soft floor that averages away.
+
+##### Limits
+
+- **Mobile nodes.** A fixed offset protects a stationary position well. If the device moves while the offset is held, the reported track is the true track translated by a constant vector, and matching the track's shape against roads or coastlines recovers the offset exactly. For mobile nodes the mechanism obscures where a track is anchored, not its shape; treat it accordingly.
+- **Ground-truth correlation burns the offset.** Any single correlation between a reported position and the true one — a precise disclosure through another channel, a physical encounter — reveals the offset for as long as it is held. After such an event the privacy key (or derivation input) should be rotated.
+- **Radio-layer localization is out of scope.** The mechanism launders only the advertised location field. Observers in RF range can localize a transmitter by which nodes hear it and at what signal strength, regardless of what its identity payload claims. The mechanism is meaningful against remote consumers of identity payloads, not against nearby receivers.
 
 ## Signature Usage
 
