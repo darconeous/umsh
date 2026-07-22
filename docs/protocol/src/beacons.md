@@ -20,12 +20,11 @@ This is particularly useful when a receiver already knows the node's identity in
 
 An **advertisement** is a broadcast or multicast packet whose payload is a
 [node identity](node-identity.md) payload — a beacon that additionally
-identifies and describes its sender. Advertisements may be sent
-unsolicited (announcing presence, name, role, and capabilities) or in
-response to an [Advertisement Request](mac-commands.md#advertisement-request-0)
-MAC command; a solicited advertisement echoes the request's nonce, when
-present, in the identity payload's
-[Nonce option](node-identity.md#nonce-option-5).
+identifies and describes its sender. Advertisements are sent unsolicited,
+announcing presence, name, role, and capabilities. To obtain a specific
+node's identity, use the [Identity Request](mac-commands.md#identity-request-1)
+MAC command, which is answered with a targeted unicast identity response
+rather than a broadcast advertisement.
 
 ## Path Discovery
 

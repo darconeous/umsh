@@ -10,6 +10,10 @@ use umsh_mac::{LocalIdentityId, SendOptions};
 #[cfg(feature = "software-crypto")]
 use crate::channel::Channel;
 use crate::dispatch::EventDispatcher;
+use crate::identity_responder::{
+    IdentityRequestContext, IdentityResponder, IdentityResponsePlan, NodeIdentityProfile,
+    RespondDecision, default_respond_policy,
+};
 use crate::mac::MacBackend;
 use crate::peer::PeerConnection;
 #[cfg(feature = "software-crypto")]
@@ -181,6 +185,7 @@ pub(crate) struct LocalNodeState {
     ping_timeout_handlers: HandlerTable<Box<dyn FnMut(PublicKey)>>,
     pending_pings: Vec<PendingPing>,
     peer_subscriptions: Vec<PeerSubscriptions>,
+    identity_responder: Option<IdentityResponder>,
     #[cfg(feature = "software-crypto")]
     pfs: PfsSessionManager,
 }
@@ -203,6 +208,7 @@ impl LocalNodeState {
             ping_timeout_handlers: HandlerTable::default(),
             pending_pings: Vec::new(),
             peer_subscriptions: Vec::new(),
+            identity_responder: None,
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
         }
@@ -517,6 +523,90 @@ impl<M: MacBackend> LocalNode<M> {
         let handle = self.add_mac_command_handler(handler);
         let state = self.state.clone();
         Subscription::new(move || state.borrow_mut().mac_command_handlers.remove(handle))
+    }
+
+    /// Enable the built-in Identity Request responder with a custom respond
+    /// policy.
+    ///
+    /// The node will answer a matching [Identity Request](crate::mac_command)
+    /// with an authenticated unicast identity response (see
+    /// [`identity_responder`](crate::identity_responder)). `policy` is the
+    /// registerable discriminator invoked for each selected request; return
+    /// [`RespondDecision::Ignore`] to decline. Replaces any previously enabled
+    /// responder.
+    pub fn enable_identity_responder<P>(&self, profile: NodeIdentityProfile, policy: P)
+    where
+        P: FnMut(&IdentityRequestContext<'_>) -> RespondDecision + 'static,
+    {
+        self.state.borrow_mut().identity_responder = Some(IdentityResponder {
+            profile,
+            policy: Box::new(policy),
+        });
+    }
+
+    /// Enable the Identity Request responder with the
+    /// [`default_respond_policy`](crate::identity_responder::default_respond_policy).
+    pub fn enable_identity_responder_default(&self, profile: NodeIdentityProfile) {
+        self.enable_identity_responder(profile, default_respond_policy);
+    }
+
+    /// Disable the Identity Request responder, if enabled.
+    pub fn disable_identity_responder(&self) {
+        self.state.borrow_mut().identity_responder = None;
+    }
+
+    /// Update the live fields of the enabled responder's identity profile
+    /// (e.g. refresh `location`/`altitude_m` from a GPS fix). No-op if the
+    /// responder is not enabled.
+    pub fn update_identity_profile(&self, f: impl FnOnce(&mut NodeIdentityProfile)) {
+        if let Some(responder) = self.state.borrow_mut().identity_responder.as_mut() {
+            f(&mut responder.profile);
+        }
+    }
+
+    /// Evaluate an incoming Identity Request against the enabled responder,
+    /// producing a reply plan the async pump can execute. Returns `None` when
+    /// no responder is enabled, the request does not select this node, or the
+    /// policy declines.
+    pub(crate) fn evaluate_identity_request(
+        &self,
+        packet: &ReceivedPacketRef<'_>,
+        from: PublicKey,
+        options: &[u8],
+    ) -> Option<IdentityResponsePlan> {
+        let ctx = IdentityRequestContext {
+            from_key: from,
+            from_hint: packet.from_hint(),
+            source_authenticated: packet.source_authenticated(),
+            has_full_source: packet.has_full_source(),
+            channel: packet.channel().map(|c| c.id()),
+            family: packet.packet_family(),
+            filters: crate::mac_command::IdentityRequestFilters::new(options),
+            rssi: packet.rssi(),
+            snr: packet.snr(),
+        };
+        self.state
+            .borrow_mut()
+            .identity_responder
+            .as_mut()?
+            .evaluate(&ctx)
+    }
+
+    /// Send a resolved Identity Request reply as an authenticated unicast.
+    ///
+    /// Uses the node's long-term identity (not a PFS ephemeral). Relies on the
+    /// crypto state the MAC already resolved for the requester — permanent or
+    /// transient — and never promotes/pins the peer. Failures are dropped: the
+    /// requester can always ask again.
+    pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
+        let mut options = SendOptions::default();
+        if plan.full_source {
+            options = options.with_full_source();
+        }
+        let _ = self
+            .mac
+            .send_unicast(self.identity_id, &plan.to, &plan.framed, &options)
+            .await;
     }
 
     fn add_transmitted_handler<F>(&self, handler: F) -> SubscriptionHandle

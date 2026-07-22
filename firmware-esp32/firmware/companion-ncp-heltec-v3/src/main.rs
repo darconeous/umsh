@@ -621,6 +621,15 @@ impl NcpEnv for BoardNcpEnv {
         PAIRING_CONFIG_ACK.wait().await
     }
 
+    async fn factory_reset(&mut self) -> ! {
+        // TODO: erase the runtime-discovered `umsh` partition span
+        // (`partition.start..partition.end`) — all journals live there —
+        // then esp32 reset. Unlike techo's hardcoded NV region, the span
+        // is not currently held by `BoardNcpEnv`, so this needs the
+        // partition bounds threaded in first.
+        todo!("Implement factory reset for esp32");
+    }
+
     fn set_advertising_allowed(&mut self, allowed: bool) {
         // ble-debug builds keep advertising open regardless of the
         // arbitration policy so the diagnostic path stays reachable.
@@ -641,6 +650,7 @@ impl NcpEnv for BoardNcpEnv {
         current.clear();
         if current.extend_from_slice(bytes).is_ok() {
             DEVICE_NAME_CHANGED.signal(());
+            device_node::NODE_NAME_CHANGED.signal(());
             UI_REFRESH.signal(());
         }
     }

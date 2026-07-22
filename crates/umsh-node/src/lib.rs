@@ -144,6 +144,7 @@ mod channel;
 mod dispatch;
 mod host;
 mod identity;
+pub mod identity_responder;
 pub mod location;
 mod mac;
 pub mod mac_command;
@@ -163,6 +164,9 @@ pub use app_payload::{
 pub use channel::Channel;
 pub use host::{Host, HostError};
 pub use identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+pub use identity_responder::{
+    IdentityRequestContext, NodeIdentityProfile, RespondDecision, default_respond_policy,
+};
 pub use mac::{MacBackend, MacBackendError};
 pub use mac_command::OwnedMacCommand;
 pub use mac_command::{CommandId, MacCommand};
@@ -507,17 +511,7 @@ mod tests {
 
     #[cfg(feature = "unsafe-advanced")]
     fn encode_text_payload(text: &str) -> Vec<u8> {
-        let message = OwnedTextMessage {
-            message_type: umsh_text::MessageType::Basic,
-            sender_handle: None,
-            sequence: None,
-            sequence_reset: false,
-            regarding: None,
-            editing: None,
-            bg_color: None,
-            text_color: None,
-            body: String::from(text),
-        };
+        let message = OwnedTextMessage::basic(text);
         let mut body = [0u8; 512];
         let len = umsh_text::text_message::encode(&message.as_borrowed(), &mut body).unwrap();
         let mut payload = Vec::with_capacity(len + 1);
@@ -763,5 +757,150 @@ mod tests {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("test future unexpectedly returned Poll::Pending"),
         }
+    }
+
+    // --- Identity Request responder ---
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn responder_node(mac: &FakeMac) -> crate::LocalNode<FakeMac> {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+        let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
+        let membership = Rc::new(RefCell::new(NodeMembership::new()));
+        let state = Rc::new(RefCell::new(LocalNodeState::new()));
+        LocalNode::new(LocalIdentityId(1), mac.clone(), dispatcher, membership, state)
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_profile(public_key: PublicKey) -> crate::NodeIdentityProfile {
+        crate::NodeIdentityProfile::new(
+            public_key,
+            crate::NodeRole::Repeater,
+            crate::NodeCapabilities::REPEATER | crate::NodeCapabilities::TEXT_MESSAGES,
+        )
+        .with_name("repeater-1")
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_selected_request_with_unicast_identity() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        // Broadcast-style request that filters on our hint and carries a nonce.
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0xCAFE_F00D)
+            .unwrap()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        let packet = test_unicast_packet(requester, &[]);
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options)
+            .expect("responder should produce a reply plan");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1, "exactly one unicast reply");
+        let reply = &unicasts[0];
+        assert_eq!(reply.to, requester, "reply is addressed to the requester");
+        // test_unicast_packet is source_authenticated → requester already has
+        // our key → hint source suffices.
+        assert!(!reply.options.full_source);
+
+        assert_eq!(reply.payload[0], umsh_core::PayloadType::NodeIdentity as u8);
+        let identity = crate::NodeIdentityPayload::from_bytes(&reply.payload[1..]).unwrap();
+        assert_eq!(identity.role, crate::NodeRole::Repeater);
+        assert_eq!(identity.name.as_deref(), Some("repeater-1"));
+        assert_eq!(identity.nonce, Some(0xCAFE_F00D), "request nonce echoed");
+        assert!(identity.signature.is_none(), "responses are unsigned");
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_ignores_request_that_filters_exclude() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        // Filter targets a different hint → we are not selected.
+        let other_hint = PublicKey([0x99; 32]).hint();
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&other_hint)
+            .unwrap()
+            .build();
+        let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
+
+        assert!(
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+                .is_none()
+        );
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_respects_ignore_policy() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder(test_profile(our_key), |_ctx| {
+            crate::RespondDecision::Ignore
+        });
+
+        // No filters → selects everyone, so only the policy can decline.
+        let options = crate::mac_command::IdentityRequestBuilder::new().build();
+        let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
+
+        assert!(
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+                .is_none()
+        );
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_disabled_yields_no_plan() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let options = crate::mac_command::IdentityRequestBuilder::new().build();
+        let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
+        assert!(
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+                .is_none()
+        );
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn default_policy_full_source_tracks_authentication() {
+        use crate::identity_responder::{IdentityRequestContext, default_respond_policy};
+        use crate::mac_command::IdentityRequestFilters;
+
+        let base = |source_authenticated: bool| IdentityRequestContext {
+            from_key: PublicKey([0x41; 32]),
+            from_hint: None,
+            source_authenticated,
+            has_full_source: false,
+            channel: None,
+            family: crate::PacketFamily::Unicast,
+            filters: IdentityRequestFilters::new(&[]),
+            rssi: None,
+            snr: None,
+        };
+
+        // Authenticated request → sender already holds our key → hint reply.
+        assert_eq!(
+            default_respond_policy(&base(true)),
+            crate::RespondDecision::Respond { full_source: false }
+        );
+        // Unauthenticated request → sender may lack our key → include it.
+        assert_eq!(
+            default_respond_policy(&base(false)),
+            crate::RespondDecision::Respond { full_source: true }
+        );
     }
 }
