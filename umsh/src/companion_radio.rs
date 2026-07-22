@@ -1259,6 +1259,22 @@ where
         self.wait_reset(deadline).await
     }
 
+    /// Factory-reset the NCP (`CMD_FACTORY_RESET`): erase ALL mutable
+    /// state — saved provisioning, the device identity, BLE bonds, and the
+    /// pairing PIN — and reboot to a blank factory state. Unlike
+    /// [`Self::reset`] this sends no expectation of a reply and does not
+    /// wait: the NCP wipes storage and reboots without responding, which
+    /// drops the transport link. Treat the ensuing disconnect as
+    /// completion; a caller that needs the radio again must re-open the
+    /// transport and re-pair, since the bond it used is now gone.
+    pub async fn factory_reset(&mut self) -> Result<(), CompanionRadioError> {
+        let mut buf = [0u8; 2];
+        let len = frame::factory_reset(&mut buf, TID_UNSOLICITED)
+            .map_err(|_| CompanionRadioError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        Ok(())
+    }
+
     /// Revert the NCP to its saved snapshot (`CMD_RESTORE`; requires
     /// `CAP_SAVE`), accepting both spec-permitted completion forms.
     pub async fn restore(&mut self) -> Result<RestoreCompletion, CompanionRadioError> {

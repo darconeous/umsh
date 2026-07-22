@@ -17,6 +17,7 @@ struct SettingsView: View {
     let configureRadio: (RadioSettings) async throws -> Void
     let disconnectRadio: () async -> Void
     var forgetRadio: () async -> Void = {}
+    var factoryResetRadio: () async throws -> Void = {}
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -75,6 +76,7 @@ struct SettingsView: View {
                         configure: configureRadio,
                         disconnect: disconnectRadio,
                         forget: forgetRadio,
+                        factoryReset: factoryResetRadio,
                         discoverRadios: discoverRadios,
                         selectRadio: selectRadio,
                         stopDiscovery: stopDiscovery
@@ -214,12 +216,15 @@ struct RadioDetailView: View {
     let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
     var forget: () async -> Void = {}
+    var factoryReset: () async throws -> Void = {}
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
+    @State private var confirmsFactoryReset = false
+    @State private var factoryResetProblem: String?
     @State private var showsRadioPicker = false
 
     var body: some View {
@@ -426,6 +431,36 @@ struct RadioDetailView: View {
         } message: {
             Text("The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
         }
+        .confirmationDialog(
+            "Factory reset this radio?",
+            isPresented: $confirmsFactoryReset,
+            titleVisibility: .visible
+        ) {
+            Button("Erase Everything and Reboot", role: .destructive) {
+                Task {
+                    do {
+                        try await factoryReset()
+                        dismiss()
+                    } catch {
+                        factoryResetProblem = "The factory reset could not be sent. Make sure the radio is still connected, then try again."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone — you will need to set the radio up again from scratch.")
+        }
+        .alert(
+            "Factory reset failed",
+            isPresented: Binding(
+                get: { factoryResetProblem != nil },
+                set: { if !$0 { factoryResetProblem = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { factoryResetProblem = nil }
+        } message: {
+            Text(factoryResetProblem ?? "")
+        }
         .sheet(isPresented: $showsRadioPicker, onDismiss: { Task { await stopDiscovery() } }) {
             NavigationStack {
                 RadioPickerView(
@@ -483,6 +518,7 @@ struct RadioDetailView: View {
                 Task { await disconnect() }
             }
             forgetButton
+            factoryResetButton
         case .waitingForRadio:
             VStack(alignment: .leading, spacing: 4) {
                 Text("Waiting for the radio to appear")
@@ -518,6 +554,13 @@ struct RadioDetailView: View {
     private var forgetButton: some View {
         Button("Forget This Radio", role: .destructive) {
             confirmsForget = true
+        }
+    }
+
+    @ViewBuilder
+    private var factoryResetButton: some View {
+        Button("Factory Reset Radio…", role: .destructive) {
+            confirmsFactoryReset = true
         }
     }
 }

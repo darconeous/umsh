@@ -131,6 +131,14 @@ pub trait NcpEnv {
     /// Apply a `PROP_BLE_PAIRING_PIN` write against the bond journal and
     /// the live BLE stack; `true` when it took effect.
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool;
+    /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
+    /// platform owns — saved snapshot, device identity, frame-counter
+    /// boundaries, BLE bonds, pairing PIN, and any other journal — then
+    /// reboot. Never returns: the reset discards in-RAM state and the
+    /// board comes back factory-fresh. There is no separate "clear bonds"
+    /// hook because a reboot reloads bonds from the (now-erased) journal,
+    /// so the live BLE stack never has to be touched.
+    async fn factory_reset(&mut self) -> !;
     /// Publish the transport-arbitration advertising policy (a wired
     /// attach suppresses BLE advertising). Diagnostic builds may
     /// deliberately ignore `allowed`.
@@ -307,6 +315,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::SaveSnapshot { .. })
         | Some(Effect::ClearSaved { .. })
         | Some(Effect::ProvisionIdentity { .. })
+        | Some(Effect::FactoryReset)
         | None => {}
     }
 }
@@ -575,6 +584,15 @@ where
                                 &mut |frame: &[u8]| emitter.push(frame),
                             );
                             emitter.flush(arbitration.destination(), rt.out).await;
+                        }
+                        Some(Effect::FactoryReset) => {
+                            // Hand off to the platform, which erases every
+                            // persistent journal and reboots. This never
+                            // returns; no acknowledgement is sent because the
+                            // reset drops the link. Any frames the session
+                            // already staged were flushed above.
+                            env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
+                            env.factory_reset().await
                         }
                         other => apply_effect(&session, other, &rt, &mut env).await,
                     }

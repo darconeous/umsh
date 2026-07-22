@@ -706,6 +706,34 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func factoryReset() async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    return
+                }
+                Self.logger.notice("action: user pressed Factory Reset")
+                do {
+                    try applySessionUpdate(companionSession.factoryReset(), from: peripheral)
+                } catch {
+                    result.resume(throwing: RadioConnectionError.incompatibleProtocol)
+                    return
+                }
+                // The radio erases all state and reboots, dropping the link
+                // itself. Abandon the binding so the app does not auto-reconnect
+                // to the now-blank device — but do NOT cancel the connection
+                // here: leaving the live link up lets the command's GATT write
+                // flush before the radio's own reboot performs the disconnect.
+                // (Set after applySessionUpdate, which re-remembers an attached
+                // radio; clearing afterward wins.)
+                shouldAutoConnect = false
+                defaults.removeObject(forKey: PreferenceKey.connectedUUID)
+                result.resume()
+            }
+        }
+    }
+
     func ping(peerAddress: String) async throws -> RadioPingResult {
         try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<RadioPingResult, any Error>) in

@@ -238,18 +238,19 @@ Two consequences deserve emphasis:
 ## Additional Commands
 
 The full protocol assigns the four command identifiers reserved by the
-minimal protocol for table operations, and adds three more:
+minimal protocol for table operations, and adds four more:
 
-Id | Mnemonic            | Dir       | Description
----|---------------------|-----------|-------------
-4  | `CMD_PROP_INSERT`   | Host->NCP | Insert an item into a multi-value property
-5  | `CMD_PROP_REMOVE`   | Host->NCP | Remove an item from a multi-value property
-7  | `CMD_PROP_INSERTED` | NCP->Host | Item-inserted notification
-8  | `CMD_PROP_REMOVED`  | NCP->Host | Item-removed notification
-11 | `CMD_QUEUE_DRAIN`   | Host->NCP | Deliver queued inbound frames
-12 | `CMD_SAVE`          | Host->NCP | Save state to non-volatile storage
-13 | `CMD_CLEAR`         | Host->NCP | Erase all saved state
-14 | `CMD_RESTORE`       | Host->NCP | Restore state from the saved snapshot
+Id | Mnemonic             | Dir       | Description
+---|----------------------|-----------|-------------
+4  | `CMD_PROP_INSERT`    | Host->NCP | Insert an item into a multi-value property
+5  | `CMD_PROP_REMOVE`    | Host->NCP | Remove an item from a multi-value property
+7  | `CMD_PROP_INSERTED`  | NCP->Host | Item-inserted notification
+8  | `CMD_PROP_REMOVED`   | NCP->Host | Item-removed notification
+11 | `CMD_QUEUE_DRAIN`    | Host->NCP | Deliver queued inbound frames
+12 | `CMD_SAVE`           | Host->NCP | Save state to non-volatile storage
+13 | `CMD_CLEAR`          | Host->NCP | Erase all saved state
+14 | `CMD_RESTORE`        | Host->NCP | Restore state from the saved snapshot
+15 | `CMD_FACTORY_RESET`  | Host->NCP | Erase **all** mutable state (incl. bonds) and reboot
 
 ### CMD 4: (Host -> NCP) `CMD_PROP_INSERT` {#cmd-prop-insert}
 
@@ -510,6 +511,42 @@ If an error occurs — in particular `STATUS_INVALID_STATE` when no snapshot
 exists (see `PROP_SAVED`) — the value of the emitted `PROP_LAST_STATUS`
 will be set accordingly, no state is modified, and no reset code is
 emitted.
+
+### CMD 15: (Host -> NCP) `CMD_FACTORY_RESET` {#cmd-factory-reset}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_FACTORY_RST|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_FACTORY_RESET`
+
+Return the radio to a blank factory state. Commands the NCP to erase
+**every** piece of mutable state it holds — both the persisted state
+`CMD_CLEAR` erases (the saved snapshot, all persisted provisioning, and
+the device identity private key) **and** the transport-level state
+`CMD_CLEAR` deliberately preserves: all BLE bonds and the configured
+`PROP_BLE_PAIRING_PIN` — and then reboot. After the reboot the radio is
+indistinguishable from one that has never been provisioned or paired.
+
+This differs from `CMD_CLEAR` + `CMD_RST` in two ways: it also clears
+transport-level pairing state (bonds and PIN), and it performs a hardware
+reboot rather than only a protocol-session reset.
+
+The command payload SHOULD be empty and MUST be ignored. Unlike every
+other command, `CMD_FACTORY_RESET` **has no response**: the NCP wipes its
+storage and reboots, which drops the transport link. A host treats the
+ensuing disconnect (and the radio's subsequent reappearance in a factory
+state) as completion; it **MUST NOT** wait for a `PROP_LAST_STATUS`. The
+TID is therefore irrelevant.
+
+Because clearing the bonds invalidates the encrypted link the command
+arrived on, a host that issues `CMD_FACTORY_RESET` over a bonded transport
+should also discard its own pairing to the radio.
+
+This command is available regardless of capabilities.
 
 This command is only available on NCPs advertising `CAP_SAVE`; otherwise
 it fails with `STATUS_UNIMPLEMENTED`.

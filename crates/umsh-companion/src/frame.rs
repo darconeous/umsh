@@ -93,6 +93,13 @@ pub enum Cmd {
     Clear = 13,
     /// Restore state from the saved snapshot (host to NCP).
     Restore = 14,
+    /// Factory reset (host to NCP): erase ALL mutable state — saved
+    /// provisioning, device identity, BLE bonds, pairing PIN, and every
+    /// other persisted journal — then reboot. Unlike `CMD_CLEAR` (which
+    /// exempts bonds and the PIN and leaves the live session running),
+    /// this returns the radio to a blank factory state and does not reply:
+    /// the reboot drops the link.
+    FactoryReset = 15,
 }
 
 impl Cmd {
@@ -113,6 +120,7 @@ impl Cmd {
             12 => Some(Self::Save),
             13 => Some(Self::Clear),
             14 => Some(Self::Restore),
+            15 => Some(Self::FactoryReset),
             _ => None,
         }
     }
@@ -350,6 +358,12 @@ pub fn clear(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Clear)?.finish())
 }
 
+/// Encode a `CMD_FACTORY_RESET` frame (no payload). The NCP erases all
+/// mutable state and reboots without replying.
+pub fn factory_reset(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::FactoryReset)?.finish())
+}
+
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -573,18 +587,18 @@ mod tests {
 
     #[test]
     fn unknown_command_is_well_formed() {
-        let frame = Frame::parse(&[0x81, 0x0F]).unwrap();
-        assert_eq!(frame.cmd, 15);
+        let frame = Frame::parse(&[0x81, 0x10]).unwrap();
+        assert_eq!(frame.cmd, 16);
         assert_eq!(frame.command(), None);
     }
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in 0..=14u8 {
+        for id in 0..=15u8 {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        assert_eq!(Cmd::from_u8(15), None);
+        assert_eq!(Cmd::from_u8(16), None);
     }
 
     #[test]
@@ -642,6 +656,7 @@ mod tests {
             (save, Cmd::Save),
             (clear, Cmd::Clear),
             (restore, Cmd::Restore),
+            (factory_reset, Cmd::FactoryReset),
         ] {
             let len = encode(&mut buf, 2).unwrap();
             assert_eq!(len, 2);

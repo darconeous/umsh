@@ -37,7 +37,8 @@ Commands:\n\
   save                  persist live state across reboots (CMD_SAVE)\n\
   restore               revert live state to the saved snapshot\n\
   clear                 erase persisted state; live state keeps running\n\
-  factory-reset         clear + reboot into factory state (needs --yes)\n\
+  factory-reset         erase ALL state incl. BLE bonds + PIN, then\n\
+                        reboot into a blank factory state (needs --yes)\n\
   reset                 protocol reset (CMD_RST): state returns to its\n\
                         post-reset values, restoring any saved\n\
                         snapshot; the MCU does not reboot\n\
@@ -502,8 +503,9 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             no_positionals(&positionals)?;
             if !yes {
                 return Err(
-                    "factory-reset erases all persisted provisioning, including the \
-                     device identity; re-run with --yes to confirm"
+                    "factory-reset erases ALL mutable state — persisted provisioning, \
+                     the device identity, BLE bonds, and the pairing PIN — then reboots; \
+                     re-run with --yes to confirm"
                         .into(),
                 );
             }
@@ -946,9 +948,12 @@ async fn dispatch<L: FrameLink>(
             Ok(())
         }
         Command::FactoryReset => {
-            radio.clear().await?;
-            let status = radio.reset().await?;
-            println!("factory reset complete ({status:?}); BLE bonds and pairing PIN are retained");
+            radio.factory_reset().await?;
+            println!(
+                "factory reset sent; the radio is erasing ALL state (provisioning, \
+                 device identity, BLE bonds, pairing PIN) and rebooting. The link \
+                 will drop; re-pair to use it again."
+            );
             Ok(())
         }
         Command::Reset => {

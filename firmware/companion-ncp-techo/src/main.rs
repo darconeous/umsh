@@ -1377,6 +1377,36 @@ mod firmware {
             PAIRING_CONFIG_ACK.wait().await
         }
 
+        async fn factory_reset(&mut self) -> ! {
+            // Erase the entire non-volatile storage region in one sweep.
+            // Every persistent journal lives in this contiguous window
+            // (see `ble_store` / memory.x): BLE bonds + pairing PIN + local
+            // IRK, the saved provisioning snapshot, the device identity,
+            // UX state, and the frame-counter boundaries. Wiping the flash
+            // and rebooting is a complete factory reset — every subsystem
+            // remounts from erased flash on boot, so no live in-RAM table
+            // (BLE bonds included) has to be touched here.
+            //
+            // The full reserved region, not just the pages currently in
+            // use, so a future journal added inside it is covered too.
+            const NV_REGION_START: u32 = ble_store::PAGE0; // 0x000E_4000
+            const NV_REGION_END: u32 = 0x000F_4000;
+            debug_log(format_args!("FACTORY RESET: erasing NV region + reboot"));
+            {
+                let mut flash = self.proto_store.flash.lock().await;
+                let mut page = NV_REGION_START;
+                while page < NV_REGION_END {
+                    // Best-effort: a page that fails to erase is superseded
+                    // by the reboot's fresh mount anyway, and there is no
+                    // host left to report to (the link drops on reset).
+                    let _ = flash.erase(page, page + ble_store::PAGE_SIZE).await;
+                    page += ble_store::PAGE_SIZE;
+                }
+            }
+            // Discards all in-RAM state and remounts factory-fresh.
+            cortex_m::peripheral::SCB::sys_reset()
+        }
+
         fn set_advertising_allowed(&mut self, allowed: bool) {
             // ble-debug builds keep advertising open regardless of the
             // arbitration policy so the diagnostic console stays reachable.

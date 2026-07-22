@@ -205,6 +205,10 @@ actor FakeRadioConnection: RadioConnection {
         publish(.disconnected)
     }
 
+    func factoryReset() async throws {
+        publish(.disconnected)
+    }
+
     func publish(_ newSnapshot: RadioSnapshot) {
         snapshot = newSnapshot
         for continuation in continuations.values {
