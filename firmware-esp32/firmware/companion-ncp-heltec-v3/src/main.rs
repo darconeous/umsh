@@ -6,9 +6,11 @@
 //! and T-1000E images run — behind this board's couplings:
 //!
 //! - **Wired transport**: HDLC-framed CRP on UART0 (the CP2102 bridge).
-//!   UART has no connection state, so the wired transport reports
-//!   attached once at boot and never detaches; protocol-level
-//!   attach/detach still drives session arbitration exactly as on USB.
+//!   UART has no connection state, so wired attachment is lazy and
+//!   permanent: the first valid HDLC frame attaches, nothing ever
+//!   detaches it (serial hosts are assumed present once they speak),
+//!   and a board nobody serials into stays detached and autonomous.
+//!   Real attach/detach edges exist only on BLE.
 //! - **BLE transport**: the `CompanionService` GATT shape over the
 //!   esp-radio controller, with the same pairing/bonding lattice the
 //!   Phase 4 spike hardware-proved (PIN on the OLED, lockout policy,
@@ -761,10 +763,18 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
     }
 }
 
+/// Start advertising and return the accept handle. This future must
+/// run to completion before racing any cancellation signal: dropping
+/// `Peripheral::advertise` mid-configuration (before its internal
+/// `LeSetAdvEnable(true)`) leaves trouble's `advertise_command_state`
+/// in `Cancel` with nothing for the runner's disable arm to disable,
+/// and every later `advertise()` then parks in `request()` forever —
+/// observed as "configuring" with no "active" on the esp-radio
+/// external controller. Cancellation belongs on the returned
+/// [`Advertiser`] (dropping it is the designed clean-stop path).
 async fn advertise<'values, 'server, C: Controller>(
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-    server: &'server CompanionServer<'values>,
-) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
+) -> Result<Advertiser<'values, C, DefaultPacketPool>, BleHostError<C::Error>> {
     const SERVICE_UUID_LE: [u8; 16] = gatt::SERVICE_UUID.to_le_bytes();
     let name = {
         let configured = DEVICE_NAME.lock().await;
@@ -792,7 +802,7 @@ async fn advertise<'values, 'server, C: Controller>(
     };
     let mut scan_data = [0u8; 31];
     let scan_len = AdStructure::encode_slice(&[scan_name], &mut scan_data)?;
-    Ok(peripheral
+    let advertiser = peripheral
         .advertise(
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
@@ -800,10 +810,9 @@ async fn advertise<'values, 'server, C: Controller>(
                 scan_data: &scan_data[..scan_len],
             },
         )
-        .await?
-        .accept()
-        .await?
-        .with_attribute_server(server)?)
+        .await?;
+    debug_log(format_args!("advertise: active, awaiting connection"));
+    Ok(advertiser)
 }
 
 fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
@@ -1127,14 +1136,33 @@ async fn ble_peripheral<'values, C: Controller>(
             ADV_POLICY_CHANGED.wait().await;
             continue;
         }
+        // The configuration phase runs unraced (see `advertise`); only
+        // the connection wait may be cancelled, by dropping the
+        // Advertiser — the runner then disables advertising cleanly and
+        // the next loop iteration reconfigures with fresh name/policy.
+        let advertiser = match advertise(peripheral).await {
+            Ok(advertiser) => advertiser,
+            Err(error) => {
+                debug_log(format_args!("advertising error={error:?}"));
+                Timer::after_millis(500).await;
+                continue;
+            }
+        };
         match select3(
-            advertise(peripheral, server),
+            advertiser.accept(),
             ADV_POLICY_CHANGED.wait(),
             DEVICE_NAME_CHANGED.wait(),
         )
         .await
         {
             Either3::First(Ok(connection)) => {
+                let connection = match connection.with_attribute_server(server) {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        debug_log(format_args!("attribute server attach error={error:?}"));
+                        continue;
+                    }
+                };
                 match gatt_connection(stack, store, server, &connection).await {
                     Ok(()) => debug_log(format_args!("gatt connection task ended ok")),
                     Err(error) => debug_log(format_args!("gatt connection task error={error:?}")),
@@ -1293,20 +1321,43 @@ async fn output_task(mut tx: UartTx<'static, Async>, panic_report: Option<heaple
 }
 
 /// Owns the UART RX half and HDLC decoder, forwarding frames into
-/// `INPUT_CH`. UART has no connection state, so the wired transport
-/// attaches once at boot and never detaches; the session's own
-/// protocol-level attach/detach drives arbitration from there. A host
-/// that vanishes without detaching leaves the session attached until
-/// the next protocol attach displaces it.
+/// `INPUT_CH`. UART has no connection state, so wired attachment is
+/// lazy and permanent: the first valid HDLC frame attaches the wired
+/// transport, and no wired detach ever fires — a serial host is
+/// assumed present for good once it has spoken. Detach semantics exist
+/// only for BLE, whose link genuinely drops; a board nobody serials
+/// into therefore stays detached and operates autonomously (queueing
+/// and delegated acknowledgement). Displacement by a BLE attach is
+/// observed as a foreign `SESSION_GEN` bump, which re-arms the lazy
+/// attach, so a displaced serial host reclaims the session with its
+/// next frame.
 #[embassy_executor::task]
 async fn uart_in_task(mut rx: UartRx<'static, Async>) {
-    INPUT_CH.send(InEvent::Attached(Transport::Usb)).await;
     let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
+    // True while this task's own lazy attach is still unprocessed: the
+    // resulting single generation bump must not reset the decoder,
+    // because the bytes in flight belong to the very session being
+    // attached. Any other generation movement is a displacement and
+    // resets as before.
+    let mut own_attach_pending = false;
+    // Local mirror of "we attached wired and were not displaced since";
+    // suppresses duplicate attaches within one read batch (each attach
+    // bumps the generation and would invalidate the previous command's
+    // in-flight response).
+    let mut wired_attached = false;
     loop {
         let generation = SESSION_GEN.load(Ordering::Acquire);
         if generation != local_generation {
-            decoder.reset();
+            if own_attach_pending && generation == local_generation.wrapping_add(1) {
+                own_attach_pending = false;
+            } else {
+                // Foreign session edge (BLE attach or a racing burst):
+                // drop any half-decoded frame and re-arm lazy attach.
+                decoder.reset();
+                own_attach_pending = false;
+                wired_attached = false;
+            }
             local_generation = generation;
         }
         let mut packet = [0u8; 64];
@@ -1320,6 +1371,16 @@ async fn uart_in_task(mut rx: UartRx<'static, Async>) {
                     let Some(Ok(bytes)) = decoder.push(byte) else {
                         continue;
                     };
+                    // Covers both first-ever contact and reclaiming
+                    // the session after a BLE displacement (which
+                    // cleared the flag via the generation check above;
+                    // a BLE *detach* bumps nothing, but then wired was
+                    // not displaced and the flag is still accurate).
+                    if !wired_attached {
+                        wired_attached = true;
+                        own_attach_pending = true;
+                        INPUT_CH.send(InEvent::Attached(Transport::Usb)).await;
+                    }
                     let mut frame = heapless::Vec::new();
                     let _ = frame.extend_from_slice(bytes);
                     INPUT_CH.send(InEvent::Frame(Transport::Usb, frame)).await;
