@@ -45,6 +45,9 @@ umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = fals
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
+# Board-agnostic NCP leaf modules (Phase 5 extraction, increment A):
+# transport arbitration, counter map, BLE pairing policy, radio mux.
+umsh-companion-runtime = { path = "../../crates/umsh-companion-runtime" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
@@ -52,8 +55,8 @@ umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = fa
 heapless = { version = "0.8", default-features = false }
 # trouble-host's GATT value implementations use heapless 0.9.
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
-# Ungated (host-buildable) because the radio_mux module and its host-run
-# unit tests use them; versions match what embassy-nrf 0.11 pulls in.
+# Ungated (host-buildable) so the crate parses on the developer's host;
+# the target firmware module uses them. Versions match embassy-nrf 0.11.
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 

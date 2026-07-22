@@ -1366,6 +1366,7 @@ dependencies = [
  "umsh-bsp-heltec-lora32-v3",
  "umsh-companion",
  "umsh-companion-ncp",
+ "umsh-companion-runtime",
  "umsh-crypto",
  "umsh-journal-store",
 ]
@@ -2762,6 +2763,10 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
 ]
+
+[[package]]
+name = "umsh-companion-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "umsh-core"

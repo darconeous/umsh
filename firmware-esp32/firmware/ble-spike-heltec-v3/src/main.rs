@@ -49,13 +49,12 @@ use umsh_bsp_esp32::rng::EspCryptoRng;
 use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
 
-mod ble_security;
 mod ble_store;
 mod companion;
 
 use static_cell::StaticCell;
 
-use ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
+use umsh_companion_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use ble_store::{BleStore, MAX_BONDS, ProtoStore, bond_identity_is_persistable, trouble_bond};
 use companion::Companion;
 

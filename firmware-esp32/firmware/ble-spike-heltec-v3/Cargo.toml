@@ -20,6 +20,10 @@ umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
 # transport so the UMSH app can attach_existing. Host-tested pure crates.
 umsh-companion = { path = "../../../crates/umsh-companion", default-features = false }
 umsh-companion-ncp = { path = "../../../crates/umsh-companion-ncp", default-features = false }
+# Shared board-agnostic NCP runtime. The spike needs only the pure pairing
+# policy (ble_security), so it takes no default features and pulls neither the
+# radio stack nor the journal store.
+umsh-companion-runtime = { path = "../../../crates/umsh-companion-runtime", default-features = false }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 
 bt-hci = { version = "0.9", default-features = false }
