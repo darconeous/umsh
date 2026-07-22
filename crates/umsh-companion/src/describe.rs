@@ -88,7 +88,13 @@ impl fmt::Display for FrameDescription<'_> {
             return write!(out, "unknown command tid={tid} ({} bytes)", bytes.len());
         };
         match command {
-            Cmd::Nop | Cmd::Reset | Cmd::QueueDrain | Cmd::Save | Cmd::Clear | Cmd::Restore => {
+            Cmd::Nop
+            | Cmd::Reset
+            | Cmd::QueueDrain
+            | Cmd::Save
+            | Cmd::Clear
+            | Cmd::Restore
+            | Cmd::FactoryReset => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet

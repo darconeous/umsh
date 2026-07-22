@@ -185,6 +185,21 @@ impl SimulatedNcp {
                 self.identity = None;
                 self.session.respond_clear(tid, Ok(()), &mut emit);
             }
+            Some(Effect::FactoryReset) => {
+                // Emulate the platform wipe-and-reboot: drop every persisted
+                // artifact (snapshot, identity, bonds/PIN) and bring the
+                // session back up factory-fresh as from a power cycle. No
+                // reply is emitted — on hardware the reboot drops the link.
+                self.snapshot = None;
+                self.identity = None;
+                self.identity_seed = 0;
+                self.pairing_pin = None;
+                self.session = NcpSession::new(
+                    session_config(),
+                    Status::RESET_POWER_ON,
+                    CryptoEngine::new(SoftwareAes, SoftwareSha256),
+                );
+            }
             Some(Effect::ProvisionIdentity { tid }) => {
                 let result = match self.session.identity_request() {
                     Some(source) => {

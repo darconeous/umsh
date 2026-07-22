@@ -184,6 +184,13 @@ pub enum Effect {
     /// reported before the identity is durably stored (spec
     /// §PROP_DEV_PRIVATE_KEY).
     ProvisionIdentity { tid: u8 },
+    /// `CMD_FACTORY_RESET`: erase ALL mutable state — every persisted
+    /// journal (saved snapshot, device identity, frame-counter
+    /// boundaries, BLE bonds, pairing PIN) — and reboot. The platform
+    /// performs the wipe and reset; nothing is emitted and no `respond_*`
+    /// completion follows, because the reboot drops the link. In-RAM
+    /// session state is discarded by the reset itself.
+    FactoryReset,
 }
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
@@ -1554,6 +1561,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // completes a factory reset. Base-protocol: succeeds even
             // with nothing saved (the erase is idempotent).
             Some(Cmd::Clear) => Some(Effect::ClearSaved { tid }),
+            // Erase EVERY piece of mutable state — saved provisioning,
+            // device identity, BLE bonds, pairing PIN, and any other
+            // persisted journal — then reboot. Unlike CMD_CLEAR this is
+            // not confined to the durable provisioning copy and does not
+            // reply: the platform wipes storage and resets, so the link
+            // drops. The TID is irrelevant (no response is sent).
+            Some(Cmd::FactoryReset) => Some(Effect::FactoryReset),
             // NCP-to-host commands arriving from the host.
             Some(Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);

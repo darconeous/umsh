@@ -318,6 +318,23 @@ impl MobileCompanionSession {
         Ok(state.update(vec![frame]))
     }
 
+    /// Erase ALL mutable state on the radio (saved provisioning, device
+    /// identity, BLE bonds, pairing PIN, every persisted journal) and
+    /// reboot it. The radio does not reply — the reset drops the link —
+    /// so this is fire-and-forget: send the frame, then treat the ensuing
+    /// disconnect as completion. Permitted from any stage so a misbehaving
+    /// radio can always be wiped; unlike `claim`/`configure` it makes no
+    /// stage or ownership demands.
+    pub fn factory_reset(&self) -> Result<CompanionSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("companion session mutex poisoned");
+        let tid = state.allocate_tid();
+        // Deliberately no ExpectedResponse: the NCP wipes storage and
+        // reboots without answering, so `update` reports
+        // waiting_for_responses = false and the caller does not block.
+        let frame = companion_factory_reset(tid)?;
+        Ok(state.update(vec![frame]))
+    }
+
     /// Apply, verify, and persist a complete radio-settings snapshot.
     pub fn configure(
         &self,
@@ -1288,6 +1305,15 @@ pub fn companion_save(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length =
         frame::save(&mut output, transaction_id).map_err(|_| MobileError::InvalidCompanionFrame)?;
+    Ok(output[..length].to_vec())
+}
+
+/// Encode a `CMD_FACTORY_RESET` request with the shared companion protocol codec.
+#[uniffi::export]
+pub fn companion_factory_reset(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
+    let mut output = [0; 2];
+    let length = frame::factory_reset(&mut output, transaction_id)
+        .map_err(|_| MobileError::InvalidCompanionFrame)?;
     Ok(output[..length].to_vec())
 }
 

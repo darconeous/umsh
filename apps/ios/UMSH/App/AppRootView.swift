@@ -98,6 +98,7 @@ struct AppRootView: View {
                     configureRadio: configureRadio,
                     disconnectRadio: disconnectRadio,
                     forgetRadio: forgetRadio,
+                    factoryResetRadio: factoryResetRadio,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery
@@ -146,6 +147,7 @@ struct AppRootView: View {
                     configure: configureRadio,
                     disconnect: disconnectRadio,
                     forget: forgetRadio,
+                    factoryReset: factoryResetRadio,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery
@@ -351,6 +353,10 @@ struct AppRootView: View {
 
     private func forgetRadio() async {
         await radioConnection.forget()
+    }
+
+    private func factoryResetRadio() async throws {
+        try await radioConnection.factoryReset()
     }
 
     private func claimRadio() async {

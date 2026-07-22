@@ -725,6 +725,17 @@ public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
     func consume(frame: Data) throws  -> CompanionSessionUpdateRecord
 
     /**
+     * Erase ALL mutable state on the radio (saved provisioning, device
+     * identity, BLE bonds, pairing PIN, every persisted journal) and
+     * reboot it. The radio does not reply — the reset drops the link —
+     * so this is fire-and-forget: send the frame, then treat the ensuing
+     * disconnect as completion. Permitted from any stage so a misbehaving
+     * radio can always be wiped; unlike `claim`/`configure` it makes no
+     * stage or ownership demands.
+     */
+    func factoryReset() throws  -> CompanionSessionUpdateRecord
+
+    /**
      * Re-read every capability-gated property represented by the mobile
      * snapshot. The existing snapshot remains usable while the bounded
      * refresh is in flight; authoritative provisioning is published when
@@ -879,6 +890,24 @@ open func consume(frame: Data)throws  -> CompanionSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_consume(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Erase ALL mutable state on the radio (saved provisioning, device
+     * identity, BLE bonds, pairing PIN, every persisted journal) and
+     * reboot it. The radio does not reply — the reset drops the link —
+     * so this is fire-and-forget: send the frame, then treat the ensuing
+     * disconnect as completion. Permitted from any stage so a misbehaving
+     * radio can always be wiped; unlike `claim`/`configure` it makes no
+     * stage or ownership demands.
+     */
+open func factoryReset()throws  -> CompanionSessionUpdateRecord  {
+    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_factory_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -6113,6 +6142,17 @@ public func renderNodeHint(bytes: Data)throws  -> NodeHintRecord  {
 })
 }
 /**
+ * Encode a `CMD_FACTORY_RESET` request with the shared companion protocol codec.
+ */
+public func companionFactoryReset(transactionId: UInt8)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_companion_factory_reset(
+        FfiConverterUInt8.lower(transactionId),uniffiCallStatus
+    )
+})
+}
+/**
  * Split a companion frame into ATT values using the negotiated maximum write
  * length. The returned values include the one-octet SAR header.
  */
@@ -6264,6 +6304,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_render_node_hint() != 12096) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_companion_factory_reset() != 27760) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_companion_gatt_segments() != 61863) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6307,6 +6350,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_consume() != 8102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_factory_reset() != 6500) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_refresh() != 54243) {

@@ -24,6 +24,11 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Cancel an in-progress discovery scan without connecting.
     func stopDiscovery() async
     func claimForCurrentIdentity() async throws
+    /// Erase ALL mutable state on the radio (saved provisioning, device
+    /// identity, BLE bonds, pairing PIN) and reboot it to a blank factory
+    /// state. Requires a live connection; the radio drops the link on reset.
+    /// The app also abandons its binding to the radio.
+    func factoryReset() async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
