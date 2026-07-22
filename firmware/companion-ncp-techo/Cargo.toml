@@ -14,7 +14,9 @@ t1000e = []
 no-ble = []
 # Hardware-diagnostic mode: keep BLE active while CDC is open and mirror
 # security/GATT lifecycle events as ASCII on the USB serial endpoint.
-ble-debug = ["trouble-host/security-debug"]
+# Also routes foreign-crate `log` records (notably trouble-host's
+# resolving-list / SMP diagnostics) onto the same serial channel.
+ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
 # Diagnostic image for exercising runtime persistence failures on hardware.
 # Boot-critical initialization is allowed to complete; every later journal
 # write/erase returns an injected error before touching NVMC. Never enable in
@@ -59,6 +61,9 @@ heapless09 = { package = "heapless", version = "0.9", default-features = false }
 # the target firmware module uses them. Versions match embassy-nrf 0.11.
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
+# Optional (ble-debug only) logging facade so foreign crates' `log`
+# records can be captured and forwarded to the USB-serial debug channel.
+log = { version = "0.4", default-features = false, optional = true }
 
 # Embedded-only deps. Gated on `target_os = "none"` so this crate still
 # parses and trivially compiles on host as an empty `fn main()`. The

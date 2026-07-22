@@ -13,7 +13,7 @@ t1000e = []
 # keeping the BLE clock configuration, to isolate the post-DFU
 # first-boot watchdog freeze. Not a production configuration.
 no-ble = []
-ble-debug = ["trouble-host/security-debug"]
+ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
 ble-store-fault-inject = ["ble-debug"]
 ble-wipe-on-boot = ["ble-debug"]
 
@@ -41,6 +41,9 @@ heapless09 = { package = "heapless", version = "0.9", default-features = false }
 # Ungated (host-buildable) because the shared radio_mux module uses them.
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
+# Optional (ble-debug only) logging facade so foreign crates' `log`
+# records can be captured and forwarded to the USB-serial debug channel.
+log = { version = "0.4", default-features = false, optional = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7" }
