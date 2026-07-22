@@ -694,11 +694,21 @@ async fn rf_advert_request(
     let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
     let keys = crypto.derive_pairwise_keys(&shared);
 
-    // Typed MAC-command payload: Advertisement Request (id 0).
+    // Typed MAC-command payload: Identity Request (id 1) carrying the nonce as
+    // a correlation option. NOTE: the receive side below still expects the old
+    // broadcast-advertisement response; that path is updated when the unicast
+    // Identity Request responder lands (see docs/protocol mac-commands.md).
+    let options = match nonce {
+        Some(nonce) => umsh::node::mac_command::IdentityRequestBuilder::new()
+            .nonce(nonce)
+            .map_err(|error| format!("command encode failed: {error:?}"))?
+            .build(),
+        None => Vec::new(),
+    };
     let mut command = [0u8; 8];
     command[0] = umsh::core::PayloadType::MacCommand as u8;
     let command_len = 1 + umsh::node::mac_command::encode(
-        &umsh::node::MacCommand::AdvertisementRequest { nonce },
+        &umsh::node::MacCommand::IdentityRequest { options: &options },
         &mut command[1..],
     )
     .map_err(|error| format!("command encode failed: {error:?}"))?;

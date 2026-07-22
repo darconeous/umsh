@@ -291,11 +291,16 @@ fn full_key(key: &PublicKey) -> String {
 
 fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
     match command {
-        umsh::node::OwnedMacCommand::AdvertisementRequest { nonce } => match nonce {
-            Some(nonce) => format!("AdvertisementRequest nonce=0x{nonce:08x}"),
-            None => String::from("AdvertisementRequest"),
-        },
-        umsh::node::OwnedMacCommand::IdentityRequest => String::from("IdentityRequest"),
+        umsh::node::OwnedMacCommand::IdentityRequest { options } => {
+            let nonce = umsh::node::mac_command::IdentityRequestFilters::new(options)
+                .nonce()
+                .ok()
+                .flatten();
+            match nonce {
+                Some(nonce) => format!("IdentityRequest nonce=0x{nonce:08x}"),
+                None => format!("IdentityRequest ({} option bytes)", options.len()),
+            }
+        }
         umsh::node::OwnedMacCommand::SignalReportRequest => String::from("SignalReportRequest"),
         umsh::node::OwnedMacCommand::SignalReportResponse { rssi, snr } => {
             format!("SignalReportResponse rssi={rssi} snr={snr}")

@@ -11,7 +11,7 @@ Support for MAC commands is optional.
 
 | Value | Command | Direction |
 |---:|---|---|
-| 0 | Advertisement Request | Request |
+| 0 | UNALLOCATED | -- |
 | 1 | Identity Request | Request |
 | 2 | Signal Report Request | Request |
 | 3 | Signal Report Response | Response |
@@ -22,27 +22,50 @@ Support for MAC commands is optional.
 | 8 | End PFS Session | Either |
 | 9 | No-op | Request | 
 
-## Advertisement Request (0)
-
-Requests that the destination advertise itself. The response is an
-[advertisement](beacons.md#advertisements): a broadcast carrying the
-responder's [node identity](node-identity.md) payload.
-
-| Field | Size | Description |
-|---|---:|---|
-| Nonce | 0 or 4 bytes | If present, MUST be copied into the response's [Nonce option](node-identity.md#nonce-option-5) |
-
-Advertisement requests may be used for:
-
-- presence detection
-- identity and capability discovery
-- frame-counter synchronization (by observing the frame counter in a secured response, or by matching the nonce)
-
 ## Identity Request (1)
 
 Requests that the destination respond with its [node identity](node-identity.md).
 
-No command-specific payload.
+A common use is resolving a [node hint](addressing.md#node-hint) to a full
+address. A node that knows only a peer's hint sends this command as a broadcast
+or multicast carrying a [FILTER_NODE_HINT](#identity-request-options) filter; a
+matching node replies with an encrypted unicast (or blind unicast) response
+carrying its full node identity. When the requester believes the peer may not
+yet know the requester's own address, it sends its full source address in the
+request so the peer can reply directly.
+
+Because a broadcast Identity Request can solicit many replies:
+
+- A node MAY decline to respond to a request from an unknown source.
+- A repeater MAY decline to forward a broadcast Identity Request, particularly
+  when its filters are broad enough to solicit a large number of replies.
+
+An Identity Request is answered with a targeted unicast identity response, never
+by flooding an [advertisement](beacons.md#advertisements) to the whole network.
+
+### Identity Request Options
+
+A unicast Identity Request requires no payload. A multicast or broadcast request
+MUST carry at least one filter option, so that only the intended nodes respond.
+
+Options use the CoAP-style delta-length encoding defined in [Packet
+Options](packet-options.md#attribute-encoding). As in CoAP, an option's key encodes
+its criticality: odd-numbered keys (least-significant bit set) are **critical**,
+even-numbered keys are **elective**. A node that encounters a critical option it
+does not understand MUST treat itself as excluded and MUST NOT respond.
+
+Filter options select which nodes respond. They combine as a logical **AND**
+across different filter types and a logical **OR** among repeated filters of the
+same type: a node responds only if it satisfies every filter type present, and
+it satisfies a given filter type if it matches any one of that type's values.
+Non-filter options (such as NONCE) do not participate in this matching.
+
+| Key | Critical | Name | Value | Description |
+|---:|---|---|---|---|
+| 1 | Yes | NONCE | 4 bytes | Correlation identifier the responder MUST echo in its response's [Nonce option](node-identity.md#nonce-option-5). Not a filter. |
+| 3 | Yes | FILTER_NODE_HINT | 3 bytes | Respond only if this matches the responder's own [node hint](addressing.md#node-hint). |
+| 5 | Yes | FILTER_NODE_ROLE | 1 byte | Respond only if the responder's [primary role](node-identity.md#node-primary-role) equals this value. |
+| 7 | Yes | FILTER_NODE_CAPS | 1 byte | Respond only if the responder's [capability bitmap](node-identity.md#capability-bitmap) has every bit set that is set in this value. |
 
 ## Signal Report Request (2)
 
@@ -107,5 +130,5 @@ No command-specific payload. The sender and recipient are identified by the pack
 
 ## No-Op (9)
 
-This command does nothing, however it will produce an UACK when sent via a packet
+This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.

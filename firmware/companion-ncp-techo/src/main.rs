@@ -1427,6 +1427,7 @@ mod firmware {
             current.clear();
             if current.extend_from_slice(bytes).is_ok() {
                 DEVICE_NAME_CHANGED.signal(());
+                super::device_node::NODE_NAME_CHANGED.signal(());
             }
         }
 

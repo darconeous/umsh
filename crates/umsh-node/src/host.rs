@@ -5,6 +5,7 @@ use core::cell::RefCell;
 use umsh_mac::{LocalIdentityId, SendOptions};
 
 use crate::dispatch::EventDispatcher;
+use crate::identity_responder::IdentityResponsePlan;
 use crate::mac::MacBackend;
 use crate::node::{LocalNode, LocalNodeState, NodeMembership, PfsLifecycle};
 use crate::receive::ReceivedPacketRef;
@@ -139,6 +140,9 @@ impl<M: MacBackend> Host<M> {
             OwnedMacCommand,
         )>::new()));
         let pending_pfs_ref = pending_pfs.clone();
+        let pending_identity =
+            Rc::new(RefCell::new(Vec::<(LocalNode<M>, IdentityResponsePlan)>::new()));
+        let pending_identity_ref = pending_identity.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();
         self.mac
@@ -164,6 +168,7 @@ impl<M: MacBackend> Host<M> {
                                 &packet,
                                 from,
                                 &pending_pfs_ref,
+                                &pending_identity_ref,
                                 now_ms,
                             );
                         }
@@ -193,6 +198,12 @@ impl<M: MacBackend> Host<M> {
             pending_pfs.borrow_mut().drain(..).collect();
         for (identity_id, from, command) in queued {
             self.handle_pfs_command(identity_id, from, command).await;
+        }
+
+        let identity_replies: Vec<(LocalNode<M>, IdentityResponsePlan)> =
+            pending_identity.borrow_mut().drain(..).collect();
+        for (node, plan) in identity_replies {
+            node.send_identity_response(plan).await;
         }
 
         self.service_protocol_timeouts().await;
@@ -324,6 +335,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
     packet: &ReceivedPacketRef<'_>,
     from: umsh_core::PublicKey,
     pending_pfs: &Rc<RefCell<Vec<(LocalIdentityId, umsh_core::PublicKey, OwnedMacCommand)>>>,
+    pending_identity: &Rc<RefCell<Vec<(LocalNode<M>, IdentityResponsePlan)>>>,
     now_ms: u64,
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
@@ -335,7 +347,7 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 
     if packet.payload_type() == PayloadType::MacCommand {
         if let Ok(command) = mac_command::parse(packet.payload()) {
-            // Match EchoResponse before converting to owned, so we can borrow data.
+            // Match borrowed variants before converting to owned.
             if let mac_command::MacCommand::EchoResponse { data } = command {
                 node.match_pong(
                     from,
@@ -343,6 +355,14 @@ fn dispatch_payload_callbacks<M: MacBackend>(
                     packet,
                     packet.received_at_ms().unwrap_or(now_ms),
                 );
+            }
+            // Identity Request: let the built-in responder (if enabled) build a
+            // reply plan now, while the reception context is live; the async
+            // pump sends it after this synchronous dispatch returns.
+            if let mac_command::MacCommand::IdentityRequest { options } = command {
+                if let Some(plan) = node.evaluate_identity_request(packet, from, options) {
+                    pending_identity.borrow_mut().push((node.clone(), plan));
+                }
             }
             let owned = OwnedMacCommand::from(command);
             node.dispatch_mac_command(from, &owned);

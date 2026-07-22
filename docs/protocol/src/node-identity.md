@@ -15,7 +15,7 @@ Fields:
 
 - `ROLE` (1 byte) — the node's [primary role](#node-primary-role).
 - `CAPS` (1 byte) — the node's [capability bitmap](#capability-bitmap).
-- `OPTIONS` (variable, optional) — a CoAP-style option list of [node identity options](#node-identity-options), using the same delta-length encoding as [packet options](packet-options.md#options-field).
+- `OPTIONS` (variable, optional) — a CoAP-style option list of [node identity options](#node-identity-options), using the same delta-length encoding as [packet options](packet-options.md#attribute-encoding).
 - `0xFF` (1 byte, optional) — options-terminator marker. Present only when a signature follows.
 - `SIGNATURE` (64 bytes, optional) — EdDSA signature covering `ROLE` through the `0xFF` terminator, inclusive.
 
@@ -58,7 +58,7 @@ A node may advertise multiple capabilities independently of its primary role. Fo
 
 ## Node Identity Options
 
-Options use the CoAP-style delta-length encoding defined in [Packet Options](packet-options.md#option-encoding).
+Options use the CoAP-style delta-length encoding defined in [Packet Options](packet-options.md#attribute-encoding).
 
 | Number | Name | Value |
 |---:|---|---|
@@ -67,7 +67,7 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | 2 | Altitude in Meters | The altitude in meters. | 
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
 | 4 | Supported Regions | one or more concatenated 2-byte region codes |
-| 5 | Nonce | 4 bytes, echoed from a soliciting Advertisement Request |
+| 5 | Nonce | 4 bytes, echoed from a soliciting Identity Request |
 
 ### Node Name (option 0)
 A UTF-8 display name for the node, typically shown in user interfaces. Max length: 24 bytes.
@@ -85,7 +85,7 @@ Seconds since the Unix epoch indicating when this identity payload was generated
 For repeaters, the list of [region codes](packet-options.md#region-code-encoding) the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.
 
 ### Nonce (option 5)
-Copied verbatim from the [Advertisement Request](mac-commands.md#advertisement-request-0) that solicited this [advertisement](beacons.md#advertisements), letting the requester match the response to its request. Present only in solicited advertisements whose request carried a nonce. Length: 4 bytes.
+Copied verbatim from the [Identity Request](mac-commands.md#identity-request-1) that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.
 
 ### Variable-Precision Location Format
 

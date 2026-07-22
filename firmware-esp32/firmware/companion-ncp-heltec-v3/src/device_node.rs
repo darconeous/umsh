@@ -35,7 +35,7 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{EmbassyClock, NoKeyValueStore};
 use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
-use umsh_node::{Host, LocalNode};
+use umsh_node::{Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole};
 use umsh_sync::AsyncRefCell;
 
 // ─── Platform ────────────────────────────────────────────────────────────────
@@ -142,6 +142,14 @@ pub static DEV_SYNC: Signal<CriticalSectionRawMutex, DevDomainSnapshot> = Signal
 /// old identity until reboot, but it must stop originating traffic.
 static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
 
+/// Signalled by the session's `publish_device_name` when the live device
+/// name changes, so the Identity Request responder's profile name stays
+/// current. A **dedicated** signal, not the BLE-facing `DEVICE_NAME_CHANGED`:
+/// embassy `Signal` tracks a single waker, so the node needs its own to
+/// avoid a lost-wakeup race with the advertising loop. Only
+/// [`node_identity_profile_task`] waits on it.
+pub static NODE_NAME_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 /// Reconciles the node's MAC against each [`DevDomainSnapshot`]: joins
 /// newly provisioned channels, removes de-provisioned ones (dropping
 /// their replay state), and registers peers. Peer *removal* is not
@@ -225,9 +233,11 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
 pub enum BeaconTrigger {
     /// The board's PRG button (short press with the node provisioned).
     Button,
-    /// A peer's Advertisement Request MAC command. The response is a
-    /// solicited advertisement — a broadcast carrying the signed node
-    /// identity payload — echoing `nonce` when the request carried one.
+    /// Emit a solicited advertisement — a broadcast carrying the signed node
+    /// identity payload — echoing `nonce` when set. Currently unconstructed:
+    /// the Identity Request responder that will drive it (with a targeted
+    /// unicast reply) is a follow-up; the generator is kept for that pass.
+    #[allow(dead_code)]
     Advertise { nonce: Option<u32> },
 }
 
@@ -296,13 +306,7 @@ async fn send_advertisement(
 ) -> bool {
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
-    let name_bytes = crate::device_name_snapshot().await;
-    // Spec caps the Node Name identity option at 24 bytes.
-    let name = core::str::from_utf8(&name_bytes)
-        .ok()
-        .map(|name| truncate_utf8(name, 24))
-        .filter(|name| !name.is_empty())
-        .map(alloc::string::String::from);
+    let name = profile_name().await;
     let payload = umsh_node::NodeIdentityPayload {
         role: umsh_node::NodeRole::Tracker,
         capabilities: umsh_node::NodeCapabilities::empty(),
@@ -337,6 +341,18 @@ async fn send_advertisement(
         .is_ok()
 }
 
+/// Snapshot the live device name as a spec-capped (≤24-byte) Node Name
+/// identity option value, or `None` when unset/empty. Shared by the
+/// advertisement path and the Identity Request responder profile.
+async fn profile_name() -> Option<alloc::string::String> {
+    let name_bytes = crate::device_name_snapshot().await;
+    core::str::from_utf8(&name_bytes)
+        .ok()
+        .map(|name| truncate_utf8(name, 24))
+        .filter(|name| !name.is_empty())
+        .map(alloc::string::String::from)
+}
+
 /// Trim to at most `max` bytes without splitting a UTF-8 sequence.
 fn truncate_utf8(text: &str, max: usize) -> &str {
     if text.len() <= max {
@@ -347,6 +363,19 @@ fn truncate_utf8(text: &str, max: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+
+/// Keeps the Identity Request responder's profile name synced to the
+/// live device name. The responder builds replies synchronously and
+/// cannot await, so the current name is pushed in here on each change
+/// rather than read at reply time.
+#[embassy_executor::task]
+async fn node_identity_profile_task(node: NcpNode) {
+    loop {
+        NODE_NAME_CHANGED.wait().await;
+        let name = profile_name().await;
+        node.update_identity_profile(move |profile| profile.name = name);
+    }
 }
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
@@ -423,24 +452,48 @@ pub async fn bring_up(
         ));
         false
     }));
-    // Advertisement Request responder: the MAC command becomes a
-    // beacon-trigger input answered by the beacon task as a solicited
-    // advertisement. `try_send` (inside request_beacon) respects the
-    // no-MAC-reentry rule for pump callbacks; a full trigger queue
-    // coalesces request bursts, and the duty ledger bounds the airtime
-    // an abusive requester can extract.
+    // Identity Request observability tap. The actual reply is produced by
+    // the built-in responder enabled below (a targeted unicast identity,
+    // echoing any NONCE); this handler only logs, and never consumes.
     core::mem::forget(node.on_mac_command(|from, command| {
-        if let umsh_node::OwnedMacCommand::AdvertisementRequest { nonce } = command {
+        if let umsh_node::OwnedMacCommand::IdentityRequest { options } = command {
+            let nonce = umsh_node::mac_command::IdentityRequestFilters::new(options)
+                .nonce()
+                .ok()
+                .flatten();
             crate::debug_log(format_args!(
-                "node advert-request: from {:02x}{:02x}.. nonce={:?}",
+                "node identity-request: from {:02x}{:02x}.. nonce={:?}",
                 from.0[0], from.0[1], nonce
             ));
-            request_beacon(BeaconTrigger::Advertise { nonce: *nonce });
         }
     }));
+    // Enable the built-in Identity Request responder. The profile mirrors
+    // the advertisement path (Tracker role, no extra capabilities); its
+    // name tracks the live device name via `node_identity_profile_task`.
+    // The default policy answers every request whose filters select us,
+    // including our full source key when the request wasn't authenticated
+    // to us. Replies are authenticated unicast — never signed, never a
+    // broadcast fallback: a request whose source can't be resolved to a
+    // key is dropped by the MAC before the responder runs.
+    {
+        use umsh_crypto::NodeIdentity as _;
+        let public_key = *SoftwareIdentity::from_secret_bytes(identity_secret).public_key();
+        let mut profile =
+            NodeIdentityProfile::new(public_key, NodeRole::Tracker, NodeCapabilities::empty());
+        profile.name = profile_name().await;
+        node.enable_identity_responder_default(profile);
+    }
+    // Let the node answer a brand-new requester that supplied its full
+    // 32-byte source key: the MAC auto-registers it transiently
+    // (LRU-evictable, never pinned) so the pairwise reply can be sealed.
+    // Repeaters specifically must be able to respond this way.
+    MacHandle::new(mac_cell)
+        .set_auto_register_full_key_peers(true)
+        .await;
     crate::debug_log(format_args!("node bring-up: host ready"));
     spawner.spawn(node_pump_task(host).unwrap());
     spawner.spawn(node_dev_sync_task(node.clone(), MacHandle::new(mac_cell)).unwrap());
+    spawner.spawn(node_identity_profile_task(node.clone()).unwrap());
     spawner.spawn(
         node_beacon_task(node, SoftwareIdentity::from_secret_bytes(identity_secret)).unwrap(),
     );

@@ -1,14 +1,35 @@
 use alloc::vec::Vec;
 
-use umsh_core::PublicKey;
+use umsh_core::options::{OptionDecoder, OptionEncoder, parse_be_u32};
+use umsh_core::{NodeHint, PublicKey};
 
 use crate::app_util::{copy_into, fixed, push_byte};
+use crate::identity::{NodeCapabilities, NodeRole};
 use crate::{AppEncodeError, AppParseError};
+
+/// Option keys carried in an [`MacCommand::IdentityRequest`] payload.
+///
+/// Keys follow the CoAP convention: an odd key (least-significant bit set) is
+/// **critical**, so a responder that does not understand it MUST NOT respond.
+/// All currently defined keys are critical. `NONCE` is a correlation
+/// identifier rather than a filter and does not participate in filter matching.
+pub mod identity_filter {
+    /// Correlation identifier the responder echoes into the identity Nonce
+    /// option (identity option 5). 4 bytes. Not a filter.
+    pub const NONCE: u16 = 1;
+    /// Match only nodes whose own [node hint](umsh_core::NodeHint) equals this
+    /// value. 3 bytes.
+    pub const FILTER_NODE_HINT: u16 = 3;
+    /// Match only nodes whose primary role equals this value. 1 byte.
+    pub const FILTER_NODE_ROLE: u16 = 5;
+    /// Match only nodes whose capability bitmap has every bit set that is set
+    /// in this value. 1 byte.
+    pub const FILTER_NODE_CAPS: u16 = 7;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CommandId {
-    AdvertisementRequest = 0,
     IdentityRequest = 1,
     SignalReportRequest = 2,
     SignalReportResponse = 3,
@@ -21,10 +42,14 @@ pub enum CommandId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacCommand<'a> {
-    AdvertisementRequest {
-        nonce: Option<u32>,
+    /// Request that the destination respond with its node identity.
+    ///
+    /// `options` is a CoAP-style option block of [`identity_filter`] keys,
+    /// empty for a plain unicast request. Interpret it with
+    /// [`IdentityRequestFilters`].
+    IdentityRequest {
+        options: &'a [u8],
     },
-    IdentityRequest,
     SignalReportRequest,
     SignalReportResponse {
         rssi: u8,
@@ -53,22 +78,14 @@ pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
         .ok_or(AppParseError::Core(umsh_core::ParseError::Truncated))?;
 
     match command_id {
-        0 => match body {
-            [] => Ok(MacCommand::AdvertisementRequest { nonce: None }),
-            [a, b, c, d] => Ok(MacCommand::AdvertisementRequest {
-                nonce: Some(u32::from_be_bytes([*a, *b, *c, *d])),
-            }),
-            _ => Err(AppParseError::InvalidLength {
-                expected: 4,
-                actual: body.len(),
-            }),
-        },
         1 => {
-            if body.is_empty() {
-                Ok(MacCommand::IdentityRequest)
-            } else {
-                Err(AppParseError::InvalidOptionValue)
+            // Validate the option block is structurally well-formed CoAP
+            // options; individual filter values are interpreted (and tolerated)
+            // lazily by IdentityRequestFilters, per receiver tolerance.
+            for item in OptionDecoder::new(body) {
+                item.map_err(AppParseError::Core)?;
             }
+            Ok(MacCommand::IdentityRequest { options: body })
         }
         2 => {
             if body.is_empty() {
@@ -126,10 +143,9 @@ fn parse_pfs(payload: &[u8], request: bool) -> Result<MacCommand<'_>, AppParseEr
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OwnedMacCommand {
-    AdvertisementRequest {
-        nonce: Option<u32>,
+    IdentityRequest {
+        options: Vec<u8>,
     },
-    IdentityRequest,
     SignalReportRequest,
     SignalReportResponse {
         rssi: u8,
@@ -155,8 +171,9 @@ pub enum OwnedMacCommand {
 impl From<MacCommand<'_>> for OwnedMacCommand {
     fn from(value: MacCommand<'_>) -> Self {
         match value {
-            MacCommand::AdvertisementRequest { nonce } => Self::AdvertisementRequest { nonce },
-            MacCommand::IdentityRequest => Self::IdentityRequest,
+            MacCommand::IdentityRequest { options } => Self::IdentityRequest {
+                options: Vec::from(options),
+            },
             MacCommand::SignalReportRequest => Self::SignalReportRequest,
             MacCommand::SignalReportResponse { rssi, snr } => {
                 Self::SignalReportResponse { rssi, snr }
@@ -189,13 +206,10 @@ impl From<MacCommand<'_>> for OwnedMacCommand {
 pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeError> {
     let mut pos = 0usize;
     match cmd {
-        MacCommand::AdvertisementRequest { nonce } => {
-            push_byte(buf, &mut pos, CommandId::AdvertisementRequest as u8)?;
-            if let Some(nonce) = nonce {
-                copy_into(buf, &mut pos, &nonce.to_be_bytes())?;
-            }
+        MacCommand::IdentityRequest { options } => {
+            push_byte(buf, &mut pos, CommandId::IdentityRequest as u8)?;
+            copy_into(buf, &mut pos, options)?;
         }
-        MacCommand::IdentityRequest => push_byte(buf, &mut pos, CommandId::IdentityRequest as u8)?,
         MacCommand::SignalReportRequest => {
             push_byte(buf, &mut pos, CommandId::SignalReportRequest as u8)?;
         }
@@ -233,6 +247,145 @@ pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeEr
     Ok(pos)
 }
 
+/// Interprets the option block of an [`MacCommand::IdentityRequest`].
+///
+/// Borrows the raw block and decodes its [`identity_filter`] options on demand.
+/// A responder uses [`nonce`](Self::nonce) to obtain the correlation value it
+/// must echo, and [`selects`](Self::selects) to decide whether it is a target
+/// of the request.
+#[derive(Clone, Copy, Debug)]
+pub struct IdentityRequestFilters<'a> {
+    options: &'a [u8],
+}
+
+impl<'a> IdentityRequestFilters<'a> {
+    /// Wrap the option block carried by an Identity Request.
+    pub fn new(options: &'a [u8]) -> Self {
+        Self { options }
+    }
+
+    /// The correlation nonce the responder must echo into its identity's Nonce
+    /// option, or `None` if the request carried no `NONCE` option.
+    ///
+    /// Returns the first `NONCE` option; tolerates minimal (≤4 byte) encodings.
+    pub fn nonce(&self) -> Result<Option<u32>, AppParseError> {
+        for item in OptionDecoder::new(self.options) {
+            let (number, value) = item.map_err(AppParseError::Core)?;
+            if number == identity_filter::NONCE {
+                return parse_be_u32(value).map(Some).map_err(AppParseError::Core);
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether a node with the given identity is selected by this request.
+    ///
+    /// Filters combine as a logical AND across distinct filter types and a
+    /// logical OR among repeated filters of the same type. An unknown
+    /// **critical** option (odd key) excludes the node; unknown elective
+    /// options are ignored. A well-formed request with no filters (a unicast
+    /// request) selects every node.
+    pub fn selects(
+        &self,
+        role: NodeRole,
+        capabilities: NodeCapabilities,
+        hint: &NodeHint,
+    ) -> Result<bool, AppParseError> {
+        // Per filter type: whether it appeared, and whether any value matched.
+        let mut hint_present = false;
+        let mut hint_match = false;
+        let mut role_present = false;
+        let mut role_match = false;
+        let mut caps_present = false;
+        let mut caps_match = false;
+
+        for item in OptionDecoder::new(self.options) {
+            let (number, value) = item.map_err(AppParseError::Core)?;
+            match number {
+                identity_filter::NONCE => {} // correlation id, not a filter
+                identity_filter::FILTER_NODE_HINT => {
+                    hint_present = true;
+                    hint_match |= value == hint.0.as_slice();
+                }
+                identity_filter::FILTER_NODE_ROLE => {
+                    role_present = true;
+                    role_match |= value == [role.as_byte()];
+                }
+                identity_filter::FILTER_NODE_CAPS => {
+                    caps_present = true;
+                    // Match if the node has every requested bit set.
+                    caps_match |= value.len() == 1
+                        && (capabilities.bits() & value[0]) == value[0];
+                }
+                other if other & 1 == 1 => {
+                    // Unknown critical option: assume we are excluded.
+                    return Ok(false);
+                }
+                _ => {} // unknown elective option: ignore
+            }
+        }
+
+        Ok((!hint_present || hint_match)
+            && (!role_present || role_match)
+            && (!caps_present || caps_match))
+    }
+}
+
+/// Builds the option block for an [`MacCommand::IdentityRequest`].
+///
+/// Options are emitted in ascending key order, so callers must add the nonce
+/// before any filters and add filters in key order. No `0xFF` end marker is
+/// written: an Identity Request payload is options-only, with no trailing data.
+#[derive(Debug, Default)]
+pub struct IdentityRequestBuilder {
+    buf: Vec<u8>,
+    last_number: u16,
+}
+
+impl IdentityRequestBuilder {
+    /// Start an empty builder (a plain unicast request until options are added).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn put(mut self, number: u16, value: &[u8]) -> Result<Self, AppEncodeError> {
+        // Encode one option into a scratch buffer, continuing the delta chain,
+        // then append. Sized for the header plus the largest filter value.
+        let mut scratch = [0u8; 8 + 4];
+        let mut enc = OptionEncoder::with_last_number(&mut scratch, self.last_number);
+        enc.put(number, value).map_err(AppEncodeError::Core)?;
+        let n = enc.finish();
+        self.buf.extend_from_slice(&scratch[..n]);
+        self.last_number = number;
+        Ok(self)
+    }
+
+    /// Add the `NONCE` correlation option. Add before any filters.
+    pub fn nonce(self, nonce: u32) -> Result<Self, AppEncodeError> {
+        self.put(identity_filter::NONCE, &nonce.to_be_bytes())
+    }
+
+    /// Add a `FILTER_NODE_HINT` filter (repeatable; repeats are OR-combined).
+    pub fn filter_hint(self, hint: &NodeHint) -> Result<Self, AppEncodeError> {
+        self.put(identity_filter::FILTER_NODE_HINT, &hint.0)
+    }
+
+    /// Add a `FILTER_NODE_ROLE` filter (repeatable; repeats are OR-combined).
+    pub fn filter_role(self, role: NodeRole) -> Result<Self, AppEncodeError> {
+        self.put(identity_filter::FILTER_NODE_ROLE, &[role.as_byte()])
+    }
+
+    /// Add a `FILTER_NODE_CAPS` filter (repeatable; repeats are OR-combined).
+    pub fn filter_caps(self, caps: NodeCapabilities) -> Result<Self, AppEncodeError> {
+        self.put(identity_filter::FILTER_NODE_CAPS, &[caps.bits()])
+    }
+
+    /// Finish and return the encoded option block.
+    pub fn build(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,30 +400,170 @@ mod tests {
     // --- round-trips ---
 
     #[test]
-    fn advertisement_request_no_nonce() {
-        encode_decode(MacCommand::AdvertisementRequest { nonce: None });
+    fn identity_request_unicast_no_options() {
+        encode_decode(MacCommand::IdentityRequest { options: &[] });
         let mut buf = [0u8; 4];
-        let len = encode(&MacCommand::AdvertisementRequest { nonce: None }, &mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x00]);
-    }
-
-    #[test]
-    fn advertisement_request_with_nonce() {
-        let cmd = MacCommand::AdvertisementRequest {
-            nonce: Some(0x12345678),
-        };
-        encode_decode(cmd);
-        let mut buf = [0u8; 8];
-        let len = encode(&cmd, &mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x00, 0x12, 0x34, 0x56, 0x78]);
-    }
-
-    #[test]
-    fn identity_request() {
-        encode_decode(MacCommand::IdentityRequest);
-        let mut buf = [0u8; 4];
-        let len = encode(&MacCommand::IdentityRequest, &mut buf).unwrap();
+        let len = encode(&MacCommand::IdentityRequest { options: &[] }, &mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x01]);
+    }
+
+    #[test]
+    fn identity_request_with_options_round_trips() {
+        let options = IdentityRequestBuilder::new()
+            .nonce(0x12345678)
+            .unwrap()
+            .filter_hint(&NodeHint([0xAA, 0xBB, 0xCC]))
+            .unwrap()
+            .filter_role(NodeRole::Repeater)
+            .unwrap()
+            .build();
+        encode_decode(MacCommand::IdentityRequest { options: &options });
+    }
+
+    #[test]
+    fn identity_request_options_are_appended_verbatim() {
+        let options = IdentityRequestBuilder::new().nonce(0x01020304).unwrap().build();
+        let mut buf = [0u8; 16];
+        let len = encode(&MacCommand::IdentityRequest { options: &options }, &mut buf).unwrap();
+        assert_eq!(buf[0], 0x01);
+        assert_eq!(&buf[1..len], options.as_slice());
+    }
+
+    #[test]
+    fn identity_filters_nonce_round_trips() {
+        let options = IdentityRequestBuilder::new().nonce(0xDEADBEEF).unwrap().build();
+        let filters = IdentityRequestFilters::new(&options);
+        assert_eq!(filters.nonce().unwrap(), Some(0xDEADBEEF));
+
+        let empty = IdentityRequestFilters::new(&[]);
+        assert_eq!(empty.nonce().unwrap(), None);
+    }
+
+    #[test]
+    fn identity_filters_no_filters_selects_everyone() {
+        let filters = IdentityRequestFilters::new(&[]);
+        assert!(
+            filters
+                .selects(NodeRole::Sensor, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn identity_filters_hint_match_and_mismatch() {
+        let options = IdentityRequestBuilder::new()
+            .filter_hint(&NodeHint([0xAA, 0xBB, 0xCC]))
+            .unwrap()
+            .build();
+        let filters = IdentityRequestFilters::new(&options);
+        let caps = NodeCapabilities::empty();
+        assert!(
+            filters
+                .selects(NodeRole::Chat, caps, &NodeHint([0xAA, 0xBB, 0xCC]))
+                .unwrap()
+        );
+        assert!(
+            !filters
+                .selects(NodeRole::Chat, caps, &NodeHint([0xAA, 0xBB, 0xCD]))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn identity_filters_repeated_type_is_or() {
+        let options = IdentityRequestBuilder::new()
+            .filter_role(NodeRole::Repeater)
+            .unwrap()
+            .filter_role(NodeRole::Chat)
+            .unwrap()
+            .build();
+        let filters = IdentityRequestFilters::new(&options);
+        let caps = NodeCapabilities::empty();
+        let hint = NodeHint([1, 2, 3]);
+        assert!(filters.selects(NodeRole::Repeater, caps, &hint).unwrap());
+        assert!(filters.selects(NodeRole::Chat, caps, &hint).unwrap());
+        assert!(!filters.selects(NodeRole::Sensor, caps, &hint).unwrap());
+    }
+
+    #[test]
+    fn identity_filters_distinct_types_are_and() {
+        let options = IdentityRequestBuilder::new()
+            .filter_role(NodeRole::Repeater)
+            .unwrap()
+            .filter_caps(NodeCapabilities::REPEATER)
+            .unwrap()
+            .build();
+        let filters = IdentityRequestFilters::new(&options);
+        let hint = NodeHint([1, 2, 3]);
+        // Both must hold.
+        assert!(
+            filters
+                .selects(NodeRole::Repeater, NodeCapabilities::REPEATER, &hint)
+                .unwrap()
+        );
+        // Role matches but caps don't.
+        assert!(
+            !filters
+                .selects(NodeRole::Repeater, NodeCapabilities::empty(), &hint)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn identity_filters_caps_requires_all_requested_bits() {
+        let options = IdentityRequestBuilder::new()
+            .filter_caps(NodeCapabilities::REPEATER | NodeCapabilities::TEXT_MESSAGES)
+            .unwrap()
+            .build();
+        let filters = IdentityRequestFilters::new(&options);
+        let hint = NodeHint([1, 2, 3]);
+        // Superset matches.
+        assert!(
+            filters
+                .selects(
+                    NodeRole::Chat,
+                    NodeCapabilities::REPEATER | NodeCapabilities::TEXT_MESSAGES | NodeCapabilities::MOBILE,
+                    &hint,
+                )
+                .unwrap()
+        );
+        // Missing one requested bit does not match.
+        assert!(
+            !filters
+                .selects(NodeRole::Chat, NodeCapabilities::REPEATER, &hint)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn identity_filters_unknown_critical_option_excludes() {
+        // Key 9 is unknown and critical (odd).
+        let mut buf = [0u8; 8];
+        let mut enc = OptionEncoder::new(&mut buf);
+        enc.put(9, &[0x01]).unwrap();
+        let n = enc.finish();
+        let filters = IdentityRequestFilters::new(&buf[..n]);
+        assert!(
+            !filters
+                .selects(NodeRole::Chat, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn identity_filters_unknown_elective_option_ignored() {
+        // Key 8 is unknown and elective (even); alongside a matching role filter.
+        let mut buf = [0u8; 16];
+        let mut enc = OptionEncoder::new(&mut buf);
+        enc.put(5, &[NodeRole::Repeater.as_byte()]).unwrap();
+        enc.put(8, &[0xFE]).unwrap();
+        let n = enc.finish();
+        let filters = IdentityRequestFilters::new(&buf[..n]);
+        assert!(
+            filters
+                .selects(NodeRole::Repeater, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .unwrap()
+        );
     }
 
     #[test]
@@ -385,13 +678,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_advertisement_request_wrong_body_length() {
-        assert!(parse(&[0x00, 0x01, 0x02]).is_err()); // 3-byte body, not 0 or 4
+    fn parse_command_zero_is_unallocated() {
+        assert!(matches!(
+            parse(&[0x00]),
+            Err(crate::AppParseError::InvalidCommandId(0))
+        ));
     }
 
     #[test]
-    fn parse_identity_request_nonempty_body() {
-        assert!(parse(&[0x01, 0x00]).is_err());
+    fn parse_identity_request_accepts_option_block() {
+        // A well-formed option block is accepted as the request payload.
+        let decoded = parse(&[0x01, 0x00]).expect("valid options should parse");
+        assert!(matches!(decoded, MacCommand::IdentityRequest { .. }));
+    }
+
+    #[test]
+    fn parse_identity_request_rejects_malformed_options() {
+        // 0x41: delta 4, length 1, but no value byte follows -> truncated.
+        assert!(parse(&[0x01, 0x41]).is_err());
     }
 
     #[test]
