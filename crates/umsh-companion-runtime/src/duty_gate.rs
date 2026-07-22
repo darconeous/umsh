@@ -26,14 +26,28 @@ pub struct DutyGatedRadio<R, C> {
     inner: R,
     ledger: &'static DutyLedger,
     clock: C,
+    /// Board coupling invoked after each successful transmit (e.g. the
+    /// T-1000E marks the load for its battery level estimator: voltage
+    /// sampled near a transmission is sagged, not resting OCV).
+    load_hook: fn(),
 }
 
 impl<R, C> DutyGatedRadio<R, C> {
     pub fn new(inner: R, ledger: &'static DutyLedger, clock: C) -> Self {
+        Self::with_load_hook(inner, ledger, clock, || {})
+    }
+
+    pub fn with_load_hook(
+        inner: R,
+        ledger: &'static DutyLedger,
+        clock: C,
+        load_hook: fn(),
+    ) -> Self {
         Self {
             inner,
             ledger,
             clock,
+            load_hook,
         }
     }
 }
@@ -55,12 +69,7 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
         // session's on_tx_result accounting. Refusals and failed
         // transmits consume no budget.
         self.ledger.record(self.clock.now_ms(), airtime_ms);
-        // Mark the load for the battery level estimator: voltage
-        // sampled near a transmission is sagged, not resting OCV.
-        // (`power` exists only on the device target; this module also
-        // builds on the host.)
-        #[cfg(all(feature = "t1000e", target_os = "none"))]
-        umsh_bsp_t1000e::power::note_external_load();
+        (self.load_hook)();
         Ok(())
     }
 

@@ -1,0 +1,77 @@
+[package]
+name = "firmware-companion-ncp-heltec-v3"
+description = "Heltec WiFi LoRa 32 V3 companion-radio NCP firmware over UART0 and BLE GATT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Phase 5 of docs/firmware-plan-heltec-lora32-v3.md: the full companion
+# NCP on ESP32-S3 — the shared session driver from
+# `umsh-companion-runtime` behind this board's transports (HDLC on
+# UART0/CP2102, CompanionService GATT on the esp-radio controller),
+# with the SX1262 behind the radio mux and the on-board device node.
+
+[features]
+# Mirror of the nRF NCP's ble-debug: multiplex driver/BLE diagnostics as
+# ASCII lines onto the UART0 output stream (HDLC hosts resynchronize
+# past them) and keep advertising open regardless of transport
+# arbitration so the BLE path stays reachable while debugging.
+ble-debug = ["trouble-host/security-debug"]
+
+[[bin]]
+name = "firmware-companion-ncp-heltec-v3"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
+umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
+umsh-companion = { path = "../../../crates/umsh-companion", default-features = false }
+umsh-companion-ncp = { path = "../../../crates/umsh-companion-ncp", default-features = false }
+# Board-agnostic NCP runtime shared with the T-Echo/T-1000E images:
+# session driver, radio mux, transport policy, pairing policy, counter
+# map. Default features pull the radio and journal-store machinery.
+umsh-companion-runtime = { path = "../../../crates/umsh-companion-runtime" }
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
+umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
+# The device node: a full on-board MAC/node stack for the device
+# identity (device_node.rs), sharing the radio through the mux.
+umsh-core = { path = "../../../crates/umsh-core", default-features = false }
+umsh-mac = { path = "../../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../../crates/umsh-sync", default-features = false }
+
+bt-hci = { version = "0.9", default-features = false }
+# 0.8 matches the shared driver's FrameBuf and the journal payload types;
+# the trouble 0.7 GATT server characteristics are built on 0.9.
+heapless = { version = "0.8", default-features = false }
+heapless09 = { package = "heapless", version = "0.9", default-features = false }
+embassy-executor = { version = "0.10", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# Raw flash over the internal SPI NOR (journal backing). The chip feature
+# and `embedded-storage` impl come from umsh-bsp-esp32's esp-storage
+# dependency via feature unification.
+esp-storage = { version = "0.9", default-features = false, features = ["critical-section", "embedded-storage"] }
+# umsh-node / umsh-sync use `alloc`.
+esp-alloc = { version = "0.10" }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-println = { version = "0.17", features = ["esp32s3"] }
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "ble", "unstable"] }
+esp-rtos = { version = "0.3", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+# Resolves to ../../lora-rs via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+# Device-identity generation and the device node's CSPRNG: ChaCha20
+# seeded from the RF-gated hardware TRNG at boot.
+rand = { version = "0.10", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+static_cell = "2"
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }

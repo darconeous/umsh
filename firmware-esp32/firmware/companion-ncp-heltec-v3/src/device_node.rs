@@ -1,53 +1,39 @@
 //! The companion radio's device node: a full `umsh-mac`/`umsh-node`
-//! stack running on the radio itself, alongside the companion session
-//! (increment 2 of `docs/companion-device-node-plan.md`).
+//! stack running on the radio itself, alongside the companion session.
 //!
-//! The device identity "exists even when no phone is attached"
-//! (companion-radio spec §Identities); this module is what makes that
-//! true. It is an ordinary MAC + `Host` pump — the same shape as the
-//! `companion-cli-t1000e` firmware on identical hardware — with the NCP's
-//! constraints baked into [`NcpNodePlatform`]:
+//! Port of `companion-ncp-techo/src/device_node.rs` to the ESP32-S3
+//! image — the logic is identical; only the clock (`umsh_hal`'s
+//! embassy clock instead of the nRF BSP's), the mutex kind, and the
+//! counter journal backing differ. See that module for the full design
+//! notes:
 //!
 //! - **Radio** is a [`LoraphyRadio`] over the node's virtual mux bundle
-//!   ([`NODE_CH`], mux client B): the session and the node share the one
-//!   physical radio through `radio_mux`.
-//! - **Rng** is a ChaCha20 CSPRNG seeded from the hardware TRNG at boot
-//!   ([`NodeRng`]): under BLE builds MPSL owns the RNG peripheral, and
-//!   project policy forbids non-crypto RNGs outright.
-//! - **Radio** transmissions pass through the shared duty ledger
-//!   (`duty_gate`): the node and the session draw from one combined
-//!   `PROP_PHY_DUTY_LIMIT` budget, and a refused transmit is shed via
-//!   the MAC's CAD-backoff path rather than killing the pump.
-//! - **The counter store** is the `COUNTER_PAGE0` journal
-//!   (`firmware::NodeCounterStore`): TX reservation boundaries for the
+//!   ([`NODE_CH`], mux client B) behind the shared duty-ledger gate.
+//! - **Rng** is a ChaCha20 CSPRNG seeded from the RF-gated hardware
+//!   TRNG at boot ([`NodeRng`]); project policy forbids non-crypto RNGs.
+//! - **The counter store** is the counter journal
+//!   (`crate::NodeCounterStore`): TX reservation boundaries for the
 //!   device identity and per-peer RX replay boundaries survive power
-//!   cycles, flushed from inside the MAC pump (`MacHandle::next_event`)
-//!   one whole-map record per persist block.
+//!   cycles, flushed from inside the MAC pump.
 //!
-//! The node is **dormant unless a device identity exists** at boot (the
-//! identity journal is empty until provisioned; the `no-ble` image has no
-//! journal at all and fails closed). [`bring_up`] is simply not called —
-//! nothing here runs, and beacon triggers fall into an undrained queue.
-//!
-//! Beacon requests arrive through [`BEACON_TRIGGER`] rather than from any
-//! specific button handler: the trigger is an input, because wake- and
-//! timer-driven advertisement policy (reserved device-domain properties
-//! 69–95) will feed the same path later.
+//! The node is **dormant unless a device identity exists** at boot:
+//! [`bring_up`] is simply not called — nothing here runs, and beacon
+//! triggers fall into an undrained queue.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use static_cell::StaticCell;
 
-use umsh_bsp_nrf52840::EmbassyClock;
 use umsh_companion_ncp::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS};
+use umsh_companion_runtime::duty_gate::DutyGatedRadio;
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_hal::NoKeyValueStore;
+use umsh_hal::{EmbassyClock, NoKeyValueStore};
 use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{Host, LocalNode};
 use umsh_sync::AsyncRefCell;
@@ -56,8 +42,8 @@ use umsh_sync::AsyncRefCell;
 
 /// ChaCha20 CSPRNG adapter implementing the `rand 0.10` traits the MAC
 /// requires (`Platform::Rng: rand::CryptoRng`). Seeded once at boot from
-/// the hardware TRNG, exactly like the session's `IdentityRng`, while the
-/// RNG peripheral is still ours to read.
+/// the hardware TRNG, exactly like the session's `IdentityRng`, while
+/// the RF subsystem that makes the TRNG trustworthy is live.
 pub struct NodeRng(rand_chacha::ChaCha20Rng);
 
 impl NodeRng {
@@ -84,20 +70,17 @@ impl rand::TryRng for NodeRng {
 }
 
 // ChaCha20 is a cryptographically secure generator; the seed comes from
-// the nRF52840 TRNG with bias correction.
+// the ESP32-S3 TRNG with the RF subsystem clocked.
 impl rand::TryCryptoRng for NodeRng {}
 
 /// `umsh_mac::Platform` bundle for the device node inside the NCP
-/// firmware. Board-independent: both the T-Echo and the T-1000E images
-/// use software crypto, the embassy clock, and the mux-backed radio.
+/// firmware.
 pub struct NcpNodePlatform;
 
 /// The node's radio path: its virtual mux bundle behind the shared
 /// duty-ledger admission gate.
-type NcpNodeRadio = crate::duty_gate::DutyGatedRadio<
-    umsh_radio_loraphy::LoraphyRadio<ThreadModeRawMutex, 4, 2>,
-    EmbassyClock,
->;
+type NcpNodeRadio =
+    DutyGatedRadio<umsh_radio_loraphy::LoraphyRadio<CriticalSectionRawMutex, 4, 2>, EmbassyClock>;
 
 impl umsh_mac::Platform for NcpNodePlatform {
     type Identity = SoftwareIdentity;
@@ -107,7 +90,7 @@ impl umsh_mac::Platform for NcpNodePlatform {
     type Delay = embassy_time::Delay;
     type Clock = EmbassyClock;
     type Rng = NodeRng;
-    type CounterStore = crate::firmware::NodeCounterStore;
+    type CounterStore = crate::NodeCounterStore;
     type KeyValueStore = NoKeyValueStore;
 }
 
@@ -134,7 +117,7 @@ type NcpNode = LocalNode<NcpNodeHandle>;
 /// The node's virtual radio bundle (mux client B). Static regardless of
 /// whether the node is running: the mux fans RX out to it either way, and
 /// a full queue just drops frames per the mux's per-client policy.
-pub static NODE_CH: umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2> =
+pub static NODE_CH: umsh_radio_loraphy::Channels<CriticalSectionRawMutex, 4, 2> =
     umsh_radio_loraphy::Channels::new();
 
 static NODE_MAC_CELL: StaticCell<AsyncRefCell<NcpNodeMac>> = StaticCell::new();
@@ -146,18 +129,13 @@ static NODE_MAC_CELL: StaticCell<AsyncRefCell<NcpNodeMac>> = StaticCell::new();
 /// identity is live. Built by the shared NCP driver whenever the
 /// session's `dev_domain_version` moves and handed to
 /// [`node_dev_sync_task`], which reconciles the node's MAC against it.
-/// The session stays authoritative for the property surface; the node
-/// only mirrors it. `identity_present` goes false when a factory reset
-/// (`CMD_CLEAR` + `CMD_RST`) completes; the running node then goes
-/// dormant (beacons gated off, channels removed) until the reboot that
-/// finishes tearing it down.
 pub use umsh_companion_runtime::driver::DevDomainSnapshot;
 
 /// Latest-wins hand-off from `ncp_task` to the sync task. A `Signal`
 /// rather than a queue: intermediate table states are irrelevant, only
 /// convergence on the newest snapshot matters. With the node dormant
 /// (never brought up) a pending snapshot just sits here unconsumed.
-pub static DEV_SYNC: Signal<ThreadModeRawMutex, DevDomainSnapshot> = Signal::new();
+pub static DEV_SYNC: Signal<CriticalSectionRawMutex, DevDomainSnapshot> = Signal::new();
 
 /// Whether the device node may transmit. Cleared when a snapshot
 /// reports the identity gone (factory reset); the MAC still holds the
@@ -187,7 +165,7 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
             let key = applied.swap_remove(index);
             let _ = node.leave(&umsh_node::Channel::private(ChannelKey(key), ""));
             mac.remove_channel(&ChannelKey(key)).await;
-            crate::firmware::debug_log(format_args!(
+            crate::debug_log(format_args!(
                 "node dev-sync: channel {:02x}{:02x}.. removed",
                 key[0], key[1]
             ));
@@ -202,12 +180,12 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
             {
                 Ok(_) => {
                     let _ = applied.push(*key);
-                    crate::firmware::debug_log(format_args!(
+                    crate::debug_log(format_args!(
                         "node dev-sync: channel {:02x}{:02x}.. joined",
                         key[0], key[1]
                     ));
                 }
-                Err(_) => crate::firmware::debug_log(format_args!(
+                Err(_) => crate::debug_log(format_args!(
                     "node dev-sync: channel {:02x}{:02x}.. join FAILED",
                     key[0], key[1]
                 )),
@@ -216,7 +194,7 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
         // Registration is add-or-refresh; repeats are harmless.
         for public_key in snapshot.peers.iter() {
             if node.peer(PublicKey(*public_key)).await.is_err() {
-                crate::firmware::debug_log(format_args!(
+                crate::debug_log(format_args!(
                     "node dev-sync: peer {:02x}{:02x}.. register FAILED",
                     public_key[0], public_key[1]
                 ));
@@ -229,7 +207,7 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
         if !snapshot.peers.is_empty() {
             let _ = mac.load_all_persisted_rx_counters().await;
         }
-        crate::firmware::debug_log(format_args!(
+        crate::debug_log(format_args!(
             "node dev-sync: {} channels, {} peers, identity={}",
             snapshot.channel_keys.len(),
             snapshot.peers.len(),
@@ -245,9 +223,7 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
 /// (device-domain advertisement policy) are planned triggers.
 #[derive(Clone, Copy)]
 pub enum BeaconTrigger {
-    /// The board's primary-action button slot (T-1000E only; the
-    /// T-Echo image carries the variant unused).
-    #[cfg_attr(not(feature = "t1000e"), allow(dead_code))]
+    /// The board's PRG button (short press with the node provisioned).
     Button,
     /// A peer's Advertisement Request MAC command. The response is a
     /// solicited advertisement — a broadcast carrying the signed node
@@ -259,7 +235,7 @@ pub enum BeaconTrigger {
 /// never drained and requests are dropped at the `try_send` in
 /// [`request_beacon`] — the slot is inert, exactly as the UX guidelines
 /// require for an unprovisioned device.
-pub static BEACON_TRIGGER: Channel<ThreadModeRawMutex, BeaconTrigger, 2> = Channel::new();
+pub static BEACON_TRIGGER: Channel<CriticalSectionRawMutex, BeaconTrigger, 2> = Channel::new();
 
 /// Fire-and-forget beacon request. A full queue means a beacon (or
 /// advertisement) is already pending, so dropping the extra request
@@ -275,17 +251,15 @@ pub fn request_beacon(trigger: BeaconTrigger) {
 /// through the panic handler beats silently losing the device identity.
 #[embassy_executor::task]
 async fn node_pump_task(mut host: NcpNodeHost) {
-    crate::firmware::debug_log(format_args!("node pump: running"));
+    crate::debug_log(format_args!("node pump: running"));
     let result = host.run().await;
-    crate::firmware::debug_log(format_args!("node pump: EXITED ok={}", result.is_ok()));
+    crate::debug_log(format_args!("node pump: EXITED ok={}", result.is_ok()));
     panic!("device node host exited");
 }
 
 /// Turns beacon triggers into node sends on the device identity: a
 /// plain beacon for the button slot, a signed solicited advertisement
-/// for an Advertisement Request. Confirmation feedback (button only)
-/// fires when the MAC *accepts* the send — a refusal (queue full, duty
-/// limiting) leaves the slot silent.
+/// for an Advertisement Request.
 #[embassy_executor::task]
 async fn node_beacon_task(node: NcpNode, identity: SoftwareIdentity) {
     use umsh_node::Transport as _;
@@ -299,19 +273,11 @@ async fn node_beacon_task(node: NcpNode, identity: SoftwareIdentity) {
         match trigger {
             BeaconTrigger::Button => {
                 let accepted = node.send_all(&[], &SendOptions::default()).await.is_ok();
-                #[cfg(feature = "t1000e")]
-                if accepted {
-                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
-                        .signal(umsh_ux_tracker::led::LedSequence::ActionConfirm);
-                    umsh_bsp_t1000e::BUZZER_SIGNAL
-                        .signal(&umsh_ux_tracker::buzzer::melodies::BEACON_ACK);
-                }
-                #[cfg(not(feature = "t1000e"))]
-                let _ = accepted;
+                crate::debug_log(format_args!("node beacon: accepted={accepted}"));
             }
             BeaconTrigger::Advertise { nonce } => {
                 let accepted = send_advertisement(&node, &identity, nonce).await;
-                crate::firmware::debug_log(format_args!(
+                crate::debug_log(format_args!(
                     "node advert: nonce={nonce:?} accepted={accepted}"
                 ));
             }
@@ -330,7 +296,7 @@ async fn send_advertisement(
 ) -> bool {
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
-    let name_bytes = crate::firmware::device_name_snapshot().await;
+    let name_bytes = crate::device_name_snapshot().await;
     // Spec caps the Node Name identity option at 24 bytes.
     let name = core::str::from_utf8(&name_bytes)
         .ok()
@@ -395,39 +361,30 @@ pub async fn bring_up(
     identity_secret: &[u8; 32],
     node_seed: [u8; 32],
     t_frame_ms: u32,
-    counters: &'static crate::firmware::NodeCountersMutex,
+    counters: &'static crate::NodeCountersMutex,
 ) {
     // The Mac is ~37 KiB. `init_with` lets the compiler construct it
     // in place inside the static cell; building it as a stack local
     // (what `StaticCell::init` does) transits the stack once per move
-    // in the chain, and this image's statics leave only ~110 KiB of
-    // stack — hardware-diagnosed as boot HardFaults (INVSTATE jumps to
-    // 0) and a smashed allocator when the temporaries blew through it.
-    // Keep the construction a single in-place expression.
-    // The T-1000E marks each completed node transmit for its battery
-    // level estimator (voltage sampled near a transmission is sagged,
-    // not resting OCV); the T-Echo has no estimator to feed.
-    #[cfg(feature = "t1000e")]
-    let load_hook: fn() = umsh_bsp_t1000e::power::note_external_load;
-    #[cfg(not(feature = "t1000e"))]
-    let load_hook: fn() = || {};
+    // in the chain — hardware-diagnosed on the nRF images as boot
+    // faults when the temporaries blew through the stack budget. Keep
+    // the construction a single in-place expression.
     let mac_cell: &'static AsyncRefCell<NcpNodeMac> = NODE_MAC_CELL.init_with(|| {
         AsyncRefCell::new(NcpNodeMac::new(
-            crate::duty_gate::DutyGatedRadio::with_load_hook(
+            DutyGatedRadio::new(
                 umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
-                &crate::firmware::DUTY_LEDGER,
+                &crate::DUTY_LEDGER,
                 EmbassyClock,
-                load_hook,
             ),
             CryptoEngine::new(SoftwareAes, SoftwareSha256),
             EmbassyClock,
             NodeRng::from_seed(node_seed),
-            crate::firmware::NodeCounterStore::new(counters),
+            crate::NodeCounterStore::new(counters),
             RepeaterConfig::default(),
             OperatingPolicy::default(),
         ))
     });
-    crate::firmware::debug_log(format_args!("node bring-up: mac cell ready"));
+    crate::debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
     let identity_id = mac_cell
         .try_borrow_mut()
@@ -441,10 +398,8 @@ pub async fn bring_up(
         .load_persisted_counter(identity_id)
         .await
     {
-        Ok(counter) => {
-            crate::firmware::debug_log(format_args!("node bring-up: tx counter {counter}"))
-        }
-        Err(_) => crate::firmware::debug_log(format_args!("node bring-up: tx counter load FAILED")),
+        Ok(counter) => crate::debug_log(format_args!("node bring-up: tx counter {counter}")),
+        Err(_) => crate::debug_log(format_args!("node bring-up: tx counter load FAILED")),
     }
 
     let mut host: NcpNodeHost = Host::new(MacHandle::new(mac_cell));
@@ -459,7 +414,7 @@ pub async fn bring_up(
             .channel()
             .map(|info| u16::from_be_bytes(info.id().0))
             .unwrap_or(0);
-        crate::firmware::debug_log(format_args!(
+        crate::debug_log(format_args!(
             "node rx: {:?} ch={:04x} len={} auth={}",
             packet.packet_family(),
             channel,
@@ -476,14 +431,14 @@ pub async fn bring_up(
     // an abusive requester can extract.
     core::mem::forget(node.on_mac_command(|from, command| {
         if let umsh_node::OwnedMacCommand::AdvertisementRequest { nonce } = command {
-            crate::firmware::debug_log(format_args!(
+            crate::debug_log(format_args!(
                 "node advert-request: from {:02x}{:02x}.. nonce={:?}",
                 from.0[0], from.0[1], nonce
             ));
             request_beacon(BeaconTrigger::Advertise { nonce: *nonce });
         }
     }));
-    crate::firmware::debug_log(format_args!("node bring-up: host ready"));
+    crate::debug_log(format_args!("node bring-up: host ready"));
     spawner.spawn(node_pump_task(host).unwrap());
     spawner.spawn(node_dev_sync_task(node.clone(), MacHandle::new(mac_cell)).unwrap());
     spawner.spawn(

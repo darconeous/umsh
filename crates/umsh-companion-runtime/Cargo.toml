@@ -27,11 +27,14 @@ radio = ["dep:umsh-radio-loraphy", "dep:embassy-futures", "dep:embassy-sync"]
 counters = ["dep:umsh-journal-store"]
 # The board-agnostic session driver: the NCP run loop, effect dispatch,
 # and frame staging, parameterized over the `NcpEnv` board couplings.
+# Also carries `duty_gate`, the shared duty-ledger radio decorator the
+# device node wraps its mux bundle in (same `DutyLedger` dependency).
 driver = [
     "radio",
     "dep:umsh-companion",
     "dep:umsh-companion-ncp",
     "dep:umsh-crypto",
+    "dep:umsh-hal",
     "dep:umsh-journal-store",
     "dep:embassy-time",
     "dep:heapless",
@@ -41,6 +44,7 @@ driver = [
 umsh-companion = { path = "../umsh-companion", optional = true }
 umsh-companion-ncp = { path = "../umsh-companion-ncp", optional = true }
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"], optional = true }
+umsh-hal = { path = "../umsh-hal", default-features = false, optional = true }
 umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false, optional = true }
 umsh-journal-store = { path = "../umsh-journal-store", optional = true }
 embassy-futures = { version = "0.1", default-features = false, optional = true }
@@ -54,6 +58,7 @@ heapless = { workspace = true }
 # radio_mux's host-run unit tests: RadioError values and RxInfo/Snr.
 lora-phy = { workspace = true }
 umsh-hal = { path = "../umsh-hal", default-features = false }
+umsh-companion = { path = "../umsh-companion" }
 # Host critical-section impl for embassy-sync under test; the target build
 # gets its implementation from the firmware's controller stack.
 critical-section = { version = "1", features = ["std"] }

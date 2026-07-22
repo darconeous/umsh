@@ -22,5 +22,7 @@ pub mod transport_policy;
 pub mod counter_map;
 #[cfg(feature = "driver")]
 pub mod driver;
+#[cfg(feature = "driver")]
+pub mod duty_gate;
 #[cfg(feature = "radio")]
 pub mod radio_mux;
