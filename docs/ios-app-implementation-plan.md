@@ -1121,3 +1121,60 @@ Platform:
   local notifications posted only after durable persistence, and a
   hardware measurement checklist that gates the UI copy. Companion
   offline-queue drain remains future/out of scope.
+
+## Requested feature backlog (2026-07-22 device-testing feedback)
+
+Captured verbatim intent from a second on-device session; same convention
+(intent + the layer that gates it).
+
+Transcript / messaging:
+- Resend a failed message by tapping it. Tapping a "not delivered" bubble
+  should offer a Resend action (matches the iMessage-style manual-retry
+  send model — there is deliberately no outbound queue, so retry stays a
+  user gesture on the failed bubble). Gating: UI action on the failed-state
+  bubble → facade re-send of the original message body; reuse the existing
+  send path, no new persistence.
+- Context-correct delete-message warning. Deleting a message from a
+  **unicast** chat currently shows the group-channel warning copy. Keep a
+  warning, but make it relevant to a direct conversation (the group copy
+  presumably references channel members / shared visibility that does not
+  apply 1:1). Gating: UI-only — branch the confirmation copy on
+  conversation kind (`ConversationKey::Direct` vs channel).
+
+Navigation:
+- Convert the peer sheet's "Message" button to "Go to chat". Instead of
+  pushing a new chat sheet onto the current stack, it should switch the
+  app to the Conversations tab and open the conversation's sheet there, so
+  there is a single canonical location for a conversation. Gating: shell
+  navigation — a cross-tab "open conversation" intent (select Conversations
+  tab + present/scroll to the target thread); avoid duplicate sheet stacks.
+
+Peer sheet:
+- "Last heard" field. Show when we last heard from the peer by any means
+  (advertisement, message, ack, echo, OTA identity capture, etc.).
+  Gating: the facade/engine must record a last-activity timestamp per peer
+  across all inbound-evidence paths (not just chat inserts) and expose it on
+  the peer record; UI renders a relative time.
+- Fetch/update a node's identity from the peer sheet. A button that solicits
+  the peer's current identity. Gating: this is the phone side of the
+  Identity Request redesign — send a MAC **Identity Request** (command 1,
+  targeted; the old broadcast Advertisement Request / command 0 was removed)
+  and apply the targeted unicast identity response the peer returns. This
+  supersedes the 2026-07-20 "solicit a peer's advertisement" remaining item;
+  it needs the request TX exposed through the mobile facade and the response
+  routed into the existing advertisement-capture/upsert path. See the
+  firmware responder work (device-node) for the wire behavior.
+- Move "Ping" onto every peer sheet. Ping is currently only offered on peer
+  sheets reached from the Network tab; it should be available on every peer
+  sheet regardless of entry point. Gating: UI — hoist the Ping action into
+  the shared peer-sheet component rather than the Network-tab variant.
+
+Platform:
+- Make the chosen device name reach the iOS Bluetooth panel. The system
+  Settings → Bluetooth list shows the radio's **first-seen** name and never
+  updates when the name is changed. Investigate how to get the current name
+  to surface there (likely the GAP device-name characteristic / advertised
+  local name on the companion firmware side, plus whatever iOS caches — iOS
+  is known to cache the GAP name aggressively). Gating: investigation
+  spanning companion firmware (GAP name source) and iOS (cache behavior);
+  outcome may be a firmware change, not an app change.
