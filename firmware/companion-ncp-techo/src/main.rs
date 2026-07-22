@@ -28,11 +28,14 @@
 //                        attach/detach edges into INPUT_CH (keeps
 //                        read_packet out of any select, so cancel safety
 //                        never depends on the USB driver)
-//   - ncp_task:          owns the framing-free Session; sorts INPUT_CH,
-//                        radio RX, and TX completions into session calls
-//   - output_task:       owns the USB Sender + HDLC encoder, drains OUT_USB_CH
+//   - ncp_task:          hosts the shared NCP driver
+//                        (umsh_companion_runtime::driver): the Session
+//                        select loop over INPUT_CH, radio RX, and TX
+//                        completions, with board couplings via BoardNcpEnv
+//   - output_task:       owns the USB Sender + HDLC encoder, drains
+//                        OUT_CH.wired
 //   - ble_app:           advertising + encrypted/bond-gated GATT/SAR edges,
-//                        pairing policy, generation-tagged OUT_BLE_CH, and
+//                        pairing policy, generation-tagged OUT_CH.ble, and
 //                        MPSL-coordinated PIN/bond persistence
 //   - button_task:       resolves the side button into display-menu gestures
 //   - display_task:      owns the e-paper BLE menu
@@ -122,7 +125,7 @@ mod firmware {
     use super::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
     use super::ble_store::{self, Snapshot, StoredBond};
     use super::proto_store;
-    use super::transport_policy::{SessionArbitration, Transport, generation_checked};
+    use super::transport_policy::{Transport, generation_checked};
     use super::ui::UiNotice;
     #[cfg(not(feature = "t1000e"))]
     use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel};
@@ -182,12 +185,9 @@ mod firmware {
     #[cfg(not(feature = "t1000e"))]
     use umsh_bsp_techo::display;
     use umsh_companion::{Status, gatt, hdlc};
-    use umsh_companion_ncp::{
-        BatteryFields, Effect, IdentitySource, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
-        TxPower,
-    };
-    use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-    use umsh_crypto::{CryptoEngine, NodeIdentity as _};
+    use umsh_companion_ncp::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
+    use umsh_crypto::CryptoEngine;
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 
     /// The NCP session instantiated with this firmware's crypto
     /// providers (software AES/SHA; Ed25519 comes in only through the
@@ -204,10 +204,10 @@ mod firmware {
     /// the hardware TRNG at boot: the RNG peripheral itself is owned by
     /// the SoftDevice Controller for the lifetime of the BLE stack.
     type IdentityRng = rand_chacha::ChaCha20Rng;
-    use umsh_radio_loraphy::{
-        MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
-        coding_rate_from_denom, spreading_factor_from_u8,
+    use umsh_companion_runtime::driver::{
+        self, InEvent, InputChannel, NcpEnv, NcpRuntime, OutFrame, TransportChannels,
     };
+    use umsh_radio_loraphy::{MAX_PAYLOAD, NcpControl};
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     #[cfg(feature = "t1000e")]
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
@@ -979,24 +979,15 @@ mod firmware {
     /// Runtime radio settings pushed by the session to the runner.
     static NCP_CTL: NcpControl<ThreadModeRawMutex> = NcpControl::new();
 
-    const FRAME_IN_MAX: usize = 300;
+    /// Framing-free receive path and connection edges into the shared
+    /// NCP driver (`InEvent`/`FrameBuf` and the queue types live there).
+    static INPUT_CH: InputChannel<ThreadModeRawMutex> = InputChannel::new();
+    type FrameBuf = driver::FrameBuf;
+    const FRAME_IN_MAX: usize = driver::FRAME_IN_MAX;
 
-    /// Framing-free receive path and connection edges into ncp_task.
-    enum InEvent {
-        Attached(Transport),
-        Detached(Transport),
-        Frame(Transport, heapless::Vec<u8, FRAME_IN_MAX>),
-    }
-    static INPUT_CH: Channel<ThreadModeRawMutex, InEvent, 8> = Channel::new();
-
-    /// One raw companion frame in the USB output queue.
-    type FrameBuf = heapless::Vec<u8, FRAME_IN_MAX>;
-    struct OutFrame {
-        generation: u32,
-        frame: FrameBuf,
-    }
-    static OUT_USB_CH: Channel<ThreadModeRawMutex, OutFrame, 4> = Channel::new();
-    static OUT_BLE_CH: Channel<ThreadModeRawMutex, OutFrame, 4> = Channel::new();
+    /// Outbound frame queues: `wired` drained by output_task (USB-CDC),
+    /// `ble` by the GATT connection writer.
+    static OUT_CH: TransportChannels<ThreadModeRawMutex> = TransportChannels::new();
 
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
@@ -1173,79 +1164,9 @@ mod firmware {
     #[cfg(not(feature = "t1000e"))]
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-    // ─── Outgoing frame staging ──────────────────────────────────────────────
+    // ─── Outgoing frame limits ───────────────────────────────────────────────
 
-    /// Largest companion frame the session emits (CMD_STR_RECV around a
-    /// full-MTU payload).
-    const FRAME_OUT_MAX: usize = 300;
-    const WIRE_MAX: usize = hdlc::max_encoded_len(300);
-
-    /// Collects frames emitted synchronously by the session, then
-    /// flushes them to OUT_USB_CH asynchronously. The session emits at
-    /// most one frame per call; two slots give headroom.
-    struct Emitter {
-        bufs: [[u8; FRAME_OUT_MAX]; 2],
-        lens: [usize; 2],
-        count: usize,
-    }
-
-    impl Emitter {
-        const fn new() -> Self {
-            Self {
-                bufs: [[0; FRAME_OUT_MAX]; 2],
-                lens: [0; 2],
-                count: 0,
-            }
-        }
-
-        /// Copy one raw companion frame into the next slot.
-        ///
-        /// The session is expected to emit at most `bufs.len()` frames per call
-        /// and every frame is expected to fit `FRAME_OUT_MAX`. Both invariants are
-        /// asserted in debug builds so a future session change that violates
-        /// them is caught rather than silently dropping a response.
-        fn push(&mut self, frame: &[u8]) {
-            if self.count >= self.bufs.len() {
-                debug_assert!(
-                    false,
-                    "Emitter overflow: session emitted more frames per call than staging slots"
-                );
-                return;
-            }
-            if frame.len() <= FRAME_OUT_MAX {
-                self.bufs[self.count][..frame.len()].copy_from_slice(frame);
-                self.lens[self.count] = frame.len();
-                self.count += 1;
-            } else {
-                debug_assert!(false, "Emitter: companion frame exceeds FRAME_OUT_MAX");
-            }
-        }
-
-        /// Queue all staged frames for the active transport output task.
-        async fn flush(&mut self, destination: Option<(Transport, u32)>) {
-            if let Some((transport, generation)) = destination {
-                for index in 0..self.count {
-                    let mut frame: FrameBuf = heapless::Vec::new();
-                    if frame
-                        .extend_from_slice(&self.bufs[index][..self.lens[index]])
-                        .is_err()
-                    {
-                        debug_log(format_args!(
-                            "emitter frame copy=FAILED index={} len={}",
-                            index, self.lens[index]
-                        ));
-                        continue;
-                    }
-                    let outbound = OutFrame { generation, frame };
-                    match transport {
-                        Transport::Usb => OUT_USB_CH.send(outbound).await,
-                        Transport::Ble => OUT_BLE_CH.send(outbound).await,
-                    }
-                }
-            }
-            self.count = 0;
-        }
-    }
+    const WIRE_MAX: usize = hdlc::max_encoded_len(driver::FRAME_OUT_MAX);
 
     fn set_advertising_allowed(allowed: bool) {
         let previous = ADV_ALLOWED.swap(allowed, Ordering::AcqRel);
@@ -1321,98 +1242,102 @@ mod firmware {
             .build(p, rng, mpsl, mem)
     }
 
-    /// Execute a radio side effect requested by the session.
-    async fn apply_effect(session: &Session, effect: Option<Effect>) {
-        match effect {
-            Some(Effect::ApplyRadio(settings)) => {
-                publish_device_name(session).await;
-                // The session validates values against the same discrete
-                // sets these converters accept, so None here is
-                // unreachable; bail out defensively rather than panic.
-                let (Some(sf), Some(bw), Some(cr)) = (
-                    spreading_factor_from_u8(settings.sf),
-                    bandwidth_from_hz(settings.bw_hz),
-                    coding_rate_from_denom(settings.cr_denom),
-                ) else {
-                    return;
-                };
-                NCP_CTL.apply(NcpSettings {
-                    enabled: settings.enabled,
-                    freq_hz: settings.freq_khz.saturating_mul(1_000),
-                    sf,
-                    bw,
-                    cr,
-                    power_dbm: i32::from(settings.tx_power_dbm),
-                });
-            }
-            Some(Effect::StartTransmit) => {
-                let mut data: heapless::Vec<u8, MAX_PAYLOAD> = heapless::Vec::new();
-                if data.extend_from_slice(session.tx_data()).is_err() {
-                    debug_log(format_args!(
-                        "radio tx staging=FAILED len={}",
-                        session.tx_data().len()
-                    ));
-                    return;
-                }
-                let power_dbm = match session.tx_power() {
-                    TxPower::Default => None,
-                    TxPower::Max => Some(i32::from(MAX_TX_POWER_DBM)),
-                    TxPower::Dbm(dbm) => Some(i32::from(dbm)),
-                };
-                // Mark the load for the battery level estimator (the
-                // radio runner transmits within milliseconds of this).
-                #[cfg(feature = "t1000e")]
-                umsh_bsp_t1000e::power::note_external_load();
-                SESSION_CH.tx.send(TxRequest { data, power_dbm }).await;
-            }
-            Some(Effect::DeviceNameChanged) => publish_device_name(session).await,
-            // Deferred effects needing `&mut Session` + the emitter are
-            // handled inline in ncp_task rather than here.
-            Some(Effect::SampleRssi { .. })
-            | Some(Effect::SampleBattery { .. })
-            | Some(Effect::SetPairingPin { .. })
-            | Some(Effect::WipeHostDomain { .. })
-            | Some(Effect::DrainQueue)
-            | Some(Effect::SaveSnapshot { .. })
-            | Some(Effect::ClearSaved { .. })
-            | Some(Effect::ProvisionIdentity { .. })
-            | None => {}
-        }
+    /// Board environment for the shared NCP driver
+    /// (`umsh_companion_runtime::driver`): persistence, entropy, pairing,
+    /// and indicator couplings. The former `cfg(feature = "t1000e")` forks
+    /// inside the session loop live here as trait-method overrides; the
+    /// T-Echo build keeps the driver's no-op defaults for the indicator
+    /// and load hooks.
+    struct BoardNcpEnv {
+        proto_store: ProtoStore,
+        identity_store: ProtoStore,
+        identity_rng: IdentityRng,
+        node_counters: &'static NodeCountersMutex,
     }
 
-    /// Mirror the session's device-domain node tables to the device
-    /// node when their generation moved (device-node plan increment 3).
-    /// `synced_version` is the caller's cache of the last published
-    /// generation. Cheap when nothing changed — one u32 compare — so
-    /// callers run it after every session interaction.
-    fn sync_dev_domain(session: &Session, synced_version: &mut u32) {
-        if session.dev_domain_version() == *synced_version {
-            return;
+    impl NcpEnv for BoardNcpEnv {
+        async fn persist_snapshot(&mut self, bytes: &[u8]) -> Result<(), ()> {
+            self.proto_store.persist(bytes).await
         }
-        *synced_version = session.dev_domain_version();
-        let mut snapshot = super::device_node::DevDomainSnapshot {
-            channel_keys: heapless::Vec::new(),
-            peers: heapless::Vec::new(),
-            identity_present: session.dev_key().is_some(),
-        };
-        for key in session.dev_channel_keys() {
-            let _ = snapshot.channel_keys.push(key);
-        }
-        for public_key in session.dev_peers() {
-            let _ = snapshot.peers.push(public_key);
-        }
-        super::device_node::DEV_SYNC.signal(snapshot);
-    }
 
-    async fn publish_device_name(session: &Session) {
-        let bytes = session.device_name().as_bytes();
-        let mut current = DEVICE_NAME.lock().await;
-        if current.as_slice() == bytes {
-            return;
+        async fn clear_snapshot(&mut self) -> Result<(), ()> {
+            self.proto_store.clear().await
         }
-        current.clear();
-        if current.extend_from_slice(bytes).is_ok() {
-            DEVICE_NAME_CHANGED.signal(());
+
+        async fn persist_identity(&mut self, bytes: &[u8]) -> Result<(), ()> {
+            self.identity_store.persist(bytes).await
+        }
+
+        async fn clear_identity(&mut self) -> Result<(), ()> {
+            self.identity_store.clear().await
+        }
+
+        async fn clear_counters(&mut self) {
+            clear_node_counters(self.node_counters).await;
+        }
+
+        fn fill_secret(&mut self, secret: &mut [u8; 32]) -> Result<(), ()> {
+            // TRNG-seeded ChaCha20 CSPRNG (the RNG peripheral belongs to
+            // the SDC at runtime); infallible once seeded.
+            rand_core::RngCore::fill_bytes(&mut self.identity_rng, secret);
+            Ok(())
+        }
+
+        async fn sample_battery(&mut self) -> Result<umsh_companion::battery::BatteryStatus, ()> {
+            sample_battery_snapshot().await
+        }
+
+        async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
+            PAIRING_CONFIG_CH.send(pin).await;
+            PAIRING_CONFIG_ACK.wait().await
+        }
+
+        fn set_advertising_allowed(&mut self, allowed: bool) {
+            // ble-debug builds keep advertising open regardless of the
+            // arbitration policy so the diagnostic console stays reachable.
+            #[cfg(feature = "ble-debug")]
+            let allowed = {
+                let _ = allowed;
+                true
+            };
+            set_advertising_allowed(allowed);
+        }
+
+        async fn publish_device_name(&mut self, name: &str) {
+            let bytes = name.as_bytes();
+            let mut current = DEVICE_NAME.lock().await;
+            if current.as_slice() == bytes {
+                return;
+            }
+            current.clear();
+            if current.extend_from_slice(bytes).is_ok() {
+                DEVICE_NAME_CHANGED.signal(());
+            }
+        }
+
+        fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
+            super::device_node::DEV_SYNC.signal(snapshot);
+        }
+
+        #[cfg(feature = "t1000e")]
+        fn request_attention(&mut self) {
+            umsh_bsp_t1000e::indicator::request_attention();
+        }
+
+        #[cfg(feature = "t1000e")]
+        fn clear_attention(&mut self) {
+            umsh_bsp_t1000e::indicator::clear_attention();
+        }
+
+        #[cfg(feature = "t1000e")]
+        fn note_transmit_load(&mut self) {
+            // Mark the load for the battery level estimator (the radio
+            // runner transmits within milliseconds of this).
+            umsh_bsp_t1000e::power::note_external_load();
+        }
+
+        fn trace(&mut self, args: core::fmt::Arguments<'_>) {
+            debug_log(args);
         }
     }
 
@@ -1720,7 +1645,7 @@ mod firmware {
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
         loop {
-            match select3(conn.next(), OUT_BLE_CH.receive(), ADV_POLICY_CHANGED.wait()).await {
+            match select3(conn.next(), OUT_CH.ble.receive(), ADV_POLICY_CHANGED.wait()).await {
                 Either3::First(GattConnectionEvent::Disconnected { reason }) => {
                     debug_log(format_args!("disconnected reason={reason:?}"));
                     break;
@@ -2299,7 +2224,7 @@ mod firmware {
         }
         loop {
             #[cfg(feature = "ble-debug")]
-            let outbound = match select(OUT_USB_CH.receive(), DEBUG_CH.receive()).await {
+            let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
                 Either::First(outbound) => outbound,
                 Either::Second(line) => {
                     for chunk in line.as_bytes().chunks(64) {
@@ -2309,7 +2234,7 @@ mod firmware {
                 }
             };
             #[cfg(not(feature = "ble-debug"))]
-            let outbound = OUT_USB_CH.receive().await;
+            let outbound = OUT_CH.wired.receive().await;
             if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
                 continue;
             }
@@ -2361,286 +2286,46 @@ mod firmware {
         }
     }
 
-    /// Owns the framing-free protocol session. Sorts host frames,
-    /// radio receptions, and transmit completions into session calls and
-    /// executes the resulting radio effects.
+    /// Owns the framing-free protocol session: hosts the shared NCP
+    /// driver (`umsh_companion_runtime::driver::run`) — host frames,
+    /// radio receptions, transmit completions, and every session effect
+    /// — over this board's channel wiring and [`BoardNcpEnv`] couplings.
     #[embassy_executor::task]
     async fn ncp_task(
         boot_reason: Status,
-        mut proto_store: ProtoStore,
+        proto_store: ProtoStore,
         boot_snapshot: Option<BootSnapshot>,
-        mut identity_store: ProtoStore,
+        identity_store: ProtoStore,
         boot_identity: Option<[u8; 32]>,
-        mut identity_rng: IdentityRng,
+        identity_rng: IdentityRng,
         node_counters: &'static NodeCountersMutex,
     ) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
-        let mut session = Session::new(
+        let session = Session::new(
             session_config(),
             boot_reason,
             CryptoEngine::new(SoftwareAes, SoftwareSha256),
         );
-        let mut emitter = Emitter::new();
-        let mut arbitration = SessionArbitration::new(SESSION_GEN.load(Ordering::Acquire));
-        // Last device-domain generation mirrored to the device node.
-        // Matches the session's initial value; the first mutation (or a
-        // boot restore) publishes the first snapshot.
-        let mut dev_domain_synced: u32 = session.dev_domain_version();
-        // Shared staging buffer for the durable-write effect arms
-        // (save/wipe). Held across their persist awaits, so as a
-        // loop-lifetime local it costs one future slot instead of one
-        // per arm.
-        let mut snapshot_buf = [0u8; umsh_companion_ncp::SNAPSHOT_MAX];
-
-        // The device identity is persisted independently of snapshots;
-        // its post-reset value is whatever the identity journal holds.
-        if let Some(public_key) = boot_identity {
-            session.set_boot_identity(public_key);
-        }
-
-        // Restore a stored snapshot before processing any host command:
-        // the saved configuration is applied, the PHY re-enabled if it
-        // was enabled when saved, and detached operation begins
-        // immediately. A snapshot that fails to decode is ignored.
-        if let Some(payload) = boot_snapshot {
-            let effect = session.restore_at_boot(&payload);
-            debug_log(format_args!(
-                "proto-store boot-restore={}",
-                if effect.is_some() { "ok" } else { "IGNORED" }
-            ));
-            apply_effect(&session, effect).await;
-            // Replay the restored device-domain tables into the device
-            // node before any host interaction: detached multicast
-            // processing must not wait for an attach.
-            sync_dev_domain(&session, &mut dev_domain_synced);
-        }
-
-        loop {
-            // Only wait for a TX completion while one is outstanding,
-            // so a spurious tx_done can never be consumed early.
-            let tx_done = async {
-                if session.has_pending_tx() {
-                    SESSION_CH.tx_done.wait().await
-                } else {
-                    core::future::pending().await
-                }
-            };
-
-            match select3(INPUT_CH.receive(), SESSION_CH.rx.receive(), tx_done).await {
-                Either3::First(InEvent::Attached(transport)) => {
-                    // Fresh session state for the new host session; the
-                    // device domain (PHY configuration and enable state,
-                    // device name, duty accounting) is deliberately
-                    // untouched and nothing is emitted (full-protocol
-                    // attach semantics).
-                    arbitration.attach(transport);
-                    SESSION_GEN.store(arbitration.generation(), Ordering::Release);
-                    #[cfg(not(feature = "ble-debug"))]
-                    set_advertising_allowed(arbitration.advertising_allowed());
-                    #[cfg(feature = "ble-debug")]
-                    {
-                        let _ = arbitration.advertising_allowed();
-                        set_advertising_allowed(true);
-                    }
-                    // Both transports meet their provisioning-security
-                    // binding here: USB-CDC by physical possession, BLE
-                    // because the companion GATT service refuses any
-                    // access outside an encrypted LESC-bonded link.
-                    session.attach(true);
-                }
-                Either3::First(InEvent::Detached(transport)) => {
-                    // Only the active transport's detach ends the
-                    // session; a displaced transport's stale detach
-                    // must not clear the successor's session state.
-                    if arbitration.detach(transport) {
-                        set_advertising_allowed(true);
-                        session.detach();
-                    }
-                }
-                Either3::First(InEvent::Frame(transport, frame_bytes)) => {
-                    if arbitration.accepts_frame(transport) {
-                        let now_ms = Instant::now().as_millis();
-                        let effect =
-                            session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                        emitter.flush(arbitration.destination()).await;
-                        match effect {
-                            Some(Effect::SampleRssi { tid }) => {
-                                // Round-trip to the radio runner for an
-                                // instantaneous RSSI sample, then answer the
-                                // deferred PROP_PHY_RSSI get.
-                                NCP_CTL.request_rssi();
-                                let sample = NCP_CTL.wait_rssi().await;
-                                session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::SampleBattery { tid }) => {
-                                // Round-trip to the platform battery
-                                // source for a fresh measurement, then
-                                // answer the deferred PROP_BATTERY get.
-                                let sample = sample_battery_snapshot().await;
-                                session.respond_battery(tid, sample, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::DrainQueue) => {
-                                // Deliver the covered frames one per
-                                // step, flushing between steps so the
-                                // two-slot emitter never overflows and
-                                // the transport applies backpressure.
-                                loop {
-                                    let more = session.drain_step(
-                                        Instant::now().as_millis(),
-                                        &mut |frame: &[u8]| emitter.push(frame),
-                                    );
-                                    emitter.flush(arbitration.destination()).await;
-                                    if !more {
-                                        break;
-                                    }
-                                }
-                                #[cfg(feature = "t1000e")]
-                                umsh_bsp_t1000e::indicator::clear_attention();
-                            }
-                            Some(Effect::WipeHostDomain { tid }) => {
-                                // Durably wipe the host-domain portion of
-                                // any saved snapshot before the new host
-                                // key takes effect; with nothing saved the
-                                // wipe is trivially satisfied.
-                                let result = match session.encode_wiped_snapshot(&mut snapshot_buf)
-                                {
-                                    Some(len) => proto_store.persist(&snapshot_buf[..len]).await,
-                                    None => Ok(()),
-                                };
-                                session.respond_host_wipe(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::SaveSnapshot { tid }) => {
-                                let result = match session.encode_snapshot(&mut snapshot_buf) {
-                                    Some(len) => proto_store.persist(&snapshot_buf[..len]).await,
-                                    None => Err(()),
-                                };
-                                session.respond_save(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::ClearSaved { tid }) => {
-                                // CMD_CLEAR covers all persisted
-                                // provisioning: the snapshot and the
-                                // independently persisted device
-                                // identity. Each journal's tombstone is
-                                // individually atomic; an interruption
-                                // between them reports failure and the
-                                // host's retry completes the erase.
-                                let result = match proto_store.clear().await {
-                                    Ok(()) => identity_store.clear().await,
-                                    Err(()) => Err(()),
-                                };
-                                // With the identity durably gone, its
-                                // counter boundaries are dead weight;
-                                // drop them with it. (Kept if the
-                                // identity clear failed — the identity
-                                // then survives the reboot and still
-                                // needs its TX boundary.)
-                                if result.is_ok() {
-                                    clear_node_counters(node_counters).await;
-                                }
-                                session.respond_clear(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::ProvisionIdentity { tid }) => {
-                                // Build the keypair (drawing a fresh
-                                // secret from the TRNG-seeded CSPRNG for
-                                // on-device generation), persist it, and
-                                // only then report the public key.
-                                let result = match session.identity_request() {
-                                    Some(source) => {
-                                        let secret = match source {
-                                            IdentitySource::Install(secret) => secret,
-                                            IdentitySource::Generate => {
-                                                let mut secret = [0u8; 32];
-                                                rand_core::RngCore::fill_bytes(
-                                                    &mut identity_rng,
-                                                    &mut secret,
-                                                );
-                                                secret
-                                            }
-                                        };
-                                        let identity = SoftwareIdentity::from_secret_bytes(&secret);
-                                        let public_key = identity.public_key().0;
-                                        let payload =
-                                            proto_store::encode_identity(&secret, &public_key);
-                                        identity_store.persist(&payload).await.map(|()| public_key)
-                                    }
-                                    None => Err(()),
-                                };
-                                session.respond_identity(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            Some(Effect::SetPairingPin { tid, pin }) => {
-                                PAIRING_CONFIG_CH.send(pin).await;
-                                let applied = PAIRING_CONFIG_ACK.wait().await;
-                                session.respond_pin_set(
-                                    tid,
-                                    applied.then_some(()).ok_or(()),
-                                    &mut |frame: &[u8]| emitter.push(frame),
-                                );
-                                emitter.flush(arbitration.destination()).await;
-                            }
-                            other => apply_effect(&session, other).await,
-                        }
-                        #[cfg(feature = "t1000e")]
-                        if session.queued_frame_count() == 0 {
-                            umsh_bsp_t1000e::indicator::clear_attention();
-                        }
-                    }
-                }
-                Either3::Second(RxFrame { data, info }) => {
-                    // While detached this may stage a delegated MAC
-                    // acknowledgement (Effect::StartTransmit).
-                    #[cfg(feature = "t1000e")]
-                    let queued_before = session.queued_frame_count();
-                    let effect = session.on_radio_rx(
-                        &data,
-                        info.rssi,
-                        info.snr.as_centibels(),
-                        info.lqi,
-                        Instant::now().as_millis(),
-                        &mut |frame: &[u8]| emitter.push(frame),
-                    );
-                    #[cfg(feature = "t1000e")]
-                    if session.queued_frame_count() > queued_before {
-                        umsh_bsp_t1000e::indicator::request_attention();
-                    }
-                    emitter.flush(arbitration.destination()).await;
-                    apply_effect(&session, effect).await;
-                }
-                Either3::Third(result) => {
-                    let now_ms = Instant::now().as_millis();
-                    let effect =
-                        session.on_tx_result(result.is_ok(), now_ms, &mut |frame: &[u8]| {
-                            emitter.push(frame)
-                        });
-                    emitter.flush(arbitration.destination()).await;
-                    apply_effect(&session, effect).await;
-                }
-            }
-            // Any of the arms may have moved the device-domain tables
-            // (property mutation, CMD_RST, CMD_RESTORE); one u32
-            // compare when they did not.
-            sync_dev_domain(&session, &mut dev_domain_synced);
-        }
+        driver::run(
+            session,
+            boot_snapshot.as_deref(),
+            boot_identity,
+            NcpRuntime {
+                input: &INPUT_CH,
+                radio: &SESSION_CH,
+                ctl: &NCP_CTL,
+                out: &OUT_CH,
+                session_gen: &SESSION_GEN,
+            },
+            BoardNcpEnv {
+                proto_store,
+                identity_store,
+                identity_rng,
+                node_counters,
+            },
+        )
+        .await
     }
 
     #[cfg(not(feature = "t1000e"))]

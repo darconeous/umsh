@@ -1292,6 +1292,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             .unwrap_or(TxPower::Default)
     }
 
+    /// The board's maximum transmit power, as configured. The concrete
+    /// dBm value behind [`TxPower::Max`] when a transmit is staged.
+    pub fn max_tx_power_dbm(&self) -> i8 {
+        self.config.max_tx_power_dbm
+    }
+
     /// Whether a transmit is awaiting [`Session::on_tx_result`].
     pub fn has_pending_tx(&self) -> bool {
         !self.session.pending.is_empty()

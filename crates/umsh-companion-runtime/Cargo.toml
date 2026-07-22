@@ -20,17 +20,33 @@ repository.workspace = true
 # always compiled. The heavier modules are gated so lightweight consumers —
 # e.g. a BLE-only spike, or host tooling — pull only what they use instead of
 # dragging in the radio stack or the journal store.
-default = ["radio", "counters"]
+default = ["radio", "counters", "driver"]
 # The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`.
 radio = ["dep:umsh-radio-loraphy", "dep:embassy-futures", "dep:embassy-sync"]
 # The persisted frame-counter map re-export, over `umsh-journal-store`.
 counters = ["dep:umsh-journal-store"]
+# The board-agnostic session driver: the NCP run loop, effect dispatch,
+# and frame staging, parameterized over the `NcpEnv` board couplings.
+driver = [
+    "radio",
+    "dep:umsh-companion",
+    "dep:umsh-companion-ncp",
+    "dep:umsh-crypto",
+    "dep:umsh-journal-store",
+    "dep:embassy-time",
+    "dep:heapless",
+]
 
 [dependencies]
+umsh-companion = { path = "../umsh-companion", optional = true }
+umsh-companion-ncp = { path = "../umsh-companion-ncp", optional = true }
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"], optional = true }
 umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false, optional = true }
 umsh-journal-store = { path = "../umsh-journal-store", optional = true }
 embassy-futures = { version = "0.1", default-features = false, optional = true }
 embassy-sync = { version = "0.8", default-features = false, optional = true }
+embassy-time = { version = "0.5", default-features = false, optional = true }
+heapless = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Used only by the modules' host-run unit tests.
