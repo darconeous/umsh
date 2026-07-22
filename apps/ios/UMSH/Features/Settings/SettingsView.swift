@@ -16,6 +16,10 @@ struct SettingsView: View {
     let refreshRadio: () async -> Void
     let configureRadio: (RadioSettings) async throws -> Void
     let disconnectRadio: () async -> Void
+    var forgetRadio: () async -> Void = {}
+    let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
+    let selectRadio: (UUID) async throws -> Void
+    let stopDiscovery: () async -> Void
 
     var body: some View {
         List {
@@ -69,7 +73,11 @@ struct SettingsView: View {
                         claim: claimRadio,
                         refresh: refreshRadio,
                         configure: configureRadio,
-                        disconnect: disconnectRadio
+                        disconnect: disconnectRadio,
+                        forget: forgetRadio,
+                        discoverRadios: discoverRadios,
+                        selectRadio: selectRadio,
+                        stopDiscovery: stopDiscovery
                     )
                 }
             }
@@ -205,8 +213,14 @@ struct RadioDetailView: View {
     let refresh: () async -> Void
     let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
+    var forget: () async -> Void = {}
+    let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
+    let selectRadio: (UUID) async throws -> Void
+    let stopDiscovery: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
+    @State private var confirmsForget = false
+    @State private var showsRadioPicker = false
 
     var body: some View {
         List {
@@ -397,6 +411,30 @@ struct RadioDetailView: View {
         } message: {
             Text("The previous host's keys, filters, queued traffic, and saved host provisioning will be permanently erased. The radio's own identity and device settings remain unchanged.")
         }
+        .confirmationDialog(
+            "Forget this companion radio?",
+            isPresented: $confirmsForget,
+            titleVisibility: .visible
+        ) {
+            Button("Forget This Radio", role: .destructive) {
+                Task {
+                    await forget()
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
+        }
+        .sheet(isPresented: $showsRadioPicker, onDismiss: { Task { await stopDiscovery() } }) {
+            NavigationStack {
+                RadioPickerView(
+                    discoverRadios: discoverRadios,
+                    selectRadio: selectRadio,
+                    stopDiscovery: stopDiscovery
+                )
+            }
+        }
     }
 
     private func dutyPercentage(_ value: UInt16) -> String {
@@ -444,6 +482,7 @@ struct RadioDetailView: View {
             Button("Disconnect", role: .destructive) {
                 Task { await disconnect() }
             }
+            forgetButton
         case .waitingForRadio:
             VStack(alignment: .leading, spacing: 4) {
                 Text("Waiting for the radio to appear")
@@ -455,21 +494,30 @@ struct RadioDetailView: View {
                 Task { await disconnect() }
             }
             Button("Find another companion radio") {
-                Task { await connect() }
+                showsRadioPicker = true
             }
+            forgetButton
         case .idle, .unavailable, .discovered, .failed:
             if snapshot.localIdentifier != nil {
                 Button("Reconnect") {
                     Task { await reconnect() }
                 }
                 Button("Find another companion radio") {
-                    Task { await connect() }
+                    showsRadioPicker = true
                 }
+                forgetButton
             } else {
                 Button("Find companion radio") {
-                    Task { await connect() }
+                    showsRadioPicker = true
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var forgetButton: some View {
+        Button("Forget This Radio", role: .destructive) {
+            confirmsForget = true
         }
     }
 }

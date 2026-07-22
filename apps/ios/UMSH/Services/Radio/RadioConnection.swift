@@ -13,6 +13,16 @@ protocol RadioConnection: AnyObject, Sendable {
     func autoConnect() async
     func reconnect() async
     func connect() async throws
+    /// Begin an explicit discovery scan and stream the live list of nearby
+    /// companion radios. The scan runs until `stopDiscovery()` or `selectRadio`
+    /// is called; it never auto-connects. Each element is the full current
+    /// list, sorted for display.
+    func discoverRadios() async -> AsyncStream<[DiscoveredRadio]>
+    /// Attach to a specific radio surfaced by `discoverRadios()`. Ends
+    /// discovery and drives the normal connect/attach path.
+    func selectRadio(_ id: UUID) async throws
+    /// Cancel an in-progress discovery scan without connecting.
+    func stopDiscovery() async
     func claimForCurrentIdentity() async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
@@ -50,6 +60,11 @@ protocol RadioConnection: AnyObject, Sendable {
     ) async throws
     func acknowledgeChatBatch(_ batchID: UInt64) async throws
     func disconnect() async
+    /// Unbind from the remembered radio entirely: revoke any standing connect
+    /// and clear the persisted `connectedUUID`. The app stops offering
+    /// Reconnect and will not auto-connect on launch until a radio is chosen
+    /// again via `selectRadio`.
+    func forget() async
 }
 
 /// A node-identity advertisement received over the mesh. The payload is the

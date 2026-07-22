@@ -96,7 +96,11 @@ struct AppRootView: View {
                     claimRadio: claimRadio,
                     refreshRadio: refreshRadio,
                     configureRadio: configureRadio,
-                    disconnectRadio: disconnectRadio
+                    disconnectRadio: disconnectRadio,
+                    forgetRadio: forgetRadio,
+                    discoverRadios: discoverRadios,
+                    selectRadio: selectRadio,
+                    stopDiscovery: stopRadioDiscovery
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -140,7 +144,11 @@ struct AppRootView: View {
                     claim: claimRadio,
                     refresh: refreshRadio,
                     configure: configureRadio,
-                    disconnect: disconnectRadio
+                    disconnect: disconnectRadio,
+                    forget: forgetRadio,
+                    discoverRadios: discoverRadios,
+                    selectRadio: selectRadio,
+                    stopDiscovery: stopRadioDiscovery
                 )
             }
         }
@@ -325,8 +333,24 @@ struct AppRootView: View {
         await radioConnection.reconnect()
     }
 
+    private func discoverRadios() async -> AsyncStream<[DiscoveredRadio]> {
+        await radioConnection.discoverRadios()
+    }
+
+    private func selectRadio(_ id: UUID) async throws {
+        try await radioConnection.selectRadio(id)
+    }
+
+    private func stopRadioDiscovery() async {
+        await radioConnection.stopDiscovery()
+    }
+
     private func disconnectRadio() async {
         await radioConnection.disconnect()
+    }
+
+    private func forgetRadio() async {
+        await radioConnection.forget()
     }
 
     private func claimRadio() async {
