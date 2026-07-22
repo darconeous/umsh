@@ -1,42 +1,55 @@
-//! ESP32 backing for the chip-agnostic BLE bond journal.
+//! ESP32 backing for the chip-agnostic record journals.
 //!
-//! The record engine, snapshot codec, and power-cut recovery all live in
+//! The record engine, codecs, and power-cut recovery all live in
 //! [`umsh_journal_store`] (proven by the same crate's host tests on the
-//! nRF path). This module supplies the Espressif flash primitive and the
-//! two-page rotation policy — the exact analogue of the `JournalFlash` /
-//! `BleStore` pair in `companion-ncp-techo/src/main.rs`, but backed by a
-//! directly-owned `esp_storage::FlashStorage` instead of the MPSL-shared
-//! nRF NVMC.
-//!
-//! Only the BLE app touches flash in this spike, so [`BleStore`] owns the
-//! driver outright — there is no `SharedFlash` mutex. The full NCP
-//! (Phase 5) will reintroduce sharing when the on-board device node and
-//! the sequential-storage map contend for the same partition.
+//! nRF path). This module supplies the Espressif flash primitive, the
+//! two-page rotation policy, and the runtime handles — the exact
+//! analogue of the `JournalFlash` / `BleStore` / `ProtoStore` trio in
+//! `companion-ncp-techo/src/main.rs`, backed by `esp_storage::FlashStorage`
+//! behind an embassy mutex instead of the MPSL-shared nRF NVMC.
 //!
 //! ## Region placement
 //!
-//! The bond journal owns the [`flash_store::JOURNAL_RESERVED`] tail of
-//! the discovered `umsh` partition, mirroring the nRF layout where the
-//! journals sit at defined offsets. The same constant shrinks the
-//! `sequential-storage` map range in `new_storage`, so the two can never
-//! overlap — see its documentation for why the carve-out must be shared.
+//! All journals live in the [`flash_store::JOURNAL_RESERVED`] tail of
+//! the discovered `umsh` partition, growing downward from the top:
+//!
+//! - topmost pair: BLE security journal (anchored at the top so bonds
+//!   survive the reservation growing),
+//! - next pair down: protocol snapshot journal,
+//! - next pair down: device-identity journal.
+//!
+//! The same constant shrinks the `sequential-storage` map range in
+//! `new_storage`, so the map and the journals can never overlap.
 //! Addresses come from the partition table, never a literal.
 
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use esp_storage::FlashStorage;
 use trouble_host::prelude::*;
 use umsh_bsp_esp32::flash_store::JOURNAL_RESERVED;
 
 use umsh_journal_store::ble::{self, Snapshot, StoredBond};
+use umsh_journal_store::proto;
 use umsh_journal_store::record::{
     CommitError, PAGE_SIZE, PageEraser, RecordWriter, erase_journal_page, write_committed_record,
 };
 
 pub use umsh_journal_store::ble::{MAX_BONDS, SLOT_SIZE};
 
-/// Newtype over the owned flash driver so the foreign journal traits can
-/// be implemented for it (orphan rule — both `RecordWriter` and
+/// Newtype over the flash driver so the foreign journal traits can be
+/// implemented for it (orphan rule — both `RecordWriter` and
 /// `FlashStorage` are foreign). Reads go through the inner driver.
-struct JournalFlash(FlashStorage<'static>);
+pub struct JournalFlash(pub FlashStorage<'static>);
+
+/// The one flash driver, shared by all three journal handles. Everything
+/// runs on the single BLE task, so the mutex is uncontended; it exists to
+/// satisfy `'static` sharing, mirroring the nRF `SharedFlash` shape.
+pub type SharedFlash = Mutex<NoopRawMutex, JournalFlash>;
+
+/// Wrap the opened flash driver for sharing (place in a `StaticCell`).
+pub fn shared(flash: FlashStorage<'static>) -> SharedFlash {
+    Mutex::new(JournalFlash(flash))
+}
 
 impl RecordWriter for JournalFlash {
     type Error = ();
@@ -52,6 +65,28 @@ impl PageEraser for JournalFlash {
     async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error> {
         self.0.erase(start, end).map_err(|_| ())
     }
+}
+
+// ─── Journal placement inside the reserved tail ─────────────────────────
+
+const _: () = assert!(
+    JOURNAL_RESERVED >= 6 * PAGE_SIZE,
+    "three journal page pairs must fit inside the map carve-out"
+);
+
+/// BLE security journal: the topmost page pair (anchored — see module doc).
+pub fn ble_page0(partition: &core::ops::Range<u32>) -> u32 {
+    partition.end - 2 * PAGE_SIZE
+}
+
+/// Protocol snapshot journal: the pair below the BLE journal.
+pub fn proto_page0(partition: &core::ops::Range<u32>) -> u32 {
+    partition.end - 4 * PAGE_SIZE
+}
+
+/// Device-identity journal: the pair below the snapshot journal.
+pub fn identity_page0(partition: &core::ops::Range<u32>) -> u32 {
+    partition.end - 6 * PAGE_SIZE
 }
 
 /// Scan a two-page journal's slot range for a fully erased slot.
@@ -115,9 +150,11 @@ async fn journal_write_target(
     }
 }
 
+// ─── BLE security journal handle ────────────────────────────────────────
+
 /// Runtime handle for the two-page BLE security journal.
 pub struct BleStore {
-    flash: JournalFlash,
+    flash: &'static SharedFlash,
     /// First page of this journal's two-page rotation (absolute flash address).
     page0: u32,
     snapshot: Snapshot,
@@ -125,21 +162,11 @@ pub struct BleStore {
 }
 
 impl BleStore {
-    /// Mount the journal over `flash`, anchored to the TOPMOST page pair
-    /// of `partition`. The pair sits inside the [`JOURNAL_RESERVED`] tail
-    /// that `flash_store::new_storage` excludes from the map range;
-    /// anchoring to the top (rather than `end - JOURNAL_RESERVED`) keeps
-    /// existing bonds in place when the reservation grows downward for
-    /// Phase 5's additional journals.
-    pub fn mount(flash: FlashStorage<'static>, partition: core::ops::Range<u32>) -> Self {
-        const {
-            assert!(
-                JOURNAL_RESERVED >= 2 * PAGE_SIZE,
-                "BLE journal page pair must fit inside the map carve-out"
-            );
-        }
-        let page0 = partition.end - 2 * PAGE_SIZE;
-        let mut flash = JournalFlash(flash);
+    /// Mount the journal over the shared flash, anchored to the topmost
+    /// page pair of `partition`.
+    pub async fn mount(shared: &'static SharedFlash, partition: &core::ops::Range<u32>) -> Self {
+        let page0 = ble_page0(partition);
+        let mut flash = shared.lock().await;
         let mut latest: Option<(u32, Snapshot)> = None;
         for page in [page0, page0 + PAGE_SIZE] {
             let mut address = page;
@@ -151,11 +178,12 @@ impl BleStore {
                 address += SLOT_SIZE as u32;
             }
         }
+        drop(flash);
         let (slot, snapshot) = latest
             .map(|(slot, snapshot)| (Some(slot), snapshot))
             .unwrap_or((None, Snapshot::empty()));
         Self {
-            flash,
+            flash: shared,
             page0,
             snapshot,
             slot,
@@ -168,19 +196,24 @@ impl BleStore {
 
     async fn persist(&mut self, mut snapshot: Snapshot) -> Result<(), ()> {
         snapshot.generation = self.snapshot.generation.wrapping_add(1);
+        let mut flash = self.flash.lock().await;
         let target =
-            journal_write_target(&mut self.flash, self.slot, self.page0, SLOT_SIZE).await?;
+            journal_write_target(&mut flash, self.slot, self.page0, SLOT_SIZE).await?;
         let bytes = snapshot.encode();
-        match write_committed_record(&mut self.flash, target, &bytes).await {
+        match write_committed_record(&mut *flash, target, &bytes).await {
             Ok(()) => {}
             Err(CommitError::Body(())) | Err(CommitError::Commit(())) => return Err(()),
         }
+        drop(flash);
         self.snapshot = snapshot;
         self.slot = Some(target);
         Ok(())
     }
 
     pub async fn set_pin(&mut self, pin: Option<u32>) -> Result<(), ()> {
+        if self.snapshot.pin == pin {
+            return Ok(());
+        }
         let mut next = self.snapshot.clone();
         next.pin = pin;
         self.persist(next).await
@@ -226,6 +259,98 @@ impl BleStore {
         self.persist(next).await
     }
 }
+
+// ─── Protocol snapshot / identity journal handle ────────────────────────
+
+/// The stored payload as read at boot (snapshot bytes or the encoded
+/// identity, depending on which journal the handle mounts).
+pub type BootPayload = heapless08::Vec<u8, { proto::MAX_PAYLOAD }>;
+
+/// Runtime handle for one full-protocol record journal: the snapshot
+/// journal or the device-identity journal, selected by its first page.
+/// Port of the nRF NCP's `ProtoStore`.
+pub struct ProtoStore {
+    flash: &'static SharedFlash,
+    /// First page of this journal's two-page rotation.
+    page0: u32,
+    generation: u32,
+    slot: Option<u32>,
+}
+
+impl ProtoStore {
+    pub async fn mount(
+        shared: &'static SharedFlash,
+        page0: u32,
+    ) -> (Self, Option<BootPayload>) {
+        let mut flash = shared.lock().await;
+        let mut latest: Option<(u32, proto::Stored)> = None;
+        for page in [page0, page0 + PAGE_SIZE] {
+            let mut address = page;
+            while address < page + PAGE_SIZE {
+                let mut bytes = [0u8; proto::SLOT_SIZE];
+                if flash.0.read(address, &mut bytes).is_ok() {
+                    latest = proto::consider_record(latest, address, &bytes);
+                }
+                address += proto::SLOT_SIZE as u32;
+            }
+        }
+        drop(flash);
+        // A tombstone is authoritative "nothing saved": older snapshot
+        // records still physically present are void.
+        let (slot, generation, payload) = match latest {
+            Some((slot, stored)) => {
+                let payload = match stored.record {
+                    proto::Record::Snapshot(payload) => Some(payload),
+                    proto::Record::Cleared => None,
+                };
+                (Some(slot), stored.generation, payload)
+            }
+            None => (None, 0, None),
+        };
+        (
+            Self {
+                flash: shared,
+                page0,
+                generation,
+                slot,
+            },
+            payload,
+        )
+    }
+
+    pub async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
+        if payload.len() > proto::MAX_PAYLOAD {
+            return Err(());
+        }
+        self.write(proto::RecordRef::Snapshot(payload)).await
+    }
+
+    /// The clear transaction is one committed tombstone record: if its
+    /// write fails or is interrupted, the previous record remains
+    /// authoritative. Pages are never erased as part of a clear — stale
+    /// records are reclaimed by the ordinary rotation.
+    pub async fn clear(&mut self) -> Result<(), ()> {
+        self.write(proto::RecordRef::Cleared).await
+    }
+
+    async fn write(&mut self, record: proto::RecordRef<'_>) -> Result<(), ()> {
+        let generation = self.generation.wrapping_add(1);
+        let mut flash = self.flash.lock().await;
+        let target =
+            journal_write_target(&mut flash, self.slot, self.page0, proto::SLOT_SIZE).await?;
+        match proto::write_record(&mut *flash, target, generation, record).await {
+            Ok(()) => {
+                drop(flash);
+                self.generation = generation;
+                self.slot = Some(target);
+                Ok(())
+            }
+            Err(_) => Err(()),
+        }
+    }
+}
+
+// ─── Trouble bond conversion helpers (verbatim from the nRF NCP) ────────
 
 /// Encode a live trouble bond for the flash journal. `addr.to_bytes()`
 /// prepends the address-kind byte, so `[0]` is the kind and `[1..]` is the
