@@ -29,7 +29,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         var rawTransactionID: UInt8?
     }
 
+    private struct DiscoveredEntry {
+        var peripheral: CBPeripheral
+        var name: String?
+        var rssiDBm: Int
+        var lastSeen: DispatchTime
+    }
+
     private enum PreferenceKey {
+        /// The radio the app is bound to. Set when a session first attaches,
+        /// changed by "find another radio", cleared by "forget". Kept across a
+        /// user Disconnect so Reconnect knows what to target.
+        static let connectedUUID = "radio.connectedUUID"
+        /// The single source of truth for auto-reconnect intent. The invariant
+        /// is: `shouldAutoConnect == true` ⟺ there is an outstanding
+        /// `connect(connectedUUID)` registered with bluetoothd. It is
+        /// reconciled against the daemon on every powered-on transition and
+        /// state restoration, so a force-quit cannot leave a zombie connect
+        /// squatting the radio's single peripheral slot.
+        static let shouldAutoConnect = "radio.shouldAutoConnect"
+        /// Legacy key (pre state-machine). Migrated into `connectedUUID` +
+        /// `shouldAutoConnect` once, at init.
         static let lastAttachedPeripheral = "radio.lastAttachedPeripheral"
     }
 
@@ -57,6 +77,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var scanRequested = false
     private var scanExcludesRememberedRadio = false
     private var scanAttempt = UUID()
+    /// Explicit user-driven discovery: accumulate every advertising radio and
+    /// stream the list instead of connecting to the first match.
+    private var discoveryMode = false
+    private var discoveryRequested = false
+    private var discovered: [UUID: DiscoveredEntry] = [:]
+    private var discoveryContinuations: [UUID: AsyncStream<[DiscoveredRadio]>.Continuation] = [:]
+    private var discoveryPruneGeneration = UUID()
     private var autoConnectRequested = false
     private var autoConnectAttempt = UUID()
     private var automaticConnectionInProgress = false
@@ -90,13 +117,32 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         [CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier]
     }
     private var restorationPendingResume = false
+    /// Peripherals handed back by `willRestoreState`. Retained so a Disconnect
+    /// (or the powered-on reconciliation) can revoke a standing connect that
+    /// survived a force-quit even before we adopt it as the active peripheral.
+    private var restoredPeripherals: [CBPeripheral] = []
     private var framesAwaitingMeshSession: [MobileMeshRxRecord] = []
     private static let maximumFramesAwaitingMeshSession = 32
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init()
+        // One-time migration from the pre state-machine single-key scheme. A
+        // radio remembered under the old key was, by definition, one the app
+        // kept auto-reconnecting to, so carry that forward as autoConnect=true.
+        if defaults.string(forKey: PreferenceKey.connectedUUID) == nil,
+           let legacy = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral) {
+            defaults.set(legacy, forKey: PreferenceKey.connectedUUID)
+            defaults.set(true, forKey: PreferenceKey.shouldAutoConnect)
+            defaults.removeObject(forKey: PreferenceKey.lastAttachedPeripheral)
+        }
         snapshot.localIdentifier = rememberedPeripheralIdentifier
+        Self.logger.notice(
+            """
+            launch autoConnect=\(self.shouldAutoConnect) \
+            bound=\(self.rememberedPeripheralIdentifier?.uuidString ?? "nil", privacy: .public)
+            """
+        )
         // Recreate the central immediately when a companion radio is saved:
         // a background relaunch delivers `willRestoreState` (and the event
         // that caused it) only after this object exists. Gated on a saved
@@ -214,6 +260,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func connect() async throws {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
+                Self.logger.notice("action: user pressed Connect (scan for first match)")
                 connectOnQueue()
                 result.resume()
             }
@@ -243,10 +290,230 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         startScanning()
     }
 
+    func discoverRadios() async -> AsyncStream<[DiscoveredRadio]> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                    let id = UUID()
+                    discoveryContinuations[id] = continuation
+                    continuation.yield(currentDiscoveryList())
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.discoveryContinuations[id] = nil
+                        }
+                    }
+                }
+                Self.logger.notice("action: user opened radio discovery")
+                startDiscoveryOnQueue()
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func selectRadio(_ id: UUID) async throws {
+        try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                Self.logger.notice(
+                    "action: user selected radio \(id, privacy: .public)"
+                )
+                selectRadioOnQueue(id, completion: result)
+            }
+        }
+    }
+
+    func stopDiscovery() async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                stopDiscoveryOnQueue()
+                result.resume()
+            }
+        }
+    }
+
+    private func startDiscoveryOnQueue() {
+        discoveryRequested = true
+        // A fresh discovery session always starts from an empty list so a
+        // powered-off radio from a previous session does not linger.
+        discovered.removeAll()
+        yieldDiscoveryList()
+        if central == nil {
+            central = CBCentralManager(
+                delegate: self,
+                queue: bluetoothQueue,
+                options: Self.centralOptions
+            )
+            return
+        }
+        guard central?.state == .poweredOn else {
+            // Bluetooth availability is reported through the shared radio
+            // snapshot; the discovery list simply stays empty until powered on.
+            publishBluetoothState()
+            return
+        }
+        beginDiscoveryScan()
+    }
+
+    private func beginDiscoveryScan() {
+        guard central?.state == .poweredOn else { return }
+        discoveryRequested = false
+        discoveryMode = true
+        // Cancel a normal "connect to first match" scan; discovery now owns
+        // the central. A standing wait-for-radio connection request is left
+        // armed — it does not interfere with scanning.
+        scanRequested = false
+        // Duplicates are allowed so RSSI updates keep the list live and a radio
+        // that momentarily drops out reappears rather than going stale.
+        central?.scanForPeripherals(
+            withServices: [UUIDs.service],
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+        )
+        discoveryPruneGeneration = UUID()
+        scheduleDiscoveryPrune(generation: discoveryPruneGeneration)
+    }
+
+    private func selectRadioOnQueue(
+        _ id: UUID,
+        completion: CheckedContinuation<Void, any Error>
+    ) {
+        guard let central, central.state == .poweredOn else {
+            completion.resume(throwing: RadioConnectionError.bluetoothUnavailable)
+            return
+        }
+        let target = discovered[id]?.peripheral
+            ?? central.retrievePeripherals(withIdentifiers: [id]).first
+        guard let target else {
+            completion.resume(throwing: RadioConnectionError.companionNotFound)
+            return
+        }
+        // Leave discovery and drive the normal attach path for this radio.
+        endDiscovery()
+        central.stopScan()
+
+        intentionalDisconnect = false
+        autoConnectRequested = false
+        autoConnectAttempt = UUID()
+        automaticConnectionInProgress = false
+        scanRequested = false
+        scanExcludesRememberedRadio = false
+
+        // "Find another radio": unregister the previously bound radio from
+        // bluetoothd (its live peripheral and any standing connect) so it stops
+        // competing for the slot, then bind to the newly chosen one.
+        let previousID = rememberedPeripheralIdentifier
+        if let existing = peripheral,
+           existing.identifier != target.identifier,
+           existing.state != .disconnected {
+            central.cancelPeripheralConnection(existing)
+        }
+        if let previousID, previousID != target.identifier {
+            for stale in central.retrievePeripherals(withIdentifiers: [previousID]) {
+                central.cancelPeripheralConnection(stale)
+            }
+        }
+        clearPeripheral()
+        peripheral = target
+        target.delegate = self
+        // Bind immediately: the user chose this radio, so it is now the
+        // auto-reconnect target and a standing connect is being issued for it.
+        rememberConnected(target.identifier)
+        publish(state: .connecting, name: target.name, localIdentifier: target.identifier)
+        issueConnect(target, on: central, reason: "selectRadio")
+        completion.resume()
+    }
+
+    private func stopDiscoveryOnQueue() {
+        guard discoveryMode || discoveryRequested else { return }
+        let wasScanning = discoveryMode
+        endDiscovery()
+        // Only stop the scan if discovery actually started one; a request that
+        // never reached poweredOn owns no scan.
+        if wasScanning {
+            central?.stopScan()
+        }
+    }
+
+    /// Clear discovery state and publish the now-empty list. Does not touch the
+    /// central's scan; callers decide whether they still need it.
+    private func endDiscovery() {
+        discoveryMode = false
+        discoveryRequested = false
+        discoveryPruneGeneration = UUID()
+        discovered.removeAll()
+        yieldDiscoveryList()
+    }
+
+    private func recordDiscovered(
+        _ peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi: NSNumber
+    ) {
+        let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        var entry = discovered[peripheral.identifier]
+            ?? DiscoveredEntry(
+                peripheral: peripheral,
+                name: advertisedName ?? peripheral.name,
+                rssiDBm: rssi.intValue,
+                lastSeen: DispatchTime.now()
+            )
+        entry.peripheral = peripheral
+        if let advertisedName { entry.name = advertisedName }
+        else if entry.name == nil { entry.name = peripheral.name }
+        // Keep the last usable RSSI when a report carries the 127 sentinel.
+        if rssi.intValue != 127 { entry.rssiDBm = rssi.intValue }
+        entry.lastSeen = DispatchTime.now()
+        discovered[peripheral.identifier] = entry
+        yieldDiscoveryList()
+    }
+
+    private func currentDiscoveryList() -> [DiscoveredRadio] {
+        let remembered = rememberedPeripheralIdentifier
+        return discovered.values
+            .map { entry in
+                DiscoveredRadio(
+                    id: entry.peripheral.identifier,
+                    name: entry.name,
+                    rssiDBm: entry.rssiDBm,
+                    isRemembered: entry.peripheral.identifier == remembered
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.isRemembered != rhs.isRemembered { return lhs.isRemembered }
+                if lhs.rssiDBm != rhs.rssiDBm { return lhs.rssiDBm > rhs.rssiDBm }
+                return (lhs.name ?? lhs.id.uuidString) < (rhs.name ?? rhs.id.uuidString)
+            }
+    }
+
+    private func yieldDiscoveryList() {
+        let list = currentDiscoveryList()
+        for continuation in discoveryContinuations.values {
+            continuation.yield(list)
+        }
+    }
+
+    /// Drop radios not seen recently so a powered-off bench unit disappears
+    /// from the list within a few seconds.
+    private func scheduleDiscoveryPrune(generation: UUID) {
+        bluetoothQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.discoveryMode,
+                  self.discoveryPruneGeneration == generation else { return }
+            let now = DispatchTime.now().uptimeNanoseconds
+            let staleNanos: UInt64 = 6 * 1_000_000_000
+            let before = self.discovered.count
+            self.discovered = self.discovered.filter { _, entry in
+                now <= entry.lastSeen.uptimeNanoseconds &+ staleNanos
+            }
+            if self.discovered.count != before { self.yieldDiscoveryList() }
+            self.scheduleDiscoveryPrune(generation: generation)
+        }
+    }
+
     func autoConnect() async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
-                autoConnectOnQueue()
+                Self.logger.notice("action: app startup auto-connect")
+                // Startup reconnect: honors a prior deliberate Disconnect.
+                autoConnectOnQueue(userInitiated: false)
                 result.resume()
             }
         }
@@ -255,13 +522,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func reconnect() async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
-                autoConnectOnQueue()
+                Self.logger.notice("action: user pressed Reconnect")
+                // Explicit user Reconnect: re-arms auto-connect intent.
+                autoConnectOnQueue(userInitiated: true)
                 result.resume()
             }
         }
     }
 
-    private func autoConnectOnQueue() {
+    private func autoConnectOnQueue(userInitiated: Bool) {
         // A state-restored link may already be connected or attaching by the
         // time app bootstrap requests its usual startup reconnect; starting
         // a fresh connection here would tear that session down.
@@ -269,10 +538,22 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         if let peripheral, peripheral.state == .connected || peripheral.state == .connecting {
             return
         }
-        guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
-              UUID(uuidString: value) != nil
-        else {
-            publishDisconnected(problem: "No saved companion radio is available to reconnect")
+        guard rememberedPeripheralIdentifier != nil else {
+            if userInitiated {
+                publishDisconnected(problem: "No saved companion radio is available to reconnect")
+            } else {
+                publishDisconnected(problem: nil)
+            }
+            return
+        }
+        if userInitiated {
+            // Reconnect re-arms the standing connect and its intent flag.
+            shouldAutoConnect = true
+        } else if !shouldAutoConnect {
+            // The user deliberately disconnected in a prior session; a saved
+            // radio does not by itself justify reconnecting. Stay off until the
+            // user asks. (Forget clears the radio entirely; this is Disconnect.)
+            publishDisconnected(problem: nil)
             return
         }
         intentionalDisconnect = false
@@ -559,10 +840,42 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func disconnect() async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
+                Self.logger.notice("action: user pressed Disconnect")
                 disconnectOnQueue()
                 result.resume()
             }
         }
+    }
+
+    func forget() async {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                Self.logger.notice("action: user pressed Forget")
+                forgetOnQueue()
+                result.resume()
+            }
+        }
+    }
+
+    /// Unbind from the radio entirely: revoke every standing/live connection,
+    /// clear the intent flag, and drop `connectedUUID`. Unlike Disconnect, the
+    /// app no longer remembers a radio and will not offer Reconnect.
+    private func forgetOnQueue() {
+        intentionalDisconnect = true
+        scanRequested = false
+        scanExcludesRememberedRadio = false
+        scanAttempt = UUID()
+        autoConnectRequested = false
+        autoConnectAttempt = UUID()
+        automaticConnectionInProgress = false
+        central?.stopScan()
+        shouldAutoConnect = false
+        cancelAllServiceConnections()
+        restoredPeripherals.removeAll()
+        clearPeripheral()
+        defaults.removeObject(forKey: PreferenceKey.connectedUUID)
+        intentionalDisconnect = false
+        publishDisconnected(problem: nil)
     }
 
     private func disconnectOnQueue() {
@@ -574,7 +887,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
         central?.stopScan()
-        guard let peripheral else {
+        // Durably clear auto-reconnect intent and revoke every standing/live
+        // connection for the companion service — including a request for the
+        // bound radio resurrected by state restoration, or one with no live
+        // peripheral object. A live, connected link is spared here so its
+        // `.disconnecting` UI flow runs below. connectedUUID is kept so
+        // Reconnect can re-arm.
+        shouldAutoConnect = false
+        let live = peripheral
+        cancelAllServiceConnections(except: live?.state == .connected ? live?.identifier : nil)
+        restoredPeripherals.removeAll()
+        guard let peripheral = live else {
             intentionalDisconnect = false
             publishDisconnected()
             return
@@ -634,9 +957,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private func startAutomaticConnection() {
         guard let central, central.state == .poweredOn, autoConnectRequested else { return }
         autoConnectRequested = false
-        guard let value = defaults.string(forKey: PreferenceKey.lastAttachedPeripheral),
-              let identifier = UUID(uuidString: value)
-        else {
+        guard let identifier = rememberedPeripheralIdentifier else {
             clearPeripheral()
             publishDisconnected(problem: "No saved companion radio is available to reconnect")
             return
@@ -657,7 +978,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             name: remembered.name,
             localIdentifier: remembered.identifier
         )
-        central.connect(remembered)
+        issueConnect(remembered, on: central, reason: "startAutomaticConnection")
 
         bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self, let remembered = self.peripheral,
@@ -684,8 +1005,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         let message: String
         switch central.state {
         case .poweredOn:
+            reconcileStandingConnectionOnPoweredOn()
             if restorationPendingResume {
                 resumeRestoredPeripheral()
+            } else if discoveryRequested {
+                beginDiscoveryScan()
             } else if autoConnectRequested {
                 startAutomaticConnection()
             } else if scanRequested {
@@ -769,9 +1093,134 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         publish(snapshot)
     }
 
+    /// The radio the app is bound to (the persisted `connectedUUID`). Used for
+    /// display and as the auto-reconnect target. Distinct from
+    /// `shouldAutoConnect`: the app can remember a radio it is deliberately
+    /// disconnected from.
     private var rememberedPeripheralIdentifier: UUID? {
-        defaults.string(forKey: PreferenceKey.lastAttachedPeripheral)
+        defaults.string(forKey: PreferenceKey.connectedUUID)
             .flatMap(UUID.init(uuidString:))
+    }
+
+    /// Auto-reconnect intent. Reading and writing this always goes through
+    /// UserDefaults so the invariant survives force-quit and background
+    /// relaunch.
+    private var shouldAutoConnect: Bool {
+        get { defaults.bool(forKey: PreferenceKey.shouldAutoConnect) }
+        set { defaults.set(newValue, forKey: PreferenceKey.shouldAutoConnect) }
+    }
+
+    /// Bind the app to `identifier` and arm auto-reconnect. This is the only
+    /// place both persisted fields are set together on a successful attach.
+    private func rememberConnected(_ identifier: UUID) {
+        defaults.set(identifier.uuidString, forKey: PreferenceKey.connectedUUID)
+        shouldAutoConnect = true
+    }
+
+    /// Best-effort revocation of every standing/live connection this central
+    /// holds for the companion service. CoreBluetooth exposes no single
+    /// "cancel all pending connects" call, so this sweeps the sources it does
+    /// surface: the bound radio's peripheral, anything currently connected for
+    /// our service, and anything handed back by state restoration. Pass `keep`
+    /// to spare one peripheral (e.g. a live link being torn down separately so
+    /// its `didDisconnect` UI flow still runs).
+    private func cancelAllServiceConnections(except keep: UUID? = nil) {
+        guard let central, central.state == .poweredOn else { return }
+        var targets: [CBPeripheral] = []
+        if let peripheral { targets.append(peripheral) }
+        if let id = rememberedPeripheralIdentifier {
+            targets += central.retrievePeripherals(withIdentifiers: [id])
+        }
+        targets += central.retrieveConnectedPeripherals(withServices: [UUIDs.service])
+        targets += restoredPeripherals
+        var seen = Set<UUID>()
+        for target in targets
+        where target.identifier != keep && seen.insert(target.identifier).inserted {
+            // NOTE: cancelPeripheralConnection withdraws only THIS app's
+            // interest. A connection owned by another app (or another install
+            // of this app) on the same phone survives this call untouched.
+            Self.logger.notice(
+                """
+                revoke standing connect \(target.identifier, privacy: .public) \
+                name=\(target.name ?? "?", privacy: .public) \
+                state=\(Self.describe(target.state), privacy: .public)
+                """
+            )
+            central.cancelPeripheralConnection(target)
+        }
+    }
+
+    private static func describe(_ state: CBPeripheralState) -> String {
+        switch state {
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown"
+        }
+    }
+
+    /// Every `central.connect` in this type routes through here so the log
+    /// shows exactly what armed a standing connect and why. A standing connect
+    /// is what survives force-quit, so this is the ground truth for "why is my
+    /// phone reconnecting".
+    private func issueConnect(
+        _ target: CBPeripheral,
+        on central: CBCentralManager,
+        reason: String
+    ) {
+        Self.logger.notice(
+            """
+            connect(\(target.identifier, privacy: .public)) \
+            name=\(target.name ?? "?", privacy: .public) \
+            reason=\(reason, privacy: .public) \
+            autoConnect=\(self.shouldAutoConnect) bound=\(self.rememberedPeripheralIdentifier?.uuidString ?? "nil", privacy: .public)
+            """
+        )
+        central.connect(target)
+    }
+
+    /// Enforce the ShouldAutoConnect invariant the moment the central becomes
+    /// usable. This is the reconciliation that makes force-quit irrelevant: the
+    /// persisted intent, not whatever bluetoothd resurrected, decides whether a
+    /// standing connect exists.
+    private func reconcileStandingConnectionOnPoweredOn() {
+        let connected = central?.retrieveConnectedPeripherals(withServices: [UUIDs.service]) ?? []
+        let connectedSummary = connected
+            .map { "\($0.identifier.uuidString)(\($0.name ?? "?"))" }
+            .joined(separator: ",")
+        let boundName = rememberedPeripheralIdentifier
+            .flatMap { central?.retrievePeripherals(withIdentifiers: [$0]).first?.name }
+        Self.logger.notice(
+            """
+            reconcile autoConnect=\(self.shouldAutoConnect) \
+            bound=\(self.rememberedPeripheralIdentifier?.uuidString ?? "nil", privacy: .public)\
+            (\(boundName ?? "?", privacy: .public)) \
+            restored=\(self.restoredPeripherals.count) \
+            connectedForService=[\(connectedSummary, privacy: .public)]
+            """
+        )
+        if shouldAutoConnect {
+            // Keep only the bound radio's connect; revoke every other
+            // standing/live connection this app holds for the service — a
+            // restored request, or a stray connect to some other companion
+            // radio left over from an earlier session. Note this can only
+            // cancel connections THIS app owns; a connection held by another
+            // app (or the system's own bonded-device reconnect) is not ours to
+            // cancel here.
+            cancelAllServiceConnections(except: rememberedPeripheralIdentifier)
+            restoredPeripherals.removeAll()
+            return
+        }
+        // Auto-connect is off: revoke everything, including a force-quit
+        // resurrected request, so the app stops squatting the radio. Leave
+        // connectedUUID intact so Reconnect can re-arm.
+        cancelAllServiceConnections()
+        restoredPeripherals.removeAll()
+        restorationPendingResume = false
+        if peripheral != nil, snapshot.linkState != .disconnecting {
+            clearPeripheral()
+        }
     }
 
     private func publishDisconnected(name: String? = nil, problem: String? = "Radio disconnected") {
@@ -1019,10 +1468,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         writeNext(on: peripheral)
         if update.snapshot.phase == .attached {
-            defaults.set(
-                peripheral.identifier.uuidString,
-                forKey: PreferenceKey.lastAttachedPeripheral
-            )
+            // A completed attach is the app's declaration of intent to stay
+            // bound to this radio: remember it and arm auto-reconnect.
+            rememberConnected(peripheral.identifier)
         }
         publish(snapshot)
 
@@ -1377,6 +1825,21 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         // companion event arrived. Adopt the restored peripheral now, but
         // defer all CoreBluetooth calls until the central reports poweredOn.
         let restored = state[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        restoredPeripherals = restored
+        Self.logger.notice(
+            """
+            willRestoreState restored=\(restored.count) \
+            ids=\(restored.map { $0.identifier.uuidString }.joined(separator: ","), privacy: .public) \
+            autoConnect=\(self.shouldAutoConnect)
+            """
+        )
+        for restoredPeripheral in restored {
+            restoredPeripheral.delegate = self
+        }
+        // If auto-connect is off, iOS resurrected a standing connect the user
+        // deliberately abandoned. Adopt nothing; the powered-on reconciliation
+        // cancels every restored request so the app stops squatting the radio.
+        guard shouldAutoConnect else { return }
         guard let remembered = restored.first(where: {
             $0.identifier == rememberedPeripheralIdentifier
         }) ?? restored.first else { return }
@@ -1415,7 +1878,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
             automaticConnectionInProgress = true
             autoConnectAttempt = UUID()
             let attempt = autoConnectAttempt
-            central.connect(peripheral)
+            issueConnect(peripheral, on: central, reason: "resumeRestoredPeripheral")
             bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
                 guard let self, let remembered = self.peripheral,
                       self.autoConnectAttempt == attempt,
@@ -1440,6 +1903,10 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
+        if discoveryMode {
+            recordDiscovered(peripheral, advertisementData: advertisementData, rssi: RSSI)
+            return
+        }
         guard snapshot.linkState == .scanning else { return }
         if scanExcludesRememberedRadio,
            peripheral.identifier == rememberedPeripheralIdentifier {
@@ -1456,10 +1923,17 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
             name: advertisedName ?? peripheral.name,
             localIdentifier: peripheral.identifier
         )
-        central.connect(peripheral)
+        issueConnect(peripheral, on: central, reason: "scanMatch")
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        Self.logger.notice(
+            """
+            event: didConnect \(peripheral.identifier, privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .public) \
+            adopted=\(self.peripheral === peripheral)
+            """
+        )
         guard self.peripheral === peripheral else { return }
         automaticConnectionInProgress = false
         intentionalDisconnect = false
@@ -1477,13 +1951,21 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: (any Error)?
     ) {
+        Self.logger.notice(
+            """
+            event: didFailToConnect \(peripheral.identifier, privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .public) \
+            error=\(error?.localizedDescription ?? "none", privacy: .public)
+            """
+        )
         guard self.peripheral === peripheral else { return }
-        if automaticConnectionInProgress || snapshot.linkState == .waitingForRadio {
+        if shouldAutoConnect,
+           automaticConnectionInProgress || snapshot.linkState == .waitingForRadio {
             // A transient failure of the standing connection request; iOS
             // does not retry a failed request on its own, so re-arm it and
             // keep waiting for the radio.
             automaticConnectionInProgress = false
-            central.connect(peripheral)
+            issueConnect(peripheral, on: central, reason: "didFailToConnect re-arm")
             publish(
                 state: .waitingForRadio,
                 name: peripheral.name,
@@ -1503,13 +1985,20 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: (any Error)?
     ) {
+        Self.logger.notice(
+            """
+            event: didDisconnect \(peripheral.identifier, privacy: .public) \
+            name=\(peripheral.name ?? "?", privacy: .public) \
+            error=\(error?.localizedDescription ?? "none", privacy: .public)
+            """
+        )
         guard self.peripheral === peripheral else { return }
         if preservesFailureOnDisconnect {
             preservesFailureOnDisconnect = false
             clearPeripheral()
             return
         }
-        if intentionalDisconnect {
+        if intentionalDisconnect || !shouldAutoConnect {
             clearPeripheral()
             publishDisconnected(name: peripheral.name, problem: nil)
             return

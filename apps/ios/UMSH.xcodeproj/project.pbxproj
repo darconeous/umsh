@@ -30,6 +30,8 @@
 		100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */; };
 		100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */; };
 		100000000000000000000017 /* UMSH/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* UMSH/Assets.xcassets */; };
+		100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */; };
+		100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +58,8 @@
 		200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityQRCodeView.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Notifications/ChatNotificationService.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* UMSH/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = UMSH/Assets.xcassets; sourceTree = "<group>"; };
+		200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/DiscoveredRadio.swift; sourceTree = "<group>"; };
+		200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/RadioPickerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +106,8 @@
 				200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */,
 				200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */,
 				200000000000000000000014 /* UMSH/Models/ConversationModels.swift */,
+				200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */,
+				200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */,
 				200000000000000000000017 /* UMSH/Assets.xcassets */,
 			);
 			name = Sources;
@@ -211,6 +217,8 @@
 				100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */,
 				100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */,
 				100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */,
+				100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */,
+				100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

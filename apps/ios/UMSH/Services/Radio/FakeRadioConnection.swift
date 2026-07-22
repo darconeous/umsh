@@ -59,6 +59,33 @@ actor FakeRadioConnection: RadioConnection {
         publish(.previewReady)
     }
 
+    func discoverRadios() -> AsyncStream<[DiscoveredRadio]> {
+        AsyncStream { continuation in
+            continuation.yield([])
+            continuation.yield([
+                DiscoveredRadio(
+                    id: UUID(uuidString: "F2A1073A-2FF5-4D85-B71D-6A81031A9C25")!,
+                    name: "T-Echo",
+                    rssiDBm: -47,
+                    isRemembered: true
+                ),
+                DiscoveredRadio(
+                    id: UUID(uuidString: "0B4F2C10-1111-4222-9333-444455556666")!,
+                    name: "T-1000-E",
+                    rssiDBm: -72,
+                    isRemembered: false
+                ),
+            ])
+            continuation.finish()
+        }
+    }
+
+    func selectRadio(_ id: UUID) async throws {
+        publish(.previewReady)
+    }
+
+    func stopDiscovery() async {}
+
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {}
 
     func useMeshSession(_ session: MobileMeshSession?) async {}
@@ -171,6 +198,10 @@ actor FakeRadioConnection: RadioConnection {
     func acknowledgeChatBatch(_ batchID: UInt64) async throws {}
 
     func disconnect() async {
+        publish(.disconnected)
+    }
+
+    func forget() async {
         publish(.disconnected)
     }
 
