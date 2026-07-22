@@ -1,0 +1,637 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-companion-runtime/src/driver.rs`."><title>driver.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_companion_runtime" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_companion_runtime/</div>driver.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! The board-agnostic companion-NCP session driver (Phase 5, increment C).
+<a href=#2 id=2 data-nosnippet>2</a>//!
+<a href=#3 id=3 data-nosnippet>3</a>//! This is the extraction of the nRF NCP's `ncp_task` select loop, its
+<a href=#4 id=4 data-nosnippet>4</a>//! `apply_effect` radio-effect dispatcher, and the `Emitter` frame stager —
+<a href=#5 id=5 data-nosnippet>5</a>//! the one copy of the session-driving logic shared by every companion
+<a href=#6 id=6 data-nosnippet>6</a>//! firmware (T-Echo, T-1000E, Heltec V3). The board personalities that used
+<a href=#7 id=7 data-nosnippet>7</a>//! to be `cfg(feature = "t1000e")` forks inside the loop are expressed as
+<a href=#8 id=8 data-nosnippet>8</a>//! [`NcpEnv`] hooks with no-op defaults, so a new board supplies exactly the
+<a href=#9 id=9 data-nosnippet>9</a>//! couplings it has and nothing else.
+<a href=#10 id=10 data-nosnippet>10</a>//!
+<a href=#11 id=11 data-nosnippet>11</a>//! The split of responsibilities:
+<a href=#12 id=12 data-nosnippet>12</a>//!
+<a href=#13 id=13 data-nosnippet>13</a>//! - **This module** owns the protocol loop: transport arbitration, frame
+<a href=#14 id=14 data-nosnippet>14</a>//!   handling, radio RX/TX-completion processing, every deferred `Effect`
+<a href=#15 id=15 data-nosnippet>15</a>//!   arm (save/clear/wipe/provision/PIN/RSSI/battery/drain), and the
+<a href=#16 id=16 data-nosnippet>16</a>//!   device-domain mirror.
+<a href=#17 id=17 data-nosnippet>17</a>//! - **The board** owns the edges: transport tasks feeding [`InEvent`]s and
+<a href=#18 id=18 data-nosnippet>18</a>//!   draining [`TransportChannels`], the radio runner + mux serving the
+<a href=#19 id=19 data-nosnippet>19</a>//!   session's virtual [`Channels`] bundle, and an [`NcpEnv`] implementation
+<a href=#20 id=20 data-nosnippet>20</a>//!   wiring persistence, entropy, pairing, and indicators to its hardware.
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">use </span>core::sync::atomic::{AtomicU32, Ordering};
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>embassy_futures::select::{Either3, select3};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>embassy_sync::blocking_mutex::raw::RawMutex;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>embassy_sync::channel::Channel;
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>embassy_time::Instant;
+<a href=#28 id=28 data-nosnippet>28</a>
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>umsh_companion_ncp::{
+<a href=#30 id=30 data-nosnippet>30</a>    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, SNAPSHOT_MAX, Session, TxPower,
+<a href=#31 id=31 data-nosnippet>31</a>};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>umsh_crypto::software::SoftwareIdentity;
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>umsh_crypto::{AesProvider, NodeIdentity <span class="kw">as _</span>, Sha256Provider};
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>umsh_journal_store::proto;
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>umsh_radio_loraphy::{
+<a href=#36 id=36 data-nosnippet>36</a>    Channels, MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
+<a href=#37 id=37 data-nosnippet>37</a>    coding_rate_from_denom, spreading_factor_from_u8,
+<a href=#38 id=38 data-nosnippet>38</a>};
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span><span class="kw">crate</span>::transport_policy::{SessionArbitration, Transport};
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a><span class="doccomment">/// Largest raw companion frame accepted from a transport.
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">pub const </span>FRAME_IN_MAX: usize = <span class="number">300</span>;
+<a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// Largest companion frame the session emits (CMD_STR_RECV around a
+<a href=#45 id=45 data-nosnippet>45</a>/// full-MTU payload).
+<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub const </span>FRAME_OUT_MAX: usize = <span class="number">300</span>;
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a><span class="doccomment">/// One raw companion frame moving through the driver.
+<a href=#49 id=49 data-nosnippet>49</a></span><span class="kw">pub type </span>FrameBuf = heapless::Vec&lt;u8, FRAME_IN_MAX&gt;;
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a><span class="doccomment">/// Framing-free receive path and connection edges into the driver.
+<a href=#52 id=52 data-nosnippet>52</a></span><span class="kw">pub enum </span>InEvent {
+<a href=#53 id=53 data-nosnippet>53</a>    Attached(Transport),
+<a href=#54 id=54 data-nosnippet>54</a>    Detached(Transport),
+<a href=#55 id=55 data-nosnippet>55</a>    Frame(Transport, FrameBuf),
+<a href=#56 id=56 data-nosnippet>56</a>}
+<a href=#57 id=57 data-nosnippet>57</a>
+<a href=#58 id=58 data-nosnippet>58</a><span class="doccomment">/// The inbound event channel every transport task feeds.
+<a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub type </span>InputChannel&lt;M&gt; = Channel&lt;M, InEvent, <span class="number">8</span>&gt;;
+<a href=#60 id=60 data-nosnippet>60</a>
+<a href=#61 id=61 data-nosnippet>61</a><span class="doccomment">/// One raw companion frame in a transport output queue, stamped with the
+<a href=#62 id=62 data-nosnippet>62</a>/// session generation that produced it so a displaced session's frames
+<a href=#63 id=63 data-nosnippet>63</a>/// are dropped at the transport edge (`transport_policy::generation_checked`).
+<a href=#64 id=64 data-nosnippet>64</a></span><span class="kw">pub struct </span>OutFrame {
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub </span>generation: u32,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">pub </span>frame: FrameBuf,
+<a href=#67 id=67 data-nosnippet>67</a>}
+<a href=#68 id=68 data-nosnippet>68</a>
+<a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// The per-transport outbound frame queues, drained by the board's
+<a href=#70 id=70 data-nosnippet>70</a>/// transport output tasks. `wired` is the physical-possession transport
+<a href=#71 id=71 data-nosnippet>71</a>/// (USB-CDC or UART), `ble` the bonded GATT transport — the same pairing
+<a href=#72 id=72 data-nosnippet>72</a>/// `transport_policy::Transport` names.
+<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub struct </span>TransportChannels&lt;M: RawMutex&gt; {
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">pub </span>wired: Channel&lt;M, OutFrame, <span class="number">4</span>&gt;,
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">pub </span>ble: Channel&lt;M, OutFrame, <span class="number">4</span>&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>}
+<a href=#77 id=77 data-nosnippet>77</a>
+<a href=#78 id=78 data-nosnippet>78</a><span class="kw">impl</span>&lt;M: RawMutex&gt; TransportChannels&lt;M&gt; {
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">pub const fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="self">Self </span>{
+<a href=#81 id=81 data-nosnippet>81</a>            wired: Channel::new(),
+<a href=#82 id=82 data-nosnippet>82</a>            ble: Channel::new(),
+<a href=#83 id=83 data-nosnippet>83</a>        }
+<a href=#84 id=84 data-nosnippet>84</a>    }
+<a href=#85 id=85 data-nosnippet>85</a>
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">fn </span>for_transport(<span class="kw-2">&amp;</span><span class="self">self</span>, transport: Transport) -&gt; <span class="kw-2">&amp;</span>Channel&lt;M, OutFrame, <span class="number">4</span>&gt; {
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">match </span>transport {
+<a href=#88 id=88 data-nosnippet>88</a>            Transport::Usb =&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.wired,
+<a href=#89 id=89 data-nosnippet>89</a>            Transport::Ble =&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.ble,
+<a href=#90 id=90 data-nosnippet>90</a>        }
+<a href=#91 id=91 data-nosnippet>91</a>    }
+<a href=#92 id=92 data-nosnippet>92</a>}
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a><span class="doccomment">/// The session's device-domain tables, mirrored to the board's device
+<a href=#95 id=95 data-nosnippet>95</a>/// node whenever their generation moves (device-node plan increment 3).
+<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">pub struct </span>DevDomainSnapshot {
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">pub </span>channel_keys: heapless::Vec&lt;[u8; <span class="number">32</span>], MAX_CHANNEL_KEYS&gt;,
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">pub </span>peers: heapless::Vec&lt;[u8; <span class="number">32</span>], MAX_DEV_PEERS&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">pub </span>identity_present: bool,
+<a href=#100 id=100 data-nosnippet>100</a>}
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// Board couplings of the session driver. Everything the loop needs from
+<a href=#103 id=103 data-nosnippet>103</a>/// the platform, expressed as one trait so the driver itself stays free
+<a href=#104 id=104 data-nosnippet>104</a>/// of HAL types and `cfg` board forks. Hooks a board doesn't have keep
+<a href=#105 id=105 data-nosnippet>105</a>/// their no-op defaults (e.g. only the T-1000E implements the attention
+<a href=#106 id=106 data-nosnippet>106</a>/// indicator and transmit-load hooks today).
+<a href=#107 id=107 data-nosnippet>107</a></span><span class="comment">// Single-executor embedded consumers; `Send` futures are irrelevant here,
+<a href=#108 id=108 data-nosnippet>108</a>// same as the embassy ecosystem's own async traits.
+<a href=#109 id=109 data-nosnippet>109</a></span><span class="attr">#[allow(async_fn_in_trait)]
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub trait </span>NcpEnv {
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Durably persist the encoded protocol snapshot (CMD_SAVE / host wipe).
+<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">async fn </span>persist_snapshot(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(), ()&gt;;
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Tombstone the snapshot journal (CMD_CLEAR).
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">async fn </span>clear_snapshot(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ()&gt;;
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Durably persist the encoded device identity.
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">async fn </span>persist_identity(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(), ()&gt;;
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Tombstone the identity journal (CMD_CLEAR).
+<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">async fn </span>clear_identity(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ()&gt;;
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Drop persisted frame-counter boundaries after a successful
+<a href=#120 id=120 data-nosnippet>120</a>    /// identity clear. Boards without a device node keep the default.
+<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">async fn </span>clear_counters(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {}
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Fill `secret` from the platform's cryptographic RNG. Fails closed:
+<a href=#123 id=123 data-nosnippet>123</a>    /// an error refuses identity generation rather than degrading.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">fn </span>fill_secret(<span class="kw-2">&amp;mut </span><span class="self">self</span>, secret: <span class="kw-2">&amp;mut </span>[u8; <span class="number">32</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;(), ()&gt;;
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// One fresh battery measurement (`Effect::SampleBattery`). Only
+<a href=#126 id=126 data-nosnippet>126</a>    /// emitted when the board's `SessionConfig::battery` advertises
+<a href=#127 id=127 data-nosnippet>127</a>    /// fields, so the default refuses.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">async fn </span>sample_battery(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;umsh_companion::battery::BatteryStatus, ()&gt; {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="prelude-val">Err</span>(())
+<a href=#130 id=130 data-nosnippet>130</a>    }
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// Apply a `PROP_BLE_PAIRING_PIN` write against the bond journal and
+<a href=#132 id=132 data-nosnippet>132</a>    /// the live BLE stack; `true` when it took effect.
+<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">async fn </span>apply_pairing_pin(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pin: <span class="prelude-ty">Option</span>&lt;u32&gt;) -&gt; bool;
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
+<a href=#135 id=135 data-nosnippet>135</a>    /// platform owns — saved snapshot, device identity, frame-counter
+<a href=#136 id=136 data-nosnippet>136</a>    /// boundaries, BLE bonds, pairing PIN, and any other journal — then
+<a href=#137 id=137 data-nosnippet>137</a>    /// reboot. Never returns: the reset discards in-RAM state and the
+<a href=#138 id=138 data-nosnippet>138</a>    /// board comes back factory-fresh. There is no separate "clear bonds"
+<a href=#139 id=139 data-nosnippet>139</a>    /// hook because a reboot reloads bonds from the (now-erased) journal,
+<a href=#140 id=140 data-nosnippet>140</a>    /// so the live BLE stack never has to be touched.
+<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="kw">async fn </span>factory_reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; !;
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="doccomment">/// Publish the transport-arbitration advertising policy (a wired
+<a href=#143 id=143 data-nosnippet>143</a>    /// attach suppresses BLE advertising). Diagnostic builds may
+<a href=#144 id=144 data-nosnippet>144</a>    /// deliberately ignore `allowed`.
+<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">fn </span>set_advertising_allowed(<span class="kw-2">&amp;mut </span><span class="self">self</span>, allowed: bool);
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// Publish the session's device name to the board's consumers
+<a href=#147 id=147 data-nosnippet>147</a>    /// (advertising data, device node, UI).
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">async fn </span>publish_device_name(<span class="kw-2">&amp;mut </span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str);
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="doccomment">/// Deliver a device-domain mirror to the board's device node.
+<a href=#150 id=150 data-nosnippet>150</a>    </span><span class="kw">fn </span>publish_dev_domain(<span class="kw-2">&amp;mut </span><span class="self">self</span>, snapshot: DevDomainSnapshot);
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// A covered frame was queued for an attached-or-future host
+<a href=#152 id=152 data-nosnippet>152</a>    /// (T-1000E: request the attention LED).
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">fn </span>request_attention(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {}
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// The host-facing queue drained to empty (T-1000E: clear it).
+<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">fn </span>clear_attention(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {}
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// A transmit is about to start; boards with a battery-level
+<a href=#157 id=157 data-nosnippet>157</a>    /// estimator mark the load spike.
+<a href=#158 id=158 data-nosnippet>158</a>    </span><span class="kw">fn </span>note_transmit_load(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {}
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Diagnostic trace line (routed to the board's debug channel; the
+<a href=#160 id=160 data-nosnippet>160</a>    /// default discards).
+<a href=#161 id=161 data-nosnippet>161</a>    </span><span class="kw">fn </span>trace(<span class="kw-2">&amp;mut </span><span class="self">self</span>, args: core::fmt::Arguments&lt;<span class="lifetime">'_</span>&gt;) {
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let _ </span>= args;
+<a href=#163 id=163 data-nosnippet>163</a>    }
+<a href=#164 id=164 data-nosnippet>164</a>}
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a><span class="doccomment">/// The driver's `'static` wiring: the channels and control blocks the
+<a href=#167 id=167 data-nosnippet>167</a>/// loop shares with the board's transport and radio tasks.
+<a href=#168 id=168 data-nosnippet>168</a></span><span class="kw">pub struct </span>NcpRuntime&lt;M: RawMutex + <span class="lifetime">'static</span>, <span class="kw">const </span>RX: usize, <span class="kw">const </span>TX: usize&gt; {
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Inbound frames and connection edges from every transport task.
+<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">pub </span>input: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>InputChannel&lt;M&gt;,
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// The session's radio endpoint — its private virtual `Channels`
+<a href=#172 id=172 data-nosnippet>172</a>    /// bundle served by the board's radio mux (never the real radio
+<a href=#173 id=173 data-nosnippet>173</a>    /// bundle directly).
+<a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">pub </span>radio: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>Channels&lt;M, RX, TX&gt;,
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Runtime radio settings / RSSI sampling into the radio runner.
+<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub </span>ctl: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>NcpControl&lt;M&gt;,
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Outbound frame queues drained by the transport output tasks.
+<a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">pub </span>out: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TransportChannels&lt;M&gt;,
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Published session epoch, checked by each transport at framing
+<a href=#180 id=180 data-nosnippet>180</a>    /// edges (`transport_policy::generation_checked`).
+<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="kw">pub </span>session_gen: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>AtomicU32,
+<a href=#182 id=182 data-nosnippet>182</a>}
+<a href=#183 id=183 data-nosnippet>183</a>
+<a href=#184 id=184 data-nosnippet>184</a><span class="doccomment">/// Collects frames emitted synchronously by the session, then flushes
+<a href=#185 id=185 data-nosnippet>185</a>/// them to the active transport's output queue asynchronously. The
+<a href=#186 id=186 data-nosnippet>186</a>/// session emits at most one frame per call; two slots give headroom.
+<a href=#187 id=187 data-nosnippet>187</a></span><span class="kw">struct </span>Emitter {
+<a href=#188 id=188 data-nosnippet>188</a>    bufs: [[u8; FRAME_OUT_MAX]; <span class="number">2</span>],
+<a href=#189 id=189 data-nosnippet>189</a>    lens: [usize; <span class="number">2</span>],
+<a href=#190 id=190 data-nosnippet>190</a>    count: usize,
+<a href=#191 id=191 data-nosnippet>191</a>}
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl </span>Emitter {
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">const fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="self">Self </span>{
+<a href=#196 id=196 data-nosnippet>196</a>            bufs: [[<span class="number">0</span>; FRAME_OUT_MAX]; <span class="number">2</span>],
+<a href=#197 id=197 data-nosnippet>197</a>            lens: [<span class="number">0</span>; <span class="number">2</span>],
+<a href=#198 id=198 data-nosnippet>198</a>            count: <span class="number">0</span>,
+<a href=#199 id=199 data-nosnippet>199</a>        }
+<a href=#200 id=200 data-nosnippet>200</a>    }
+<a href=#201 id=201 data-nosnippet>201</a>
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Copy one raw companion frame into the next slot.
+<a href=#203 id=203 data-nosnippet>203</a>    ///
+<a href=#204 id=204 data-nosnippet>204</a>    /// The session is expected to emit at most `bufs.len()` frames per call
+<a href=#205 id=205 data-nosnippet>205</a>    /// and every frame is expected to fit `FRAME_OUT_MAX`. Both invariants are
+<a href=#206 id=206 data-nosnippet>206</a>    /// asserted in debug builds so a future session change that violates
+<a href=#207 id=207 data-nosnippet>207</a>    /// them is caught rather than silently dropping a response.
+<a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: <span class="kw-2">&amp;</span>[u8]) {
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">if </span><span class="self">self</span>.count &gt;= <span class="self">self</span>.bufs.len() {
+<a href=#210 id=210 data-nosnippet>210</a>            <span class="macro">debug_assert!</span>(
+<a href=#211 id=211 data-nosnippet>211</a>                <span class="bool-val">false</span>,
+<a href=#212 id=212 data-nosnippet>212</a>                <span class="string">"Emitter overflow: session emitted more frames per call than staging slots"
+<a href=#213 id=213 data-nosnippet>213</a>            </span>);
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="kw">return</span>;
+<a href=#215 id=215 data-nosnippet>215</a>        }
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">if </span>frame.len() &lt;= FRAME_OUT_MAX {
+<a href=#217 id=217 data-nosnippet>217</a>            <span class="self">self</span>.bufs[<span class="self">self</span>.count][..frame.len()].copy_from_slice(frame);
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="self">self</span>.lens[<span class="self">self</span>.count] = frame.len();
+<a href=#219 id=219 data-nosnippet>219</a>            <span class="self">self</span>.count += <span class="number">1</span>;
+<a href=#220 id=220 data-nosnippet>220</a>        } <span class="kw">else </span>{
+<a href=#221 id=221 data-nosnippet>221</a>            <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"Emitter: companion frame exceeds FRAME_OUT_MAX"</span>);
+<a href=#222 id=222 data-nosnippet>222</a>        }
+<a href=#223 id=223 data-nosnippet>223</a>    }
+<a href=#224 id=224 data-nosnippet>224</a>
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="doccomment">/// Queue all staged frames for the active transport output task.
+<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">async fn </span>flush&lt;M: RawMutex&gt;(
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#228 id=228 data-nosnippet>228</a>        destination: <span class="prelude-ty">Option</span>&lt;(Transport, u32)&gt;,
+<a href=#229 id=229 data-nosnippet>229</a>        out: <span class="kw-2">&amp;</span>TransportChannels&lt;M&gt;,
+<a href=#230 id=230 data-nosnippet>230</a>    ) {
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((transport, generation)) = destination {
+<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.count {
+<a href=#233 id=233 data-nosnippet>233</a>                <span class="kw">let </span><span class="kw-2">mut </span>frame: FrameBuf = heapless::Vec::new();
+<a href=#234 id=234 data-nosnippet>234</a>                <span class="kw">if </span>frame
+<a href=#235 id=235 data-nosnippet>235</a>                    .extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.bufs[index][..<span class="self">self</span>.lens[index]])
+<a href=#236 id=236 data-nosnippet>236</a>                    .is_err()
+<a href=#237 id=237 data-nosnippet>237</a>                {
+<a href=#238 id=238 data-nosnippet>238</a>                    <span class="comment">// FRAME_OUT_MAX == FrameBuf capacity, so this cannot
+<a href=#239 id=239 data-nosnippet>239</a>                    // happen; assert in debug rather than silently drop.
+<a href=#240 id=240 data-nosnippet>240</a>                    </span><span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"Emitter frame copy exceeded FrameBuf capacity"</span>);
+<a href=#241 id=241 data-nosnippet>241</a>                    <span class="kw">continue</span>;
+<a href=#242 id=242 data-nosnippet>242</a>                }
+<a href=#243 id=243 data-nosnippet>243</a>                out.for_transport(transport)
+<a href=#244 id=244 data-nosnippet>244</a>                    .send(OutFrame { generation, frame })
+<a href=#245 id=245 data-nosnippet>245</a>                    .<span class="kw">await</span>;
+<a href=#246 id=246 data-nosnippet>246</a>            }
+<a href=#247 id=247 data-nosnippet>247</a>        }
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="self">self</span>.count = <span class="number">0</span>;
+<a href=#249 id=249 data-nosnippet>249</a>    }
+<a href=#250 id=250 data-nosnippet>250</a>}
+<a href=#251 id=251 data-nosnippet>251</a>
+<a href=#252 id=252 data-nosnippet>252</a><span class="doccomment">/// Execute a radio side effect requested by the session.
+<a href=#253 id=253 data-nosnippet>253</a></span><span class="kw">async fn </span>apply_effect&lt;A, S, <span class="kw">const </span>TXQ: usize, M, <span class="kw">const </span>RX: usize, <span class="kw">const </span>TX: usize, E&gt;(
+<a href=#254 id=254 data-nosnippet>254</a>    session: <span class="kw-2">&amp;</span>Session&lt;A, S, TXQ&gt;,
+<a href=#255 id=255 data-nosnippet>255</a>    effect: <span class="prelude-ty">Option</span>&lt;Effect&gt;,
+<a href=#256 id=256 data-nosnippet>256</a>    rt: <span class="kw-2">&amp;</span>NcpRuntime&lt;M, RX, TX&gt;,
+<a href=#257 id=257 data-nosnippet>257</a>    env: <span class="kw-2">&amp;mut </span>E,
+<a href=#258 id=258 data-nosnippet>258</a>) <span class="kw">where
+<a href=#259 id=259 data-nosnippet>259</a>    </span>A: AesProvider,
+<a href=#260 id=260 data-nosnippet>260</a>    S: Sha256Provider,
+<a href=#261 id=261 data-nosnippet>261</a>    M: RawMutex,
+<a href=#262 id=262 data-nosnippet>262</a>    E: NcpEnv,
+<a href=#263 id=263 data-nosnippet>263</a>{
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">match </span>effect {
+<a href=#265 id=265 data-nosnippet>265</a>        <span class="prelude-val">Some</span>(Effect::ApplyRadio(settings)) =&gt; {
+<a href=#266 id=266 data-nosnippet>266</a>            env.publish_device_name(session.device_name()).<span class="kw">await</span>;
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="comment">// The session validates values against the same discrete
+<a href=#268 id=268 data-nosnippet>268</a>            // sets these converters accept, so None here is
+<a href=#269 id=269 data-nosnippet>269</a>            // unreachable; bail out defensively rather than panic.
+<a href=#270 id=270 data-nosnippet>270</a>            </span><span class="kw">let </span>(<span class="prelude-val">Some</span>(sf), <span class="prelude-val">Some</span>(bw), <span class="prelude-val">Some</span>(cr)) = (
+<a href=#271 id=271 data-nosnippet>271</a>                spreading_factor_from_u8(settings.sf),
+<a href=#272 id=272 data-nosnippet>272</a>                bandwidth_from_hz(settings.bw_hz),
+<a href=#273 id=273 data-nosnippet>273</a>                coding_rate_from_denom(settings.cr_denom),
+<a href=#274 id=274 data-nosnippet>274</a>            ) <span class="kw">else </span>{
+<a href=#275 id=275 data-nosnippet>275</a>                <span class="kw">return</span>;
+<a href=#276 id=276 data-nosnippet>276</a>            };
+<a href=#277 id=277 data-nosnippet>277</a>            rt.ctl.apply(NcpSettings {
+<a href=#278 id=278 data-nosnippet>278</a>                enabled: settings.enabled,
+<a href=#279 id=279 data-nosnippet>279</a>                freq_hz: settings.freq_khz.saturating_mul(<span class="number">1_000</span>),
+<a href=#280 id=280 data-nosnippet>280</a>                sf,
+<a href=#281 id=281 data-nosnippet>281</a>                bw,
+<a href=#282 id=282 data-nosnippet>282</a>                cr,
+<a href=#283 id=283 data-nosnippet>283</a>                power_dbm: i32::from(settings.tx_power_dbm),
+<a href=#284 id=284 data-nosnippet>284</a>            });
+<a href=#285 id=285 data-nosnippet>285</a>        }
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="prelude-val">Some</span>(Effect::StartTransmit) =&gt; {
+<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">let </span><span class="kw-2">mut </span>data: heapless::Vec&lt;u8, MAX_PAYLOAD&gt; = heapless::Vec::new();
+<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw">if </span>data.extend_from_slice(session.tx_data()).is_err() {
+<a href=#289 id=289 data-nosnippet>289</a>                env.trace(<span class="macro">format_args!</span>(
+<a href=#290 id=290 data-nosnippet>290</a>                    <span class="string">"radio tx staging=FAILED len={}"</span>,
+<a href=#291 id=291 data-nosnippet>291</a>                    session.tx_data().len()
+<a href=#292 id=292 data-nosnippet>292</a>                ));
+<a href=#293 id=293 data-nosnippet>293</a>                <span class="kw">return</span>;
+<a href=#294 id=294 data-nosnippet>294</a>            }
+<a href=#295 id=295 data-nosnippet>295</a>            <span class="kw">let </span>power_dbm = <span class="kw">match </span>session.tx_power() {
+<a href=#296 id=296 data-nosnippet>296</a>                TxPower::Default =&gt; <span class="prelude-val">None</span>,
+<a href=#297 id=297 data-nosnippet>297</a>                TxPower::Max =&gt; <span class="prelude-val">Some</span>(i32::from(session.max_tx_power_dbm())),
+<a href=#298 id=298 data-nosnippet>298</a>                TxPower::Dbm(dbm) =&gt; <span class="prelude-val">Some</span>(i32::from(dbm)),
+<a href=#299 id=299 data-nosnippet>299</a>            };
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="comment">// Mark the load for the board's battery level estimator (the
+<a href=#301 id=301 data-nosnippet>301</a>            // radio runner transmits within milliseconds of this).
+<a href=#302 id=302 data-nosnippet>302</a>            </span>env.note_transmit_load();
+<a href=#303 id=303 data-nosnippet>303</a>            rt.radio.tx.send(TxRequest { data, power_dbm }).<span class="kw">await</span>;
+<a href=#304 id=304 data-nosnippet>304</a>        }
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="prelude-val">Some</span>(Effect::DeviceNameChanged) =&gt; {
+<a href=#306 id=306 data-nosnippet>306</a>            env.publish_device_name(session.device_name()).<span class="kw">await</span>;
+<a href=#307 id=307 data-nosnippet>307</a>        }
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="comment">// Deferred effects needing `&amp;mut Session` + the emitter are
+<a href=#309 id=309 data-nosnippet>309</a>        // handled inline in the run loop rather than here.
+<a href=#310 id=310 data-nosnippet>310</a>        </span><span class="prelude-val">Some</span>(Effect::SampleRssi { .. })
+<a href=#311 id=311 data-nosnippet>311</a>        | <span class="prelude-val">Some</span>(Effect::SampleBattery { .. })
+<a href=#312 id=312 data-nosnippet>312</a>        | <span class="prelude-val">Some</span>(Effect::SetPairingPin { .. })
+<a href=#313 id=313 data-nosnippet>313</a>        | <span class="prelude-val">Some</span>(Effect::WipeHostDomain { .. })
+<a href=#314 id=314 data-nosnippet>314</a>        | <span class="prelude-val">Some</span>(Effect::DrainQueue)
+<a href=#315 id=315 data-nosnippet>315</a>        | <span class="prelude-val">Some</span>(Effect::SaveSnapshot { .. })
+<a href=#316 id=316 data-nosnippet>316</a>        | <span class="prelude-val">Some</span>(Effect::ClearSaved { .. })
+<a href=#317 id=317 data-nosnippet>317</a>        | <span class="prelude-val">Some</span>(Effect::ProvisionIdentity { .. })
+<a href=#318 id=318 data-nosnippet>318</a>        | <span class="prelude-val">Some</span>(Effect::FactoryReset)
+<a href=#319 id=319 data-nosnippet>319</a>        | <span class="prelude-val">None </span>=&gt; {}
+<a href=#320 id=320 data-nosnippet>320</a>    }
+<a href=#321 id=321 data-nosnippet>321</a>}
+<a href=#322 id=322 data-nosnippet>322</a>
+<a href=#323 id=323 data-nosnippet>323</a><span class="doccomment">/// Mirror the session's device-domain node tables to the device node
+<a href=#324 id=324 data-nosnippet>324</a>/// when their generation moved (device-node plan increment 3).
+<a href=#325 id=325 data-nosnippet>325</a>/// `synced_version` is the caller's cache of the last published
+<a href=#326 id=326 data-nosnippet>326</a>/// generation. Cheap when nothing changed — one u32 compare — so the
+<a href=#327 id=327 data-nosnippet>327</a>/// loop runs it after every session interaction.
+<a href=#328 id=328 data-nosnippet>328</a></span><span class="kw">fn </span>sync_dev_domain&lt;A, S, <span class="kw">const </span>TXQ: usize, E&gt;(
+<a href=#329 id=329 data-nosnippet>329</a>    session: <span class="kw-2">&amp;</span>Session&lt;A, S, TXQ&gt;,
+<a href=#330 id=330 data-nosnippet>330</a>    synced_version: <span class="kw-2">&amp;mut </span>u32,
+<a href=#331 id=331 data-nosnippet>331</a>    env: <span class="kw-2">&amp;mut </span>E,
+<a href=#332 id=332 data-nosnippet>332</a>) <span class="kw">where
+<a href=#333 id=333 data-nosnippet>333</a>    </span>A: AesProvider,
+<a href=#334 id=334 data-nosnippet>334</a>    S: Sha256Provider,
+<a href=#335 id=335 data-nosnippet>335</a>    E: NcpEnv,
+<a href=#336 id=336 data-nosnippet>336</a>{
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">if </span>session.dev_domain_version() == <span class="kw-2">*</span>synced_version {
+<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">return</span>;
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw-2">*</span>synced_version = session.dev_domain_version();
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">let </span><span class="kw-2">mut </span>snapshot = DevDomainSnapshot {
+<a href=#342 id=342 data-nosnippet>342</a>        channel_keys: heapless::Vec::new(),
+<a href=#343 id=343 data-nosnippet>343</a>        peers: heapless::Vec::new(),
+<a href=#344 id=344 data-nosnippet>344</a>        identity_present: session.dev_key().is_some(),
+<a href=#345 id=345 data-nosnippet>345</a>    };
+<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">for </span>key <span class="kw">in </span>session.dev_channel_keys() {
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let _ </span>= snapshot.channel_keys.push(key);
+<a href=#348 id=348 data-nosnippet>348</a>    }
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">for </span>public_key <span class="kw">in </span>session.dev_peers() {
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">let _ </span>= snapshot.peers.push(public_key);
+<a href=#351 id=351 data-nosnippet>351</a>    }
+<a href=#352 id=352 data-nosnippet>352</a>    env.publish_dev_domain(snapshot);
+<a href=#353 id=353 data-nosnippet>353</a>}
+<a href=#354 id=354 data-nosnippet>354</a>
+<a href=#355 id=355 data-nosnippet>355</a><span class="doccomment">/// Drive the companion session forever: restore persisted state, then
+<a href=#356 id=356 data-nosnippet>356</a>/// select over host frames, radio receptions, and transmit completions,
+<a href=#357 id=357 data-nosnippet>357</a>/// executing every session effect through the board's [`NcpEnv`].
+<a href=#358 id=358 data-nosnippet>358</a>///
+<a href=#359 id=359 data-nosnippet>359</a>/// The caller constructs the [`Session`] with its board profile
+<a href=#360 id=360 data-nosnippet>360</a>/// (`SessionConfig`) and boot status, mounts its journals, and hands the
+<a href=#361 id=361 data-nosnippet>361</a>/// stored payloads in; the driver owns everything after that.
+<a href=#362 id=362 data-nosnippet>362</a></span><span class="kw">pub async fn </span>run&lt;A, S, <span class="kw">const </span>TXQ: usize, M, <span class="kw">const </span>RX: usize, <span class="kw">const </span>TX: usize, E&gt;(
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="kw-2">mut </span>session: Session&lt;A, S, TXQ&gt;,
+<a href=#364 id=364 data-nosnippet>364</a>    boot_snapshot: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
+<a href=#365 id=365 data-nosnippet>365</a>    boot_identity: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">32</span>]&gt;,
+<a href=#366 id=366 data-nosnippet>366</a>    rt: NcpRuntime&lt;M, RX, TX&gt;,
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw-2">mut </span>env: E,
+<a href=#368 id=368 data-nosnippet>368</a>) -&gt; !
+<a href=#369 id=369 data-nosnippet>369</a><span class="kw">where
+<a href=#370 id=370 data-nosnippet>370</a>    </span>A: AesProvider,
+<a href=#371 id=371 data-nosnippet>371</a>    S: Sha256Provider,
+<a href=#372 id=372 data-nosnippet>372</a>    M: RawMutex,
+<a href=#373 id=373 data-nosnippet>373</a>    E: NcpEnv,
+<a href=#374 id=374 data-nosnippet>374</a>{
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="kw">let </span><span class="kw-2">mut </span>emitter = Emitter::new();
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">let </span><span class="kw-2">mut </span>arbitration = SessionArbitration::new(rt.session_gen.load(Ordering::Acquire));
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="comment">// Last device-domain generation mirrored to the device node.
+<a href=#378 id=378 data-nosnippet>378</a>    // Matches the session's initial value; the first mutation (or a
+<a href=#379 id=379 data-nosnippet>379</a>    // boot restore) publishes the first snapshot.
+<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>dev_domain_synced: u32 = session.dev_domain_version();
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="comment">// Shared staging buffer for the durable-write effect arms
+<a href=#382 id=382 data-nosnippet>382</a>    // (save/wipe). Held across their persist awaits, so as a
+<a href=#383 id=383 data-nosnippet>383</a>    // loop-lifetime local it costs one future slot instead of one
+<a href=#384 id=384 data-nosnippet>384</a>    // per arm.
+<a href=#385 id=385 data-nosnippet>385</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>snapshot_buf = [<span class="number">0u8</span>; SNAPSHOT_MAX];
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="comment">// The device identity is persisted independently of snapshots;
+<a href=#388 id=388 data-nosnippet>388</a>    // its post-reset value is whatever the identity journal holds.
+<a href=#389 id=389 data-nosnippet>389</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(public_key) = boot_identity {
+<a href=#390 id=390 data-nosnippet>390</a>        session.set_boot_identity(public_key);
+<a href=#391 id=391 data-nosnippet>391</a>    }
+<a href=#392 id=392 data-nosnippet>392</a>
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="comment">// Restore a stored snapshot before processing any host command:
+<a href=#394 id=394 data-nosnippet>394</a>    // the saved configuration is applied, the PHY re-enabled if it
+<a href=#395 id=395 data-nosnippet>395</a>    // was enabled when saved, and detached operation begins
+<a href=#396 id=396 data-nosnippet>396</a>    // immediately. A snapshot that fails to decode is ignored.
+<a href=#397 id=397 data-nosnippet>397</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(payload) = boot_snapshot {
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span>effect = session.restore_at_boot(payload);
+<a href=#399 id=399 data-nosnippet>399</a>        env.trace(<span class="macro">format_args!</span>(
+<a href=#400 id=400 data-nosnippet>400</a>            <span class="string">"proto-store boot-restore={}"</span>,
+<a href=#401 id=401 data-nosnippet>401</a>            <span class="kw">if </span>effect.is_some() { <span class="string">"ok" </span>} <span class="kw">else </span>{ <span class="string">"IGNORED" </span>}
+<a href=#402 id=402 data-nosnippet>402</a>        ));
+<a href=#403 id=403 data-nosnippet>403</a>        apply_effect(<span class="kw-2">&amp;</span>session, effect, <span class="kw-2">&amp;</span>rt, <span class="kw-2">&amp;mut </span>env).<span class="kw">await</span>;
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="comment">// Replay the restored device-domain tables into the device
+<a href=#405 id=405 data-nosnippet>405</a>        // node before any host interaction: detached multicast
+<a href=#406 id=406 data-nosnippet>406</a>        // processing must not wait for an attach.
+<a href=#407 id=407 data-nosnippet>407</a>        </span>sync_dev_domain(<span class="kw-2">&amp;</span>session, <span class="kw-2">&amp;mut </span>dev_domain_synced, <span class="kw-2">&amp;mut </span>env);
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">loop </span>{
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="comment">// Only wait for a TX completion while one is outstanding,
+<a href=#412 id=412 data-nosnippet>412</a>        // so a spurious tx_done can never be consumed early.
+<a href=#413 id=413 data-nosnippet>413</a>        </span><span class="kw">let </span>tx_done = <span class="kw">async </span>{
+<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">if </span>session.has_pending_tx() {
+<a href=#415 id=415 data-nosnippet>415</a>                rt.radio.tx_done.wait().<span class="kw">await
+<a href=#416 id=416 data-nosnippet>416</a>            </span>} <span class="kw">else </span>{
+<a href=#417 id=417 data-nosnippet>417</a>                core::future::pending().<span class="kw">await
+<a href=#418 id=418 data-nosnippet>418</a>            </span>}
+<a href=#419 id=419 data-nosnippet>419</a>        };
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">match </span>select3(rt.input.receive(), rt.radio.rx.receive(), tx_done).<span class="kw">await </span>{
+<a href=#422 id=422 data-nosnippet>422</a>            Either3::First(InEvent::Attached(transport)) =&gt; {
+<a href=#423 id=423 data-nosnippet>423</a>                <span class="comment">// Fresh session state for the new host session; the
+<a href=#424 id=424 data-nosnippet>424</a>                // device domain (PHY configuration and enable state,
+<a href=#425 id=425 data-nosnippet>425</a>                // device name, duty accounting) is deliberately
+<a href=#426 id=426 data-nosnippet>426</a>                // untouched and nothing is emitted (full-protocol
+<a href=#427 id=427 data-nosnippet>427</a>                // attach semantics).
+<a href=#428 id=428 data-nosnippet>428</a>                </span>arbitration.attach(transport);
+<a href=#429 id=429 data-nosnippet>429</a>                rt.session_gen
+<a href=#430 id=430 data-nosnippet>430</a>                    .store(arbitration.generation(), Ordering::Release);
+<a href=#431 id=431 data-nosnippet>431</a>                env.set_advertising_allowed(arbitration.advertising_allowed());
+<a href=#432 id=432 data-nosnippet>432</a>                <span class="comment">// Both transports meet their provisioning-security
+<a href=#433 id=433 data-nosnippet>433</a>                // binding here: the wired transport by physical
+<a href=#434 id=434 data-nosnippet>434</a>                // possession, BLE because the companion GATT service
+<a href=#435 id=435 data-nosnippet>435</a>                // refuses any access outside an encrypted LESC-bonded
+<a href=#436 id=436 data-nosnippet>436</a>                // link.
+<a href=#437 id=437 data-nosnippet>437</a>                </span>session.attach(<span class="bool-val">true</span>);
+<a href=#438 id=438 data-nosnippet>438</a>            }
+<a href=#439 id=439 data-nosnippet>439</a>            Either3::First(InEvent::Detached(transport)) =&gt; {
+<a href=#440 id=440 data-nosnippet>440</a>                <span class="comment">// Only the active transport's detach ends the
+<a href=#441 id=441 data-nosnippet>441</a>                // session; a displaced transport's stale detach
+<a href=#442 id=442 data-nosnippet>442</a>                // must not clear the successor's session state.
+<a href=#443 id=443 data-nosnippet>443</a>                </span><span class="kw">if </span>arbitration.detach(transport) {
+<a href=#444 id=444 data-nosnippet>444</a>                    env.set_advertising_allowed(<span class="bool-val">true</span>);
+<a href=#445 id=445 data-nosnippet>445</a>                    session.detach();
+<a href=#446 id=446 data-nosnippet>446</a>                }
+<a href=#447 id=447 data-nosnippet>447</a>            }
+<a href=#448 id=448 data-nosnippet>448</a>            Either3::First(InEvent::Frame(transport, frame_bytes)) =&gt; {
+<a href=#449 id=449 data-nosnippet>449</a>                <span class="kw">if </span>arbitration.accepts_frame(transport) {
+<a href=#450 id=450 data-nosnippet>450</a>                    <span class="kw">let </span>now_ms = Instant::now().as_millis();
+<a href=#451 id=451 data-nosnippet>451</a>                    <span class="kw">let </span>effect = session.handle_frame(<span class="kw-2">&amp;</span>frame_bytes, now_ms, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#452 id=452 data-nosnippet>452</a>                        emitter.push(frame)
+<a href=#453 id=453 data-nosnippet>453</a>                    });
+<a href=#454 id=454 data-nosnippet>454</a>                    emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#455 id=455 data-nosnippet>455</a>                    <span class="kw">match </span>effect {
+<a href=#456 id=456 data-nosnippet>456</a>                        <span class="prelude-val">Some</span>(Effect::SampleRssi { tid }) =&gt; {
+<a href=#457 id=457 data-nosnippet>457</a>                            <span class="comment">// Round-trip to the radio runner for an
+<a href=#458 id=458 data-nosnippet>458</a>                            // instantaneous RSSI sample, then answer the
+<a href=#459 id=459 data-nosnippet>459</a>                            // deferred PROP_PHY_RSSI get.
+<a href=#460 id=460 data-nosnippet>460</a>                            </span>rt.ctl.request_rssi();
+<a href=#461 id=461 data-nosnippet>461</a>                            <span class="kw">let </span>sample = rt.ctl.wait_rssi().<span class="kw">await</span>;
+<a href=#462 id=462 data-nosnippet>462</a>                            session.respond_rssi(tid, sample, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#463 id=463 data-nosnippet>463</a>                                emitter.push(frame)
+<a href=#464 id=464 data-nosnippet>464</a>                            });
+<a href=#465 id=465 data-nosnippet>465</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#466 id=466 data-nosnippet>466</a>                        }
+<a href=#467 id=467 data-nosnippet>467</a>                        <span class="prelude-val">Some</span>(Effect::SampleBattery { tid }) =&gt; {
+<a href=#468 id=468 data-nosnippet>468</a>                            <span class="comment">// Round-trip to the platform battery
+<a href=#469 id=469 data-nosnippet>469</a>                            // source for a fresh measurement, then
+<a href=#470 id=470 data-nosnippet>470</a>                            // answer the deferred PROP_BATTERY get.
+<a href=#471 id=471 data-nosnippet>471</a>                            </span><span class="kw">let </span>sample = env.sample_battery().<span class="kw">await</span>;
+<a href=#472 id=472 data-nosnippet>472</a>                            session.respond_battery(tid, sample, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#473 id=473 data-nosnippet>473</a>                                emitter.push(frame)
+<a href=#474 id=474 data-nosnippet>474</a>                            });
+<a href=#475 id=475 data-nosnippet>475</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#476 id=476 data-nosnippet>476</a>                        }
+<a href=#477 id=477 data-nosnippet>477</a>                        <span class="prelude-val">Some</span>(Effect::DrainQueue) =&gt; {
+<a href=#478 id=478 data-nosnippet>478</a>                            <span class="comment">// Deliver the covered frames one per
+<a href=#479 id=479 data-nosnippet>479</a>                            // step, flushing between steps so the
+<a href=#480 id=480 data-nosnippet>480</a>                            // two-slot emitter never overflows and
+<a href=#481 id=481 data-nosnippet>481</a>                            // the transport applies backpressure.
+<a href=#482 id=482 data-nosnippet>482</a>                            </span><span class="kw">loop </span>{
+<a href=#483 id=483 data-nosnippet>483</a>                                <span class="kw">let </span>more = session.drain_step(
+<a href=#484 id=484 data-nosnippet>484</a>                                    Instant::now().as_millis(),
+<a href=#485 id=485 data-nosnippet>485</a>                                    <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| emitter.push(frame),
+<a href=#486 id=486 data-nosnippet>486</a>                                );
+<a href=#487 id=487 data-nosnippet>487</a>                                emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#488 id=488 data-nosnippet>488</a>                                <span class="kw">if </span>!more {
+<a href=#489 id=489 data-nosnippet>489</a>                                    <span class="kw">break</span>;
+<a href=#490 id=490 data-nosnippet>490</a>                                }
+<a href=#491 id=491 data-nosnippet>491</a>                            }
+<a href=#492 id=492 data-nosnippet>492</a>                            env.clear_attention();
+<a href=#493 id=493 data-nosnippet>493</a>                        }
+<a href=#494 id=494 data-nosnippet>494</a>                        <span class="prelude-val">Some</span>(Effect::WipeHostDomain { tid }) =&gt; {
+<a href=#495 id=495 data-nosnippet>495</a>                            <span class="comment">// Durably wipe the host-domain portion of
+<a href=#496 id=496 data-nosnippet>496</a>                            // any saved snapshot before the new host
+<a href=#497 id=497 data-nosnippet>497</a>                            // key takes effect; with nothing saved the
+<a href=#498 id=498 data-nosnippet>498</a>                            // wipe is trivially satisfied.
+<a href=#499 id=499 data-nosnippet>499</a>                            </span><span class="kw">let </span>result = <span class="kw">match </span>session.encode_wiped_snapshot(<span class="kw-2">&amp;mut </span>snapshot_buf) {
+<a href=#500 id=500 data-nosnippet>500</a>                                <span class="prelude-val">Some</span>(len) =&gt; env.persist_snapshot(<span class="kw-2">&amp;</span>snapshot_buf[..len]).<span class="kw">await</span>,
+<a href=#501 id=501 data-nosnippet>501</a>                                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#502 id=502 data-nosnippet>502</a>                            };
+<a href=#503 id=503 data-nosnippet>503</a>                            session.respond_host_wipe(tid, result, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#504 id=504 data-nosnippet>504</a>                                emitter.push(frame)
+<a href=#505 id=505 data-nosnippet>505</a>                            });
+<a href=#506 id=506 data-nosnippet>506</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#507 id=507 data-nosnippet>507</a>                        }
+<a href=#508 id=508 data-nosnippet>508</a>                        <span class="prelude-val">Some</span>(Effect::SaveSnapshot { tid }) =&gt; {
+<a href=#509 id=509 data-nosnippet>509</a>                            <span class="kw">let </span>result = <span class="kw">match </span>session.encode_snapshot(<span class="kw-2">&amp;mut </span>snapshot_buf) {
+<a href=#510 id=510 data-nosnippet>510</a>                                <span class="prelude-val">Some</span>(len) =&gt; env.persist_snapshot(<span class="kw-2">&amp;</span>snapshot_buf[..len]).<span class="kw">await</span>,
+<a href=#511 id=511 data-nosnippet>511</a>                                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(()),
+<a href=#512 id=512 data-nosnippet>512</a>                            };
+<a href=#513 id=513 data-nosnippet>513</a>                            session.respond_save(tid, result, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#514 id=514 data-nosnippet>514</a>                                emitter.push(frame)
+<a href=#515 id=515 data-nosnippet>515</a>                            });
+<a href=#516 id=516 data-nosnippet>516</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#517 id=517 data-nosnippet>517</a>                        }
+<a href=#518 id=518 data-nosnippet>518</a>                        <span class="prelude-val">Some</span>(Effect::ClearSaved { tid }) =&gt; {
+<a href=#519 id=519 data-nosnippet>519</a>                            <span class="comment">// CMD_CLEAR covers all persisted
+<a href=#520 id=520 data-nosnippet>520</a>                            // provisioning: the snapshot and the
+<a href=#521 id=521 data-nosnippet>521</a>                            // independently persisted device
+<a href=#522 id=522 data-nosnippet>522</a>                            // identity. Each journal's tombstone is
+<a href=#523 id=523 data-nosnippet>523</a>                            // individually atomic; an interruption
+<a href=#524 id=524 data-nosnippet>524</a>                            // between them reports failure and the
+<a href=#525 id=525 data-nosnippet>525</a>                            // host's retry completes the erase.
+<a href=#526 id=526 data-nosnippet>526</a>                            </span><span class="kw">let </span>result = <span class="kw">match </span>env.clear_snapshot().<span class="kw">await </span>{
+<a href=#527 id=527 data-nosnippet>527</a>                                <span class="prelude-val">Ok</span>(()) =&gt; env.clear_identity().<span class="kw">await</span>,
+<a href=#528 id=528 data-nosnippet>528</a>                                <span class="prelude-val">Err</span>(()) =&gt; <span class="prelude-val">Err</span>(()),
+<a href=#529 id=529 data-nosnippet>529</a>                            };
+<a href=#530 id=530 data-nosnippet>530</a>                            <span class="comment">// With the identity durably gone, its
+<a href=#531 id=531 data-nosnippet>531</a>                            // counter boundaries are dead weight;
+<a href=#532 id=532 data-nosnippet>532</a>                            // drop them with it. (Kept if the
+<a href=#533 id=533 data-nosnippet>533</a>                            // identity clear failed — the identity
+<a href=#534 id=534 data-nosnippet>534</a>                            // then survives the reboot and still
+<a href=#535 id=535 data-nosnippet>535</a>                            // needs its TX boundary.)
+<a href=#536 id=536 data-nosnippet>536</a>                            </span><span class="kw">if </span>result.is_ok() {
+<a href=#537 id=537 data-nosnippet>537</a>                                env.clear_counters().<span class="kw">await</span>;
+<a href=#538 id=538 data-nosnippet>538</a>                            }
+<a href=#539 id=539 data-nosnippet>539</a>                            session.respond_clear(tid, result, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#540 id=540 data-nosnippet>540</a>                                emitter.push(frame)
+<a href=#541 id=541 data-nosnippet>541</a>                            });
+<a href=#542 id=542 data-nosnippet>542</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#543 id=543 data-nosnippet>543</a>                        }
+<a href=#544 id=544 data-nosnippet>544</a>                        <span class="prelude-val">Some</span>(Effect::ProvisionIdentity { tid }) =&gt; {
+<a href=#545 id=545 data-nosnippet>545</a>                            <span class="comment">// Build the keypair (drawing a fresh
+<a href=#546 id=546 data-nosnippet>546</a>                            // secret from the platform RNG for
+<a href=#547 id=547 data-nosnippet>547</a>                            // on-device generation), persist it, and
+<a href=#548 id=548 data-nosnippet>548</a>                            // only then report the public key.
+<a href=#549 id=549 data-nosnippet>549</a>                            </span><span class="kw">let </span>result = <span class="kw">match </span>session.identity_request() {
+<a href=#550 id=550 data-nosnippet>550</a>                                <span class="prelude-val">Some</span>(source) =&gt; {
+<a href=#551 id=551 data-nosnippet>551</a>                                    <span class="kw">let </span>secret = <span class="kw">match </span>source {
+<a href=#552 id=552 data-nosnippet>552</a>                                        IdentitySource::Install(secret) =&gt; <span class="prelude-val">Ok</span>(secret),
+<a href=#553 id=553 data-nosnippet>553</a>                                        IdentitySource::Generate =&gt; {
+<a href=#554 id=554 data-nosnippet>554</a>                                            <span class="kw">let </span><span class="kw-2">mut </span>secret = [<span class="number">0u8</span>; <span class="number">32</span>];
+<a href=#555 id=555 data-nosnippet>555</a>                                            env.fill_secret(<span class="kw-2">&amp;mut </span>secret).map(|()| secret)
+<a href=#556 id=556 data-nosnippet>556</a>                                        }
+<a href=#557 id=557 data-nosnippet>557</a>                                    };
+<a href=#558 id=558 data-nosnippet>558</a>                                    <span class="kw">match </span>secret {
+<a href=#559 id=559 data-nosnippet>559</a>                                        <span class="prelude-val">Ok</span>(secret) =&gt; {
+<a href=#560 id=560 data-nosnippet>560</a>                                            <span class="kw">let </span>identity =
+<a href=#561 id=561 data-nosnippet>561</a>                                                SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>secret);
+<a href=#562 id=562 data-nosnippet>562</a>                                            <span class="kw">let </span>public_key = identity.public_key().<span class="number">0</span>;
+<a href=#563 id=563 data-nosnippet>563</a>                                            <span class="kw">let </span>payload =
+<a href=#564 id=564 data-nosnippet>564</a>                                                proto::encode_identity(<span class="kw-2">&amp;</span>secret, <span class="kw-2">&amp;</span>public_key);
+<a href=#565 id=565 data-nosnippet>565</a>                                            env.persist_identity(<span class="kw-2">&amp;</span>payload)
+<a href=#566 id=566 data-nosnippet>566</a>                                                .<span class="kw">await
+<a href=#567 id=567 data-nosnippet>567</a>                                                </span>.map(|()| public_key)
+<a href=#568 id=568 data-nosnippet>568</a>                                        }
+<a href=#569 id=569 data-nosnippet>569</a>                                        <span class="prelude-val">Err</span>(()) =&gt; <span class="prelude-val">Err</span>(()),
+<a href=#570 id=570 data-nosnippet>570</a>                                    }
+<a href=#571 id=571 data-nosnippet>571</a>                                }
+<a href=#572 id=572 data-nosnippet>572</a>                                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(()),
+<a href=#573 id=573 data-nosnippet>573</a>                            };
+<a href=#574 id=574 data-nosnippet>574</a>                            session.respond_identity(tid, result, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#575 id=575 data-nosnippet>575</a>                                emitter.push(frame)
+<a href=#576 id=576 data-nosnippet>576</a>                            });
+<a href=#577 id=577 data-nosnippet>577</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#578 id=578 data-nosnippet>578</a>                        }
+<a href=#579 id=579 data-nosnippet>579</a>                        <span class="prelude-val">Some</span>(Effect::SetPairingPin { tid, pin }) =&gt; {
+<a href=#580 id=580 data-nosnippet>580</a>                            <span class="kw">let </span>applied = env.apply_pairing_pin(pin).<span class="kw">await</span>;
+<a href=#581 id=581 data-nosnippet>581</a>                            session.respond_pin_set(
+<a href=#582 id=582 data-nosnippet>582</a>                                tid,
+<a href=#583 id=583 data-nosnippet>583</a>                                applied.then_some(()).ok_or(()),
+<a href=#584 id=584 data-nosnippet>584</a>                                <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| emitter.push(frame),
+<a href=#585 id=585 data-nosnippet>585</a>                            );
+<a href=#586 id=586 data-nosnippet>586</a>                            emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#587 id=587 data-nosnippet>587</a>                        }
+<a href=#588 id=588 data-nosnippet>588</a>                        <span class="prelude-val">Some</span>(Effect::FactoryReset) =&gt; {
+<a href=#589 id=589 data-nosnippet>589</a>                            <span class="comment">// Hand off to the platform, which erases every
+<a href=#590 id=590 data-nosnippet>590</a>                            // persistent journal and reboots. This never
+<a href=#591 id=591 data-nosnippet>591</a>                            // returns; no acknowledgement is sent because the
+<a href=#592 id=592 data-nosnippet>592</a>                            // reset drops the link. Any frames the session
+<a href=#593 id=593 data-nosnippet>593</a>                            // already staged were flushed above.
+<a href=#594 id=594 data-nosnippet>594</a>                            </span>env.trace(<span class="macro">format_args!</span>(<span class="string">"CMD_FACTORY_RESET: wiping all state + reboot"</span>));
+<a href=#595 id=595 data-nosnippet>595</a>                            env.factory_reset().<span class="kw">await
+<a href=#596 id=596 data-nosnippet>596</a>                        </span>}
+<a href=#597 id=597 data-nosnippet>597</a>                        other =&gt; apply_effect(<span class="kw-2">&amp;</span>session, other, <span class="kw-2">&amp;</span>rt, <span class="kw-2">&amp;mut </span>env).<span class="kw">await</span>,
+<a href=#598 id=598 data-nosnippet>598</a>                    }
+<a href=#599 id=599 data-nosnippet>599</a>                    <span class="kw">if </span>session.queued_frame_count() == <span class="number">0 </span>{
+<a href=#600 id=600 data-nosnippet>600</a>                        env.clear_attention();
+<a href=#601 id=601 data-nosnippet>601</a>                    }
+<a href=#602 id=602 data-nosnippet>602</a>                }
+<a href=#603 id=603 data-nosnippet>603</a>            }
+<a href=#604 id=604 data-nosnippet>604</a>            Either3::Second(RxFrame { data, info }) =&gt; {
+<a href=#605 id=605 data-nosnippet>605</a>                <span class="comment">// While detached this may stage a delegated MAC
+<a href=#606 id=606 data-nosnippet>606</a>                // acknowledgement (Effect::StartTransmit).
+<a href=#607 id=607 data-nosnippet>607</a>                </span><span class="kw">let </span>queued_before = session.queued_frame_count();
+<a href=#608 id=608 data-nosnippet>608</a>                <span class="kw">let </span>effect = session.on_radio_rx(
+<a href=#609 id=609 data-nosnippet>609</a>                    <span class="kw-2">&amp;</span>data,
+<a href=#610 id=610 data-nosnippet>610</a>                    info.rssi,
+<a href=#611 id=611 data-nosnippet>611</a>                    info.snr.as_centibels(),
+<a href=#612 id=612 data-nosnippet>612</a>                    info.lqi,
+<a href=#613 id=613 data-nosnippet>613</a>                    Instant::now().as_millis(),
+<a href=#614 id=614 data-nosnippet>614</a>                    <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| emitter.push(frame),
+<a href=#615 id=615 data-nosnippet>615</a>                );
+<a href=#616 id=616 data-nosnippet>616</a>                <span class="kw">if </span>session.queued_frame_count() &gt; queued_before {
+<a href=#617 id=617 data-nosnippet>617</a>                    env.request_attention();
+<a href=#618 id=618 data-nosnippet>618</a>                }
+<a href=#619 id=619 data-nosnippet>619</a>                emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#620 id=620 data-nosnippet>620</a>                apply_effect(<span class="kw-2">&amp;</span>session, effect, <span class="kw-2">&amp;</span>rt, <span class="kw-2">&amp;mut </span>env).<span class="kw">await</span>;
+<a href=#621 id=621 data-nosnippet>621</a>            }
+<a href=#622 id=622 data-nosnippet>622</a>            Either3::Third(result) =&gt; {
+<a href=#623 id=623 data-nosnippet>623</a>                <span class="kw">let </span>now_ms = Instant::now().as_millis();
+<a href=#624 id=624 data-nosnippet>624</a>                <span class="kw">let </span>effect = session.on_tx_result(result.is_ok(), now_ms, <span class="kw-2">&amp;mut </span>|frame: <span class="kw-2">&amp;</span>[u8]| {
+<a href=#625 id=625 data-nosnippet>625</a>                    emitter.push(frame)
+<a href=#626 id=626 data-nosnippet>626</a>                });
+<a href=#627 id=627 data-nosnippet>627</a>                emitter.flush(arbitration.destination(), rt.out).<span class="kw">await</span>;
+<a href=#628 id=628 data-nosnippet>628</a>                apply_effect(<span class="kw-2">&amp;</span>session, effect, <span class="kw-2">&amp;</span>rt, <span class="kw-2">&amp;mut </span>env).<span class="kw">await</span>;
+<a href=#629 id=629 data-nosnippet>629</a>            }
+<a href=#630 id=630 data-nosnippet>630</a>        }
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="comment">// Any of the arms may have moved the device-domain tables
+<a href=#632 id=632 data-nosnippet>632</a>        // (property mutation, CMD_RST, CMD_RESTORE); one u32
+<a href=#633 id=633 data-nosnippet>633</a>        // compare when they did not.
+<a href=#634 id=634 data-nosnippet>634</a>        </span>sync_dev_domain(<span class="kw-2">&amp;</span>session, <span class="kw-2">&amp;mut </span>dev_domain_synced, <span class="kw-2">&amp;mut </span>env);
+<a href=#635 id=635 data-nosnippet>635</a>    }
+<a href=#636 id=636 data-nosnippet>636</a>}
+</code></pre></div></section></main></body></html>

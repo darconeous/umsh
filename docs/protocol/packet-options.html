@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -346,7 +346,29 @@
 </tbody>
 </table>
 </div>
-<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:</p>
+<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
+on the resulting value would yield three letters. In that case, you
+additionally perform the following transform:</p>
+<pre><code class="language-python">def transform_letter_chunk(encoded: int) -&gt; int:
+    """Transform a three-letter ARNCE chunk into a non-letter ARNCE chunk."""
+
+    LETTER_MIN = 1
+    LETTER_MAX = 26
+
+    TRANSFORM_BASE = 27 * 1600       # 0xA8C0
+    TRANSFORM_COUNT = 26 ** 3        # 17,576
+
+    a = encoded // 1600
+    b = (encoded // 40) % 40
+    c = encoded % 40
+
+    if not all(LETTER_MIN &lt;= x &lt;= LETTER_MAX for x in (a, b, c)):
+        return encoded
+
+    rank = (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
+    return TRANSFORM_BASE + rank
+</code></pre>
+<p>Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -355,23 +377,15 @@
 <tbody>
 <tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
 <tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
-<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0x6af2</code></td></tr>
+<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0xD35F</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.</p>
-<p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>If collisions between IATA-based codes and
-hash-based codes is a concern, we could redefine
-how hash-based codes are calculated to keep
-hashing the previous full hash value until it
-returns a result that is not a
-valid three-letter ARNCE encoding.</p>
-<p>This would have the benefit of allowing IATA codes
-to be immediately renderable in user interfaces.</p>
-</blockquote>
+<p>Note that the first two bytes of the SHA256 of “Southern Oregon” is 0x6AF2, which would decode to <code>QDR</code>, so it is transformed to 0xD35F (which would decode as 654).</p>
+<p>Thus, non-IATA-based region codes will never collide with IATA-based
+region codes. This allows all region codes which decode to three letters to be assumed to be an IATA region code and can be used/displayed unambiguously without additional context.</p>
+<p>However, collisions can still happen between hash-originated region codes.
+These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>

@@ -251,28 +251,31 @@
 <a href=#251 id=251 data-nosnippet>251</a>        } <span class="kw">else </span>{
 <a href=#252 id=252 data-nosnippet>252</a>            opts = opts.no_flood();
 <a href=#253 id=253 data-nosnippet>253</a>        }
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="self">self</span>.send(<span class="kw-2">&amp;</span>buf[..n], <span class="kw-2">&amp;</span>opts).<span class="kw">await
-<a href=#255 id=255 data-nosnippet>255</a>    </span>}
-<a href=#256 id=256 data-nosnippet>256</a>
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
-<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">pub async fn </span>request_pfs(
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#260 id=260 data-nosnippet>260</a>        duration_minutes: u16,
-<a href=#261 id=261 data-nosnippet>261</a>        options: <span class="kw-2">&amp;</span>SendOptions,
-<a href=#262 id=262 data-nosnippet>262</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;SendProgressTicket, NodeError&lt;M&gt;&gt; {
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="self">self</span>.transport
-<a href=#264 id=264 data-nosnippet>264</a>            .request_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>.peer, duration_minutes, options)
-<a href=#265 id=265 data-nosnippet>265</a>            .<span class="kw">await
-<a href=#266 id=266 data-nosnippet>266</a>    </span>}
-<a href=#267 id=267 data-nosnippet>267</a>
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
-<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">pub async fn </span>end_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>, options: <span class="kw-2">&amp;</span>SendOptions) -&gt; <span class="prelude-ty">Result</span>&lt;(), NodeError&lt;M&gt;&gt; {
-<a href=#270 id=270 data-nosnippet>270</a>        <span class="self">self</span>.transport.end_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>.peer, options).<span class="kw">await
-<a href=#271 id=271 data-nosnippet>271</a>    </span>}
-<a href=#272 id=272 data-nosnippet>272</a>
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
-<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">pub async fn </span>pfs_status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::node::PfsStatus, NodeError&lt;M&gt;&gt; {
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="self">self</span>.transport.pfs_status(<span class="kw-2">&amp;</span><span class="self">self</span>.peer).<span class="kw">await
-<a href=#276 id=276 data-nosnippet>276</a>    </span>}
-<a href=#277 id=277 data-nosnippet>277</a>}
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">if </span>options.trace_route {
+<a href=#255 id=255 data-nosnippet>255</a>            opts = opts.with_trace_route();
+<a href=#256 id=256 data-nosnippet>256</a>        }
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="self">self</span>.send(<span class="kw-2">&amp;</span>buf[..n], <span class="kw-2">&amp;</span>opts).<span class="kw">await
+<a href=#258 id=258 data-nosnippet>258</a>    </span>}
+<a href=#259 id=259 data-nosnippet>259</a>
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
+<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">pub async fn </span>request_pfs(
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#263 id=263 data-nosnippet>263</a>        duration_minutes: u16,
+<a href=#264 id=264 data-nosnippet>264</a>        options: <span class="kw-2">&amp;</span>SendOptions,
+<a href=#265 id=265 data-nosnippet>265</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;SendProgressTicket, NodeError&lt;M&gt;&gt; {
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="self">self</span>.transport
+<a href=#267 id=267 data-nosnippet>267</a>            .request_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>.peer, duration_minutes, options)
+<a href=#268 id=268 data-nosnippet>268</a>            .<span class="kw">await
+<a href=#269 id=269 data-nosnippet>269</a>    </span>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
+<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub async fn </span>end_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>, options: <span class="kw-2">&amp;</span>SendOptions) -&gt; <span class="prelude-ty">Result</span>&lt;(), NodeError&lt;M&gt;&gt; {
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="self">self</span>.transport.end_pfs(<span class="kw-2">&amp;</span><span class="self">self</span>.peer, options).<span class="kw">await
+<a href=#274 id=274 data-nosnippet>274</a>    </span>}
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
+<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">pub async fn </span>pfs_status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::node::PfsStatus, NodeError&lt;M&gt;&gt; {
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="self">self</span>.transport.pfs_status(<span class="kw-2">&amp;</span><span class="self">self</span>.peer).<span class="kw">await
+<a href=#279 id=279 data-nosnippet>279</a>    </span>}
+<a href=#280 id=280 data-nosnippet>280</a>}
 </code></pre></div></section></main></body></html>

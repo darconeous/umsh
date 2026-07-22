@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CadPolicy","TxError"],"struct":["EmbassyClock","NoChannelStore","NoPeerStore","NoPowerControl","RxInfo","Snr","TxOptions"],"trait":["ChannelStore","Clock","CounterStore","KeyValueStore","PeerStore","PowerControl","Radio"]};
+window.SIDEBAR_ITEMS = {"enum":["CadPolicy","TxError"],"struct":["EmbassyClock","NoChannelStore","NoCounterStore","NoKeyValueStore","NoPeerStore","NoPowerControl","RxInfo","Snr","TxOptions"],"trait":["ChannelStore","Clock","CounterStore","KeyValueStore","PeerStore","PowerControl","Radio"]};

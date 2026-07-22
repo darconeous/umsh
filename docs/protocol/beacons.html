@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,14 @@
 <li>a repeater path that may be usable to reach it</li>
 </ul>
 <p>This is particularly useful when a receiver already knows the node’s identity information.</p>
+<h2 id="advertisements"><a class="header" href="#advertisements">Advertisements</a></h2>
+<p>An <strong>advertisement</strong> is a broadcast or multicast packet whose payload is a
+<a href="node-identity.html">node identity</a> payload — a beacon that additionally
+identifies and describes its sender. Advertisements are sent unsolicited,
+announcing presence, name, role, and capabilities. To obtain a specific
+node’s identity, use the <a href="mac-commands.html#identity-request-1">Identity Request</a>
+MAC command, which is answered with a targeted unicast identity response
+rather than a broadcast advertisement.</p>
 <h2 id="path-discovery"><a class="header" href="#path-discovery">Path Discovery</a></h2>
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>

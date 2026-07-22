@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,7 +195,7 @@
 </tbody>
 </table>
 </div>
-<p>Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads (unicast to the room node), and the room distributes them to members the same way. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery.</p>
+<p>Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads by unicast, and the room distributes them to each member by separate unicast transmissions. Chat rooms do not use multicast. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery and is also delivered by unicast.</p>
 <h2 id="get-room-info--room-info"><a class="header" href="#get-room-info--room-info">Get Room Info / Room Info</a></h2>
 <p>A user may send a Get Room Info action to a room node without being logged in. The room responds with a Room Info action containing CoAP-option-encoded metadata:</p>
 <div class="table-wrapper">
@@ -233,7 +233,7 @@
 </div>
 <p>All options are optional. Behavior details:</p>
 <ul>
-<li>If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages can be retrieved with Fetch Messages.</li>
+<li>If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages MAY be retrieved with Fetch Messages, if stored.</li>
 <li>If the room is password-protected but already recognizes the user’s public key, the password is ignored. A room may forget a public key after prolonged inactivity, requiring a password on the next login.</li>
 <li>First-time logins must include the full 32-byte public key (S flag set).</li>
 </ul>
@@ -242,7 +242,7 @@
 <p>If the user is currently logged in, the room sends a final text message to all members using the User Left message type (see <a href="#system-events">System Events</a>).</p>
 <h2 id="send-message"><a class="header" href="#send-message">Send Message</a></h2>
 <p>To send a message to a chat room, a user sends a standard <a href="app-text-messages.html">text message</a> unicast to the room node. The Sender Handle option is ignored — the room fills it in from the sender’s registered handle when distributing the message to members.</p>
-<p>The Message Sequence option SHOULD be included, using the sender’s own per-sender message ID counter. The room uses this to detect duplicate submissions and to order rapid messages from the same user. The sender’s per-sender ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.</p>
+<p>The Message Sequence option SHOULD be included, using the sender’s own sequence for its conversation with this room. The room uses this to detect duplicate submissions and to order rapid messages from the same user. This sender-assigned ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.</p>
 <h2 id="fetch-messages"><a class="header" href="#fetch-messages">Fetch Messages</a></h2>
 <p>Retrieves previous messages posted to the room, which may include system messages.</p>
 <div class="table-wrapper">
@@ -261,7 +261,7 @@
 <h2 id="admin-commands"><a class="header" href="#admin-commands">Admin Commands</a></h2>
 <p>TBD.</p>
 <h2 id="message-distribution"><a class="header" href="#message-distribution">Message Distribution</a></h2>
-<p>When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see <a href="app-text-messages.html#regarding">Regarding</a>).</p>
+<p>When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a separate unicast text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see <a href="app-text-messages.html#regarding">Regarding</a>).</p>
 <p>All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room’s clock is synchronized.</p>
 <h3 id="sender-sequence"><a class="header" href="#sender-sequence">Sender Sequence</a></h3>
 <p>When the room echoes a message back to the original sender, it faces a correlation problem: the sender showed the message optimistically in their UI the moment they sent it, but the echoed copy arrives with a room-assigned ID the client has never seen. Without some way to link them, the client cannot reliably identify which pending outbound message the echo corresponds to — matching by content alone fails if the user sends identical messages in quick succession.</p>
@@ -277,7 +277,7 @@
 </tbody>
 </table>
 </div>
-<p>The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this against its pending outbound messages to identify the echo, then updates its local record to use the canonical room-assigned ID for future Regarding references.</p>
+<p>The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this value against its pending outbound messages to identify the echo. It then retains both wire identities on the same local message record: the sender-assigned ID and the canonical room-assigned Message Sequence ID carried by the echo. Room-wide Regarding references use the canonical room-assigned ID. When the original sender submits an edit or deletion of its own message to the room, its Editing option uses the original sender-assigned ID so that the room can correlate the update before redistributing it with the appropriate canonical reference.</p>
 <h3 id="system-events"><a class="header" href="#system-events">System Events</a></h3>
 <p>The room delivers system notifications as text messages to all logged-in members, using message types reserved for room use:</p>
 <div class="table-wrapper">

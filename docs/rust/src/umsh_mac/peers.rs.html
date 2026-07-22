@@ -354,21 +354,36 @@
 <a href=#354 id=354 data-nosnippet>354</a>        <span class="self">self</span>.channels.iter_mut()
 <a href=#355 id=355 data-nosnippet>355</a>    }
 <a href=#356 id=356 data-nosnippet>356</a>
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Add or replace a channel entry.
-<a href=#358 id=358 data-nosnippet>358</a>    </span><span class="kw">pub fn </span>try_add(
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#360 id=360 data-nosnippet>360</a>        key: ChannelKey,
-<a href=#361 id=361 data-nosnippet>361</a>        derived: DerivedChannelKeys,
-<a href=#362 id=362 data-nosnippet>362</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), CapacityError&gt; {
-<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = <span class="self">self</span>.get_mut_by_id(<span class="kw-2">&amp;</span>derived.channel_id) {
-<a href=#364 id=364 data-nosnippet>364</a>            channel.channel_key = key;
-<a href=#365 id=365 data-nosnippet>365</a>            channel.derived = derived;
-<a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#367 id=367 data-nosnippet>367</a>        }
-<a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="self">self</span>.channels
-<a href=#370 id=370 data-nosnippet>370</a>            .push(ChannelState::new(key, derived))
-<a href=#371 id=371 data-nosnippet>371</a>            .map_err(|<span class="kw">_</span>| CapacityError)
-<a href=#372 id=372 data-nosnippet>372</a>    }
-<a href=#373 id=373 data-nosnippet>373</a>}
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Remove the channel holding this exact key, discarding its replay
+<a href=#358 id=358 data-nosnippet>358</a>    /// state with it (re-adding the key later starts at first contact).
+<a href=#359 id=359 data-nosnippet>359</a>    /// Returns whether a channel was removed.
+<a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">pub fn </span>remove_by_key(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>ChannelKey) -&gt; bool {
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(index) = <span class="self">self
+<a href=#362 id=362 data-nosnippet>362</a>            </span>.channels
+<a href=#363 id=363 data-nosnippet>363</a>            .iter()
+<a href=#364 id=364 data-nosnippet>364</a>            .position(|channel| channel.channel_key.<span class="number">0 </span>== key.<span class="number">0</span>)
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw">else </span>{
+<a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#367 id=367 data-nosnippet>367</a>        };
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="self">self</span>.channels.swap_remove(index);
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="bool-val">true
+<a href=#370 id=370 data-nosnippet>370</a>    </span>}
+<a href=#371 id=371 data-nosnippet>371</a>
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// Add or replace a channel entry.
+<a href=#373 id=373 data-nosnippet>373</a>    </span><span class="kw">pub fn </span>try_add(
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#375 id=375 data-nosnippet>375</a>        key: ChannelKey,
+<a href=#376 id=376 data-nosnippet>376</a>        derived: DerivedChannelKeys,
+<a href=#377 id=377 data-nosnippet>377</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), CapacityError&gt; {
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = <span class="self">self</span>.get_mut_by_id(<span class="kw-2">&amp;</span>derived.channel_id) {
+<a href=#379 id=379 data-nosnippet>379</a>            channel.channel_key = key;
+<a href=#380 id=380 data-nosnippet>380</a>            channel.derived = derived;
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#382 id=382 data-nosnippet>382</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="self">self</span>.channels
+<a href=#385 id=385 data-nosnippet>385</a>            .push(ChannelState::new(key, derived))
+<a href=#386 id=386 data-nosnippet>386</a>            .map_err(|<span class="kw">_</span>| CapacityError)
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>}
 </code></pre></div></section></main></body></html>

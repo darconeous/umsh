@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DeliveryPath","DuplicateTreatment","ValidateError","Validated"],"fn":["validate"],"struct":["ContentMessage","DirectChannelProfile","Envelope","ValidationNotes"],"trait":["TextProfile"]};

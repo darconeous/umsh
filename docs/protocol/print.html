@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -856,7 +856,29 @@ unicast semantics without encryption.</p>
 </tbody>
 </table>
 </div>
-<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:</p>
+<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
+on the resulting value would yield three letters. In that case, you
+additionally perform the following transform:</p>
+<pre><code class="language-python">def transform_letter_chunk(encoded: int) -&gt; int:
+    """Transform a three-letter ARNCE chunk into a non-letter ARNCE chunk."""
+
+    LETTER_MIN = 1
+    LETTER_MAX = 26
+
+    TRANSFORM_BASE = 27 * 1600       # 0xA8C0
+    TRANSFORM_COUNT = 26 ** 3        # 17,576
+
+    a = encoded // 1600
+    b = (encoded // 40) % 40
+    c = encoded % 40
+
+    if not all(LETTER_MIN &lt;= x &lt;= LETTER_MAX for x in (a, b, c)):
+        return encoded
+
+    rank = (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
+    return TRANSFORM_BASE + rank
+</code></pre>
+<p>Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -865,23 +887,15 @@ unicast semantics without encryption.</p>
 <tbody>
 <tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
 <tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
-<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0x6af2</code></td></tr>
+<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0xD35F</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.</p>
-<p>These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>If collisions between IATA-based codes and
-hash-based codes is a concern, we could redefine
-how hash-based codes are calculated to keep
-hashing the previous full hash value until it
-returns a result that is not a
-valid three-letter ARNCE encoding.</p>
-<p>This would have the benefit of allowing IATA codes
-to be immediately renderable in user interfaces.</p>
-</blockquote>
+<p>Note that the first two bytes of the SHA256 of “Southern Oregon” is 0x6AF2, which would decode to <code>QDR</code>, so it is transformed to 0xD35F (which would decode as 654).</p>
+<p>Thus, non-IATA-based region codes will never collide with IATA-based
+region codes. This allows all region codes which decode to three letters to be assumed to be an IATA region code and can be used/displayed unambiguously without additional context.</p>
+<p>However, collisions can still happen between hash-originated region codes.
+These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
@@ -1713,6 +1727,14 @@ delay = uniform_random(0, W)
 <li>a repeater path that may be usable to reach it</li>
 </ul>
 <p>This is particularly useful when a receiver already knows the node’s identity information.</p>
+<h2 id="advertisements"><a class="header" href="#advertisements">Advertisements</a></h2>
+<p>An <strong>advertisement</strong> is a broadcast or multicast packet whose payload is a
+<a href="#node-identity">node identity</a> payload — a beacon that additionally
+identifies and describes its sender. Advertisements are sent unsolicited,
+announcing presence, name, role, and capabilities. To obtain a specific
+node’s identity, use the <a href="#identity-request-1">Identity Request</a>
+MAC command, which is answered with a targeted unicast identity response
+rather than a broadcast advertisement.</p>
 <h2 id="path-discovery"><a class="header" href="#path-discovery">Path Discovery</a></h2>
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>
@@ -1823,7 +1845,7 @@ delay = uniform_random(0, W)
 <ul>
 <li><code>ROLE</code> (1 byte) — the node’s <a href="#node-primary-role">primary role</a>.</li>
 <li><code>CAPS</code> (1 byte) — the node’s <a href="#capability-bitmap">capability bitmap</a>.</li>
-<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="#options-field">packet options</a>.</li>
+<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="#attribute-encoding">packet options</a>.</li>
 <li><code>0xFF</code> (1 byte, optional) — options-terminator marker. Present only when a signature follows.</li>
 <li><code>SIGNATURE</code> (64 bytes, optional) — EdDSA signature covering <code>ROLE</code> through the <code>0xFF</code> terminator, inclusive.</li>
 </ul>
@@ -1859,7 +1881,7 @@ delay = uniform_random(0, W)
 </ul>
 <p>A node may advertise multiple capabilities independently of its primary role. For example, a node with role <strong>Chat</strong> may also set the <code>REP</code> bit to advertise repeater duty.</p>
 <h2 id="node-identity-options"><a class="header" href="#node-identity-options">Node Identity Options</a></h2>
-<p>Options use the CoAP-style delta-length encoding defined in <a href="#option-encoding">Packet Options</a>.</p>
+<p>Options use the CoAP-style delta-length encoding defined in <a href="#attribute-encoding">Packet Options</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -1871,6 +1893,7 @@ delay = uniform_random(0, W)
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
 <tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">5</td><td>Nonce</td><td>4 bytes, echoed from a soliciting Identity Request</td></tr>
 </tbody>
 </table>
 </div>
@@ -1884,6 +1907,8 @@ delay = uniform_random(0, W)
 <p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
 <p>For repeaters, the list of <a href="#region-code-encoding">region codes</a> the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.</p>
+<h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
+<p>Copied verbatim from the <a href="#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
@@ -1993,7 +2018,7 @@ delay = uniform_random(0, W)
 <tr><th style="text-align: right">Value</th><th>Command</th><th>Direction</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>Beacon Request</td><td>Request</td></tr>
+<tr><td style="text-align: right">0</td><td>UNALLOCATED</td><td>–</td></tr>
 <tr><td style="text-align: right">1</td><td>Identity Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">2</td><td>Signal Report Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">3</td><td>Signal Report Response</td><td>Response</td></tr>
@@ -2006,26 +2031,49 @@ delay = uniform_random(0, W)
 </tbody>
 </table>
 </div>
-<h2 id="beacon-request-0"><a class="header" href="#beacon-request-0">Beacon Request (0)</a></h2>
-<p>Requests that the destination send back a beacon.</p>
+<h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
+<p>Requests that the destination respond with its <a href="#node-identity">node identity</a>.</p>
+<p>A common use is resolving a <a href="#node-hint">node hint</a> to a full
+address. A node that knows only a peer’s hint sends this command as a broadcast
+or multicast carrying a <a href="#identity-request-options">FILTER_NODE_HINT</a> filter; a
+matching node replies with an encrypted unicast (or blind unicast) response
+carrying its full node identity. When the requester believes the peer may not
+yet know the requester’s own address, it sends its full source address in the
+request so the peer can reply directly.</p>
+<p>Because a broadcast Identity Request can solicit many replies:</p>
+<ul>
+<li>A node MAY decline to respond to a request from an unknown source.</li>
+<li>A repeater MAY decline to forward a broadcast Identity Request, particularly
+when its filters are broad enough to solicit a large number of replies.</li>
+</ul>
+<p>An Identity Request is answered with a targeted unicast identity response, never
+by flooding an <a href="#advertisements">advertisement</a> to the whole network.</p>
+<h3 id="identity-request-options"><a class="header" href="#identity-request-options">Identity Request Options</a></h3>
+<p>A unicast Identity Request requires no payload. A multicast or broadcast request
+MUST carry at least one filter option, so that only the intended nodes respond.</p>
+<p>Options use the CoAP-style delta-length encoding defined in <a href="#attribute-encoding">Packet
+Options</a>. As in CoAP, an option’s key encodes
+its criticality: odd-numbered keys (least-significant bit set) are <strong>critical</strong>,
+even-numbered keys are <strong>elective</strong>. A node that encounters a critical option it
+does not understand MUST treat itself as excluded and MUST NOT respond.</p>
+<p>Filter options select which nodes respond. They combine as a logical <strong>AND</strong>
+across different filter types and a logical <strong>OR</strong> among repeated filters of the
+same type: a node responds only if it satisfies every filter type present, and
+it satisfies a given filter type if it matches any one of that type’s values.
+Non-filter options (such as NONCE) do not participate in this matching.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+<tr><th style="text-align: right">Key</th><th>Critical</th><th>Name</th><th>Value</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Nonce</td><td style="text-align: right">0 or 4 bytes</td><td>If present, must be copied into the response beacon</td></tr>
+<tr><td style="text-align: right">1</td><td>Yes</td><td>NONCE</td><td>4 bytes</td><td>Correlation identifier the responder MUST echo in its response’s <a href="#nonce-option-5">Nonce option</a>. Not a filter.</td></tr>
+<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>3 bytes</td><td>Respond only if this matches the responder’s own <a href="#node-hint">node hint</a>.</td></tr>
+<tr><td style="text-align: right">5</td><td>Yes</td><td>FILTER_NODE_ROLE</td><td>1 byte</td><td>Respond only if the responder’s <a href="#node-primary-role">primary role</a> equals this value.</td></tr>
+<tr><td style="text-align: right">7</td><td>Yes</td><td>FILTER_NODE_CAPS</td><td>1 byte</td><td>Respond only if the responder’s <a href="#capability-bitmap">capability bitmap</a> has every bit set that is set in this value.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Beacon requests may be used for:</p>
-<ul>
-<li>presence detection</li>
-<li>frame-counter synchronization</li>
-</ul>
-<h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
-<p>Requests that the destination respond with its <a href="#node-identity">node identity</a>.</p>
-<p>No command-specific payload.</p>
 <h2 id="signal-report-request-2"><a class="header" href="#signal-report-request-2">Signal Report Request (2)</a></h2>
 <p>Requests that the destination respond with signal quality information about the link.</p>
 <p>No command-specific payload.</p>
@@ -2102,7 +2150,7 @@ delay = uniform_random(0, W)
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
-<p>This command does nothing, however it will produce an UACK when sent via a packet
+<p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-management-protocol"><a class="header" href="#node-management-protocol">Node Management Protocol</a></h1>
@@ -2112,6 +2160,13 @@ type that requests an ACK.</p>
 <p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
 <p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
+<p>Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option’s role:</p>
+<ul>
+<li>An option that carries identity, sequencing, or reference semantics — Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence — makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.</li>
+<li>A presentation option — Sender Handle, Background Color, Text Color — keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.</li>
+<li>Duplicates of a zero-length flag option — Sequence Reset, Channel Group Resend — are idempotent.</li>
+</ul>
+<p>Repeated unrecognized options remain ignorable.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2126,6 +2181,7 @@ type that requests an ACK.</p>
 <tr><td style="text-align: right">5</td><td>Editing</td><td>1 byte</td></tr>
 <tr><td style="text-align: right">6</td><td>Background Color</td><td>3 bytes, RGB</td></tr>
 <tr><td style="text-align: right">7</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
+<tr><td style="text-align: right">8</td><td>Channel Group Resend</td><td>0 bytes (flag)</td></tr>
 </tbody>
 </table>
 </div>
@@ -2138,19 +2194,27 @@ type that requests an ACK.</p>
 <tbody>
 <tr><td style="text-align: right">0</td><td>Basic text</td><td>Displayed in a text bubble</td></tr>
 <tr><td style="text-align: right">1</td><td>Status text</td><td>Displayed inline as “[HANDLE] [MESSAGE]” (similar to IRC <code>/me</code>)</td></tr>
-<tr><td style="text-align: right">2</td><td>Message Resend Request</td><td>Not displayed, has no text, see below</td></tr>
+<tr><td style="text-align: right">2</td><td>Message Resend Request</td><td>Not displayed; see the body rules below</td></tr>
+<tr><td style="text-align: right">3</td><td>Message Unavailable</td><td>Not normally displayed; see below</td></tr>
 </tbody>
 </table>
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. An <strong>emote</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate emotes from plain status text by the presence of the Regarding option.</p>
-<p>A message resend request it itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL only contain one “Message Sequence” option which contains the specific message or fragment that was missed. This
-MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.</p>
-<p>For requesting a message that was sent to a channel, there is a need to disambiguate between requesting a message missed from the channel chat vs requesting a message missed from a blind unicast 1:1 chat. To disambiguate, when requesting the message from a channel chat, the text body will contain a single ASCII “#” character.</p>
+<p>A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.</p>
+<p>A resend request identifies exactly one missing frame, and a successful response retransmits exactly one frame. The 1-byte Message Sequence form requests a message by ID without specifying a fragment; the sender responds with the unfragmented message or, if it was fragmented, with fragment zero. The fragment count carried in fragment zero lets the requester ask for any remaining fragments individually. The 3-byte form requests one specific fragment.</p>
+<p>Not all messages are available to be resent; for example, a requested message may have been deleted or evicted. In that case, the original sender SHOULD respond with Message Unavailable. A sender producing Message Unavailable SHOULD include only a Message Type option with value 3 and one Message Sequence option exactly matching the requested message or fragment. Its body SHOULD be empty.</p>
+<p>Message Unavailable follows the delivery path appropriate to the requested conversation, just like a successful resend of the original message: direct-conversation responses use unicast, blind-unicast one-to-one channel responses use blind-unicast, and channel-group responses use multicast to the channel.</p>
+<p>Once a receiver has unambiguously recognized Message Unavailable and its single Message Sequence option, it MUST ignore all other options and the entire body. The indicated sequence position is treated as accounted for, so it no longer remains a gap in that sender’s sequence history. The receiver is not required to render a whole-message unavailable response in the UI.</p>
+<p>When the three-byte Message Sequence form identifies a fragment, only that requested fragment is reported unavailable, even if the sender no longer has any part of the message. Other fragments remain independently repairable. The receiver SHOULD render the unavailable portion of the partial message as unavailable rather than continuing to show it as pending.</p>
+<p>Message Unavailable is also the standard response to a request for an unknown Message Sequence ID, including an ID that has not been sent.</p>
+<h3 id="channel-group-resend"><a class="header" href="#channel-group-resend">Channel Group Resend</a></h3>
+<p>A zero-length flag used only on a Message Resend Request received by blind-unicast. Both a request for a message missed from a multicast channel conversation and a request for a message missed from a blind-unicast one-to-one conversation arrive by blind-unicast. The presence of this flag selects the sender’s archive for the multicast channel conversation. Its absence selects the sender’s archive for the blind-unicast one-to-one conversation with the requester.</p>
+<p>A receiver MUST drop a request containing this flag if the request was not received by blind-unicast or if the option has a non-zero length. The flag has no meaning on other message types and MUST be ignored there.</p>
 <h3 id="sender-handle"><a class="header" href="#sender-handle">Sender Handle</a></h3>
 <p>A UTF-8 string containing the name or pseudonym of the sender. If not supplied, a handle may be inferred from previously received node metadata for the sender’s address.</p>
 <h3 id="message-sequence"><a class="header" href="#message-sequence">Message Sequence</a></h3>
-<p>Associates a packet with a per-sender monotonically increasing message identifier, and optionally carries fragmentation state. The option is encouraged on all messages but is not required. Messages without this option cannot be directly referenced in replies or emotes.</p>
+<p>Associates a packet with a monotonically increasing message identifier maintained independently for each sender within each conversation, and optionally carries fragmentation state. The option is encouraged on all messages but is not required. Messages without this option cannot be directly referenced in replies or emotes.</p>
 <p>The option value is either 1 byte or 3 bytes:</p>
 <p><strong>1-byte form</strong> (message ID only):</p>
 <div class="table-wrapper">
@@ -2178,28 +2242,43 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </div>
 <p>Rules:</p>
 <ul>
-<li>Message IDs are per-sender and monotonically increasing, wrapping at 255.</li>
+<li>Message IDs are monotonically increasing per sender within each conversation, wrapping at 255. A one-to-one blind-unicast conversation and the group conversation on the same channel are distinct conversations with independent sequence streams, even though they share channel key material.</li>
+<li>When an ID wraps and is reused, the older message with that ID in the same conversation-and-sender stream is retired: it is no longer a valid target for Regarding, Editing, or a resend request in that stream. Retirement does not affect any other stream or already-displayed history.</li>
 <li>Messages smaller than <code>MTU</code>-32 bytes SHOULD NOT be fragmented.</li>
+<li>A fragment body carries at most 160 bytes, and a message has at most 10 fragments; senders MUST NOT exceed either limit. Larger fragment bodies and larger fragment counts are nevertheless syntactically valid; a receiver that will not reassemble such a message drops the assembly and MAY account for the ID as unavailable rather than leaving a gap.</li>
+<li>Fragmentation splits the body at byte boundaries. An individual fragment body is not required to be valid UTF-8; the reassembled body is validated as UTF-8 only after every fragment is present.</li>
 <li>Options from the first fragment (Fragment Index 0) apply to the entire reassembled message. Subsequent fragments MUST NOT include options that would override those of the first fragment, and any such options MUST be ignored by the receiver.</li>
-<li>During reassembly, missing fragments SHOULD be rendered as <code>[FRAGMENT MISSING]</code>, or an appropriately-localized equivalent.</li>
+<li>During reassembly, missing fragments SHOULD be rendered as <code>[FRAGMENT MISSING]</code>, or an appropriately-localized equivalent. When a fragment boundary splits a UTF-8 code point, rendering discards the incomplete code point on each side of the gap; the substituted marker is part of the rendered display, not the message body.</li>
 <li>Out-of-order reassembly SHOULD be supported for fragments received within a reasonable amount of time (thirty seconds to two minutes).</li>
 <li>Edits (see <a href="#editing">Editing</a>) carry their own message IDs and MUST NOT be referenced by subsequent Editing or Regarding options. The original message ID is the stable reference.</li>
 </ul>
+<h3 id="ordering-gaps-and-automatic-repair"><a class="header" href="#ordering-gaps-and-automatic-repair">Ordering, Gaps, and Automatic Repair</a></h3>
+<p>Message IDs compare using serial-number arithmetic modulo 256. Relative to the most recent ID accepted from a sender in a conversation, a forward delta of 1 through 127 is newer; a delta of 128 through 255 is old or ambiguous.</p>
+<p>A forward delta greater than 1 within one conversation-and-sender stream means messages are missing from that stream. A gap in one sender’s stream says nothing about any other sender in the conversation. After a short reordering grace period, a receiver MAY request each missing message with a resend request using the 1-byte Message Sequence form, subject to the limits below:</p>
+<ul>
+<li>Automatic repair is bounded: a receiver SHOULD NOT automatically request more than 8 missing messages from a single observed gap, and SHOULD apply per-peer and overall rate limits to all generated resend requests.</li>
+<li>A forward delta greater than the receiver’s automatic-repair bound, an ambiguous delta, the first message observed from a sender, and the first message after a Sequence Reset all establish a new baseline. Receivers MUST NOT generate automatic resend requests to backfill across a baseline.</li>
+<li>Repair of a channel-group conversation requires addressing a blind unicast to the original sender, which requires that sender’s full public key. A member holding only the source hint cannot construct the request and simply renders the loss.</li>
+<li>In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message — or a Message Unavailable naming it — arrives on the channel before the request is sent.</li>
+<li>Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.</li>
+</ul>
 <h3 id="sequence-reset"><a class="header" href="#sequence-reset">Sequence Reset</a></h3>
-<p>A 0-byte flag option that signals the sender has reset its message ID counter — for example, after a restart. Receivers SHOULD discard any cached message context for this sender, including pending fragment reassembly state.</p>
+<p>A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation — for example, after losing that conversation’s persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.</p>
 <p>The Sequence Reset option SHOULD accompany a Message Sequence option bearing the sender’s new starting ID. In the absence of a Message Sequence option, receivers SHOULD treat the next message from that sender as starting a fresh sequence.</p>
+<p>Reset announcement is lazy and scoped to the affected conversation: the sender includes the flag on the next message it actually sends in that conversation. Senders do not transmit standalone reset messages preemptively to conversations they are not otherwise sending to.</p>
 <h3 id="regarding"><a class="header" href="#regarding">Regarding</a></h3>
 <p>References a previously sent message for the purposes of replies and emotes.</p>
-<p>The option length depends on context:</p>
+<p>The option length depends on the conversation, not on how the MAC packet is addressed:</p>
 <ul>
-<li><strong>Unicast</strong> (MAC packet addressed to a single destination): 1 byte — the Message ID of the referenced message.</li>
-<li><strong>Multicast channel</strong>: 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
+<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): 1 byte — the Message ID of the referenced message.</li>
+<li><strong>Channel-group conversation</strong> (delivered by multicast to the channel): 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
 </ul>
 <p>The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence, or if the user has since reset their sequence ID.</p>
 <p>In chat rooms, the room assigns canonical Message IDs across all senders (see <a href="#room-update">Chat Rooms</a>), so the 1-byte form is used and no source prefix is needed.</p>
 <h3 id="editing"><a class="header" href="#editing">Editing</a></h3>
-<p>Indicates that this message replaces a previously sent message from the same sender. The option value is 1 byte: the Message ID of the message being edited. Because only the original sender can issue an edit (enforced by MAC-layer authentication), no source prefix is needed.</p>
+<p>Indicates that this message replaces a previously sent message in the same conversation and sender scope. The option value is 1 byte: the Message ID of the message being edited. No source prefix is needed because the source scope comes from the enclosing packet. For unicast and blind-unicast, pairwise authentication binds that source to a peer key. For multicast, authentication proves only possession of the channel key; the source hint is a claimed identity, and the protocol cannot prevent one channel member from impersonating another member.</p>
 <p>An edit with a zero-length body signals deletion of the original message.</p>
+<p>For as long as a client retains sequence history for an edited or deleted message, it SHOULD retain the stable original-message identity or a tombstone so that references can still be resolved. A client MAY retain prior revision content, including deleted content, for edit-history display; this is a local storage and privacy policy rather than a protocol requirement.</p>
 <p>Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message’s ID, not the edit’s ID.</p>
 <p>How edits are presented to users is implementation-defined. Implementations typically display only the most recent edit, with some indication that edits exist, and an optional mechanism to view edit history.</p>
 <h3 id="background-color"><a class="header" href="#background-color">Background Color</a></h3>
@@ -2230,7 +2309,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </tbody>
 </table>
 </div>
-<p>Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads (unicast to the room node), and the room distributes them to members the same way. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery.</p>
+<p>Regular message exchange — including system events — does not use a dedicated action type. Users send messages to the room as plain text message payloads by unicast, and the room distributes them to each member by separate unicast transmissions. Chat rooms do not use multicast. Action types are reserved for room management operations. Room Update (action 8) is used only for batch history delivery and is also delivered by unicast.</p>
 <h2 id="get-room-info--room-info"><a class="header" href="#get-room-info--room-info">Get Room Info / Room Info</a></h2>
 <p>A user may send a Get Room Info action to a room node without being logged in. The room responds with a Room Info action containing CoAP-option-encoded metadata:</p>
 <div class="table-wrapper">
@@ -2268,7 +2347,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </div>
 <p>All options are optional. Behavior details:</p>
 <ul>
-<li>If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages can be retrieved with Fetch Messages.</li>
+<li>If a last-message timestamp is provided and more than 10 messages have been received since then, only the 10 most recent are sent automatically. Older messages MAY be retrieved with Fetch Messages, if stored.</li>
 <li>If the room is password-protected but already recognizes the user’s public key, the password is ignored. A room may forget a public key after prolonged inactivity, requiring a password on the next login.</li>
 <li>First-time logins must include the full 32-byte public key (S flag set).</li>
 </ul>
@@ -2277,7 +2356,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <p>If the user is currently logged in, the room sends a final text message to all members using the User Left message type (see <a href="#system-events">System Events</a>).</p>
 <h2 id="send-message"><a class="header" href="#send-message">Send Message</a></h2>
 <p>To send a message to a chat room, a user sends a standard <a href="#text-messages">text message</a> unicast to the room node. The Sender Handle option is ignored — the room fills it in from the sender’s registered handle when distributing the message to members.</p>
-<p>The Message Sequence option SHOULD be included, using the sender’s own per-sender message ID counter. The room uses this to detect duplicate submissions and to order rapid messages from the same user. The sender’s per-sender ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.</p>
+<p>The Message Sequence option SHOULD be included, using the sender’s own sequence for its conversation with this room. The room uses this to detect duplicate submissions and to order rapid messages from the same user. This sender-assigned ID is separate from the canonical room-assigned ID that the room assigns when distributing the message.</p>
 <h2 id="fetch-messages"><a class="header" href="#fetch-messages">Fetch Messages</a></h2>
 <p>Retrieves previous messages posted to the room, which may include system messages.</p>
 <div class="table-wrapper">
@@ -2296,7 +2375,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 <h2 id="admin-commands"><a class="header" href="#admin-commands">Admin Commands</a></h2>
 <p>TBD.</p>
 <h2 id="message-distribution"><a class="header" href="#message-distribution">Message Distribution</a></h2>
-<p>When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see <a href="#regarding">Regarding</a>).</p>
+<p>When the room receives a message from a user, it assigns a monotonically increasing canonical Message Sequence ID from a single room-wide counter and distributes the message to each logged-in member as a separate unicast text message. System events (user join/leave, admin messages) are distributed the same way, using room-specific message types. This gives the room a single unified message ordering across all activity — a Regarding option referencing a room message ID is unambiguous without a source prefix (see <a href="#regarding">Regarding</a>).</p>
 <p>All timestamps are managed by the room and are relative to its own clock — typically a UTC UNIX timestamp, though accuracy depends on whether the room’s clock is synchronized.</p>
 <h3 id="sender-sequence"><a class="header" href="#sender-sequence">Sender Sequence</a></h3>
 <p>When the room echoes a message back to the original sender, it faces a correlation problem: the sender showed the message optimistically in their UI the moment they sent it, but the echoed copy arrives with a room-assigned ID the client has never seen. Without some way to link them, the client cannot reliably identify which pending outbound message the echo corresponds to — matching by content alone fails if the user sends identical messages in quick succession.</p>
@@ -2312,7 +2391,7 @@ MUST be received via unicast (for one-on-one messages) or blind-unicast (for cha
 </tbody>
 </table>
 </div>
-<p>The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this against its pending outbound messages to identify the echo, then updates its local record to use the canonical room-assigned ID for future Regarding references.</p>
+<p>The Sender Sequence value is the per-sender Message Sequence ID the user included in their outbound message. The client matches this value against its pending outbound messages to identify the echo. It then retains both wire identities on the same local message record: the sender-assigned ID and the canonical room-assigned Message Sequence ID carried by the echo. Room-wide Regarding references use the canonical room-assigned ID. When the original sender submits an edit or deletion of its own message to the room, its Editing option uses the original sender-assigned ID so that the room can correlate the update before redistributing it with the appropriate canonical reference.</p>
 <h3 id="system-events"><a class="header" href="#system-events">System Events</a></h3>
 <p>The room delivers system notifications as text messages to all logged-in members, using message types reserved for room use:</p>
 <div class="table-wrapper">
@@ -3583,7 +3662,8 @@ list ((#prop-dev-peers))</li>
 <li>the RF configuration (<code>PROP_PHY_*</code>), including <code>PROP_PHY_ENABLED</code>, and
 the duty-cycle limit</li>
 <li>the human-readable device name (<code>PROP_DEV_NAME</code>)</li>
-<li>device behavior settings (property identifiers 69–95, reserved for
+<li>live battery telemetry (<code>PROP_BATTERY</code>), when <code>CAP_BATTERY</code> is present</li>
+<li>device behavior settings (property identifiers 70–95, reserved for
 future definition: repeater policy, positioning, periodic advertisement
 of the device identity, and similar)</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
@@ -3670,14 +3750,15 @@ restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host’s behalf.</p>
 <ul>
 <li><code>CMD_SAVE</code> (see (#cmd-save)) atomically writes the current device
-domain and host domain — including the RF configuration and the current
-value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage, replacing any
-previous snapshot. Two things are never part of a snapshot: <strong>queue
-contents</strong>, and the <strong>device identity keypair</strong>, which is independently
-persisted the moment it is installed or generated (see
-(#prop-dev-private-key)) and is changed only by explicit provisioning
-or <code>CMD_CLEAR</code> — neither <code>CMD_RESTORE</code> nor a reboot can revert the
-device identity to an earlier key.</li>
+domain and host domain <strong>configuration</strong> — including the RF configuration
+and the current value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage,
+replacing any previous snapshot. Dynamic read-only state, including
+queue contents and <code>PROP_BATTERY</code>, is never part of a snapshot. The
+device identity keypair is also excluded: it is independently persisted
+the moment it is installed or generated (see (#prop-dev-private-key)) and
+is changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
+<code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
+key.</li>
 <li>At boot, if a snapshot exists, the NCP <strong>MUST</strong> restore it and resume
 operation accordingly <em>before</em> processing any host command: the RF
 configuration is applied, the PHY is re-enabled if it was enabled when
@@ -3722,7 +3803,7 @@ Implementations MAY persist the queue to narrow this window, but hosts
 </ul>
 <h2 id="additional-commands"><a class="header" href="#additional-commands">Additional Commands</a></h2>
 <p>The full protocol assigns the four command identifiers reserved by the
-minimal protocol for table operations, and adds three more:</p>
+minimal protocol for table operations, and adds four more:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3737,6 +3818,7 @@ minimal protocol for table operations, and adds three more:</p>
 <tr><td>12</td><td><code>CMD_SAVE</code></td><td>Host-&gt;NCP</td><td>Save state to non-volatile storage</td></tr>
 <tr><td>13</td><td><code>CMD_CLEAR</code></td><td>Host-&gt;NCP</td><td>Erase all saved state</td></tr>
 <tr><td>14</td><td><code>CMD_RESTORE</code></td><td>Host-&gt;NCP</td><td>Restore state from the saved snapshot</td></tr>
+<tr><td>15</td><td><code>CMD_FACTORY_RESET</code></td><td>Host-&gt;NCP</td><td>Erase <strong>all</strong> mutable state (incl. bonds) and reboot</td></tr>
 </tbody>
 </table>
 </div>
@@ -3952,6 +4034,34 @@ properties it depends on, exactly as in the post-attach procedure.</p>
 exists (see <code>PROP_SAVED</code>) — the value of the emitted <code>PROP_LAST_STATUS</code>
 will be set accordingly, no state is modified, and no reset code is
 emitted.</p>
+<h3 id="cmd-factory-reset"><a class="header" href="#cmd-factory-reset">CMD 15: (Host -&gt; NCP) <code>CMD_FACTORY_RESET</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_FACTORY_RST|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_FACTORY_RESET</code></p>
+<p>Return the radio to a blank factory state. Commands the NCP to erase
+<strong>every</strong> piece of mutable state it holds — both the persisted state
+<code>CMD_CLEAR</code> erases (the saved snapshot, all persisted provisioning, and
+the device identity private key) <strong>and</strong> the transport-level state
+<code>CMD_CLEAR</code> deliberately preserves: all BLE bonds and the configured
+<code>PROP_BLE_PAIRING_PIN</code> — and then reboot. After the reboot the radio is
+indistinguishable from one that has never been provisioned or paired.</p>
+<p>This differs from <code>CMD_CLEAR</code> + <code>CMD_RST</code> in two ways: it also clears
+transport-level pairing state (bonds and PIN), and it performs a hardware
+reboot rather than only a protocol-session reset.</p>
+<p>The command payload SHOULD be empty and MUST be ignored. Unlike every
+other command, <code>CMD_FACTORY_RESET</code> <strong>has no response</strong>: the NCP wipes its
+storage and reboots, which drops the transport link. A host treats the
+ensuing disconnect (and the radio’s subsequent reappearance in a factory
+state) as completion; it <strong>MUST NOT</strong> wait for a <code>PROP_LAST_STATUS</code>. The
+TID is therefore irrelevant.</p>
+<p>Because clearing the bonds invalidates the encrypted link the command
+arrived on, a host that issues <code>CMD_FACTORY_RESET</code> over a bonded transport
+should also discard its own pairing to the radio.</p>
+<p>This command is available regardless of capabilities.</p>
 <p>This command is only available on NCPs advertising <code>CAP_SAVE</code>; otherwise
 it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <h2 id="multi-value-properties"><a class="header" href="#multi-value-properties">Multi-Value Properties</a></h2>
@@ -4019,7 +4129,7 @@ host domain fully in effect and the new host key not installed.</li>
 </thead>
 <tbody>
 <tr><td>48–63</td><td>Session-scoped and global protocol state</td></tr>
-<tr><td>64–95</td><td>Device domain (<code>PROP_DEV_*</code>)</td></tr>
+<tr><td>64–95</td><td>Device domain</td></tr>
 <tr><td>96–127</td><td>Host domain (<code>PROP_HOST_*</code>)</td></tr>
 </tbody>
 </table>
@@ -4038,6 +4148,7 @@ host domain fully in effect and the new host key not installed.</li>
 <tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
 <tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
 <tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
+<tr><td>69</td><td><code>PROP_BATTERY</code></td><td>Get, Is</td><td>Battery status snapshot</td></tr>
 <tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
 <tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
 <tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
@@ -4186,6 +4297,99 @@ They <strong>MAY</strong> shorten it to fit a constrained presentation, but <str
 split a UTF-8 code point when doing so.</p>
 <p>The name is intentionally public metadata. Operators should assume that any
 value used in discovery advertisements can be observed by nearby devices.</p>
+<h3 id="prop-battery"><a class="header" href="#prop-battery">PROP 69: <code>PROP_BATTERY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BATTERY</code></li>
+<li>Value Type: Battery status snapshot (see below), or empty</li>
+<li>Post-Reset Value: Current measurement, or empty if reporting is
+unsupported</li>
+</ul>
+<p>An NCP advertising <code>CAP_BATTERY</code> has a battery capable of powering its
+operation and recognizes this property. The capability does not require the
+hardware to support reporting any measurement: an implementation that cannot
+report battery status at all answers <code>CMD_PROP_GET</code> successfully with an
+<strong>empty value</strong>.</p>
+<p>A non-empty value is a snapshot of the battery measurements the platform
+supports, taken as one measurement event:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Octets</th><th>Field</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Field flags</td></tr>
+<tr><td>0 or 2</td><td>Battery voltage, UINT16_LE, millivolts</td></tr>
+<tr><td>0 or 1</td><td>Battery level, UINT8, percent (0–100)</td></tr>
+<tr><td>0+</td><td>Charge state, PUI</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bits 0 (voltage), 1 (level), and 2 (charge state) of the field flags octet
+indicate which fields are present; present fields follow in the order above.
+Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
+with a reserved bit set, or whose length does not match its field flags, as
+malformed.</p>
+<p>Which fields are reported is fixed for a given hardware and firmware
+configuration: the field flags do not change while a session is attached. An
+absent field indicates only that the implementation cannot report that
+measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
+or temporarily unreadable battery: an implementation that normally reports a
+field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
+with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
+value.</p>
+<p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
+the request is serviced, not a previously cached reading; concurrent
+requests <strong>MAY</strong> share one measurement. How each field is produced is
+platform-defined — in particular, the level estimate is not necessarily
+derived from the voltage measurement, and a platform with a fuel gauge may
+report a level without reporting a voltage at all.</p>
+<p>The fields:</p>
+<dl>
+<dt id="battery-voltage"><a class="header" href="#battery-voltage"><strong>Battery voltage</strong></a></dt>
+<dd>The measured voltage at the battery terminals, in millivolts. This is the
+battery voltage, not an external-power input or regulated system voltage;
+it may therefore reflect the normal voltage elevation that occurs while
+the battery is charging.</dd>
+<dt id="battery-level"><a class="header" href="#battery-level"><strong>Battery level</strong></a></dt>
+<dd>The implementation’s estimate of the battery’s state of charge, as an
+integer percentage from 0 through 100 inclusive. A host <strong>MUST NOT</strong>
+derive this value from the voltage field or assume that successive
+estimates change monotonically.</dd>
+<dt id="charge-state"><a class="header" href="#charge-state"><strong>Charge state</strong></a></dt>
+<dd>The current battery charge state:</dd>
+</dl>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>BATTERY_CHARGE_STATE_DISCHARGING</code></td></tr>
+<tr><td>1</td><td><code>BATTERY_CHARGE_STATE_CHARGING</code></td></tr>
+<tr><td>2</td><td><code>BATTERY_CHARGE_STATE_CHARGED</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
+<dd>The charging system reports neither active charging nor charge completion.
+This is the charge state used for a disconnected battery when the
+implementation can detect that condition; an absent field remains reserved
+exclusively for unsupported reporting.</dd>
+<dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
+<dd>The charging system reports that the battery is actively receiving charge.</dd>
+<dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
+<dd>External power is present and the charging system reports that charging has
+completed. A battery at 100 percent while operating without external power
+remains in <code>BATTERY_CHARGE_STATE_DISCHARGING</code>.</dd>
+</dl>
+<p>The property contains live, read-only state. It is never included in a
+saved snapshot and is not changed by <code>CMD_RESTORE</code>. An NCP <strong>MAY</strong> emit
+unsolicited <code>CMD_PROP_IS</code> updates when the reported snapshot changes. Such
+updates <strong>SHOULD</strong> be coalesced or rate-limited so that measurement noise
+does not produce excessive companion traffic.</p>
 <h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -4631,6 +4835,7 @@ not indicate a problem.</dd>
 <tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><code>CMD_SAVE</code>, <code>CMD_RESTORE</code>, <code>PROP_SAVED</code>, and boot-time restoration of saved state</td></tr>
 <tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
+<tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -4971,7 +5176,310 @@ the NCP (see <a href="#security-boundary">Companion Radio</a>)
 <strong>MUST NOT</strong> be carried over a link that does not meet the
 requirements of this section.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h1>
+<h1 id="identity-export-format"><a class="header" href="#identity-export-format">Identity Export Format</a></h1>
+<p>This appendix defines a portable, passphrase-protected artifact for backing
+up and restoring a node identity, together with the secret material and local
+knowledge that make a restored identity immediately useful. It is produced
+and consumed by host implementations — phones, tablets, and desktops. A
+companion radio never generates, stores, or parses an export artifact, and a
+companion radio’s own device identity is never exported through this format.</p>
+<p>The artifact is a single binary object with two layers:</p>
+<ul>
+<li>an <strong>envelope</strong> that binds a format version and key-derivation parameters
+to an encrypted, authenticated body; and</li>
+<li>a <strong>payload</strong> inside the envelope: a CBOR map carrying the identity secret,
+counter-recovery information, and optional local state.</li>
+</ul>
+<p>The same format serves two profiles distinguished only by which payload
+sections are present:</p>
+<ul>
+<li>a <strong>core export</strong> carries only the identity and counter sections. It is
+small enough to render as a short QR sequence (see
+<a href="#qr-part-framing">QR Part Framing</a>) and suits printed or engraved
+recovery copies.</li>
+<li>a <strong>full export</strong> additionally carries channel keys, contacts, and
+application settings. It is intended for file storage.</li>
+</ul>
+<p>No <code>umsh:</code> URI form is defined for export artifacts. This is deliberate:
+private key material must not flow through link handlers, pasteboards, or
+URI-preview machinery. The recommended file extension is <code>.umshid</code>.</p>
+<h2 id="envelope"><a class="header" href="#envelope">Envelope</a></h2>
+<p>All multi-byte integers are big-endian, as elsewhere in UMSH.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Offset</th><th>Size</th><th>Field</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>6</td><td>Magic</td><td>ASCII <code>UMSHID</code></td></tr>
+<tr><td>6</td><td>1</td><td>Format version</td><td><code>0x01</code></td></tr>
+<tr><td>7</td><td>1</td><td>KDF identifier</td><td><code>0x01</code> = Argon2id</td></tr>
+<tr><td>8</td><td>4</td><td>Argon2id memory cost <em>m</em></td><td>KiB</td></tr>
+<tr><td>12</td><td>4</td><td>Argon2id time cost <em>t</em></td><td>passes</td></tr>
+<tr><td>16</td><td>1</td><td>Argon2id parallelism <em>p</em></td><td>lanes</td></tr>
+<tr><td>17</td><td>16</td><td>KDF salt</td><td>random per export</td></tr>
+<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = UMSH SIV construction</td></tr>
+<tr><td>34</td><td>16</td><td>MIC</td><td>full AES-CMAC tag</td></tr>
+<tr><td>50</td><td>—</td><td>Ciphertext</td><td>encrypted payload</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bytes 0–33 (everything before the MIC) form the <strong>envelope header</strong>. The
+header is authenticated as associated data; any modification of the version,
+KDF parameters, salt, or cipher identifier invalidates the MIC.</p>
+<p>The KDF salt <strong>MUST</strong> be freshly generated from a cryptographically secure
+random source for every export, including re-exports of the same identity.</p>
+<p>Unrecognized format version, KDF identifier, or cipher identifier values
+<strong>MUST</strong> cause the importer to reject the artifact before attempting key
+derivation.</p>
+<h2 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h2>
+<p>The passphrase is encoded as UTF-8 after Unicode NFC normalization.
+Normalization is required: text input methods on different platforms produce
+different codepoint sequences for visually identical passphrases, and a
+cross-platform artifact must decrypt identically everywhere.</p>
+<pre><code class="language-text">prk  = Argon2id(passphrase, kdf_salt, m, t, p, taglen = 32)
+
+ikm  = prk
+salt = "UMSH-IDEXPORT-SALT"
+info = "UMSH-IDEXPORT-V1"
+okm  = HKDF-SHA256(ikm, salt, info, 32)
+
+K_enc = okm[0..15]
+K_mic = okm[16..31]
+</code></pre>
+<p>Exporters <strong>MUST</strong> use at least <em>m</em> = 19456 KiB, <em>t</em> = 2, <em>p</em> = 1, and
+<strong>SHOULD</strong> use <em>m</em> = 65536 KiB, <em>t</em> = 3, <em>p</em> = 1 where device memory allows.
+Importers <strong>MUST</strong> honor the parameters carried in the header, but <strong>MAY</strong>
+refuse artifacts whose parameters exceed a local resource ceiling (for
+example <em>m</em> &gt; 1048576 KiB, <em>t</em> &gt; 32, or <em>p</em> &gt; 4) to avoid resource-exhaustion
+attacks through crafted headers.</p>
+<h2 id="encryption-and-authentication"><a class="header" href="#encryption-and-authentication">Encryption and Authentication</a></h2>
+<p>The payload is protected with the same SIV-style construction used for
+packets (see <a href="#encrypted-packets">Encrypted Packets</a>), with the
+full 16-byte MIC and the envelope header as associated data:</p>
+<ol>
+<li>Compute the full 16-byte AES-CMAC over the envelope header followed by
+the payload plaintext, using <code>K_mic</code>.</li>
+<li>Use the MIC directly as the 16-byte CTR IV, as in standard AES-SIV.</li>
+<li>Encrypt the payload using <strong>AES-128-CTR</strong> with <code>K_enc</code> and that IV.</li>
+</ol>
+<p>To import, derive the keys, decrypt the ciphertext, recompute the CMAC over
+the header and recovered plaintext, and compare it to the stored MIC in
+constant time. On mismatch the importer <strong>MUST</strong> report a single generic
+failure: a wrong passphrase and a corrupted or forged artifact are
+deliberately indistinguishable.</p>
+<h2 id="payload-1"><a class="header" href="#payload-1">Payload</a></h2>
+<p>The payload is a CBOR (RFC 8949) map using unsigned-integer keys.
+Definite-length encoding <strong>MUST</strong> be used. Deterministic encoding is not
+required; the envelope, not the payload encoding, provides integrity.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Section</th><th>Type</th><th>Presence</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Identity</td><td>map</td><td>required</td></tr>
+<tr><td>2</td><td>Counters</td><td>map</td><td>required</td></tr>
+<tr><td>3</td><td>Channels</td><td>array of maps</td><td>optional</td></tr>
+<tr><td>4</td><td>Contacts</td><td>array of maps</td><td>optional</td></tr>
+<tr><td>5</td><td>Application settings</td><td>map</td><td>optional</td></tr>
+</tbody>
+</table>
+</div>
+<p>Importers <strong>MUST</strong> ignore unrecognized top-level keys and unrecognized keys
+within any section. Unrecognized content <strong>MUST NOT</strong> be preserved into a
+later re-export: a section defined by a future version may carry security
+state that must not outlive the format revision that understands it.</p>
+<h3 id="identity-section"><a class="header" href="#identity-section">Identity Section</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Field</th><th>Type</th><th>Presence</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Private key seed</td><td>32-byte byte string</td><td>required</td></tr>
+<tr><td>2</td><td>Created</td><td>unsigned (Unix seconds)</td><td>optional</td></tr>
+<tr><td>3</td><td>Display name</td><td>text string</td><td>optional</td></tr>
+<tr><td>4</td><td>Advertisement</td><td>byte string</td><td>optional</td></tr>
+</tbody>
+</table>
+</div>
+<p>The seed is the node’s Ed25519 private key seed, from which the Ed25519
+public key and the derived X25519 key are obtained. The public key is not
+stored; the importer <strong>MUST</strong> derive it from the seed, and that derived key
+is the restored identity’s address.</p>
+<p>The advertisement, when present, is the node’s most recent
+<a href="#advertisements">advertisement</a> in canonical wire form. The
+importer <strong>SHOULD</strong> verify its signature against the derived public key and
+discard it — without failing the restore — if verification fails.</p>
+<h3 id="counter-section"><a class="header" href="#counter-section">Counter Section</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Field</th><th>Type</th><th>Presence</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>TX counter floor</td><td>unsigned</td><td>required</td></tr>
+<tr><td>2</td><td>Restore generation</td><td>unsigned</td><td>required</td></tr>
+</tbody>
+</table>
+</div>
+<p>The TX counter floor is the highest outbound
+<a href="#frame-counter-1">frame counter</a> value the exporting
+implementation knows to have been used, maximized across however many
+outbound counters it tracks. It is a floor, not a current value: the
+exporting device may continue transmitting after the export is created, so
+the artifact is stale by an unknown amount the moment it exists. Restore
+safety comes from the advance rule below, not from the accuracy of this
+field.</p>
+<p>The restore generation records how many times this identity had been
+restored from an export when the artifact was created. It begins at zero,
+and each successful restore records one more than the value found in the
+artifact. It is bookkeeping for diagnostics and future exports; it is not a
+security mechanism.</p>
+<h3 id="channel-section"><a class="header" href="#channel-section">Channel Section</a></h3>
+<p>Each entry describes one channel membership:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Field</th><th>Type</th><th>Presence</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Channel key</td><td>32-byte byte string</td><td>required</td></tr>
+<tr><td>2</td><td>Kind</td><td>unsigned</td><td>required</td></tr>
+<tr><td>3</td><td>Name</td><td>text string</td><td>optional</td></tr>
+</tbody>
+</table>
+</div>
+<p>Kind values: <code>1</code> =
+<a href="#private-channels">private channel</a>, <code>2</code> =
+<a href="#named-channels">named channel</a>, <code>3</code> =
+<a href="#managed-channels">managed channel</a>. For named
+channels the key is derivable from the canonical name, but the key is stored
+regardless so that import never depends on name canonicalization. The name
+field carries the canonical name for named channels and the local display
+name otherwise.</p>
+<h3 id="contact-section"><a class="header" href="#contact-section">Contact Section</a></h3>
+<p>Each entry describes one known peer:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Field</th><th>Type</th><th>Presence</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Public key</td><td>32-byte byte string</td><td>required</td></tr>
+<tr><td>2</td><td>Local alias</td><td>text string</td><td>optional</td></tr>
+<tr><td>3</td><td>Advertisement</td><td>byte string</td><td>optional</td></tr>
+</tbody>
+</table>
+</div>
+<p>The advertisement, when present, is the peer’s cached
+<a href="#advertisements">advertisement</a> in canonical wire form. The
+importer <strong>SHOULD</strong> verify its signature against the entry’s public key and
+discard it on failure. Local aliases are display state, not protocol state.</p>
+<p>Ephemeral session state is never exported: PFS sessions are local to the
+device that negotiated them, and receive-side replay baselines are
+re-established through the normal
+<a href="#frame-counter-1">first-contact and re-baselining rules</a>.</p>
+<h3 id="application-settings-section"><a class="header" href="#application-settings-section">Application Settings Section</a></h3>
+<p>A map with text-string keys and arbitrary CBOR values, namespaced by the
+producing application (for example <code>ios.notifications.previews</code>). Contents
+are application-defined and restored best-effort; importers <strong>MUST</strong> ignore
+entries they do not understand. This section <strong>MUST NOT</strong> contain key
+material or any other secret — secrets belong only in the sections defined
+above.</p>
+<h2 id="restore-procedure"><a class="header" href="#restore-procedure">Restore Procedure</a></h2>
+<ol>
+<li>
+<p>Parse the envelope; reject unknown version, KDF, or cipher identifiers.</p>
+</li>
+<li>
+<p>Derive keys from the passphrase and header parameters; decrypt and
+authenticate. Report authentication failure generically.</p>
+</li>
+<li>
+<p>Derive the public key from the seed and present the identity (name,
+complete address) for explicit confirmation before committing anything.</p>
+</li>
+<li>
+<p>On confirmation, compute the restored outbound frame counter:</p>
+<pre><code class="language-text">block    = 2^24
+restored = (floor(tx_floor / block) + 2) * block
+</code></pre>
+<p>If <code>restored</code> does not fit in the 4-byte counter space, the restore
+<strong>MUST</strong> fail; the identity’s counter space is effectively exhausted and
+the identity should be retired rather than restored.</p>
+</li>
+<li>
+<p>Persist the identity, the restored counter value, and the incremented
+restore generation before the identity sends any authenticated traffic.</p>
+</li>
+<li>
+<p>Import optional sections, verifying signatures where specified.</p>
+</li>
+</ol>
+<p>The advance rule skips at least one full block of 2²⁴ counter values beyond
+the recorded floor. This dominates any plausible transmission volume between
+export and restore on a LoRa-class link, and bounds the identity to roughly
+250 restores across its lifetime — a deliberate trade of counter space for
+safety against a stale floor.</p>
+<p>Restoring an identity does not revoke the source: the exporting device, and
+every other copy of the artifact, still holds a working private key. The
+restore flow <strong>MUST</strong> state that the exporting device is to stop using the
+identity; concurrent use violates the monotonic-counter assumption that
+peers rely on for replay protection. After a successful restore,
+implementations <strong>SHOULD</strong> encourage creating a fresh export, since existing
+artifacts remain valid but describe a stale counter floor and generation.</p>
+<h2 id="qr-part-framing"><a class="header" href="#qr-part-framing">QR Part Framing</a></h2>
+<p>An artifact rendered as QR codes is split into parts, each carried in one
+symbol using QR byte mode:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Offset</th><th>Size</th><th>Field</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>4</td><td>Part magic</td><td>ASCII <code>UMQR</code></td></tr>
+<tr><td>4</td><td>1</td><td>Framing version</td><td><code>0x01</code></td></tr>
+<tr><td>5</td><td>4</td><td>Artifact check</td><td>first 4 bytes of SHA-256 of the complete envelope</td></tr>
+<tr><td>9</td><td>1</td><td>Part index</td><td>0-based</td></tr>
+<tr><td>10</td><td>1</td><td>Part count</td><td>total parts, ≥ 1</td></tr>
+<tr><td>11</td><td>—</td><td>Chunk</td><td>envelope bytes</td></tr>
+</tbody>
+</table>
+</div>
+<p>Concatenating the chunks in index order reproduces the envelope.
+An importer <strong>MUST NOT</strong> combine parts whose artifact check values differ,
+and <strong>MUST</strong> verify the reassembled envelope against the check value before
+attempting decryption. The check value is a reassembly guard against mixing
+parts from different exports; the envelope MIC remains the integrity
+mechanism.</p>
+<p>A core export fits in two to three modest QR symbols. Full exports are not
+intended for QR presentation.</p>
+<h2 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h2>
+<p><strong>The passphrase is the floor.</strong> Argon2id raises the cost of guessing but
+cannot rescue a weak passphrase, and the artifact is exposed to offline
+attack wherever it is stored. Applications should communicate this when the
+passphrase is chosen.</p>
+<p><strong>A full export is more than a key.</strong> Channel keys are membership
+credentials; an attacker who decrypts a full export can read and send on
+every included channel, not merely impersonate the identity. Applications
+should present a full export as at least as sensitive as the identity
+itself.</p>
+<p><strong>Artifacts cannot be revoked.</strong> Every copy of an export remains a valid
+credential for as long as the identity and the included channel keys remain
+in use. Deleting the file an application knows about does not delete copies.
+Retiring a compromised export means retiring the identity and rotating the
+included channel keys.</p>
+<p><strong>Decrypted material must be handled like the live key.</strong> Implementations
+zeroize decrypted payload buffers, never log payload contents, and never
+expose the seed or channel keys outside the component that consumes them.</p>
+<p><strong>Header parameters are attacker-controlled until authenticated.</strong> The KDF
+parameters are read before any authentication is possible; the resource
+ceilings in <a href="#key-derivation">Key Derivation</a> exist so a crafted header
+cannot demand unbounded memory or time.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security Considerations</a></h1>
 <p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>
 <h2 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h2>
 <p>UMSH is designed for a shared radio medium where any device in range can observe and inject packets. The threat model assumes:</p>
@@ -5532,7 +6040,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <h3 id="pkc-direct-messages"><a class="header" href="#pkc-direct-messages">PKC Direct Messages</a></h3>
 <p>Meshtastic v2.5+ added Curve25519 ECDH with AES-CCM for direct messages, providing both confidentiality and authentication. This is a substantial improvement over channel-only encryption, but applies only to direct messages — all broadcast traffic (position, telemetry, channel text) remains unauthenticated.</p>
 <p>UMSH authenticates all traffic uniformly — unicast, multicast, and broadcast — using the same CMAC-based construction. There is no distinction between “authenticated” and “unauthenticated” packet classes.</p>
-<h3 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h3>
+<h3 id="key-derivation-1"><a class="header" href="#key-derivation-1">Key Derivation</a></h3>
 <p>Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
 <p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.</p>
 <h2 id="routing-1"><a class="header" href="#routing-1">Routing</a></h2>

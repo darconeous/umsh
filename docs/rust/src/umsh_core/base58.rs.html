@@ -103,39 +103,48 @@
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="attr">#[test]
 <a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">fn </span>encode_matches_reference_vectors() {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>ZERO), <span class="string">b"11111111111111111111111111111111111111111111"</span>);
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>MAX), <span class="string">b"JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG"</span>);
-<a href=#108 id=108 data-nosnippet>108</a>
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span><span class="kw-2">mut </span>one = ZERO;
-<a href=#110 id=110 data-nosnippet>110</a>        one[<span class="number">31</span>] = <span class="number">1</span>;
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>one), <span class="string">b"11111111111111111111111111111111111111111112"</span>);
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="macro">assert_eq!</span>(
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>leading_zero_key()),
-<a href=#115 id=115 data-nosnippet>115</a>            <span class="string">b"111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE"
-<a href=#116 id=116 data-nosnippet>116</a>        </span>);
-<a href=#117 id=117 data-nosnippet>117</a>    }
-<a href=#118 id=118 data-nosnippet>118</a>
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="attr">#[test]
-<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">fn </span>decode_round_trips() {
-<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">for </span>key <span class="kw">in </span>[ZERO, MAX, leading_zero_key()] {
-<a href=#122 id=122 data-nosnippet>122</a>            <span class="macro">assert_eq!</span>(decode(<span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>key)).unwrap(), key);
-<a href=#123 id=123 data-nosnippet>123</a>        }
-<a href=#124 id=124 data-nosnippet>124</a>    }
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="attr">#[test]
-<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">fn </span>decode_rejects_bad_input() {
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="macro">assert_eq!</span>(decode(<span class="string">b"7NeD"</span>), <span class="prelude-val">Err</span>(AddressParseError::InvalidLength));
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="comment">// '0', 'O', 'I', and 'l' are excluded from the base58 alphabet.
-<a href=#130 id=130 data-nosnippet>130</a>        </span><span class="kw">for </span>bad <span class="kw">in </span>[<span class="string">b'0'</span>, <span class="string">b'O'</span>, <span class="string">b'I'</span>, <span class="string">b'l'</span>] {
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw">let </span><span class="kw-2">mut </span>digits = <span class="kw-2">*</span><span class="string">b"11111111111111111111111111111111111111111111"</span>;
-<a href=#132 id=132 data-nosnippet>132</a>            digits[<span class="number">10</span>] = bad;
-<a href=#133 id=133 data-nosnippet>133</a>            <span class="macro">assert_eq!</span>(decode(<span class="kw-2">&amp;</span>digits), <span class="prelude-val">Err</span>(AddressParseError::InvalidCharacter));
-<a href=#134 id=134 data-nosnippet>134</a>        }
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="macro">assert_eq!</span>(
-<a href=#136 id=136 data-nosnippet>136</a>            decode(<span class="kw-2">&amp;</span>[<span class="string">b'z'</span>; ENCODED_LEN]),
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="prelude-val">Err</span>(AddressParseError::Overflow)
-<a href=#138 id=138 data-nosnippet>138</a>        );
-<a href=#139 id=139 data-nosnippet>139</a>    }
-<a href=#140 id=140 data-nosnippet>140</a>}
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="macro">assert_eq!</span>(
+<a href=#107 id=107 data-nosnippet>107</a>            <span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>ZERO),
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="string">b"11111111111111111111111111111111111111111111"
+<a href=#109 id=109 data-nosnippet>109</a>        </span>);
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="macro">assert_eq!</span>(
+<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>MAX),
+<a href=#112 id=112 data-nosnippet>112</a>            <span class="string">b"JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG"
+<a href=#113 id=113 data-nosnippet>113</a>        </span>);
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span><span class="kw-2">mut </span>one = ZERO;
+<a href=#116 id=116 data-nosnippet>116</a>        one[<span class="number">31</span>] = <span class="number">1</span>;
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="macro">assert_eq!</span>(
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>one),
+<a href=#119 id=119 data-nosnippet>119</a>            <span class="string">b"11111111111111111111111111111111111111111112"
+<a href=#120 id=120 data-nosnippet>120</a>        </span>);
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="macro">assert_eq!</span>(
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>leading_zero_key()),
+<a href=#124 id=124 data-nosnippet>124</a>            <span class="string">b"111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE"
+<a href=#125 id=125 data-nosnippet>125</a>        </span>);
+<a href=#126 id=126 data-nosnippet>126</a>    }
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="attr">#[test]
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">fn </span>decode_round_trips() {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">for </span>key <span class="kw">in </span>[ZERO, MAX, leading_zero_key()] {
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="macro">assert_eq!</span>(decode(<span class="kw-2">&amp;</span>encode(<span class="kw-2">&amp;</span>key)).unwrap(), key);
+<a href=#132 id=132 data-nosnippet>132</a>        }
+<a href=#133 id=133 data-nosnippet>133</a>    }
+<a href=#134 id=134 data-nosnippet>134</a>
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="attr">#[test]
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">fn </span>decode_rejects_bad_input() {
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="macro">assert_eq!</span>(decode(<span class="string">b"7NeD"</span>), <span class="prelude-val">Err</span>(AddressParseError::InvalidLength));
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="comment">// '0', 'O', 'I', and 'l' are excluded from the base58 alphabet.
+<a href=#139 id=139 data-nosnippet>139</a>        </span><span class="kw">for </span>bad <span class="kw">in </span>[<span class="string">b'0'</span>, <span class="string">b'O'</span>, <span class="string">b'I'</span>, <span class="string">b'l'</span>] {
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="kw">let </span><span class="kw-2">mut </span>digits = <span class="kw-2">*</span><span class="string">b"11111111111111111111111111111111111111111111"</span>;
+<a href=#141 id=141 data-nosnippet>141</a>            digits[<span class="number">10</span>] = bad;
+<a href=#142 id=142 data-nosnippet>142</a>            <span class="macro">assert_eq!</span>(decode(<span class="kw-2">&amp;</span>digits), <span class="prelude-val">Err</span>(AddressParseError::InvalidCharacter));
+<a href=#143 id=143 data-nosnippet>143</a>        }
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="macro">assert_eq!</span>(
+<a href=#145 id=145 data-nosnippet>145</a>            decode(<span class="kw-2">&amp;</span>[<span class="string">b'z'</span>; ENCODED_LEN]),
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="prelude-val">Err</span>(AddressParseError::Overflow)
+<a href=#147 id=147 data-nosnippet>147</a>        );
+<a href=#148 id=148 data-nosnippet>148</a>    }
+<a href=#149 id=149 data-nosnippet>149</a>}
 </code></pre></div></section></main></body></html>

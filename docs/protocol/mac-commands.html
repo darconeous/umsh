@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,7 +188,7 @@
 <tr><th style="text-align: right">Value</th><th>Command</th><th>Direction</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td>Beacon Request</td><td>Request</td></tr>
+<tr><td style="text-align: right">0</td><td>UNALLOCATED</td><td>–</td></tr>
 <tr><td style="text-align: right">1</td><td>Identity Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">2</td><td>Signal Report Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">3</td><td>Signal Report Response</td><td>Response</td></tr>
@@ -201,26 +201,49 @@
 </tbody>
 </table>
 </div>
-<h2 id="beacon-request-0"><a class="header" href="#beacon-request-0">Beacon Request (0)</a></h2>
-<p>Requests that the destination send back a beacon.</p>
+<h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
+<p>Requests that the destination respond with its <a href="node-identity.html">node identity</a>.</p>
+<p>A common use is resolving a <a href="addressing.html#node-hint">node hint</a> to a full
+address. A node that knows only a peer’s hint sends this command as a broadcast
+or multicast carrying a <a href="#identity-request-options">FILTER_NODE_HINT</a> filter; a
+matching node replies with an encrypted unicast (or blind unicast) response
+carrying its full node identity. When the requester believes the peer may not
+yet know the requester’s own address, it sends its full source address in the
+request so the peer can reply directly.</p>
+<p>Because a broadcast Identity Request can solicit many replies:</p>
+<ul>
+<li>A node MAY decline to respond to a request from an unknown source.</li>
+<li>A repeater MAY decline to forward a broadcast Identity Request, particularly
+when its filters are broad enough to solicit a large number of replies.</li>
+</ul>
+<p>An Identity Request is answered with a targeted unicast identity response, never
+by flooding an <a href="beacons.html#advertisements">advertisement</a> to the whole network.</p>
+<h3 id="identity-request-options"><a class="header" href="#identity-request-options">Identity Request Options</a></h3>
+<p>A unicast Identity Request requires no payload. A multicast or broadcast request
+MUST carry at least one filter option, so that only the intended nodes respond.</p>
+<p>Options use the CoAP-style delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet
+Options</a>. As in CoAP, an option’s key encodes
+its criticality: odd-numbered keys (least-significant bit set) are <strong>critical</strong>,
+even-numbered keys are <strong>elective</strong>. A node that encounters a critical option it
+does not understand MUST treat itself as excluded and MUST NOT respond.</p>
+<p>Filter options select which nodes respond. They combine as a logical <strong>AND</strong>
+across different filter types and a logical <strong>OR</strong> among repeated filters of the
+same type: a node responds only if it satisfies every filter type present, and
+it satisfies a given filter type if it matches any one of that type’s values.
+Non-filter options (such as NONCE) do not participate in this matching.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+<tr><th style="text-align: right">Key</th><th>Critical</th><th>Name</th><th>Value</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td>Nonce</td><td style="text-align: right">0 or 4 bytes</td><td>If present, must be copied into the response beacon</td></tr>
+<tr><td style="text-align: right">1</td><td>Yes</td><td>NONCE</td><td>4 bytes</td><td>Correlation identifier the responder MUST echo in its response’s <a href="node-identity.html#nonce-option-5">Nonce option</a>. Not a filter.</td></tr>
+<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>3 bytes</td><td>Respond only if this matches the responder’s own <a href="addressing.html#node-hint">node hint</a>.</td></tr>
+<tr><td style="text-align: right">5</td><td>Yes</td><td>FILTER_NODE_ROLE</td><td>1 byte</td><td>Respond only if the responder’s <a href="node-identity.html#node-primary-role">primary role</a> equals this value.</td></tr>
+<tr><td style="text-align: right">7</td><td>Yes</td><td>FILTER_NODE_CAPS</td><td>1 byte</td><td>Respond only if the responder’s <a href="node-identity.html#capability-bitmap">capability bitmap</a> has every bit set that is set in this value.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Beacon requests may be used for:</p>
-<ul>
-<li>presence detection</li>
-<li>frame-counter synchronization</li>
-</ul>
-<h2 id="identity-request-1"><a class="header" href="#identity-request-1">Identity Request (1)</a></h2>
-<p>Requests that the destination respond with its <a href="node-identity.html">node identity</a>.</p>
-<p>No command-specific payload.</p>
 <h2 id="signal-report-request-2"><a class="header" href="#signal-report-request-2">Signal Report Request (2)</a></h2>
 <p>Requests that the destination respond with signal quality information about the link.</p>
 <p>No command-specific payload.</p>
@@ -297,7 +320,7 @@
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
-<p>This command does nothing, however it will produce an UACK when sent via a packet
+<p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
 
                     </main>

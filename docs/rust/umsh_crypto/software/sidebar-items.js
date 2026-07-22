@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["is_valid_ed25519_public_key"],"struct":["SoftwareAes","SoftwareAesCipher","SoftwareIdentity","SoftwareSha256"],"type":["SoftwareCryptoEngine"]};
+window.SIDEBAR_ITEMS = {"fn":["is_valid_ed25519_public_key","verify_ed25519_signature"],"struct":["SoftwareAes","SoftwareAesCipher","SoftwareIdentity","SoftwareSha256"],"type":["SoftwareCryptoEngine"]};

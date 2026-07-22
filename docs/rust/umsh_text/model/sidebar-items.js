@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRAGMENT_BODY_MAX","FRAGMENT_COUNT_MAX","REASSEMBLED_BODY_MAX"],"enum":["ConversationKey","MessageType","Regarding","SenderScope","WireRef"],"mod":["option"],"struct":["ExtensionOptions","ExtensionOptionsIter","Fragment","MessageSequence","TextMessage"]};

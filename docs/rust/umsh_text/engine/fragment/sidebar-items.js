@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PAGE_SIZE"],"enum":["InsertOutcome"],"fn":["empty_slot","render_slot"],"struct":["BodyTooLarge","FirstMeta","FragmentPlan","ReassemblyPool","RenderResult","RenderSentinels","Slot"]};

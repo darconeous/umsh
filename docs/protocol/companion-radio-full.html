@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -253,7 +253,8 @@ list ((#prop-dev-peers))</li>
 <li>the RF configuration (<code>PROP_PHY_*</code>), including <code>PROP_PHY_ENABLED</code>, and
 the duty-cycle limit</li>
 <li>the human-readable device name (<code>PROP_DEV_NAME</code>)</li>
-<li>device behavior settings (property identifiers 69–95, reserved for
+<li>live battery telemetry (<code>PROP_BATTERY</code>), when <code>CAP_BATTERY</code> is present</li>
+<li>device behavior settings (property identifiers 70–95, reserved for
 future definition: repeater policy, positioning, periodic advertisement
 of the device identity, and similar)</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
@@ -340,14 +341,15 @@ restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host’s behalf.</p>
 <ul>
 <li><code>CMD_SAVE</code> (see (#cmd-save)) atomically writes the current device
-domain and host domain — including the RF configuration and the current
-value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage, replacing any
-previous snapshot. Two things are never part of a snapshot: <strong>queue
-contents</strong>, and the <strong>device identity keypair</strong>, which is independently
-persisted the moment it is installed or generated (see
-(#prop-dev-private-key)) and is changed only by explicit provisioning
-or <code>CMD_CLEAR</code> — neither <code>CMD_RESTORE</code> nor a reboot can revert the
-device identity to an earlier key.</li>
+domain and host domain <strong>configuration</strong> — including the RF configuration
+and the current value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage,
+replacing any previous snapshot. Dynamic read-only state, including
+queue contents and <code>PROP_BATTERY</code>, is never part of a snapshot. The
+device identity keypair is also excluded: it is independently persisted
+the moment it is installed or generated (see (#prop-dev-private-key)) and
+is changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
+<code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
+key.</li>
 <li>At boot, if a snapshot exists, the NCP <strong>MUST</strong> restore it and resume
 operation accordingly <em>before</em> processing any host command: the RF
 configuration is applied, the PHY is re-enabled if it was enabled when
@@ -392,7 +394,7 @@ Implementations MAY persist the queue to narrow this window, but hosts
 </ul>
 <h2 id="additional-commands"><a class="header" href="#additional-commands">Additional Commands</a></h2>
 <p>The full protocol assigns the four command identifiers reserved by the
-minimal protocol for table operations, and adds three more:</p>
+minimal protocol for table operations, and adds four more:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -407,6 +409,7 @@ minimal protocol for table operations, and adds three more:</p>
 <tr><td>12</td><td><code>CMD_SAVE</code></td><td>Host-&gt;NCP</td><td>Save state to non-volatile storage</td></tr>
 <tr><td>13</td><td><code>CMD_CLEAR</code></td><td>Host-&gt;NCP</td><td>Erase all saved state</td></tr>
 <tr><td>14</td><td><code>CMD_RESTORE</code></td><td>Host-&gt;NCP</td><td>Restore state from the saved snapshot</td></tr>
+<tr><td>15</td><td><code>CMD_FACTORY_RESET</code></td><td>Host-&gt;NCP</td><td>Erase <strong>all</strong> mutable state (incl. bonds) and reboot</td></tr>
 </tbody>
 </table>
 </div>
@@ -622,6 +625,34 @@ properties it depends on, exactly as in the post-attach procedure.</p>
 exists (see <code>PROP_SAVED</code>) — the value of the emitted <code>PROP_LAST_STATUS</code>
 will be set accordingly, no state is modified, and no reset code is
 emitted.</p>
+<h3 id="cmd-factory-reset"><a class="header" href="#cmd-factory-reset">CMD 15: (Host -&gt; NCP) <code>CMD_FACTORY_RESET</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_FACTORY_RST|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_FACTORY_RESET</code></p>
+<p>Return the radio to a blank factory state. Commands the NCP to erase
+<strong>every</strong> piece of mutable state it holds — both the persisted state
+<code>CMD_CLEAR</code> erases (the saved snapshot, all persisted provisioning, and
+the device identity private key) <strong>and</strong> the transport-level state
+<code>CMD_CLEAR</code> deliberately preserves: all BLE bonds and the configured
+<code>PROP_BLE_PAIRING_PIN</code> — and then reboot. After the reboot the radio is
+indistinguishable from one that has never been provisioned or paired.</p>
+<p>This differs from <code>CMD_CLEAR</code> + <code>CMD_RST</code> in two ways: it also clears
+transport-level pairing state (bonds and PIN), and it performs a hardware
+reboot rather than only a protocol-session reset.</p>
+<p>The command payload SHOULD be empty and MUST be ignored. Unlike every
+other command, <code>CMD_FACTORY_RESET</code> <strong>has no response</strong>: the NCP wipes its
+storage and reboots, which drops the transport link. A host treats the
+ensuing disconnect (and the radio’s subsequent reappearance in a factory
+state) as completion; it <strong>MUST NOT</strong> wait for a <code>PROP_LAST_STATUS</code>. The
+TID is therefore irrelevant.</p>
+<p>Because clearing the bonds invalidates the encrypted link the command
+arrived on, a host that issues <code>CMD_FACTORY_RESET</code> over a bonded transport
+should also discard its own pairing to the radio.</p>
+<p>This command is available regardless of capabilities.</p>
 <p>This command is only available on NCPs advertising <code>CAP_SAVE</code>; otherwise
 it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <h2 id="multi-value-properties"><a class="header" href="#multi-value-properties">Multi-Value Properties</a></h2>
@@ -689,7 +720,7 @@ host domain fully in effect and the new host key not installed.</li>
 </thead>
 <tbody>
 <tr><td>48–63</td><td>Session-scoped and global protocol state</td></tr>
-<tr><td>64–95</td><td>Device domain (<code>PROP_DEV_*</code>)</td></tr>
+<tr><td>64–95</td><td>Device domain</td></tr>
 <tr><td>96–127</td><td>Host domain (<code>PROP_HOST_*</code>)</td></tr>
 </tbody>
 </table>
@@ -708,6 +739,7 @@ host domain fully in effect and the new host key not installed.</li>
 <tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
 <tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
 <tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
+<tr><td>69</td><td><code>PROP_BATTERY</code></td><td>Get, Is</td><td>Battery status snapshot</td></tr>
 <tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
 <tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
 <tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
@@ -856,6 +888,99 @@ They <strong>MAY</strong> shorten it to fit a constrained presentation, but <str
 split a UTF-8 code point when doing so.</p>
 <p>The name is intentionally public metadata. Operators should assume that any
 value used in discovery advertisements can be observed by nearby devices.</p>
+<h3 id="prop-battery"><a class="header" href="#prop-battery">PROP 69: <code>PROP_BATTERY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BATTERY</code></li>
+<li>Value Type: Battery status snapshot (see below), or empty</li>
+<li>Post-Reset Value: Current measurement, or empty if reporting is
+unsupported</li>
+</ul>
+<p>An NCP advertising <code>CAP_BATTERY</code> has a battery capable of powering its
+operation and recognizes this property. The capability does not require the
+hardware to support reporting any measurement: an implementation that cannot
+report battery status at all answers <code>CMD_PROP_GET</code> successfully with an
+<strong>empty value</strong>.</p>
+<p>A non-empty value is a snapshot of the battery measurements the platform
+supports, taken as one measurement event:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Octets</th><th>Field</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Field flags</td></tr>
+<tr><td>0 or 2</td><td>Battery voltage, UINT16_LE, millivolts</td></tr>
+<tr><td>0 or 1</td><td>Battery level, UINT8, percent (0–100)</td></tr>
+<tr><td>0+</td><td>Charge state, PUI</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bits 0 (voltage), 1 (level), and 2 (charge state) of the field flags octet
+indicate which fields are present; present fields follow in the order above.
+Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
+with a reserved bit set, or whose length does not match its field flags, as
+malformed.</p>
+<p>Which fields are reported is fixed for a given hardware and firmware
+configuration: the field flags do not change while a session is attached. An
+absent field indicates only that the implementation cannot report that
+measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
+or temporarily unreadable battery: an implementation that normally reports a
+field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
+with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
+value.</p>
+<p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
+the request is serviced, not a previously cached reading; concurrent
+requests <strong>MAY</strong> share one measurement. How each field is produced is
+platform-defined — in particular, the level estimate is not necessarily
+derived from the voltage measurement, and a platform with a fuel gauge may
+report a level without reporting a voltage at all.</p>
+<p>The fields:</p>
+<dl>
+<dt id="battery-voltage"><a class="header" href="#battery-voltage"><strong>Battery voltage</strong></a></dt>
+<dd>The measured voltage at the battery terminals, in millivolts. This is the
+battery voltage, not an external-power input or regulated system voltage;
+it may therefore reflect the normal voltage elevation that occurs while
+the battery is charging.</dd>
+<dt id="battery-level"><a class="header" href="#battery-level"><strong>Battery level</strong></a></dt>
+<dd>The implementation’s estimate of the battery’s state of charge, as an
+integer percentage from 0 through 100 inclusive. A host <strong>MUST NOT</strong>
+derive this value from the voltage field or assume that successive
+estimates change monotonically.</dd>
+<dt id="charge-state"><a class="header" href="#charge-state"><strong>Charge state</strong></a></dt>
+<dd>The current battery charge state:</dd>
+</dl>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>BATTERY_CHARGE_STATE_DISCHARGING</code></td></tr>
+<tr><td>1</td><td><code>BATTERY_CHARGE_STATE_CHARGING</code></td></tr>
+<tr><td>2</td><td><code>BATTERY_CHARGE_STATE_CHARGED</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
+<dd>The charging system reports neither active charging nor charge completion.
+This is the charge state used for a disconnected battery when the
+implementation can detect that condition; an absent field remains reserved
+exclusively for unsupported reporting.</dd>
+<dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
+<dd>The charging system reports that the battery is actively receiving charge.</dd>
+<dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
+<dd>External power is present and the charging system reports that charging has
+completed. A battery at 100 percent while operating without external power
+remains in <code>BATTERY_CHARGE_STATE_DISCHARGING</code>.</dd>
+</dl>
+<p>The property contains live, read-only state. It is never included in a
+saved snapshot and is not changed by <code>CMD_RESTORE</code>. An NCP <strong>MAY</strong> emit
+unsolicited <code>CMD_PROP_IS</code> updates when the reported snapshot changes. Such
+updates <strong>SHOULD</strong> be coalesced or rate-limited so that measurement noise
+does not produce excessive companion traffic.</p>
 <h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1301,6 +1426,7 @@ not indicate a problem.</dd>
 <tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><code>CMD_SAVE</code>, <code>CMD_RESTORE</code>, <code>PROP_SAVED</code>, and boot-time restoration of saved state</td></tr>
 <tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
+<tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
 </tbody>
 </table>
 </div>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e8d9db76.js";
+            window.path_to_searchindex_js = "searchindex-7e4e091f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4c32735f.js"></script>
+        <script src="toc-6c1064ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,7 +186,7 @@
 <ul>
 <li><code>ROLE</code> (1 byte) — the node’s <a href="#node-primary-role">primary role</a>.</li>
 <li><code>CAPS</code> (1 byte) — the node’s <a href="#capability-bitmap">capability bitmap</a>.</li>
-<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="packet-options.html#options-field">packet options</a>.</li>
+<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="packet-options.html#attribute-encoding">packet options</a>.</li>
 <li><code>0xFF</code> (1 byte, optional) — options-terminator marker. Present only when a signature follows.</li>
 <li><code>SIGNATURE</code> (64 bytes, optional) — EdDSA signature covering <code>ROLE</code> through the <code>0xFF</code> terminator, inclusive.</li>
 </ul>
@@ -222,7 +222,7 @@
 </ul>
 <p>A node may advertise multiple capabilities independently of its primary role. For example, a node with role <strong>Chat</strong> may also set the <code>REP</code> bit to advertise repeater duty.</p>
 <h2 id="node-identity-options"><a class="header" href="#node-identity-options">Node Identity Options</a></h2>
-<p>Options use the CoAP-style delta-length encoding defined in <a href="packet-options.html#option-encoding">Packet Options</a>.</p>
+<p>Options use the CoAP-style delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -234,6 +234,7 @@
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>The altitude in meters.</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
 <tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">5</td><td>Nonce</td><td>4 bytes, echoed from a soliciting Identity Request</td></tr>
 </tbody>
 </table>
 </div>
@@ -247,6 +248,8 @@
 <p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
 <p>For repeaters, the list of <a href="packet-options.html#region-code-encoding">region codes</a> the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.</p>
+<h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
+<p>Copied verbatim from the <a href="mac-commands.html#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
