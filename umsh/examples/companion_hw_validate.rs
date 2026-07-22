@@ -44,8 +44,15 @@ const CHANNEL_KEY: [u8; 32] = [0x42; 32];
 const PEER_NODE_SECRET: [u8; 32] = [0x5E; 32];
 
 fn config() -> CompanionRadioConfig {
-    let mut config = CompanionRadioConfig::new(906_875, 250_000, 9, 5);
-    config.tx_power_dbm = 10;
+    // MeshCore US on-air profile: 910.525 MHz / SF7 / BW 62.5 kHz / CR 4/5,
+    // private sync word 0x1424. Matches the firmware's post-reset default
+    // profile and the rest of the device fleet, so the validation traffic
+    // shares the same channel everything else is already tuned to.
+    let mut config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+    // Point-blank bench geometry: full power saturates the listening
+    // radio's front end (~50% frame loss observed at 14 dBm, RSSI
+    // −8 dBm); −9 dBm lands at a healthy −35 dBm.
+    config.tx_power_dbm = -9;
     config.response_timeout = Duration::from_secs(2);
     config
 }
@@ -390,17 +397,96 @@ async fn transmit<L: FrameLink>(
     .map_err(|error| format!("transmit failed: {error:?}").into())
 }
 
+/// Non-asserting unicast blast: transmit `count` sealed, ack-requesting
+/// unicasts to the provisioned host (counters base..base+count, spaced
+/// so the DUT has time to receive+queue each), without waiting for or
+/// asserting on the delegated ack. Decouples "does the DUT queue matched
+/// unicasts" from "does the ack round-trip land" — check the DUT queue
+/// afterward with `phase-e` or `info`.
+async fn rf_blast(
+    port: &str,
+    base: u32,
+    count: u32,
+    power_dbm: Option<i8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio_serial::SerialPortBuilderExt;
+    let stream = tokio_serial::new(port, 115_200).open_native_async()?;
+    let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
+    println!("peer ncp={} base={base} count={count}", radio.ncp_version());
+    if let Some(power) = power_dbm {
+        radio.set_prop(prop::PHY_TX_POWER, &[power as u8]).await?;
+        println!("peer tx power {power} dBm");
+    }
+    radio.set_prop(prop::MAC_PROMISCUOUS, &[1]).await?;
+    for offset in 0..count {
+        let counter = base + offset;
+        let frame = sealed_unicast(counter, true, &pairwise(), [0xC4, 0xC4, 0xC4]);
+        transmit(&mut radio, &frame).await?;
+        println!("  unicast counter={counter} ({} bytes) on the air", frame.len());
+        // Report everything the peer hears in the inter-frame window —
+        // the DUT's delegated ack lands ~120 ms after each unicast, so
+        // silence here while an air capture shows the ack is proof of a
+        // post-TX receive gap on this peer's radio.
+        let window = Instant::now() + Duration::from_millis(1500);
+        while let Some(remaining) = window
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+        {
+            let Some((heard, rssi)) = recv_frame(&mut radio, remaining).await else {
+                break;
+            };
+            let kind = PacketHeader::parse(&heard)
+                .map(|header| format!("{:?}", header.fcf.packet_type()))
+                .unwrap_or_else(|_| "unparseable".into());
+            println!("    peer heard {kind} {} bytes rssi={rssi}", heard.len());
+        }
+    }
+    println!("RF BLAST OK — check the DUT queue (expect count={count} if matching works)");
+    Ok(())
+}
+
 /// Drive the T-Echo as the RF peer while the T-1000E sits detached:
 /// delegated ack on the air, duplicate re-ack, unrelated-traffic
 /// rejection, then queue overflow with one late acknowledged frame.
 /// Follow with `phase-e <t1000e-port> 16 3 1`.
-async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>> {
+async fn rf_peer(
+    port: &str,
+    base: u32,
+    power_dbm: Option<i8>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use tokio_serial::SerialPortBuilderExt;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
     // The peer radio is disposable: the resetting attach configures its
     // PHY to the same parameters the T-1000E saved.
     let mut radio = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
     println!("peer ncp={} base counter={base}", radio.ncp_version());
+    if let Some(power) = power_dbm {
+        // Bench-geometry escape hatch: at point-blank range full power
+        // saturates the DUT's front end and randomly costs frames the
+        // final queue arithmetic depends on.
+        radio.set_prop(prop::PHY_TX_POWER, &[power as u8]).await?;
+        println!("peer tx power {power} dBm");
+    }
+    // The peer NCP's CMD_RST restored whatever host provisioning its
+    // snapshot holds (on a daily-driver board: real filters that drop
+    // the DUT's fixture-addressed acks before they reach this host).
+    // Promiscuous live delivery bypasses that filtering.
+    radio.set_prop(prop::MAC_PROMISCUOUS, &[1]).await?;
+    // Warm-up transmit: the LR1110's first post-TX return to RX after a
+    // reconfiguration is slow enough to swallow a delegated ack that
+    // arrives ~120 ms later (every later turnaround is fine). Burn the
+    // slow first re-arm on a broadcast that draws no reply.
+    let mut warmup = [0u8; 16];
+    let warmup_frame = PacketBuilder::new(&mut warmup)
+        .broadcast()
+        .source_hint(NodeHint([0xAB, 0xCD, 0xEF]))
+        .payload(&[0xFE])
+        .build()
+        .expect("warm-up frame builds");
+    let warmup_frame = warmup_frame.to_vec();
+    transmit(&mut radio, &warmup_frame).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    println!("peer warmed up (post-TX RX re-arm exercised)");
 
     // 1. A relevant, acknowledgement-requesting frame: the detached
     //    T-1000E must queue it and ack on the host's behalf.
@@ -424,8 +510,26 @@ async fn rf_peer(port: &str, base: u32) -> Result<(), Box<dyn std::error::Error>
         [0x99, 0x99, 0x99],
     );
     transmit(&mut radio, &unrelated).await?;
-    let stray = recv_frame(&mut radio, Duration::from_secs(2)).await;
-    expect(stray.is_none(), "unrelated traffic not acknowledged")?;
+    // Promiscuous listening sees ambient traffic (fleet frames, the
+    // DUT's own beacons); only a MAC ack would prove the unrelated
+    // frame was wrongly accepted.
+    let unrelated_deadline = Instant::now() + Duration::from_secs(2);
+    let mut stray_ack = false;
+    while let Some(remaining) = unrelated_deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+    {
+        let Some((frame, _)) = recv_frame(&mut radio, remaining).await else {
+            break;
+        };
+        if let Ok(header) = PacketHeader::parse(&frame)
+            && header.fcf.packet_type() == PacketType::MacAck
+        {
+            stray_ack = true;
+            break;
+        }
+    }
+    expect(!stray_ack, "unrelated traffic not acknowledged")?;
 
     // 4. Overflow: 18 more frames (counters base+1..=base+18). With
     //    the earlier frame that is 19 accepted into a 16-slot queue —
@@ -781,6 +885,29 @@ async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Neutral queue drain: attach without resetting, drain whatever is
+/// queued, and print each frame. No assertions — bench cleanup between
+/// runs.
+async fn drain(port: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut radio = open(port).await?;
+    radio.set_frame_trace(None);
+    let mut count = 0usize;
+    radio
+        .queue_drain_with(|data, meta| {
+            let kind = PacketHeader::parse(data)
+                .map(|header| format!("{:?}", header.fcf.packet_type()))
+                .unwrap_or_else(|_| "unparseable".into());
+            let flags = BufferedRxMeta::decode(meta)
+                .map(|meta| meta.flags)
+                .unwrap_or(0);
+            println!("  drained {kind} {} bytes flags={flags:#04x}", data.len());
+            count += 1;
+        })
+        .await?;
+    println!("drained {count} frames");
+    Ok(())
+}
+
 /// Neutral inspection: attach without resetting and print everything
 /// `sync` can see — capabilities, ownership (against an optional
 /// expected key), PHY state, and the digest forms of all tables. Makes
@@ -896,7 +1023,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("phase-b") if args.len() == 4 => phase_b(&args[2], parse_key32(&args[3])?).await,
         Some("phase-c") if args.len() == 3 => phase_c(&args[2]).await,
         Some("phase-d") if args.len() == 3 => phase_d(&args[2]).await,
-        Some("rf-peer") if args.len() == 4 => rf_peer(&args[2], args[3].parse()?).await,
+        Some("rf-peer") if (4..=5).contains(&args.len()) => {
+            let power = args.get(4).map(|text| text.parse()).transpose()?;
+            rf_peer(&args[2], args[3].parse()?, power).await
+        }
+        Some("rf-blast") if (5..=6).contains(&args.len()) => {
+            let power = args.get(5).map(|text| text.parse()).transpose()?;
+            rf_blast(&args[2], args[3].parse()?, args[4].parse()?, power).await
+        }
         Some("rf-dev-multicast") if (5..=6).contains(&args.len()) => {
             let count = args
                 .get(5)
@@ -941,6 +1075,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             hold(&args[2], seconds).await
         }
         Some("probe-restore") if args.len() == 3 => probe_restore(&args[2]).await,
+        Some("drain") if args.len() == 3 => drain(&args[2]).await,
         Some("battery") if args.len() == 3 => battery_check(&args[2]).await,
         #[cfg(feature = "ble-radio")]
         Some("ble-sync") if args.len() == 3 => ble_sync(&args[2]).await,
