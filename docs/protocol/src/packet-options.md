@@ -147,28 +147,46 @@ Region codes are 2-byte identifiers derived by one of two methods, depending on 
 | SJC | `0x7853` |
 | MFR | `0x5242` |
 
-**Named regions.** For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded). Examples:
+**Named regions.** For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
+on the resulting value would yield three letters. In that case, you
+additionally perform the following transform:
+
+```python
+def transform_letter_chunk(encoded: int) -> int:
+    """Transform a three-letter ARNCE chunk into a non-letter ARNCE chunk."""
+
+    LETTER_MIN = 1
+    LETTER_MAX = 26
+
+    TRANSFORM_BASE = 27 * 1600       # 0xA8C0
+    TRANSFORM_COUNT = 26 ** 3        # 17,576
+
+    a = encoded // 1600
+    b = (encoded // 40) % 40
+    c = encoded % 40
+
+    if not all(LETTER_MIN <= x <= LETTER_MAX for x in (a, b, c)):
+        return encoded
+
+    rank = (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
+    return TRANSFORM_BASE + rank
+```
+
+Examples:
 
 | Region Name | SHA-256 prefix | Region Code |
 |---|---|---|
 | Rogue Valley | `0xdf6f...` | `0xdf6f` |
 | SF Bay Area | `0x31d9...` | `0x31d9` |
-| Southern Oregon | `0x6af2...` | `0x6af2` |
+| Southern Oregon | `0x6af2...` | `0xD35F` |
 
-IATA-based region codes will never collide with each other. However, because region codes are only 2 bytes, named regions may happen to collide with IATA codes or other named regions. Approximately 30% of all hash-based identifiers will have a valid ARNCE decoding to three letters, and approximately 56% of those will collide with an actual assigned IATA code.
+Note that the first two bytes of the SHA256 of "Southern Oregon" is 0x6AF2, which would decode to `QDR`, so it is transformed to 0xD35F (which would decode as 654).
 
+Thus, non-IATA-based region codes will never collide with IATA-based
+region codes. This allows all region codes which decode to three letters to be assumed to be an IATA region code and can be used/displayed unambiguously without additional context.
+
+However, collisions can still happen between hash-originated region codes.
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).
-
-> [!NOTE]
-> If collisions between IATA-based codes and
-> hash-based codes is a concern, we could redefine
-> how hash-based codes are calculated to keep
-> hashing the previous full hash value until it
-> returns a result that is not a
-> valid three-letter ARNCE encoding.
->
-> This would have the benefit of allowing IATA codes
-> to be immediately renderable in user interfaces.
 
 The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
 
