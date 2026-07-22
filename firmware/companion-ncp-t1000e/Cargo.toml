@@ -29,6 +29,9 @@ umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = fa
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
+# Board-agnostic NCP runtime shared with the T-Echo (same main.rs) and the
+# ESP32 port: leaf modules + the session driver.
+umsh-companion-runtime = { path = "../../crates/umsh-companion-runtime" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }

@@ -143,19 +143,15 @@ static NODE_MAC_CELL: StaticCell<AsyncRefCell<NcpNodeMac>> = StaticCell::new();
 
 /// A point-in-time copy of the session's device-domain node tables
 /// (`PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`) plus whether a device
-/// identity is live. Built by `ncp_task` whenever the session's
-/// `dev_domain_version` moves and handed to [`node_dev_sync_task`],
-/// which reconciles the node's MAC against it. The session stays
-/// authoritative for the property surface; the node only mirrors it.
-pub struct DevDomainSnapshot {
-    pub channel_keys: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS>,
-    pub peers: heapless::Vec<[u8; 32], MAX_DEV_PEERS>,
-    /// `PROP_DEV_KEY` is live. Goes false when a factory reset
-    /// (`CMD_CLEAR` + `CMD_RST`) completes; the running node then goes
-    /// dormant (beacons gated off, channels removed) until the reboot
-    /// that finishes tearing it down.
-    pub identity_present: bool,
-}
+/// identity is live. Built by the shared NCP driver whenever the
+/// session's `dev_domain_version` moves and handed to
+/// [`node_dev_sync_task`], which reconciles the node's MAC against it.
+/// The session stays authoritative for the property surface; the node
+/// only mirrors it. `identity_present` goes false when a factory reset
+/// (`CMD_CLEAR` + `CMD_RST`) completes; the running node then goes
+/// dormant (beacons gated off, channels removed) until the reboot that
+/// finishes tearing it down.
+pub use umsh_companion_runtime::driver::DevDomainSnapshot;
 
 /// Latest-wins hand-off from `ncp_task` to the sync task. A `Signal`
 /// rather than a queue: intermediate table states are irrelevant, only
