@@ -609,20 +609,33 @@ mod firmware {
             self.persist(next).await
         }
 
-        async fn add_bond(&mut self, bond: &BondInformation) -> Result<(), ()> {
+        /// Persists `bond`, keeping the bond list LRU-ordered. Returns the
+        /// evicted bond, if inserting a new one at `MAX_BONDS` capacity
+        /// pushed out the least-recently-used entry.
+        async fn add_bond(&mut self, bond: &BondInformation) -> Result<Option<StoredBond>, ()> {
             let stored = stored_bond(bond);
             let mut next = self.snapshot.clone();
-            if let Some(existing) = next.bonds.iter_mut().find(|existing| {
-                existing.address_kind == stored.address_kind && existing.address == stored.address
-            }) {
-                if *existing == stored {
-                    return Ok(());
-                }
-                *existing = stored;
-            } else {
-                next.bonds.push(stored).map_err(|_| ())?;
+            let outcome = ble_store::upsert_bond(&mut next.bonds, stored);
+            let evicted = match outcome {
+                ble_store::BondUpsert::Unchanged => return Ok(None),
+                ble_store::BondUpsert::Updated => None,
+                ble_store::BondUpsert::Inserted { evicted } => evicted,
+            };
+            self.persist(next).await?;
+            Ok(evicted)
+        }
+
+        /// Moves the bond matching `address_kind`/`address` to the MRU end
+        /// and persists it, if it isn't already there. Called on reconnect
+        /// via an existing bond, so the LRU order reflects actual use
+        /// rather than only pairing/re-pairing events.
+        async fn touch_bond(&mut self, address_kind: u8, address: [u8; 6]) -> Result<bool, ()> {
+            let mut next = self.snapshot.clone();
+            if !ble_store::touch_bond(&mut next.bonds, address_kind, address) {
+                return Ok(false);
             }
-            self.persist(next).await
+            self.persist(next).await?;
+            Ok(true)
         }
 
         async fn clear_security(&mut self) -> Result<(), ()> {
@@ -1113,7 +1126,10 @@ mod firmware {
     #[cfg(feature = "ble-debug")]
     type DebugLine = heapless::String<192>;
     #[cfg(feature = "ble-debug")]
-    static DEBUG_CH: Channel<ThreadModeRawMutex, DebugLine, 32> = Channel::new();
+    // 128 deep so the whole boot window (including trouble-host's resolving-list
+    // diagnostics) survives in the buffer until a serial reader attaches and
+    // starts draining; the output task only drains after DTR. ble-debug only.
+    static DEBUG_CH: Channel<ThreadModeRawMutex, DebugLine, 128> = Channel::new();
     #[cfg(feature = "ble-debug")]
     static DEBUG_DROPPED: AtomicU32 = AtomicU32::new(0);
 
@@ -1136,6 +1152,44 @@ mod firmware {
         }
         #[cfg(not(feature = "ble-debug"))]
         let _ = args;
+    }
+
+    /// Bridges the `log` facade used by foreign crates (notably
+    /// trouble-host's resolving-list and SMP diagnostics) into the same
+    /// USB-serial debug channel as [`debug_log`], inheriting its
+    /// timestamping and drop accounting.
+    #[cfg(feature = "ble-debug")]
+    struct DebugChannelLogger;
+
+    #[cfg(feature = "ble-debug")]
+    impl log::Log for DebugChannelLogger {
+        fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            debug_log(format_args!(
+                "{} {}: {}",
+                record.level(),
+                record.target(),
+                record.args(),
+            ));
+        }
+
+        fn flush(&self) {}
+    }
+
+    #[cfg(feature = "ble-debug")]
+    static DEBUG_LOGGER: DebugChannelLogger = DebugChannelLogger;
+
+    /// Installs [`DebugChannelLogger`] as the global `log` sink. Idempotent:
+    /// `set_logger` may only succeed once, so a repeat call is ignored. Level
+    /// is capped at Debug to capture trouble-host's `[host] …` diagnostics
+    /// and warnings without the per-packet Trace flood.
+    #[cfg(feature = "ble-debug")]
+    fn init_foreign_crate_logging() {
+        let _ = log::set_logger(&DEBUG_LOGGER);
+        log::set_max_level(log::LevelFilter::Debug);
     }
 
     #[cfg(feature = "ble-debug")]
@@ -1215,10 +1269,34 @@ mod firmware {
         UI_REFRESH.signal(());
     }
 
-    async fn persist_bond(store: &BleStoreMutex, bond: &BondInformation) -> Result<usize, ()> {
+    async fn persist_bond(
+        store: &BleStoreMutex,
+        bond: &BondInformation,
+    ) -> Result<(usize, Option<StoredBond>), ()> {
         let mut store = store.lock().await;
-        store.add_bond(bond).await?;
-        Ok(store.snapshot().bonds.len())
+        let evicted = store.add_bond(bond).await?;
+        Ok((store.snapshot().bonds.len(), evicted))
+    }
+
+    /// Drops an LRU-evicted bond from the live trouble bond table so the
+    /// evicted peer can't keep reconnecting as "bonded" this power cycle
+    /// using stale in-RAM keys after being pushed out of durable storage.
+    fn forget_evicted_bond<C: Controller, P: PacketPool>(
+        stack: &Stack<'_, C, P>,
+        evicted: Option<StoredBond>,
+    ) {
+        let Some(evicted) = evicted else {
+            return;
+        };
+        let Some(evicted_info) = trouble_bond(&evicted) else {
+            return;
+        };
+        match stack.remove_bond_information(evicted_info.identity) {
+            Ok(()) => debug_log(format_args!("lru bond evict remove=ok")),
+            Err(error) => {
+                debug_log(format_args!("lru bond evict remove=FAILED error={error:?}"))
+            }
+        }
     }
 
     fn build_sdc<'d, const N: usize>(
@@ -1230,6 +1308,15 @@ mod firmware {
         sdc::Builder::new()?
             .support_adv()
             .support_peripheral()
+            // LE Privacy enables the controller resolving list and address
+            // resolution. Without it, trouble-host's boot-time
+            // LeSetAddrResolutionEnable / LeAddDeviceToResolvingList commands
+            // fail as unsupported, the resolving list stays empty, and a
+            // bonded central that reconnects with a rotated resolvable private
+            // address (iOS rotates its RPA ~every 15 min) never resolves to
+            // its bond — so the link never re-encrypts and wedges the single
+            // peripheral slot as an unusable NoEncryption connection.
+            .support_le_privacy()
             .peripheral_count(1)?
             .buffer_cfg(
                 SDC_PACKET_SIZE,
@@ -1642,8 +1729,48 @@ mod firmware {
         let mut attached = false;
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
+        // Reap a connection that never reaches encryption, so an unbonded or
+        // unresolvable central — e.g. an iOS OS-level background reconnect that
+        // presents an RPA we can't resolve — cannot squat the single peripheral
+        // slot at NoEncryption and lock out the real client. A bonded reconnect
+        // encrypts in ~0.3 s (see connect→Encrypted in the trace); 5 s leaves
+        // ~2x headroom for a slow negotiated connection interval. A deliberate
+        // pairing (the user pressed pair, then enters the PIN on the phone) gets
+        // the full pairing-window grace instead.
+        let grace = if PAIRING_MODE.load(Ordering::Acquire) {
+            Duration::from_secs(40)
+        } else {
+            Duration::from_secs(5)
+        };
+        let mut encrypted = false;
+        let mut deadline = core::pin::pin!(Timer::after(grace));
+
         loop {
-            match select3(conn.next(), OUT_CH.ble.receive(), ADV_POLICY_CHANGED.wait()).await {
+            let event = {
+                let grace_guard = async {
+                    if encrypted {
+                        core::future::pending::<()>().await
+                    } else {
+                        deadline.as_mut().await
+                    }
+                };
+                match select(
+                    select3(conn.next(), OUT_CH.ble.receive(), ADV_POLICY_CHANGED.wait()),
+                    grace_guard,
+                )
+                .await
+                {
+                    Either::First(event) => event,
+                    Either::Second(()) => {
+                        debug_log(format_args!(
+                            "unencrypted connection grace expired; disconnecting squatter"
+                        ));
+                        conn.raw().disconnect();
+                        break;
+                    }
+                }
+            };
+            match event {
                 Either3::First(GattConnectionEvent::Disconnected { reason }) => {
                     debug_log(format_args!("disconnected reason={reason:?}"));
                     break;
@@ -1672,7 +1799,10 @@ mod firmware {
                             break;
                         }
                         let persisted_bonds = match persist_bond(store, &bond).await {
-                            Ok(count) => count,
+                            Ok((count, evicted)) => {
+                                forget_evicted_bond(stack, evicted);
+                                count
+                            }
                             Err(()) => {
                                 debug_log(format_args!("pairing bond persist=FAILED"));
                                 match stack.remove_bond_information(bond.identity) {
@@ -1731,7 +1861,18 @@ mod firmware {
                         conn.raw().is_bonded_peer(),
                         conn.raw().security_level(),
                     ));
+                    // Link is encrypted: this is not a squatter, so stop the
+                    // unencrypted-connection reaper regardless of bond state.
+                    encrypted = true;
                     if bond.is_some() || conn.raw().is_bonded_peer() {
+                        let peer = conn.raw().peer_identity();
+                        let raw = peer.addr.to_bytes();
+                        let address: [u8; 6] = raw[1..].try_into().unwrap();
+                        match store.lock().await.touch_bond(raw[0], address).await {
+                            Ok(true) => debug_log(format_args!("bond lru touch=moved")),
+                            Ok(false) => {}
+                            Err(()) => debug_log(format_args!("bond lru touch=FAILED")),
+                        }
                         publish_pairing_runtime(pairing_runtime().bonded_reconnect());
                         BLE_LED_MODE.store(0, Ordering::Release);
                         apply_pairing_gate(stack);
@@ -1800,8 +1941,9 @@ mod firmware {
                                 false
                             }
                             Some(bond) => match persist_bond(store, &bond).await {
-                                Ok(count) => {
+                                Ok((count, evicted)) => {
                                     debug_log(format_args!("protected bond persist=ok"));
+                                    forget_evicted_bond(stack, evicted);
                                     BLE_BOND_COUNT.store(count as u8, Ordering::Release);
                                     UI_REFRESH.signal(());
                                     apply_pairing_gate(stack);
@@ -2061,6 +2203,10 @@ mod firmware {
     }
 
     async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
+        // Install the log→serial bridge before the host stack starts so
+        // trouble-host's boot-time resolving-list diagnostics are captured.
+        #[cfg(feature = "ble-debug")]
+        init_foreign_crate_logging();
         super::panic::breadcrumb_mark(10);
         let mut resources: HostResources<
             _,

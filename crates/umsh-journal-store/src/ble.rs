@@ -29,6 +29,63 @@ pub struct StoredBond {
     pub is_bonded: bool,
 }
 
+/// Outcome of [`upsert_bond`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BondUpsert {
+    /// The bond's content and position were already current.
+    Unchanged,
+    /// An existing bond's content and/or MRU position changed.
+    Updated,
+    /// A new bond was appended, evicting the LRU entry first if the list
+    /// was already at `MAX_BONDS`.
+    Inserted { evicted: Option<StoredBond> },
+}
+
+/// Insert or refresh `bond` in `bonds`, which is kept ordered
+/// least-recently-used-first / most-recently-used-last (index 0 is the
+/// eviction candidate). A bond matching by `address_kind` + `address` is
+/// refreshed in place and moved to the MRU end; a new bond is appended at
+/// the MRU end, evicting the current LRU entry first if the list is full.
+pub fn upsert_bond(bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>, bond: StoredBond) -> BondUpsert {
+    if let Some(index) = bonds
+        .iter()
+        .position(|existing| existing.address_kind == bond.address_kind && existing.address == bond.address)
+    {
+        if bonds[index] == bond && index == bonds.len() - 1 {
+            return BondUpsert::Unchanged;
+        }
+        bonds.remove(index);
+        let _ = bonds.push(bond);
+        return BondUpsert::Updated;
+    }
+    let evicted = if bonds.len() == MAX_BONDS {
+        Some(bonds.remove(0))
+    } else {
+        None
+    };
+    let _ = bonds.push(bond);
+    BondUpsert::Inserted { evicted }
+}
+
+/// Move the bond matching `address_kind` + `address` to the MRU end, if
+/// present and not already there. Returns `true` when the order changed
+/// (and the caller should persist), `false` when the bond was already MRU
+/// or is not stored at all.
+pub fn touch_bond(bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>, address_kind: u8, address: [u8; 6]) -> bool {
+    let Some(index) = bonds
+        .iter()
+        .position(|existing| existing.address_kind == address_kind && existing.address == address)
+    else {
+        return false;
+    };
+    if index == bonds.len() - 1 {
+        return false;
+    }
+    let bond = bonds.remove(index);
+    let _ = bonds.push(bond);
+    true
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub generation: u32,
@@ -380,5 +437,98 @@ mod tests {
         let mut successful = MockWriter::default();
         assert_eq!(block_on(erase_journal_page(&mut successful, PAGE0)), Ok(()));
         assert_eq!(successful.erases, std::vec![(PAGE0, PAGE0 + PAGE_SIZE)]);
+    }
+
+    fn bond(id: u8) -> StoredBond {
+        StoredBond {
+            address_kind: 0,
+            address: [id, 0, 0, 0, 0, 0],
+            irk: None,
+            ltk: [id; 16],
+            security_level: 2,
+            is_bonded: true,
+        }
+    }
+
+    fn addresses(bonds: &heapless::Vec<StoredBond, MAX_BONDS>) -> std::vec::Vec<u8> {
+        bonds.iter().map(|b| b.address[0]).collect()
+    }
+
+    #[test]
+    fn upsert_appends_new_bonds_at_mru_end_until_full() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            assert_eq!(
+                upsert_bond(&mut bonds, bond(id)),
+                BondUpsert::Inserted { evicted: None }
+            );
+        }
+        assert_eq!(addresses(&bonds), std::vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn upsert_evicts_lru_entry_when_full() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            upsert_bond(&mut bonds, bond(id));
+        }
+        // 1 is least-recently-used; inserting 5 should evict it.
+        assert_eq!(
+            upsert_bond(&mut bonds, bond(5)),
+            BondUpsert::Inserted {
+                evicted: Some(bond(1))
+            }
+        );
+        assert_eq!(addresses(&bonds), std::vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn upsert_of_existing_bond_moves_it_to_mru_end() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            upsert_bond(&mut bonds, bond(id));
+        }
+        // Re-pairing bond 2 (content unchanged) should move it to the end,
+        // so the *new* LRU candidate becomes 1, not 2.
+        assert_eq!(upsert_bond(&mut bonds, bond(2)), BondUpsert::Updated);
+        assert_eq!(addresses(&bonds), std::vec![1, 3, 4, 2]);
+    }
+
+    #[test]
+    fn upsert_of_bond_already_at_mru_end_with_same_content_is_unchanged() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            upsert_bond(&mut bonds, bond(id));
+        }
+        assert_eq!(upsert_bond(&mut bonds, bond(4)), BondUpsert::Unchanged);
+        assert_eq!(addresses(&bonds), std::vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn touch_moves_known_bond_to_mru_end_and_reports_change() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            upsert_bond(&mut bonds, bond(id));
+        }
+        assert!(touch_bond(&mut bonds, 0, [1, 0, 0, 0, 0, 0]));
+        assert_eq!(addresses(&bonds), std::vec![2, 3, 4, 1]);
+    }
+
+    #[test]
+    fn touch_of_bond_already_at_mru_end_is_a_no_op() {
+        let mut bonds = heapless::Vec::new();
+        for id in 1..=4 {
+            upsert_bond(&mut bonds, bond(id));
+        }
+        assert!(!touch_bond(&mut bonds, 0, [4, 0, 0, 0, 0, 0]));
+        assert_eq!(addresses(&bonds), std::vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn touch_of_unknown_bond_is_a_no_op() {
+        let mut bonds = heapless::Vec::new();
+        upsert_bond(&mut bonds, bond(1));
+        assert!(!touch_bond(&mut bonds, 0, [9, 0, 0, 0, 0, 0]));
+        assert_eq!(addresses(&bonds), std::vec![1]);
     }
 }
