@@ -1404,6 +1404,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-companion-ncp-heltec-v3"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "lora-phy",
+ "rand 0.10.2",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-esp32",
+ "umsh-bsp-heltec-lora32-v3",
+ "umsh-companion",
+ "umsh-companion-ncp",
+ "umsh-companion-runtime",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "firmware-hello-heltec-v2"
 version = "0.1.0"
 dependencies = [
@@ -2767,6 +2809,18 @@ dependencies = [
 [[package]]
 name = "umsh-companion-runtime"
 version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "heapless 0.8.0",
+ "umsh-companion",
+ "umsh-companion-ncp",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-radio-loraphy",
+]
 
 [[package]]
 name = "umsh-core"

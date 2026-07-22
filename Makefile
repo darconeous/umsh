@@ -9,7 +9,8 @@
 	build-ble-spike-heltec-v2 flash-ble-spike-heltec-v2 \
 	build-hello-heltec-v3 flash-hello-heltec-v3 \
 	build-ble-spike-heltec-v3 flash-ble-spike-heltec-v3 \
-	build-companion-cli-heltec-v3 flash-companion-cli-heltec-v3
+	build-companion-cli-heltec-v3 flash-companion-cli-heltec-v3 \
+	build-companion-ncp-heltec-v3 flash-companion-ncp-heltec-v3
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -127,6 +128,13 @@ build-ble-spike-heltec-v3:
 flash-ble-spike-heltec-v3: build-ble-spike-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-ble-spike-heltec-v3
+
+build-companion-ncp-heltec-v3:
+	cd firmware-esp32/firmware/companion-ncp-heltec-v3 && cargo build --release
+
+flash-companion-ncp-heltec-v3: build-companion-ncp-heltec-v3
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
+		$(ESP32S3_TARGET_DIR)/firmware-companion-ncp-heltec-v3
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
