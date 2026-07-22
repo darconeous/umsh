@@ -1,0 +1,43 @@
+[package]
+name = "umsh-companion-runtime"
+description = "Board-agnostic companion-radio NCP runtime shared across firmware targets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Phase 5 extraction (docs/firmware-plan-heltec-lora32-v3.md). The
+# board-agnostic slice of the companion NCP — pure protocol/session/channel
+# plumbing with no board HAL. Consumed by both the nRF52840 and ESP32-S3
+# companion NCP firmwares so there is exactly one copy of this logic.
+#
+# Hard rule: NO board HAL here (no embassy-nrf, no esp-hal, no BSP). Only
+# HAL-agnostic primitives — embassy-sync/futures (generic over RawMutex),
+# heapless, and the pure protocol crates.
+
+[features]
+# `ble_security` and `transport_policy` are pure (no external deps) and are
+# always compiled. The heavier modules are gated so lightweight consumers —
+# e.g. a BLE-only spike, or host tooling — pull only what they use instead of
+# dragging in the radio stack or the journal store.
+default = ["radio", "counters"]
+# The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`.
+radio = ["dep:umsh-radio-loraphy", "dep:embassy-futures", "dep:embassy-sync"]
+# The persisted frame-counter map re-export, over `umsh-journal-store`.
+counters = ["dep:umsh-journal-store"]
+
+[dependencies]
+umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false, optional = true }
+umsh-journal-store = { path = "../umsh-journal-store", optional = true }
+embassy-futures = { version = "0.1", default-features = false, optional = true }
+embassy-sync = { version = "0.8", default-features = false, optional = true }
+
+[dev-dependencies]
+# Used only by the modules' host-run unit tests.
+heapless = { workspace = true }
+# radio_mux's host-run unit tests: RadioError values and RxInfo/Snr.
+lora-phy = { workspace = true }
+umsh-hal = { path = "../umsh-hal", default-features = false }
+# Host critical-section impl for embassy-sync under test; the target build
+# gets its implementation from the firmware's controller stack.
+critical-section = { version = "1", features = ["std"] }

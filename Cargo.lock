@@ -1485,6 +1485,7 @@ dependencies = [
  "umsh-bsp-techo",
  "umsh-companion",
  "umsh-companion-ncp",
+ "umsh-companion-runtime",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
@@ -3331,6 +3332,20 @@ dependencies = [
  "umsh-companion",
  "umsh-core",
  "umsh-crypto",
+]
+
+[[package]]
+name = "umsh-companion-runtime"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "heapless 0.8.0",
+ "lora-phy",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-radio-loraphy",
 ]
 
 [[package]]

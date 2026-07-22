@@ -81,21 +81,19 @@ extern crate alloc;
 #[global_allocator]
 static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod ble_security;
+// Board-agnostic leaf modules now live in `umsh-companion-runtime` (Phase 5
+// extraction, increment A). Re-import them under their original names so the
+// `super::<module>` paths inside `mod firmware` resolve unchanged. Gated to the
+// firmware target because the host build compiles `mod firmware` out entirely.
+#[cfg(target_os = "none")]
+use umsh_companion_runtime::{ble_security, counter_map, radio_mux, transport_policy};
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod counter_map;
 #[cfg(target_os = "none")]
 mod device_node;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod duty_gate;
 mod proto_store;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod radio_mux;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod transport_policy;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 #[cfg_attr(feature = "t1000e", allow(dead_code))]
 mod ui;
