@@ -477,10 +477,21 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     isRemembered: entry.peripheral.identifier == remembered
                 )
             }
+            // Stable ordering: the saved radio stays pinned to the top, then
+            // strictly alphabetical by name with the identifier as a final
+            // deterministic tiebreak. RSSI is deliberately NOT a sort key — it
+            // updates with every advertisement and would churn the list order,
+            // making a specific radio hard to tap on a busy bench. Signal
+            // strength is still shown per-row.
             .sorted { lhs, rhs in
                 if lhs.isRemembered != rhs.isRemembered { return lhs.isRemembered }
-                if lhs.rssiDBm != rhs.rssiDBm { return lhs.rssiDBm > rhs.rssiDBm }
-                return (lhs.name ?? lhs.id.uuidString) < (rhs.name ?? rhs.id.uuidString)
+                // Named radios sort above unnamed ones; within each group,
+                // alphabetical, then by identifier for a total, stable order.
+                if (lhs.name == nil) != (rhs.name == nil) { return rhs.name == nil }
+                if let lhsName = lhs.name, let rhsName = rhs.name, lhsName != rhsName {
+                    return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
             }
     }
 
