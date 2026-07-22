@@ -5,9 +5,10 @@
 //! (ported verbatim from the T-Echo NCP), a **PIN shown on the OLED**
 //! (`IoCapabilities::DisplayOnly` + `set_fixed_passkey`), and durable
 //! bonds through [`umsh_journal_store`] on the discovered `umsh`
-//! partition. What is deliberately NOT here is the full companion-radio
-//! protocol and on-board node — that is Phase 5. The GATT payload stays a
-//! bonded echo so `umsh-companionctl`'s BLE smoke path still applies.
+//! partition. Behind the bonded GATT edge runs the real minimal
+//! companion-radio protocol (`companion.rs`) — radio-less and
+//! non-durable, but enough for the UMSH app's `attach_existing` to
+//! complete. The full NCP (radio, persistence, device node) is Phase 5.
 //!
 //! This proves, on S3 hardware, the two things Phase 4 exists to de-risk:
 //!   1. Real trouble-host pairing/bonding drives the esp-radio controller,
@@ -50,9 +51,16 @@ use umsh_bsp_heltec_lora32_v3::vext::Vext;
 
 mod ble_security;
 mod ble_store;
+mod companion;
+
+use static_cell::StaticCell;
 
 use ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
-use ble_store::{BleStore, MAX_BONDS, bond_identity_is_persistable, trouble_bond};
+use ble_store::{BleStore, MAX_BONDS, ProtoStore, bond_identity_is_persistable, trouble_bond};
+use companion::Companion;
+
+/// The one flash driver behind every journal (bonds, snapshot, identity).
+static SHARED_FLASH: StaticCell<ble_store::SharedFlash> = StaticCell::new();
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -62,7 +70,7 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2;
 /// HCI command/event slot count for the external controller.
 const HCI_SLOTS: usize = 4;
-/// Max GATT value payload the echo characteristics carry.
+/// Max GATT value payload the companion characteristics carry.
 const BLE_VALUE_MAX: usize = 244;
 
 /// 21eb6b15-0001-4ccf-92e4-a079171bec97 in little-endian wire order.
@@ -234,15 +242,73 @@ async fn persist_bond_timed(store: &mut BleStore, bond: &BondInformation) -> Res
     Ok(count)
 }
 
+/// Fragment one companion response frame into SAR segments and notify
+/// them out, sized to the live ATT MTU (same shape as the nRF NCP's
+/// `send_ble_frame`, minus the generation tagging — the spike has one
+/// session and one transport).
+async fn send_companion_frame(
+    server: &Server<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    frame: &[u8],
+) -> Result<(), trouble_host::Error> {
+    let segment_payload = usize::from(conn.raw().att_mtu())
+        .saturating_sub(4)
+        .clamp(1, BLE_VALUE_MAX - 1);
+    for segment in companion::segments(frame, segment_payload) {
+        let mut value: heapless::Vec<u8, BLE_VALUE_MAX> = heapless::Vec::new();
+        value
+            .push(segment.header())
+            .map_err(|_| trouble_host::Error::InsufficientSpace)?;
+        value
+            .extend_from_slice(segment.payload())
+            .map_err(|_| trouble_host::Error::InsufficientSpace)?;
+        server.companion.frame_out.notify(conn, &value, false).await?;
+    }
+    Ok(())
+}
+
 async fn gatt_connection<C: Controller>(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
     store: &mut BleStore,
+    session: &mut Companion,
     display: &mut Display,
 ) -> Result<(), trouble_host::Error> {
     conn.raw().set_bondable(true)?;
     render_status(display, true).await;
+    let mut attached = false;
+    let mut reassembler: companion::Reassembler<{ companion::MAX_FRAME }> =
+        companion::Reassembler::new();
+    let result = gatt_connection_loop(
+        server,
+        conn,
+        stack,
+        store,
+        session,
+        display,
+        &mut attached,
+        &mut reassembler,
+    )
+    .await;
+    if attached {
+        println!("companion: detach (connection ended)");
+        session.detach();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn gatt_connection_loop<C: Controller>(
+    server: &Server<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    stack: &Stack<'_, C, DefaultPacketPool>,
+    store: &mut BleStore,
+    session: &mut Companion,
+    display: &mut Display,
+    attached: &mut bool,
+    reassembler: &mut companion::Reassembler<{ companion::MAX_FRAME }>,
+) -> Result<(), trouble_host::Error> {
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
@@ -334,13 +400,14 @@ async fn gatt_connection<C: Controller>(
                     }
                 }
 
-                let mut echo: Option<heapless::Vec<u8, BLE_VALUE_MAX>> = None;
+                // Stage the raw SAR segment before replying to the write.
+                let mut inbound: Option<heapless::Vec<u8, BLE_VALUE_MAX>> = None;
                 if frame_in_write {
                     if let GattEvent::Write(write) = &event {
                         write.with_data(|_, data| {
                             let mut value = heapless::Vec::new();
                             let _ = value.extend_from_slice(data);
-                            echo = Some(value);
+                            inbound = Some(value);
                         });
                     }
                 }
@@ -352,9 +419,80 @@ async fn gatt_connection<C: Controller>(
                 }?;
                 reply.send().await;
 
-                if bonded {
-                    if let Some(value) = echo {
-                        let _ = server.companion.frame_out.notify(conn, &value, true).await;
+                if !bonded {
+                    continue;
+                }
+
+                // CCCD writes drive the session attach lifecycle: a
+                // subscribe is the host attaching, an unsubscribe (or
+                // disconnect) detaches.
+                if cccd_write {
+                    let subscribed = server.companion.frame_out.should_notify(conn);
+                    match (*attached, subscribed) {
+                        (false, true) => {
+                            println!("companion: attach (cccd subscribed)");
+                            *attached = true;
+                            session.attach();
+                        }
+                        (true, false) => {
+                            println!("companion: detach (cccd unsubscribed)");
+                            *attached = false;
+                            reassembler.reset();
+                            session.detach();
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Reassemble the inbound SAR stream; each complete frame
+                // goes through the real companion session, and every
+                // response frame is fragmented back out.
+                if let Some(segment) = inbound {
+                    match reassembler.push(&segment) {
+                        Some(Ok(frame)) => {
+                            let now_ms = Instant::now().as_millis();
+                            let mut staged: companion::OutFrame = heapless::Vec::new();
+                            let (responses, pin_request) = match staged.extend_from_slice(frame) {
+                                Ok(()) => session.handle_frame(&staged, now_ms).await,
+                                Err(_) => {
+                                    println!(
+                                        "companion: frame staging=FAILED len={}",
+                                        frame.len()
+                                    );
+                                    continue;
+                                }
+                            };
+                            for response in &responses {
+                                send_companion_frame(server, conn, response).await?;
+                            }
+                            if let Some(request) = pin_request {
+                                // Persist first, then the live passkey; the
+                                // transaction succeeds only when both hold.
+                                let mut applied = store.set_pin(request.pin).await.is_ok();
+                                if applied {
+                                    applied = stack.set_fixed_passkey(request.pin).is_ok();
+                                }
+                                if applied {
+                                    PAIRING_PIN.store(
+                                        request.pin.unwrap_or(u32::MAX),
+                                        Ordering::Release,
+                                    );
+                                    apply_pairing_gate(stack);
+                                }
+                                println!(
+                                    "companion: pin applied={applied} present={}",
+                                    request.pin.is_some(),
+                                );
+                                for response in &session.respond_pin(request.tid, applied) {
+                                    send_companion_frame(server, conn, response).await?;
+                                }
+                                render_status(display, true).await;
+                            }
+                        }
+                        Some(Err(error)) => {
+                            println!("companion: frame decode=FAILED error={error:?}");
+                        }
+                        None => {}
                     }
                 }
             }
@@ -398,6 +536,7 @@ async fn advertise<'values, 'server, C: Controller>(
 async fn ble_app<C: Controller>(
     controller: C,
     mut store: BleStore,
+    mut session: Companion,
     mut display: Display,
     identity: Address,
 ) -> ! {
@@ -463,8 +602,15 @@ async fn ble_app<C: Controller>(
             render_status(&mut display, false).await;
             match advertise(&mut peripheral, &server).await {
                 Ok(conn) => {
-                    let _ =
-                        gatt_connection(&server, &conn, &stack, &mut store, &mut display).await;
+                    let _ = gatt_connection(
+                        &server,
+                        &conn,
+                        &stack,
+                        &mut store,
+                        &mut session,
+                        &mut display,
+                    )
+                    .await;
                 }
                 Err(error) => println!("advertise error={error:?}"),
             }
@@ -511,8 +657,9 @@ async fn main(spawner: embassy_executor::Spawner) {
     let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
     let controller: ExternalController<_, HCI_SLOTS> = ExternalController::new(connector);
 
-    // ── Mount the bond journal; generate+persist PIN and local IRK once ──
-    let mut store = BleStore::mount(flash, partition);
+    // ── Mount the journals; generate+persist PIN and local IRK once ──────
+    let shared: &'static ble_store::SharedFlash = SHARED_FLASH.init(ble_store::shared(flash));
+    let mut store = BleStore::mount(shared, &partition).await;
     println!(
         "store mounted: bonds={} pin={} local-irk={}",
         store.snapshot().bonds.len(),
@@ -541,6 +688,24 @@ async fn main(spawner: embassy_executor::Spawner) {
         println!("generated pairing PIN {pin:06} on first boot");
     }
 
+    // ── Protocol snapshot + device-identity journals ─────────────────────
+    let (proto_store, boot_snapshot) =
+        ProtoStore::mount(shared, ble_store::proto_page0(&partition)).await;
+    let (identity_store, identity_payload) =
+        ProtoStore::mount(shared, ble_store::identity_page0(&partition)).await;
+    let boot_identity = identity_payload
+        .as_deref()
+        .and_then(umsh_journal_store::proto::decode_identity)
+        .map(|(_secret, public)| public);
+    println!(
+        "proto mounted: snapshot={} identity={}",
+        boot_snapshot.is_some(),
+        boot_identity.is_some(),
+    );
+    // The companion session outlives connections: host-domain state
+    // survives a drop/reconnect exactly as on the nRF NCPs.
+    let session = Companion::new(proto_store, identity_store, boot_snapshot, boot_identity);
+
     // Stable random-static identity (top two bits of the MSB set) so a
     // bonded peer reconnects to the same address across reboots.
     let identity = Address::random([0x55, 0x4d, 0x53, 0x48, 0x00, 0xc3]);
@@ -563,7 +728,7 @@ async fn main(spawner: embassy_executor::Spawner) {
         println!("oled: init failed (continuing headless)");
     }
 
-    ble_app(controller, store, display, identity).await
+    ble_app(controller, store, session, display, identity).await
 }
 
 #[embassy_executor::task]

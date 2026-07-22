@@ -105,10 +105,12 @@ pub enum StorageInitError {
 /// the partition) and journal placement (top of the partition, growing
 /// downward) derive from this one constant.
 ///
-/// Currently two pages: the BLE security journal. Grows in page pairs as
-/// more journals (protocol snapshot, counters) move to the ESP32 in
-/// Phase 5.
-pub const JOURNAL_RESERVED: u32 = 2 * FlashStorage::SECTOR_SIZE;
+/// Three page pairs, growing downward from the partition top:
+/// BLE security journal (topmost pair — anchored there so bonds survive
+/// the reservation growing), protocol snapshot journal, device-identity
+/// journal. Grows in page pairs as more journals (counters) move to the
+/// ESP32 in Phase 5.
+pub const JOURNAL_RESERVED: u32 = 6 * FlashStorage::SECTOR_SIZE;
 
 /// Locate the UMSH data partition and build the store over it.
 ///

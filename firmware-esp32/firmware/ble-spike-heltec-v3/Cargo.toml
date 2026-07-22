@@ -16,11 +16,20 @@ umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
 # The chip-agnostic BLE bond journal (codec + power-cut-safe record
 # engine). heapless 0.8-based; coexists with the GATT stack's 0.9.
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
+# Minimal companion-radio protocol (path A): the real Session + GATT frame
+# transport so the UMSH app can attach_existing. Host-tested pure crates.
+umsh-companion = { path = "../../../crates/umsh-companion", default-features = false }
+umsh-companion-ncp = { path = "../../../crates/umsh-companion-ncp", default-features = false }
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 
 bt-hci = { version = "0.9", default-features = false }
 heapless = { version = "0.9", default-features = false }
+# The journal payload types are built on heapless 0.8 (workspace version).
+heapless08 = { package = "heapless", version = "0.8", default-features = false }
 embassy-executor = { version = "0.10", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
+# Mutex sharing the one flash driver across the journal handles.
+embassy-sync = { version = "0.8", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 # Raw flash over the internal SPI NOR (bond journal backing). The chip
