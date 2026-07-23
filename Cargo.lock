@@ -2020,10 +2020,12 @@ dependencies = [
 [[package]]
 name = "lora-modulation"
 version = "0.1.5"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=51fa994082abfe37fa9ca290d3a2e47096265224#51fa994082abfe37fa9ca290d3a2e47096265224"
 
 [[package]]
 name = "lora-phy"
 version = "3.0.2-alpha"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=51fa994082abfe37fa9ca290d3a2e47096265224#51fa994082abfe37fa9ca290d3a2e47096265224"
 dependencies = [
  "document-features",
  "embedded-hal 1.0.0",
