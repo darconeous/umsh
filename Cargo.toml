@@ -30,6 +30,7 @@ members = [
     "firmware/companion-cli-sensecap-solar",
     "firmware/companion-ncp-t1000e",
     "firmware/companion-ncp-techo",
+    "firmware/companion-ncp-sensecap-solar",
     "firmware/ble-spike-techo",
     "tools/companion-web-debugger/engine",
     "tools/uniffi-bindgen",

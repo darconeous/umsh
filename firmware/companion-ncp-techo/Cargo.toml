@@ -7,7 +7,36 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+# ─── Board identity (irreducibly per-board: concrete pins, BSP module,
+#     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-t1000e = ["t1000e", "cap-battery-saadc"]
+board-sensecap-solar = ["cap-battery-saadc"]
+
+# ─── Capability features (shared code shape, board-portable) ───
+# The historical `t1000e` flag still bundles the T-1000E-only capabilities
+# that no other board shares (LR1110 radio, PWM LED engine, buzzer, sleep
+# / UX-preference state machine, action button, T-1000E System OFF). It is
+# implied by `board-t1000e`. Capabilities a NEW board can share are broken
+# out below so they can be mixed independently.
 t1000e = []
+# SAADC battery monitor (T-1000E and SenseCAP Solar). Gates the shared
+# battery snapshot / load-hint code; the concrete SAADC pins + BSP module
+# are still board-selected.
+cap-battery-saadc = []
+# SSD1681 e-paper UI subsystem (T-Echo only).
+has-display = []
+# Side/nav button feeding the UI menu (T-Echo only).
+button-techo = []
+# T-Echo peripheral-rail drop + tri-state/WakePin System OFF path.
+system-off-techo = []
+# Heartbeat LED is active-low (T-Echo). Absent → active-high (SenseCAP).
+led-active-low = []
+# LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
+lfclk-rc = []
+
+# Default build = T-Echo.
+default = ["board-techo"]
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP) while
 # keeping the BLE clock configuration, to isolate the post-DFU
 # first-boot watchdog freeze. Not a production configuration.

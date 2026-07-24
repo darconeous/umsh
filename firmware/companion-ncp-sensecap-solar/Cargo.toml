@@ -1,6 +1,6 @@
 [package]
-name = "firmware-companion-ncp-t1000e"
-description = "Seeed SenseCAP T1000-E companion-radio NCP firmware over USB-CDC and BLE GATT"
+name = "firmware-companion-ncp-sensecap-solar"
+description = "SenseCAP Solar Node P1-Pro companion-radio NCP firmware over USB-CDC and BLE GATT"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,8 +9,13 @@ repository.workspace = true
 [features]
 # See firmware/companion-ncp-techo/Cargo.toml for the capability-feature
 # rationale; this block is kept identical across the NCP boards, only the
-# `default` differs. Default build = T-1000E.
-default = ["board-t1000e"]
+# `default` differs. Default build = SenseCAP Solar Node.
+#
+# SenseCAP Solar is a hybrid: SX1262 radio (like the T-Echo) + SAADC
+# battery monitor (like the T-1000E) + no display + active-high LED. It
+# therefore enables `cap-battery-saadc` but NOT `t1000e` / `has-display`
+# / `button-techo` / `system-off-techo` / `led-active-low`.
+default = ["board-sensecap-solar"]
 board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc"]
@@ -22,28 +27,27 @@ system-off-techo = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
-# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP) while
-# keeping the BLE clock configuration, to isolate the post-DFU
-# first-boot watchdog freeze. Not a production configuration.
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP).
 no-ble = []
+# Hardware-diagnostic mode: mirror BLE security/GATT lifecycle events as
+# ASCII on the USB serial endpoint.
 ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
 ble-store-fault-inject = ["ble-debug"]
 ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
-name = "firmware-companion-ncp-t1000e"
+name = "firmware-companion-ncp-sensecap-solar"
 # The protocol, security, transport-arbitration, and BLE implementation are
-# shared with the T-Echo NCP. Board differences are selected by `t1000e`.
+# shared with the T-Echo / T-1000E NCP. Board differences are selected by
+# the capability + `board-sensecap-solar` features above.
 path = "../companion-ncp-techo/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = false }
+umsh-bsp-sensecap-solar = { path = "../../crates/umsh-bsp-sensecap-solar", default-features = false }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-companion = { path = "../../crates/umsh-companion" }
 umsh-companion-ncp = { path = "../../crates/umsh-companion-ncp" }
-# Board-agnostic NCP runtime shared with the T-Echo (same main.rs) and the
-# ESP32 port: leaf modules + the session driver.
 umsh-companion-runtime = { path = "../../crates/umsh-companion-runtime" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
@@ -51,11 +55,8 @@ umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
-# Ungated (host-buildable) because the shared radio_mux module uses them.
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
-# Optional (ble-debug only) logging facade so foreign crates' `log`
-# records can be captured and forwarded to the USB-serial debug channel.
 log = { version = "0.4", default-features = false, optional = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
@@ -73,14 +74,14 @@ defmt = "0.3"
 nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
 nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
 trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
-# Device-identity generation: ChaCha20 CSPRNG seeded from the hardware
-# TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
 rand_core = { workspace = true }
 rand_chacha = { version = "0.3", default-features = false }
-# The device node: a full on-board MAC/node stack for the device
-# identity (device_node.rs), sharing the radio through the mux.
 umsh-core = { path = "../../crates/umsh-core", default-features = false }
 umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
 umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
 umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
 rand = { workspace = true }
+
+[dev-dependencies]
+lora-phy = { workspace = true }
+critical-section = { version = "1", features = ["std"] }

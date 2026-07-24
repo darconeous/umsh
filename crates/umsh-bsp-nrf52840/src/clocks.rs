@@ -44,6 +44,19 @@ pub fn ble_config() -> Config {
     config
 }
 
+/// BLE configuration for boards that have **no** 32.768 kHz crystal
+/// (e.g. Seeed XIAO nRF52840-based boards like the SenseCAP Solar Node):
+/// HFXO stays on the external high-frequency crystal, but the LFCLK runs
+/// from the internal RC oscillator. The MPSL clock configuration must be
+/// set to `MPSL_CLOCK_LF_SRC_RC` (with calibration intervals) to match —
+/// `ExternalXtal` here would wait forever for a crystal that isn't
+/// populated and wedge BLE bring-up.
+pub fn ble_config_lfrc() -> Config {
+    let mut config = default_config();
+    config.lfclk_source = LfclkSource::InternalRC;
+    config
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

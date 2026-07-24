@@ -4,6 +4,7 @@
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
 	flash-companion-cli-t1000e-serial \
 	build-companion-cli-sensecap-solar flash-companion-cli-sensecap-solar \
+	build-companion-ncp-sensecap-solar flash-companion-ncp-sensecap-solar \
 	build-companion-ncp-t1000e flash-companion-ncp-t1000e-serial \
 	build-companion-ncp-techo flash-companion-ncp-techo \
 	build-hello-heltec-v2 flash-hello-heltec-v2 \
@@ -75,6 +76,13 @@ build-companion-cli-sensecap-solar:
 flash-companion-cli-sensecap-solar: build-companion-cli-sensecap-solar
 	scripts/flash.py --board sensecap-solar --copy-default \
 		$(TARGET_DIR)/firmware-companion-cli-sensecap-solar
+
+build-companion-ncp-sensecap-solar:
+	cd firmware/companion-ncp-sensecap-solar && cargo build --release
+
+flash-companion-ncp-sensecap-solar: build-companion-ncp-sensecap-solar
+	scripts/flash.py --board sensecap-solar --copy-default \
+		$(TARGET_DIR)/firmware-companion-ncp-sensecap-solar
 
 build-companion-ncp-t1000e:
 	cd firmware/companion-ncp-t1000e && cargo build --release

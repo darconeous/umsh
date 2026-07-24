@@ -436,9 +436,11 @@ pub async fn bring_up(
     // The T-1000E marks each completed node transmit for its battery
     // level estimator (voltage sampled near a transmission is sagged,
     // not resting OCV); the T-Echo has no estimator to feed.
-    #[cfg(feature = "t1000e")]
+    #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
     let load_hook: fn() = umsh_bsp_t1000e::power::note_external_load;
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-sensecap-solar"))]
+    let load_hook: fn() = umsh_bsp_sensecap_solar::power::note_external_load;
+    #[cfg(not(feature = "cap-battery-saadc"))]
     let load_hook: fn() = || {};
     let mac_cell: &'static AsyncRefCell<NcpNodeMac> = NODE_MAC_CELL.init_with(|| {
         AsyncRefCell::new(NcpNodeMac::new(

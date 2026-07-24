@@ -96,7 +96,7 @@ mod ble_store;
 mod device_node;
 mod proto_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
-#[cfg_attr(feature = "t1000e", allow(dead_code))]
+#[cfg_attr(not(feature = "has-display"), allow(dead_code))]
 mod ui;
 
 // The #[panic_handler] must live in the binary crate.
@@ -125,14 +125,16 @@ mod firmware {
     use super::proto_store;
     use super::transport_policy::{Transport, generation_checked};
     use super::ui::UiNotice;
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
-    use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
+    use embassy_futures::select::{Either, Either3, select, select3};
+    #[cfg(any(feature = "button-techo", feature = "t1000e"))]
+    use embassy_futures::select::{Either4, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
@@ -141,7 +143,7 @@ mod firmware {
     #[cfg(feature = "t1000e")]
     use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
-    #[cfg(feature = "t1000e")]
+    #[cfg(feature = "cap-battery-saadc")]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
@@ -173,15 +175,22 @@ mod firmware {
     use trouble_host::prelude::*;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
+    #[cfg(any(feature = "system-off-techo", feature = "t1000e"))]
     use umsh_bsp_nrf52840::system_off::Port;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "system-off-techo")]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     use umsh_bsp_techo::display;
+    // Board-selected battery BSP module, used only by the shared
+    // `cap-battery-saadc` snapshot/load-hint code below.
+    #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
+    use umsh_bsp_t1000e::power as board_power;
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-sensecap-solar"))]
+    use umsh_bsp_sensecap_solar::power as board_power;
     use umsh_companion::{Status, gatt, hdlc};
     use umsh_companion_ncp::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
     use umsh_crypto::CryptoEngine;
@@ -206,6 +215,7 @@ mod firmware {
         self, InEvent, InputChannel, NcpEnv, NcpRuntime, OutFrame, TransportChannels,
     };
     use umsh_radio_loraphy::{MAX_PAYLOAD, NcpControl};
+    #[cfg(any(feature = "button-techo", feature = "t1000e"))]
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     #[cfg(feature = "t1000e")]
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
@@ -245,10 +255,15 @@ mod firmware {
     /// Nordic's SDC buffer configuration accepts 27..=251 octets.
     const SDC_PACKET_SIZE: u16 = 251;
     const BLE_VALUE_MAX: usize = 244;
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "board-techo")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-Echo NCP";
     #[cfg(feature = "t1000e")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-1000E NCP";
+    // Board default + " XXXX" suffix must stay within trouble's 22-byte
+    // GAP device-name limit; a longer name fails GATT-server construction
+    // (the cause of the SenseCAP first-bringup boot loop).
+    #[cfg(feature = "board-sensecap-solar")]
+    const DEFAULT_DEVICE_NAME: &str = "UMSH Solar NCP";
 
     /// The board default name plus a stable per-die suffix — the low 16
     /// bits of FICR DEVICEADDR, the same die-unique value the BLE
@@ -292,10 +307,12 @@ mod firmware {
     /// `PROP_NCP_VERSION`: the board's firmware name and `git describe
     /// --always` (from the build script), nothing else. Boot
     /// diagnostics stay on the debug console.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "board-techo")]
     const NCP_VERSION: &str = concat!("umsh-ncp-techo ", env!("GIT_DESCRIBE"));
     #[cfg(feature = "t1000e")]
     const NCP_VERSION: &str = concat!("umsh-ncp-t1000e ", env!("GIT_DESCRIBE"));
+    #[cfg(feature = "board-sensecap-solar")]
+    const NCP_VERSION: &str = concat!("umsh-ncp-sensecap-solar ", env!("GIT_DESCRIBE"));
 
     fn session_config() -> SessionConfig {
         SessionConfig {
@@ -326,13 +343,13 @@ mod firmware {
             // monitor reports voltage, charge state, and the rest-gated
             // OCV level estimate; the T-Echo reports nothing until its
             // P0.04 divider readings are hardware-validated.
-            #[cfg(feature = "t1000e")]
+            #[cfg(feature = "cap-battery-saadc")]
             battery: Some(BatteryFields {
                 voltage: true,
                 level: true,
                 charge_state: true,
             }),
-            #[cfg(not(feature = "t1000e"))]
+            #[cfg(not(feature = "cap-battery-saadc"))]
             battery: Some(BatteryFields::NONE),
         }
     }
@@ -1027,13 +1044,13 @@ mod firmware {
     /// gated sample/classify/publish iteration early and replies with
     /// the millivolt reading and UX classification. The timeout covers
     /// the monitor having exited for critical-battery shutdown.
-    #[cfg(feature = "t1000e")]
+    #[cfg(feature = "cap-battery-saadc")]
     async fn sample_battery_snapshot() -> Result<umsh_companion::battery::BatteryStatus, ()> {
         use umsh_companion::battery::{BatteryChargeState, BatteryStatus};
         use umsh_ux_tracker::battery::BatteryState;
         let sample = embassy_time::with_timeout(
             Duration::from_secs(2),
-            umsh_bsp_t1000e::power::sample_battery(),
+            board_power::sample_battery(),
         )
         .await
         .map_err(|_| ())?;
@@ -1062,7 +1079,7 @@ mod firmware {
     /// T-Echo: `BatteryFields::NONE` means the session answers the empty
     /// value without emitting the effect, so this is unreachable; a
     /// failure keeps any future misrouting honest.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(not(feature = "cap-battery-saadc"))]
     async fn sample_battery_snapshot() -> Result<umsh_companion::battery::BatteryStatus, ()> {
         Err(())
     }
@@ -1107,13 +1124,13 @@ mod firmware {
     static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static PAIRING_TIMER_RESET: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
     static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static UI_NOTICE: Signal<ThreadModeRawMutex, UiNotice> = Signal::new();
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     static DISPLAY_SHUTDOWN: Signal<ThreadModeRawMutex, ()> = Signal::new();
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     static DISPLAY_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
     /// 0 = normal heartbeat, 1 = pairing mode, 2 = BLE state wiped.
     static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
@@ -1213,7 +1230,7 @@ mod firmware {
     }
 
     /// Fired by button_task on a 2 s hold; consumed by shutdown_task.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "system-off-techo")]
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     // ─── Outgoing frame limits ───────────────────────────────────────────────
@@ -1445,11 +1462,11 @@ mod firmware {
             umsh_bsp_t1000e::indicator::clear_attention();
         }
 
-        #[cfg(feature = "t1000e")]
+        #[cfg(feature = "cap-battery-saadc")]
         fn note_transmit_load(&mut self) {
             // Mark the load for the battery level estimator (the radio
             // runner transmits within milliseconds of this).
-            umsh_bsp_t1000e::power::note_external_load();
+            board_power::note_external_load();
         }
 
         fn trace(&mut self, args: core::fmt::Arguments<'_>) {
@@ -2233,6 +2250,17 @@ mod firmware {
         }
     }
 
+    /// Startup-failure containment: a misconfigured or failed BLE bring-up
+    /// must degrade to a USB-only NCP, never a panic/reboot loop — a
+    /// display-less field node that boot-loops is unrecoverable in place.
+    /// Parks the BLE app forever; USB keeps running via the outer join.
+    async fn ble_disabled_park(reason: &'static str) -> ! {
+        loop {
+            debug_log(format_args!("BLE DISABLED: {reason}"));
+            Timer::after_secs(600).await;
+        }
+    }
+
     async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
         // Install the log→serial bridge before the host stack starts so
         // trouble-host's boot-time resolving-list diagnostics are captured.
@@ -2301,7 +2329,7 @@ mod firmware {
                 debug_log(format_args!(
                     "ble stack fixed-passkey configure=FAILED error={error:?}"
                 ));
-                panic!("invalid fixed passkey")
+                ble_disabled_park("invalid fixed passkey").await
             }
         };
         for (index, bond) in initial.bonds.iter().enumerate() {
@@ -2333,7 +2361,7 @@ mod firmware {
                 debug_log(format_args!(
                     "gatt server construction=FAILED error={error:?}"
                 ));
-                panic!("gatt server construction failed")
+                ble_disabled_park("gatt server construction failed").await
             }
         };
 
@@ -2503,7 +2531,7 @@ mod firmware {
         .await
     }
 
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     fn render_ui_frame(buf: &mut [u8; display::BUF_SIZE], model: UiModel) {
         use core::fmt::Write as _;
         use embedded_graphics::Drawable;
@@ -2577,7 +2605,7 @@ mod firmware {
         }
     }
 
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     fn render_message_frame(buf: &mut [u8; display::BUF_SIZE], title: &str, detail: &str) {
         use embedded_graphics::Drawable;
         use embedded_graphics::geometry::Point;
@@ -2604,7 +2632,7 @@ mod firmware {
     /// Owns the e-paper bus and renders the BLE menu. Input is serialized
     /// through the full-refresh cycle so Select can never activate an item the
     /// user has not yet seen on the panel.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     #[embassy_executor::task]
     async fn display_task(
         mut spi: Spim<'static>,
@@ -2689,7 +2717,7 @@ mod firmware {
         }
     }
 
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "button-techo")]
     fn techo_button_timings() -> ButtonTimings {
         ButtonTimings {
             max_click_hold: core::time::Duration::from_millis(500),
@@ -2703,7 +2731,7 @@ mod firmware {
     /// tested state machine used by T-1000E. Single advances, double selects,
     /// a 1–4 second hold released by the user goes back, and a continuing
     /// four-second hold always powers off.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "button-techo")]
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
@@ -2754,7 +2782,7 @@ mod firmware {
     /// The capacitive touch button remains dedicated to the unusual e-paper
     /// backlight. T-Echo defines P0.11 as active-low with a pull-up: illuminate
     /// on a debounced low level and turn it off on the corresponding release.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "has-display")]
     #[embassy_executor::task]
     async fn touch_task(mut touch: Input<'static>, mut backlight: Output<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(20);
@@ -2886,9 +2914,17 @@ mod firmware {
         .await;
     }
 
+    /// SenseCAP Solar battery monitor task: SAADC + active-low divider gate.
+    /// No charge-detect / external-power GPIO (see BSP `power` module).
+    #[cfg(feature = "board-sensecap-solar")]
+    #[embassy_executor::task]
+    async fn sensecap_power_task(saadc: Saadc<'static, 1>, divider_gate: Output<'static>) {
+        umsh_bsp_sensecap_solar::power::run_battery_monitor(saadc, divider_gate).await;
+    }
+
     /// Controlled power-off: put the e-paper controller to sleep, tri-state
     /// peripheral signal pins, drop the rail, and enter System OFF.
-    #[cfg(not(feature = "t1000e"))]
+    #[cfg(feature = "system-off-techo")]
     #[embassy_executor::task]
     async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
         SHUTDOWN_SIGNAL.wait().await;
@@ -2969,7 +3005,12 @@ mod firmware {
             unsafe { crate::ALLOCATOR.init(core::ptr::addr_of!(HEAP) as usize, HEAP_SIZE) }
         }
 
+        // Crystal-less boards (XIAO-based SenseCAP Solar) run the LFCLK from
+        // the internal RC oscillator; boards with a 32.768 kHz crystal use it.
+        #[cfg(not(feature = "lfclk-rc"))]
         let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
+        #[cfg(feature = "lfclk-rc")]
+        let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config_lfrc());
         // GPIO state survives the soft reset/DFU handoff. Silence the T-1000E
         // piezo before any potentially lengthy radio, flash, or BLE work so a
         // retained PWM/enable state cannot sound until the buzzer task starts.
@@ -3123,7 +3164,7 @@ mod firmware {
 
         // Peripheral power enable (P0.12). Must be high before the LoRa
         // module is addressed. Ownership transfers to shutdown_task.
-        #[cfg(not(feature = "t1000e"))]
+        #[cfg(feature = "system-off-techo")]
         let peripheral_power = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
 
         // On T-1000E, seize LR1110 reset before any lengthy initialization.
@@ -3194,8 +3235,11 @@ mod firmware {
                 cortex_m::peripheral::NVIC::unmask(embassy_nrf::pac::Interrupt::TIMER2);
             }
         }
-        #[cfg(not(feature = "t1000e"))]
+        #[cfg(feature = "board-techo")]
         let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
+        // SenseCAP Solar: LED_B (P0.19, blue, active-high) is the heartbeat.
+        #[cfg(feature = "board-sensecap-solar")]
+        let led = Output::new(p.P0_19, Level::Low, OutputDrive::Standard);
         #[cfg(feature = "t1000e")]
         let led = {
             let mut config = SimpleConfig::default();
@@ -3250,7 +3294,7 @@ mod firmware {
         //   SPI bus: SCK=P0.19, MOSI=P0.22, MISO=P0.23 (TWISPI1)
         //   CS=P0.24, RST=P0.25, BUSY=P0.17, DIO1=P0.20
         //   DIO2: internal RF switch; DIO3: 1.8 V TCXO.
-        #[cfg(not(feature = "t1000e"))]
+        #[cfg(feature = "board-techo")]
         {
             let mut cfg = SpimConfig::default();
             // SX1262 datasheet §8.2: max SCK = 16 MHz, Mode 0.
@@ -3284,11 +3328,15 @@ mod firmware {
 
             // enable_public_network=false → sync word 0x1424 (private).
             // session_config().sync_word must match this choice.
-            let lora = LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay)
-                .await
-                .unwrap_or_else(|_| panic!("radio init"));
-
-            spawner.spawn(radio_task(lora).unwrap());
+            // Radio init failure degrades to a USB/BLE-only NCP (RF dead)
+            // rather than a startup panic → reboot loop: a display-less
+            // field node must stay reachable to diagnose.
+            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
+                Ok(lora) => {
+                    spawner.spawn(radio_task(lora).unwrap());
+                }
+                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            }
         }
 
         // ── LR1110 LoRa radio (T-1000E) ─────────────────────────────────────
@@ -3316,10 +3364,64 @@ mod firmware {
                 rx_boost: true,
                 rf_switch: Some(RF_SWITCH),
             };
-            let lora = LoRa::new(Lr1110::new(radio_spi, iv, lora_config), false, Delay)
-                .await
-                .unwrap_or_else(|_| panic!("radio init"));
-            spawner.spawn(radio_task(lora).unwrap());
+            match LoRa::new(Lr1110::new(radio_spi, iv, lora_config), false, Delay).await {
+                Ok(lora) => {
+                    spawner.spawn(radio_task(lora).unwrap());
+                }
+                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            }
+        }
+
+        // ── SX1262 LoRa radio (SenseCAP Solar Node) ─────────────────────────
+        // Byte-for-byte the Wio Tracker L1 SX1262 bring-up on this board's
+        // pins (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
+        //   SPI TWISPI1 @16MHz: SCK=P1.13, MISO=P1.14, MOSI=P1.15, CS=P0.04
+        //   RST=P0.28, BUSY=P0.29, DIO1=P0.03, RXEN=P0.05 (rf_switch_rx)
+        #[cfg(feature = "board-sensecap-solar")]
+        {
+            let mut cfg = SpimConfig::default();
+            cfg.frequency = Frequency::M16;
+            let radio_bus = Spim::new(
+                p.TWISPI1, Irqs, p.P1_13, // SCK
+                p.P1_14, // MISO
+                p.P1_15, // MOSI
+                cfg,
+            );
+            let radio_cs = Output::new(p.P0_04, Level::High, OutputDrive::Standard);
+            let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
+
+            let radio_rst = Output::new(p.P0_28, Level::High, OutputDrive::Standard);
+            let radio_dio1 = Input::new(p.P0_03, Pull::None);
+            let radio_busy = Input::new(p.P0_29, Pull::None);
+            // RXEN clamped low at construction (safety contract) until
+            // lora-phy drives it HIGH in RX / LOW in TX.
+            let radio_rxen = Output::new(p.P0_05, Level::Low, OutputDrive::Standard);
+
+            let iv = GenericSx126xInterfaceVariant::new(
+                radio_rst,
+                radio_dio1,
+                radio_busy,
+                Some(radio_rxen), // rf_switch_rx
+                None,             // rf_switch_tx: none
+            )
+            .unwrap();
+
+            let lora_config = LoraConfig {
+                chip: Sx1262,
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8), // DIO3 → 1.8 V TCXO
+                use_dcdc: true,
+                rx_boost: true,
+            };
+
+            // Radio init failure degrades to a USB/BLE-only NCP (RF dead)
+            // rather than a startup panic → reboot loop. The SX1262 bring-up
+            // on these pins is hardware-proven (bidirectional RF, 2026-07-23).
+            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
+                Ok(lora) => {
+                    spawner.spawn(radio_task(lora).unwrap());
+                }
+                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            }
         }
 
         // The mux is the radio runner's only client; the session (and,
@@ -3351,11 +3453,25 @@ mod firmware {
             let mpsl_peripherals = mpsl::Peripherals::new(
                 p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31,
             );
+            // Boards with a 32.768 kHz crystal use it (20 ppm); crystal-less
+            // boards (XIAO-based SenseCAP Solar) run MPSL's LFCLK from the
+            // internal RC oscillator, periodically calibrated against the HF
+            // clock (rc_ctiv = 16 → every 4 s; rc_temp_ctiv = 2 → also on
+            // ~0.5 °C drift). Must match the embassy `lfclk_source` above.
+            #[cfg(not(feature = "lfclk-rc"))]
             let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
                 source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
                 rc_ctiv: 0,
                 rc_temp_ctiv: 0,
                 accuracy_ppm: 20,
+                skip_wait_lfclk_started: false,
+            };
+            #[cfg(feature = "lfclk-rc")]
+            let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
+                source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
+                rc_ctiv: 16,
+                rc_temp_ctiv: 2,
+                accuracy_ppm: 250,
                 skip_wait_lfclk_started: false,
             };
             static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
@@ -3487,7 +3603,7 @@ mod firmware {
 
         let mut config = Config::new(0x16c0, 0x27dd);
         config.manufacturer = Some("UMSH");
-        #[cfg(not(feature = "t1000e"))]
+        #[cfg(feature = "board-techo")]
         {
             config.product = Some("T-Echo UMSH NCP");
             config.serial_number = Some("companion-ncp-techo");
@@ -3496,6 +3612,11 @@ mod firmware {
         {
             config.product = Some("T-1000E UMSH NCP");
             config.serial_number = Some("companion-ncp-t1000e");
+        }
+        #[cfg(feature = "board-sensecap-solar")]
+        {
+            config.product = Some("Solar Node UMSH NCP");
+            config.serial_number = Some("companion-ncp-sensecap-solar");
         }
         config.max_power = 100;
         config.max_packet_size_0 = 64;
@@ -3566,7 +3687,7 @@ mod firmware {
 
         // The touch button only controls the e-paper backlight. Menu input is
         // exclusively the side button below.
-        #[cfg(not(feature = "t1000e"))]
+        #[cfg(feature = "board-techo")]
         {
             let touch = Input::new(p.P0_11, Pull::Up);
             let backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
@@ -3625,6 +3746,23 @@ mod firmware {
             spawner.spawn(t1000e_shutdown_task().unwrap());
         }
 
+        // SenseCAP Solar battery monitor: SAADC on AIN7/P0.31, resistor
+        // divider gated by P0.14 (active-low). Mirrors the T-1000E SAADC
+        // configuration (12-bit, GAIN1_6, 0.6 V ref) so the BSP conversion
+        // constant is comparable. No charge-detect / external-power GPIO
+        // (the CN3165 exposes none); VBUS presence comes from usbregstatus.
+        #[cfg(feature = "board-sensecap-solar")]
+        {
+            let saadc = Saadc::new(
+                p.SAADC,
+                Irqs,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(p.P0_31)],
+            );
+            let divider_gate = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
+            spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
+        }
+
         #[cfg(not(feature = "t1000e"))]
         drop(ux_store);
 
@@ -3659,13 +3797,13 @@ mod firmware {
                 } else {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
-                #[cfg(not(feature = "t1000e"))]
+                #[cfg(feature = "led-active-low")]
                 if on {
                     led.set_low();
                 } else {
                     led.set_high();
                 }
-                #[cfg(feature = "t1000e")]
+                #[cfg(not(feature = "led-active-low"))]
                 if on {
                     led.set_high();
                 } else {
@@ -3675,11 +3813,19 @@ mod firmware {
                 continue;
             }
             let decision = engine.tick(Instant::now().as_millis());
-            // T-Echo P0.14 is active-low; T-1000E P0.24 is active-high.
+            // Active-low (T-Echo P0.14) inverts; active-high (SenseCAP LED_B
+            // P0.19) drives directly.
+            #[cfg(feature = "led-active-low")]
             if decision.on {
                 led.set_low()
             } else {
                 led.set_high()
+            }
+            #[cfg(not(feature = "led-active-low"))]
+            if decision.on {
+                led.set_high()
+            } else {
+                led.set_low()
             }
             Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
