@@ -430,6 +430,27 @@ mod tests {
     }
 
     #[test]
+    fn request_identity_framing_carries_readable_nonce() {
+        // Mirrors PeerConnection::request_identity: a nonce-only options block
+        // framed with a leading PayloadType::MacCommand byte. The receiver
+        // dispatches on payload[0], then parses the command body.
+        let options = IdentityRequestBuilder::new().nonce(0xCAFEF00D).unwrap().build();
+        let mut buf = [0u8; 128];
+        buf[0] = umsh_core::PayloadType::MacCommand as u8;
+        let n = encode(&MacCommand::IdentityRequest { options: &options }, &mut buf[1..]).unwrap() + 1;
+
+        assert_eq!(buf[0], umsh_core::PayloadType::MacCommand as u8);
+        let decoded = parse(&buf[1..n]).expect("command body should parse");
+        let MacCommand::IdentityRequest { options: body } = decoded else {
+            panic!("expected IdentityRequest, got {decoded:?}");
+        };
+        assert_eq!(
+            IdentityRequestFilters::new(body).nonce().unwrap(),
+            Some(0xCAFEF00D)
+        );
+    }
+
+    #[test]
     fn identity_filters_nonce_round_trips() {
         let options = IdentityRequestBuilder::new().nonce(0xDEADBEEF).unwrap().build();
         let filters = IdentityRequestFilters::new(&options);

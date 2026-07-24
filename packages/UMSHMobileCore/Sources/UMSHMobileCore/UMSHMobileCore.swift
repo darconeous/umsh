@@ -1511,6 +1511,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord]) async throws
 
+    /**
+     * Solicit a specific peer's current node identity by sending a targeted
+     * MAC Identity Request (command 1). This resolves once the request has
+     * been handed to the transport; the peer's identity response arrives
+     * later as a `NodeIdentity` advertisement on the normal receive path
+     * (surfaced through `poll_update`'s advertisement events).
+     */
+    func requestIdentity(peerAddress: String) async throws
+
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
     /**
@@ -1807,6 +1816,29 @@ open func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRec
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_reject_chat_batch(
                         self.uniffiCloneHandle(),FfiConverterUInt64.lower(batchId),FfiConverterSequenceTypeMobileChatCheckpointRecord.lower(checkpoints)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Solicit a specific peer's current node identity by sending a targeted
+     * MAC Identity Request (command 1). This resolves once the request has
+     * been handed to the transport; the peer's identity response arrives
+     * later as a `NodeIdentity` advertisement on the normal receive path
+     * (surfaced through `poll_update`'s advertisement events).
+     */
+open func requestIdentity(peerAddress: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_request_identity(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -6419,6 +6451,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_reject_chat_batch() != 19006) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity() != 54447) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {

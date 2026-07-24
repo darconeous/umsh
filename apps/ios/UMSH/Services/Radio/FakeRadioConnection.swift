@@ -51,6 +51,10 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.identityUnavailable
     }
 
+    func requestIdentity(peerAddress: String) async throws {
+        throw RadioConnectionError.identityUnavailable
+    }
+
     func signIdentityBundle(name: String?) async throws -> Data {
         throw RadioConnectionError.identityUnavailable
     }

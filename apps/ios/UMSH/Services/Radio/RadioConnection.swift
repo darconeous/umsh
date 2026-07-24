@@ -32,6 +32,10 @@ protocol RadioConnection: AnyObject, Sendable {
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
+    /// Solicit a peer's current node identity by sending a targeted MAC
+    /// Identity Request. Resolves once the request is handed to the radio;
+    /// the peer's response arrives asynchronously on `advertisementEvents()`.
+    func requestIdentity(peerAddress: String) async throws
     func prepareChat(
         peerAddresses: [String],
         checkpoints: [MobileChatCheckpointRecord]

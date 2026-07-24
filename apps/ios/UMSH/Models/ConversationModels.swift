@@ -11,6 +11,9 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// Decoded advertised identity, when a bundle has been imported or
     /// received for this peer.
     var advertisedIdentity: MeshNodeIdentity? = nil
+    /// When we last heard from this peer by any means — advertisement, inbound
+    /// message, delivery ack, or ping reply. `nil` until the first evidence.
+    var lastHeard: Date? = nil
 
     var displayName: String {
         alias ?? advertisedName ?? (isCompanionRadio ? "Companion radio" : identity.hint.text)

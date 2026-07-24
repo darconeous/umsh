@@ -257,6 +257,36 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         self.send(&buf[..n], &opts).await
     }
 
+    /// Solicit this peer's current identity by sending a targeted MAC
+    /// Identity Request (command 1). Because the request is a unicast to a
+    /// specific peer, no filter options are needed — filters exist only to
+    /// narrow a broadcast solicitation. A random NONCE is included so the
+    /// peer echoes it in its identity response, matching the responder's
+    /// correlation contract.
+    ///
+    /// The response arrives asynchronously as a `PayloadType::NodeIdentity`
+    /// frame on the normal receive path, not as the return value here.
+    pub async fn request_identity(
+        &self,
+        options: &SendOptions,
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        let mut nonce_bytes = [0u8; 4];
+        self.transport.fill_random(&mut nonce_bytes).await;
+        let nonce = u32::from_be_bytes(nonce_bytes);
+
+        let opts_block = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(nonce)?
+            .build();
+        let cmd = crate::mac_command::MacCommand::IdentityRequest {
+            options: &opts_block,
+        };
+        let mut buf = [0u8; 128];
+        buf[0] = umsh_core::PayloadType::MacCommand as u8;
+        let n = crate::mac_command::encode(&cmd, &mut buf[1..])? + 1;
+
+        self.send(&buf[..n], options).await
+    }
+
     #[cfg(feature = "software-crypto")]
     pub async fn request_pfs(
         &self,

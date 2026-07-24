@@ -272,6 +272,10 @@ enum WorkerCommand {
         timestamp: Option<u32>,
         response: oneshot::Sender<Result<Vec<u8>, MobileMeshError>>,
     },
+    RequestIdentity {
+        peer: PublicKey,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
     Shutdown,
@@ -678,6 +682,22 @@ impl MobileMeshSession {
                 timestamp,
                 response,
             })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Solicit a specific peer's current node identity by sending a targeted
+    /// MAC Identity Request (command 1). This resolves once the request has
+    /// been handed to the transport; the peer's identity response arrives
+    /// later as a `NodeIdentity` advertisement on the normal receive path
+    /// (surfaced through `poll_update`'s advertisement events).
+    pub async fn request_identity(&self, peer_address: String) -> Result<(), MobileMeshError> {
+        let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RequestIdentity { peer, response })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -1378,6 +1398,30 @@ async fn run_worker(
                                 timestamp,
                             )
                             .await;
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::RequestIdentity { peer, response }) => {
+                            let result = match node.peer(peer).await {
+                                Ok(connection) => connection
+                                    .request_identity(
+                                        &SendOptions::default()
+                                            .with_flood_hops(5)
+                                            .with_ack_requested(false),
+                                    )
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|_| MobileMeshError::SendFailed),
+                                Err(_) => Err(MobileMeshError::SendFailed),
+                            };
+                            // A real authenticated send advances the frame counter;
+                            // persist it before acknowledging, as the ping/advertise
+                            // paths do.
+                            if result.is_ok()
+                                && handle.service_counter_persistence().await.is_err()
+                            {
+                                let _ = response.send(Err(MobileMeshError::SendFailed));
+                                return;
+                            }
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::RestoreChat { checkpoints, response }) => {

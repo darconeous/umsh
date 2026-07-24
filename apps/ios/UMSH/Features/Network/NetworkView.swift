@@ -12,6 +12,7 @@ struct NetworkView: View {
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
+    var fetchIdentity: ((PeerSummary) async -> Bool)? = nil
     var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
@@ -106,6 +107,7 @@ struct NetworkView: View {
                 sendMessage: sendMessage,
                 messageActions: messageActions,
                 pingPeer: pingPeer,
+                fetchIdentity: fetchIdentity,
                 updateAlias: updateAlias
             )
         } label: {
@@ -133,12 +135,14 @@ struct PeerDetailView: View {
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
+    let fetchIdentity: ((PeerSummary) async -> Bool)?
     let updateAlias: ((PeerSummary, String?) async -> Bool)?
 
     @State private var openedConversation: DirectConversationSummary?
     @State private var isOpeningConversation = false
     @State private var isPinging = false
     @State private var pingStatus: PeerPingStatus?
+    @State private var isFetchingIdentity = false
     @State private var feedbackTitle = ""
     @State private var feedbackMessage = ""
     @State private var showsFeedback = false
@@ -157,6 +161,7 @@ struct PeerDetailView: View {
         sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
         messageActions: ChatMessageActions = .unavailable,
         pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil,
+        fetchIdentity: ((PeerSummary) async -> Bool)? = nil,
         updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
     ) {
         self.peer = peer
@@ -167,6 +172,7 @@ struct PeerDetailView: View {
         self.sendMessage = sendMessage
         self.messageActions = messageActions
         self.pingPeer = pingPeer
+        self.fetchIdentity = fetchIdentity
         self.updateAlias = updateAlias
         _currentAlias = State(initialValue: peer.alias)
     }
@@ -184,6 +190,11 @@ struct PeerDetailView: View {
                 }
                 LabeledContent("Type", value: peer.isCompanionRadio ? "Companion radio identity" : peer.kind.label)
                 LabeledContent("Node hint", value: peer.identity.hint.text)
+                if let lastHeard = peer.lastHeard {
+                    LabeledContent("Last heard") {
+                        Text(lastHeard, format: .relative(presentation: .named))
+                    }
+                }
                 if updateAlias != nil {
                     LabeledContent("Alias") {
                         Button {
@@ -238,6 +249,20 @@ struct PeerDetailView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(isPinging)
+                    }
+
+                    if fetchIdentity != nil {
+                        Button {
+                            Task { await fetchPeerIdentity() }
+                        } label: {
+                            Label(
+                                isFetchingIdentity ? "Fetching identity…" : "Fetch identity",
+                                systemImage: "person.crop.circle.badge.questionmark"
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isFetchingIdentity)
                     }
 
                     if let pingStatus {
@@ -373,6 +398,19 @@ struct PeerDetailView: View {
         case let .unavailable(reason):
             pingStatus = .unavailable(reason: reason)
         }
+    }
+
+    private func fetchPeerIdentity() async {
+        guard let fetchIdentity else { return }
+        guard !isFetchingIdentity else { return }
+        isFetchingIdentity = true
+        defer { isFetchingIdentity = false }
+        let sent = await fetchIdentity(peer)
+        feedbackTitle = sent ? "Identity requested" : "Request unavailable"
+        feedbackMessage = sent
+            ? "Asked this peer for its current identity. Its details will update here when it responds."
+            : "Connect a companion radio configured for this phone before requesting a peer's identity."
+        showsFeedback = true
     }
 
     private static func decibels(_ centibels: Int16) -> String {

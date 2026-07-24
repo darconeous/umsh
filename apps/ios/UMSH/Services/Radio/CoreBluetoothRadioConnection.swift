@@ -69,6 +69,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var frameIn: CBCharacteristic?
     private var frameOut: CBCharacteristic?
     private var snapshot = RadioSnapshot.idle
+    /// Deferred publish of a Bluetooth-unavailable banner. Non-poweredOn
+    /// states are frequently transient at launch / after sleep (especially on
+    /// macOS: unknown → resetting → poweredOff → poweredOn), so the banner is
+    /// held for a short grace window and cancelled if the stack settles to
+    /// poweredOn — otherwise a radio that is actually on flashes a false
+    /// "Bluetooth off" to the user.
+    private var bluetoothUnavailableGrace: DispatchWorkItem?
+    private static let bluetoothUnavailableGraceSeconds: TimeInterval = 1.5
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
@@ -247,6 +255,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             name: name,
             timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
         )
+    }
+
+    func requestIdentity(peerAddress: String) async throws {
+        let session = try await currentMeshSession()
+        try await session.requestIdentity(peerAddress: peerAddress)
     }
 
     func signIdentityBundle(name: String?) async throws -> Data {
@@ -1041,9 +1054,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func publishBluetoothState() {
         guard let central else { return }
-        let message: String
-        switch central.state {
-        case .poweredOn:
+
+        // A fresh state supersedes any banner we were about to show.
+        bluetoothUnavailableGrace?.cancel()
+        bluetoothUnavailableGrace = nil
+
+        if central.state == .poweredOn {
             reconcileStandingConnectionOnPoweredOn()
             if restorationPendingResume {
                 resumeRestoredPeripheral()
@@ -1053,15 +1069,44 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 startAutomaticConnection()
             } else if scanRequested {
                 startScanning()
+            } else if snapshot.linkState == .unavailable {
+                // Bluetooth is on, but a transient off/starting state left an
+                // unavailable banner up and nothing else is going to publish a
+                // fresh snapshot. Clear it so the UI stops claiming Bluetooth
+                // is disabled when it is not.
+                publishDisconnected(problem: nil)
             }
             return
+        }
+
+        let message: String
+        switch central.state {
         case .unauthorized: message = "Bluetooth permission is denied"
         case .unsupported: message = "Bluetooth is unavailable on this device"
         case .poweredOff: message = "Bluetooth is turned off"
         case .resetting: message = "Bluetooth is restarting"
         case .unknown: message = "Bluetooth is starting"
+        case .poweredOn: return // handled above
         @unknown default: message = "Bluetooth is unavailable"
         }
+
+        // Defer the banner: if the stack settles to poweredOn within the grace
+        // window the work item is cancelled and no false alarm is shown. A
+        // genuinely unavailable radio stays in this state and the banner
+        // appears once the window elapses.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let central = self.central,
+                  central.state != .poweredOn else { return }
+            self.publishBluetoothUnavailable(message)
+        }
+        bluetoothUnavailableGrace = work
+        bluetoothQueue.asyncAfter(
+            deadline: .now() + Self.bluetoothUnavailableGraceSeconds,
+            execute: work
+        )
+    }
+
+    private func publishBluetoothUnavailable(_ message: String) {
         publish(
             RadioSnapshot(
                 linkState: .unavailable,

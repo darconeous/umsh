@@ -21,6 +21,10 @@ struct StoredNode: Equatable, Sendable {
     /// Raw advertised-identity payload bytes (node-identity.md wire form),
     /// decoded for display through the Rust facade on load.
     let advertisement: Data?
+    /// Wall-clock instant we last heard from this peer by any means
+    /// (advertisement, inbound message, delivery ack, ping reply). `nil`
+    /// until the first inbound evidence lands.
+    let lastHeardAt: Date?
 }
 
 struct NewStoredNode: Equatable, Sendable {
@@ -55,7 +59,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 7
+    static let currentSchemaVersion: Int32 = 8
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -304,6 +308,51 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// Record that we just heard from a peer by any means. No-ops when the
+    /// peer is not yet saved locally — an unknown peer has no row to touch and
+    /// needs no last-heard until it is added.
+    func touchLastHeard(
+        ownerIdentityID: String,
+        publicAddress: String,
+        at instant: Date
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE node SET last_heard_at = ?
+            WHERE owner_identity_id = ? AND public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_double(statement, 1, instant.timeIntervalSince1970))
+        try bind(ownerIdentityID, to: statement, at: 2)
+        try bind(publicAddress, to: statement, at: 3)
+        try stepDone(statement)
+    }
+
+    /// Resolve the peer a locally-stored message belongs to, keyed by its
+    /// durable `(sessionID, handle)`. Used to attribute delivery acks — which
+    /// carry no peer address — back to a peer for last-heard bookkeeping.
+    func peerAddressForMessage(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> String? {
+        let statement = try prepare(
+            """
+            SELECT peer_address FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        // session_id is stored as TEXT (the decimal UInt64), matching how
+        // delivery fragments and message rows are written.
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(String(sessionID), to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Self.optionalStringColumn(statement, at: 0)
+    }
+
     func upsertCompanionRadioPeer(
         ownerIdentityID: String,
         publicAddress: String,
@@ -338,7 +387,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement
+                   is_contact, system_role, node_kind, advertisement, last_heard_at
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
                      alias_search, id
@@ -387,7 +436,7 @@ actor SQLiteApplicationStore {
             """
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
                    n.advertised_name, n.is_contact, n.system_role, n.node_kind,
-                   n.advertisement, c.draft_text
+                   n.advertisement, n.last_heard_at, c.draft_text
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
@@ -402,7 +451,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 10)
+                        draftText: Self.stringColumn(statement, at: 11)
                     )
                 )
             case SQLITE_DONE:
@@ -728,7 +777,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement
+                   is_contact, system_role, node_kind, advertisement, last_heard_at
             FROM node
             WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
             ORDER BY alias_search, id
@@ -811,7 +860,8 @@ actor SQLiteApplicationStore {
             isContact: sqlite3_column_int(statement, offset + 5) != 0,
             systemRole: Self.optionalStringColumn(statement, at: offset + 6),
             nodeKind: Self.optionalStringColumn(statement, at: offset + 7),
-            advertisement: Self.optionalDataColumn(statement, at: offset + 8)
+            advertisement: Self.optionalDataColumn(statement, at: offset + 8),
+            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 9)
         )
     }
 
@@ -1322,6 +1372,23 @@ actor SQLiteApplicationStore {
                 throw error
             }
         }
+
+        if version < 8 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node ADD COLUMN last_heard_at REAL;
+                    PRAGMA user_version = 8;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
     }
 
     private static func readSchemaVersion(_ database: OpaquePointer) throws -> Int32 {
@@ -1379,6 +1446,15 @@ actor SQLiteApplicationStore {
     ) -> Data? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return dataColumn(statement, at: index)
+    }
+
+    /// Read a REAL column holding a Unix-epoch-seconds instant.
+    private static func optionalDateColumn(
+        _ statement: OpaquePointer,
+        at index: Int32
+    ) -> Date? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
     }
 
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

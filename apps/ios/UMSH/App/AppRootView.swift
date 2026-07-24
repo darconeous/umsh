@@ -69,6 +69,7 @@ struct AppRootView: View {
                     sendMessage: sendMessage,
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
                     pingPeer: pingPeer,
+                    fetchIdentity: fetchIdentity,
                     updateAlias: updateAlias
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -230,6 +231,7 @@ struct AppRootView: View {
                 isContact: false,
                 advertisement: advertisement.payload
             )
+            await touchLastHeard(advertisement.peerAddress)
             await reloadApplicationState()
         } catch {
             Self.logger.error("Failed to persist received advertisement")
@@ -610,6 +612,9 @@ struct AppRootView: View {
                 peerAddress: peer.identity.canonicalAddress
             ) {
             case let .reply(reply):
+                // A pong is evidence we heard from the peer; a timeout is not.
+                await touchLastHeard(peer.identity.canonicalAddress)
+                await reloadApplicationState()
                 return .reply(
                     PeerPingReply(
                         roundTripMilliseconds: reply.roundTripMilliseconds,
@@ -626,6 +631,37 @@ struct AppRootView: View {
         } catch {
             return .unavailable(reason: "The Rust mesh session could not send this ping.")
         }
+    }
+
+    /// Solicit a peer's current identity over the mesh. The response is not
+    /// awaited here — it returns asynchronously as a node-identity
+    /// advertisement, captured by `applyReceivedAdvertisement`, which upserts
+    /// the fresh bundle and refreshes the sheet. Returns whether the request
+    /// was sent, for a brief UI confirmation.
+    private func fetchIdentity(_ peer: PeerSummary) async -> Bool {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return false }
+        do {
+            try await radioConnection.requestIdentity(
+                peerAddress: peer.identity.canonicalAddress
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Record that we just heard from a peer by any inbound evidence. Safe to
+    /// call for peers not yet saved locally — the store no-ops on a missing
+    /// row. Callers reload application state afterward to surface the change.
+    private func touchLastHeard(_ peerAddress: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        try? await applicationStore.touchLastHeard(
+            ownerIdentityID: localIdentity.id,
+            publicAddress: peerAddress,
+            at: Date()
+        )
     }
 
     private func installMeshSession() async throws {
@@ -695,6 +731,30 @@ struct AppRootView: View {
                     requestID: lookup.requestId,
                     kind: payload == nil ? .unknown : .found,
                     payload: payload ?? Data()
+                )
+            }
+            // Last-heard evidence beyond chat inserts: an inbound message and a
+            // delivery ack both prove we heard from the peer. Deliveries carry
+            // no address, so resolve them from the acked message's conversation.
+            var heardFrom: Set<String> = []
+            for mutation in update.mutations where mutation.direction == .inbound {
+                if let peerAddress = mutation.peerAddress { heardFrom.insert(peerAddress) }
+            }
+            for delivery in update.deliveries where delivery.state == .acknowledged {
+                if let peerAddress = try? await applicationStore.peerAddressForMessage(
+                    ownerIdentityID: localIdentity.id,
+                    sessionID: delivery.sessionId,
+                    handle: delivery.handle
+                ) {
+                    heardFrom.insert(peerAddress)
+                }
+            }
+            let heardAt = Date()
+            for peerAddress in heardFrom {
+                try? await applicationStore.touchLastHeard(
+                    ownerIdentityID: localIdentity.id,
+                    publicAddress: peerAddress,
+                    at: heardAt
                 )
             }
             try await radioConnection.acknowledgeChatBatch(update.batchID)
@@ -808,7 +868,8 @@ struct AppRootView: View {
                     isContact: stored.isContact,
                     systemRole: stored.systemRole,
                     kind: stored.nodeKind.flatMap(PeerKind.init(rawValue:)) ?? .unknown,
-                    advertisedIdentity: advertisedIdentity
+                    advertisedIdentity: advertisedIdentity,
+                    lastHeard: stored.lastHeardAt
                 )
             }
             let storedConversations = try await applicationStore.listDirectConversations(
