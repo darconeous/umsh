@@ -43,10 +43,23 @@ Commands:\n\
                         post-reset values, restoring any saved\n\
                         snapshot; the MCU does not reboot\n\
   pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\
+  phy                   print PHY enable state and LoRa parameters\n\
+  phy on|off            enable/disable the radio (PROP_PHY_ENABLED); a\n\
+                        repeater or autonomous node needs the PHY on\n\
+  phy freq <kHz>        set the frequency in kHz (PROP_PHY_FREQ)\n\
+  phy sf <5-12>         set the LoRa spreading factor\n\
+  phy bw <Hz>           set the LoRa bandwidth in Hz\n\
+  phy cr <5-8>          set the LoRa coding-rate denominator (4/N)\n\
+  phy power <dBm>       set the transmit power in dBm (PROP_PHY_TX_POWER)\n\
   duty                  print duty-cycle usage and limit\n\
   duty limit <N|off>    set PROP_PHY_DUTY_LIMIT on its raw 0-65535\n\
                         scale (655 \u{2248} 1% of the hour); `off` disables\n\
                         enforcement\n\
+  repeater              print whether autonomous repeater forwarding\n\
+                        is enabled (PROP_MAC_REPEATER_ENABLED)\n\
+  repeater on|off       enable/disable repeater forwarding; the on-board\n\
+                        node forwards overheard frames and advertises as\n\
+                        a repeater (needs a provisioned device identity)\n\
   dev-channel [list]    list device-identity channel ids (digest form)\n\
   dev-channel add <KEY>    add a device channel key (the on-board node\n\
                            joins it and processes its multicast)\n\
@@ -87,7 +100,9 @@ const COMMANDS: &[&str] = &[
     "factory-reset",
     "reset",
     "pin",
+    "phy",
     "duty",
+    "repeater",
     "dev-channel",
     "dev-peer",
 ];
@@ -118,13 +133,31 @@ enum Command {
     FactoryReset,
     Reset,
     Pin(Option<u32>),
+    /// `phy` (report) / `phy on|off` / `phy freq|sf|bw|cr|power <value>`.
+    Phy(PhyOp),
     /// `duty` (`None`: report usage + limit) / `duty limit <value>`.
     Duty(Option<u16>),
+    /// `repeater` (`None`: report state) / `repeater on|off`
+    /// (`Some(bool)`: set `PROP_MAC_REPEATER_ENABLED`).
+    Repeater(Option<bool>),
     DevChannel(TableOp),
     DevPeer(TableOp),
     /// `--ble-scan` (a transport mode more than a command; carried here
     /// so the invocation stays one shape).
     BleScan,
+}
+
+/// One operation on the PHY configuration. `Report` reads the current
+/// state; the rest write a single `PROP_PHY_*` property.
+#[derive(Debug, PartialEq, Eq)]
+enum PhyOp {
+    Report,
+    Enable(bool),
+    Freq(u32),
+    Sf(u8),
+    Bw(u32),
+    Cr(u8),
+    Power(i8),
 }
 
 /// One operation on a device-domain key table (`PROP_DEV_CHANNEL_KEYS`
@@ -431,7 +464,13 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             "--no-save" => {
                 if !matches!(
                     word.as_str(),
-                    "provision" | "set-name" | "duty" | "dev-channel" | "dev-peer"
+                    "provision"
+                        | "set-name"
+                        | "phy"
+                        | "duty"
+                        | "repeater"
+                        | "dev-channel"
+                        | "dev-peer"
                 ) {
                     return Err(format!("{name} only applies to mutating commands"));
                 }
@@ -530,6 +569,13 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             }
             Some(other) => return Err(format!("duty does not take {other:?}")),
         },
+        "phy" => Command::Phy(parse_phy_op(&positionals)?),
+        "repeater" => match positionals.first().map(String::as_str) {
+            None => Command::Repeater(None),
+            Some("on") if positionals.len() == 1 => Command::Repeater(Some(true)),
+            Some("off") if positionals.len() == 1 => Command::Repeater(Some(false)),
+            _ => return Err("repeater takes `on`, `off`, or no argument".into()),
+        },
         "dev-channel" => Command::DevChannel(parse_table_op(&word, &positionals)?),
         "dev-peer" => Command::DevPeer(parse_table_op(&word, &positionals)?),
         _ => unreachable!("command word validated above"),
@@ -542,6 +588,55 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
         no_save,
         command,
     })
+}
+
+fn parse_phy_op(positionals: &[String]) -> Result<PhyOp, String> {
+    let value = |what: &str| -> Result<&String, String> {
+        if positionals.len() == 2 {
+            Ok(&positionals[1])
+        } else {
+            Err(format!("phy {what} takes exactly one value"))
+        }
+    };
+    let num = |text: &str, what: &str| -> Result<i64, String> {
+        text.parse::<i64>()
+            .map_err(|_| format!("phy {what}: expected a number, got {text:?}"))
+    };
+    match positionals.first().map(String::as_str) {
+        None => Ok(PhyOp::Report),
+        Some("on") if positionals.len() == 1 => Ok(PhyOp::Enable(true)),
+        Some("off") if positionals.len() == 1 => Ok(PhyOp::Enable(false)),
+        Some("freq") => {
+            let n = num(value("freq")?, "freq")?;
+            u32::try_from(n).map(PhyOp::Freq).map_err(|_| "phy freq out of range".into())
+        }
+        Some("sf") => {
+            let n = num(value("sf")?, "sf")?;
+            if !(5..=12).contains(&n) {
+                return Err("phy sf must be 5-12".into());
+            }
+            Ok(PhyOp::Sf(n as u8))
+        }
+        Some("bw") => {
+            let n = num(value("bw")?, "bw")?;
+            u32::try_from(n).map(PhyOp::Bw).map_err(|_| "phy bw out of range".into())
+        }
+        Some("cr") => {
+            let n = num(value("cr")?, "cr")?;
+            if !(5..=8).contains(&n) {
+                return Err("phy cr must be 5-8".into());
+            }
+            Ok(PhyOp::Cr(n as u8))
+        }
+        Some("power") => {
+            let n = num(value("power")?, "power")?;
+            i8::try_from(n).map(PhyOp::Power).map_err(|_| "phy power out of range".into())
+        }
+        _ => Err(
+            "phy takes: (none), on, off, freq <kHz>, sf <5-12>, bw <Hz>, cr <5-8>, power <dBm>"
+                .into(),
+        ),
+    }
 }
 
 fn parse_table_op(word: &str, positionals: &[String]) -> Result<TableOp, String> {
@@ -580,6 +675,7 @@ fn cap_name(code: u32) -> String {
         cap::DEV_IDENTITY => "DEV_IDENTITY".into(),
         cap::DEV_NAME => "DEV_NAME".into(),
         cap::BATTERY => "BATTERY".into(),
+        cap::REPEATER => "REPEATER".into(),
         other => other.to_string(),
     }
 }
@@ -615,6 +711,10 @@ fn filter_display(filter: &Filter) -> String {
 
 fn decode_u16(value: &[u8]) -> Option<u16> {
     <[u8; 2]>::try_from(value).ok().map(u16::from_le_bytes)
+}
+
+fn decode_u32(value: &[u8]) -> Option<u32> {
+    <[u8; 4]>::try_from(value).ok().map(u32::from_le_bytes)
 }
 
 fn duty_percent(raw: u16) -> f64 {
@@ -734,6 +834,17 @@ async fn info<L: FrameLink>(
             }
         });
         println!("{:<14}now {now}, limit {limit}", "duty:");
+    }
+    if sync.has_capability(cap::REPEATER) {
+        let state = radio
+            .get_prop(prop::MAC_REPEATER_ENABLED)
+            .await
+            .ok()
+            .and_then(|v| v.first().copied())
+            .map_or("unknown".to_string(), |byte| {
+                if byte == 0 { "off".into() } else { "on".into() }
+            });
+        println!("{:<14}{state}", "repeater:");
     }
     if sync.has_capability(cap::BATTERY) {
         // Live telemetry: each GET performs a measurement, so this is
@@ -969,7 +1080,9 @@ async fn dispatch<L: FrameLink>(
             }
             Ok(())
         }
+        Command::Phy(op) => phy(&mut radio, op, no_save).await,
         Command::Duty(limit) => duty(&mut radio, limit, no_save).await,
+        Command::Repeater(state) => repeater(&mut radio, state, no_save).await,
         Command::DevChannel(op) => {
             dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
@@ -978,6 +1091,93 @@ async fn dispatch<L: FrameLink>(
         // opened.
         Command::BleScan => unreachable!("scan handled in run()"),
     }
+}
+
+/// Print the current PHY enable state and LoRa parameters on one line.
+async fn phy_report<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let enabled = radio
+        .get_prop(prop::PHY_ENABLED)
+        .await?
+        .first()
+        .copied()
+        .unwrap_or(0)
+        != 0;
+    let mut parts = vec![if enabled { "enabled" } else { "disabled" }.to_string()];
+    if let Some(freq) = radio.get_prop(prop::PHY_FREQ).await.ok().and_then(|v| decode_u32(&v)) {
+        parts.push(format!("{freq} kHz"));
+    }
+    if let Some(bw) = radio.get_prop(prop::PHY_LORA_BW).await.ok().and_then(|v| decode_u32(&v)) {
+        parts.push(format!("BW {bw} Hz"));
+    }
+    if let Some(sf) = radio
+        .get_prop(prop::PHY_LORA_SF)
+        .await
+        .ok()
+        .and_then(|v| v.first().copied())
+    {
+        parts.push(format!("SF{sf}"));
+    }
+    if let Some(cr) = radio
+        .get_prop(prop::PHY_LORA_CR)
+        .await
+        .ok()
+        .and_then(|v| v.first().copied())
+    {
+        parts.push(format!("CR 4/{cr}"));
+    }
+    if let Some(power) = radio
+        .get_prop(prop::PHY_TX_POWER)
+        .await
+        .ok()
+        .and_then(|v| v.first().copied())
+    {
+        parts.push(format!("TX {} dBm", power as i8));
+    }
+    println!("phy: {}", parts.join(", "));
+    Ok(())
+}
+
+/// Report or set the PHY configuration. Each mutating form writes one
+/// `PROP_PHY_*` property and echoes the authoritative value. The PHY must
+/// be enabled before the radio can receive, forward, or transmit — so an
+/// autonomous node or repeater needs `phy on` (then `save`).
+async fn phy<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    op: PhyOp,
+    no_save: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match op {
+        PhyOp::Report => return phy_report(radio).await,
+        PhyOp::Enable(on) => {
+            let echoed = radio.set_prop(prop::PHY_ENABLED, &[on as u8]).await?;
+            let on = echoed.first().copied().unwrap_or(on as u8) != 0;
+            println!("phy {}", if on { "enabled" } else { "disabled" });
+        }
+        PhyOp::Freq(khz) => {
+            let echoed = radio.set_prop(prop::PHY_FREQ, &khz.to_le_bytes()).await?;
+            println!("phy freq {} kHz", decode_u32(&echoed).unwrap_or(khz));
+        }
+        PhyOp::Sf(sf) => {
+            let echoed = radio.set_prop(prop::PHY_LORA_SF, &[sf]).await?;
+            println!("phy SF{}", echoed.first().copied().unwrap_or(sf));
+        }
+        PhyOp::Bw(hz) => {
+            let echoed = radio.set_prop(prop::PHY_LORA_BW, &hz.to_le_bytes()).await?;
+            println!("phy BW {} Hz", decode_u32(&echoed).unwrap_or(hz));
+        }
+        PhyOp::Cr(cr) => {
+            let echoed = radio.set_prop(prop::PHY_LORA_CR, &[cr]).await?;
+            println!("phy CR 4/{}", echoed.first().copied().unwrap_or(cr));
+        }
+        PhyOp::Power(dbm) => {
+            let echoed = radio.set_prop(prop::PHY_TX_POWER, &[dbm as u8]).await?;
+            let dbm = echoed.first().copied().map_or(dbm, |b| b as i8);
+            println!("phy TX {dbm} dBm");
+        }
+    }
+    persist_mutation(radio, no_save, true).await
 }
 
 fn parse_duty_limit(value: &str) -> Result<u16, String> {
@@ -1017,6 +1217,36 @@ async fn duty<L: FrameLink>(
     let limit = radio.get_prop(prop::PHY_DUTY_LIMIT).await?;
     println!("duty now   {now} ({:.2}% of the hour)", duty_percent(now));
     print_duty_limit(decode_u16(&limit).ok_or("malformed PHY_DUTY_LIMIT")?);
+    Ok(())
+}
+
+fn print_repeater(byte: Option<u8>) {
+    match byte {
+        Some(0) => println!("repeater off"),
+        Some(_) => println!("repeater on (on-board node forwards overheard frames)"),
+        None => println!("repeater state unknown (empty value)"),
+    }
+}
+
+/// Report or set autonomous repeater forwarding
+/// (`PROP_MAC_REPEATER_ENABLED`). Persisted device-domain state: it takes
+/// effect once a device identity is provisioned (store-and-defer) and
+/// survives reboot. Enabling it makes the on-board node forward overheard
+/// routable frames and advertise as a repeater.
+async fn repeater<L: FrameLink>(
+    radio: &mut CompanionRadio<L>,
+    state: Option<bool>,
+    no_save: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(enabled) = state {
+        let echoed = radio
+            .set_prop(prop::MAC_REPEATER_ENABLED, &[enabled as u8])
+            .await?;
+        print_repeater(echoed.first().copied());
+        return persist_mutation(radio, no_save, true).await;
+    }
+    let value = radio.get_prop(prop::MAC_REPEATER_ENABLED).await?;
+    print_repeater(value.first().copied());
     Ok(())
 }
 

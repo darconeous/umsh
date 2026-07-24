@@ -56,6 +56,14 @@ pub mod prop {
     pub const DEV_NAME: u32 = 68;
     /// Battery status snapshot (`PROP_BATTERY`).
     pub const BATTERY: u32 = 69;
+    /// Autonomous MAC-layer repeater/forwarding enable (`PROP_MAC_REPEATER_ENABLED`).
+    ///
+    /// First of the device-behavior settings range (70–95). A persisted,
+    /// device-domain boolean: when set, the device identity's on-board MAC
+    /// forwards overheard routable frames and advertises `NodeRole::Repeater`.
+    /// Takes effect only once a device identity is provisioned
+    /// (store-and-defer otherwise).
+    pub const MAC_REPEATER_ENABLED: u32 = 70;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -110,6 +118,9 @@ pub mod cap {
     pub const DEV_NAME: u32 = 38;
     /// `CAP_BATTERY`
     pub const BATTERY: u32 = 39;
+    /// `CAP_REPEATER` — the device can act as an autonomous mesh repeater
+    /// (`PROP_MAC_REPEATER_ENABLED`).
+    pub const REPEATER: u32 = 40;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

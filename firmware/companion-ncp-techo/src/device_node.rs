@@ -164,6 +164,25 @@ pub static DEV_SYNC: Signal<ThreadModeRawMutex, DevDomainSnapshot> = Signal::new
 /// old identity until reboot, but it must stop originating traffic.
 static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
 
+/// Whether the device node is acting as a repeater
+/// (`PROP_MAC_REPEATER_ENABLED`). Reconciled from each
+/// [`DevDomainSnapshot`] by [`node_dev_sync_task`]; read by the
+/// advertisement path so a solicited advertisement reports the role and
+/// capabilities that match the live forwarding state ("link them").
+static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
+
+/// The advertised (role, capabilities) pair for the device identity,
+/// derived from the repeater flag. Used by both the solicited
+/// advertisement and the Identity Request responder profile so an
+/// enabled repeater actually advertises as one.
+fn advertised_identity(is_repeater: bool) -> (NodeRole, NodeCapabilities) {
+    if is_repeater {
+        (NodeRole::Repeater, NodeCapabilities::REPEATER)
+    } else {
+        (NodeRole::Tracker, NodeCapabilities::empty())
+    }
+}
+
 /// Signalled by the session's `publish_device_name` when the live device
 /// name changes, so the Identity Request responder's profile name stays
 /// current. A **dedicated** signal, not the BLE-facing `DEVICE_NAME_CHANGED`:
@@ -186,6 +205,24 @@ async fn node_dev_sync_task(node: NcpNode, mac: NcpNodeHandle) {
     loop {
         let snapshot = DEV_SYNC.wait().await;
         NODE_ACTIVE.store(snapshot.identity_present, Ordering::Relaxed);
+        // Reconcile the forwarding switch and, linked to it, the
+        // advertised role/capabilities. Setting the MAC flag is
+        // idempotent; the profile update only matters when the flag
+        // actually changes, but re-applying it is harmless.
+        mac.set_repeater_enabled(snapshot.repeater_enabled).await;
+        if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
+            != snapshot.repeater_enabled
+        {
+            let (role, capabilities) = advertised_identity(snapshot.repeater_enabled);
+            node.update_identity_profile(move |profile| {
+                profile.role = role;
+                profile.capabilities = capabilities;
+            });
+            crate::firmware::debug_log(format_args!(
+                "node dev-sync: repeater {}",
+                if snapshot.repeater_enabled { "ON" } else { "off" }
+            ));
+        }
         let mut index = 0;
         while index < applied.len() {
             if snapshot.channel_keys.contains(&applied[index]) {
@@ -341,9 +378,10 @@ async fn send_advertisement(
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
     let name = profile_name().await;
+    let (role, capabilities) = advertised_identity(NODE_IS_REPEATER.load(Ordering::Relaxed));
     let payload = umsh_node::NodeIdentityPayload {
-        role: umsh_node::NodeRole::Tracker,
-        capabilities: umsh_node::NodeCapabilities::empty(),
+        role,
+        capabilities,
         name,
         location: None,
         altitude_m: None,

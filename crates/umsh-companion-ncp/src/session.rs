@@ -280,6 +280,12 @@ struct DeviceDomain {
     channel_keys: ChannelKeyTable,
     /// `PROP_DEV_PEERS`: peer public keys the device node recognizes.
     peers: DevPeerTable,
+    /// `PROP_MAC_REPEATER_ENABLED`: when set, the device identity's
+    /// on-board MAC autonomously forwards overheard routable frames and
+    /// advertises `NodeRole::Repeater`. Persisted device-domain state;
+    /// takes effect only once a device identity is provisioned
+    /// (store-and-defer otherwise).
+    repeater_enabled: bool,
 }
 
 impl DeviceDomain {
@@ -302,6 +308,7 @@ impl DeviceDomain {
             name_len,
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
+            repeater_enabled: false,
         }
     }
 }
@@ -876,8 +883,9 @@ pub const SNAPSHOT_MAX: usize = 1536;
 
 /// Snapshot wire-format version; a decoder rejects other versions and
 /// the NCP then boots as if nothing were saved. Version 2 added the
-/// device identity's channel keys and peer list.
-const SNAPSHOT_VERSION: u8 = 2;
+/// device identity's channel keys and peer list. Version 3 added the
+/// `PROP_MAC_REPEATER_ENABLED` flag.
+const SNAPSHOT_VERSION: u8 = 3;
 
 /// The saved-state subset of the device and host domains (spec §Saved
 /// State): everything `CMD_SAVE` persists and `CMD_RESTORE`/`CMD_RST`
@@ -891,6 +899,7 @@ struct SavedState {
     name_len: usize,
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
+    repeater_enabled: bool,
     host_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     auto_ack: bool,
     filters: FilterTable,
@@ -913,6 +922,7 @@ impl SavedState {
             name_len: device.name_len,
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
+            repeater_enabled: device.repeater_enabled,
             host_key: host.key,
             auto_ack: host.auto_ack,
             filters: host.filters,
@@ -977,6 +987,7 @@ impl SavedState {
         for public_key in self.dev_peers.iter() {
             writer.bytes(public_key)?;
         }
+        writer.byte(self.repeater_enabled as u8)?;
         Some(writer.at)
     }
 
@@ -1086,6 +1097,11 @@ impl SavedState {
         for _ in 0..dev_peer_count {
             dev_peers.insert(reader.array()?).ok()?;
         }
+        let repeater_enabled = match reader.byte()? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         if reader.at != bytes.len() {
             return None;
         }
@@ -1096,6 +1112,7 @@ impl SavedState {
             name_len,
             dev_channel_keys,
             dev_peers,
+            repeater_enabled,
             host_key,
             auto_ack,
             filters,
@@ -1345,6 +1362,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.peers.iter().copied()
     }
 
+    /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
+    /// autonomously forward overheard routable frames and advertise
+    /// `NodeRole::Repeater`. Part of the device domain, so it changes
+    /// [`Session::dev_domain_version`] and the firmware reconciles it
+    /// against the live MAC on the next sync.
+    pub fn repeater_enabled(&self) -> bool {
+        self.device.repeater_enabled
+    }
+
     /// The live `PROP_DEV_KEY` value. `None` once a factory reset
     /// (`CMD_CLEAR` + `CMD_RST`) completes — the firmware uses this
     /// edge to make a running device node dormant.
@@ -1404,6 +1430,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.name_len = saved.name_len;
         self.device.channel_keys = saved.dev_channel_keys;
         self.device.peers = saved.dev_peers;
+        self.device.repeater_enabled = saved.repeater_enabled;
         self.bump_dev_domain();
     }
 
@@ -2467,6 +2494,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // Device-domain forwarding switch. Accepted regardless of
+            // whether a device identity exists yet: the flag is persisted
+            // and takes effect the moment the device node is brought up
+            // (store-and-defer). The firmware reconciles it against the
+            // live MAC via the dev-domain version.
+            prop::MAC_REPEATER_ENABLED => {
+                self.device.repeater_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // This NCP's queue size is fixed; adjustment is optional in
             // the spec and unimplemented here.
             prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
@@ -2765,6 +2802,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::DEV_PRIVATE_KEY
                 | prop::DEV_CHANNEL_KEYS
                 | prop::DEV_PEERS
+                | prop::MAC_REPEATER_ENABLED
                 | prop::PHY_DUTY_NOW
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
@@ -2810,6 +2848,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     cap::HOST_AUTO_ACK,
                     cap::SAVE,
                     cap::DEV_IDENTITY,
+                    cap::REPEATER,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -2860,6 +2899,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     len += put(&mut out[len..], public_key);
                 }
                 len
+            }
+            prop::MAC_REPEATER_ENABLED => {
+                out[0] = self.device.repeater_enabled as u8;
+                1
             }
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
@@ -3231,9 +3274,45 @@ mod tests {
                 cap::HOST_AUTO_ACK,
                 cap::SAVE,
                 cap::DEV_IDENTITY,
+                cap::REPEATER,
                 cap::BATTERY
             ]
         );
+    }
+
+    #[test]
+    fn repeater_enable_round_trips_and_persists() {
+        let mut session = test_session();
+        // Defaults off, accepted before any identity is provisioned
+        // (store-and-defer), and echoes the authoritative value back.
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [0]);
+        let (emitted, effect) = set(&mut session, prop::MAC_REPEATER_ENABLED, &[1]);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::MAC_REPEATER_ENABLED);
+        assert_eq!(value, [1]);
+        // Not radio-affecting; no ApplyRadio effect.
+        assert_eq!(effect, None);
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [1]);
+        assert!(session.repeater_enabled());
+        // Only a boolean is accepted.
+        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_ENABLED, &[2]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        // Survives save + boot-from-snapshot.
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(booted.repeater_enabled());
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::MAC_REPEATER_ENABLED), [1]);
+
+        // A fresh unprovisioned session defaults off.
+        let fresh: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        assert!(!fresh.repeater_enabled());
     }
 
     #[test]
@@ -3834,15 +3913,20 @@ mod tests {
         let mut buf = [0u8; 80];
 
         // A known single-value property is not insertable/removable.
-        for known in [prop::PHY_FREQ, prop::BLE_PAIRING_PIN, prop::CAPS] {
+        for known in [
+            prop::PHY_FREQ,
+            prop::BLE_PAIRING_PIN,
+            prop::CAPS,
+            prop::MAC_REPEATER_ENABLED,
+        ] {
             let len = frame::prop_insert(&mut buf, 1, known, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 70 is in the reserved
+        // An unknown property is not found; 71 is in the reserved
         // device-behavior range the spec has not assigned.
-        for unknown in [70, 1_234] {
+        for unknown in [71, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());

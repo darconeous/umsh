@@ -97,6 +97,9 @@ pub struct DevDomainSnapshot {
     pub channel_keys: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS>,
     pub peers: heapless::Vec<[u8; 32], MAX_DEV_PEERS>,
     pub identity_present: bool,
+    /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
+    /// forward overheard routable frames and advertise as a repeater.
+    pub repeater_enabled: bool,
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -342,6 +345,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         channel_keys: heapless::Vec::new(),
         peers: heapless::Vec::new(),
         identity_present: session.dev_key().is_some(),
+        repeater_enabled: session.repeater_enabled(),
     };
     for key in session.dev_channel_keys() {
         let _ = snapshot.channel_keys.push(key);

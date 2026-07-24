@@ -38,6 +38,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::DEV_PEERS => "PROP_DEV_PEERS",
         prop::DEV_NAME => "PROP_DEV_NAME",
         prop::BATTERY => "PROP_BATTERY",
+        prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
@@ -67,6 +68,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::DEV_IDENTITY => "DEV_IDENTITY",
         cap::DEV_NAME => "DEV_NAME",
         cap::BATTERY => "BATTERY",
+        cap::REPEATER => "REPEATER",
         _ => return None,
     })
 }

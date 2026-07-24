@@ -173,6 +173,20 @@ impl<
             .set_auto_register_full_key_peers(enabled);
     }
 
+    /// Whether the MAC autonomously forwards overheard routable frames.
+    pub async fn repeater_enabled(&self) -> bool {
+        self.mac.borrow().await.repeater_config().enabled
+    }
+
+    /// Enable or disable autonomous repeater forwarding. Only the master
+    /// `enabled` switch is touched; every other [`RepeaterConfig`] field
+    /// (regions, RSSI/SNR gates, contention tuning) keeps its current
+    /// value. Toggling at runtime is safe: forwarding simply starts or
+    /// stops honoring newly received frames.
+    pub async fn set_repeater_enabled(&self, enabled: bool) {
+        self.mac.borrow_mut().await.repeater_config_mut().enabled = enabled;
+    }
+
     /// Installs pairwise transport keys for one local identity and remote peer.
     ///
     /// This is a crate-internal method. External callers should use the

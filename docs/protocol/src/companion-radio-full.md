@@ -37,8 +37,9 @@ host is attached to observe the result.
 The full protocol supports exactly two node identities:
 
 * **The device identity** — a node belonging to the companion radio itself,
-  used for in-band management, diagnostics, and (in future revisions)
-  repeater and advertisement behavior. Its Ed25519 private key is held by
+  used for in-band management, diagnostics, repeater forwarding (see
+  (#prop-mac-repeater-enabled)), and (in future revisions) periodic
+  advertisement behavior. Its Ed25519 private key is held by
   the NCP: it is either generated on the device or installed once by the
   host (see (#prop-dev-private-key)), and it is never readable through this
   protocol.
@@ -85,9 +86,10 @@ host is attached:
   the duty-cycle limit
 * the human-readable device name (`PROP_DEV_NAME`)
 * live battery telemetry (`PROP_BATTERY`), when `CAP_BATTERY` is present
-* device behavior settings (property identifiers 70–95, reserved for
-  future definition: repeater policy, positioning, periodic advertisement
-  of the device identity, and similar)
+* device behavior settings (property identifiers 70–95): the repeater
+  forwarding switch (`PROP_MAC_REPEATER_ENABLED`), with the rest of the
+  range reserved for future definition (further repeater policy,
+  positioning, periodic advertisement of the device identity, and similar)
 * transport configuration such as `PROP_BLE_PAIRING_PIN`
 
 The RF configuration is deliberately device-domain: a site repeater keeps
@@ -634,6 +636,7 @@ Id  | Mnemonic                      | Commands                 | Description
 67  | `PROP_DEV_PEERS`              | Get, Set, Insert, Remove | Device identity peer list
 68  | `PROP_DEV_NAME`               | Get, Set                 | Human-readable device name
 69  | `PROP_BATTERY`                | Get, Is                  | Battery status snapshot
+70  | `PROP_MAC_REPEATER_ENABLED`   | Get, Set                 | Autonomous repeater forwarding enable
 96  | `PROP_HOST_KEY`               | Get, Set                 | Tethered host identity public key
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
@@ -886,6 +889,40 @@ saved snapshot and is not changed by `CMD_RESTORE`. An NCP **MAY** emit
 unsolicited `CMD_PROP_IS` updates when the reported snapshot changes. Such
 updates **SHOULD** be coalesced or rate-limited so that measurement noise
 does not produce excessive companion traffic.
+
+### PROP 70: `PROP_MAC_REPEATER_ENABLED` {#prop-mac-repeater-enabled}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`
+* Value Type: BOOL
+* Post-Reset Value: Persisted
+
+The first of the device-behavior settings (property identifiers 70–95).
+When true, the companion radio's **device identity** acts as an
+autonomous mesh repeater: its on-board node forwards overheard routable
+frames according to [Repeater Operation](repeater-operation.md), and it
+advertises `NodeRole::Repeater` (with the repeater capability) in its
+[node identity](node-identity.md). When false, the device identity does
+not forward.
+
+This property governs only the *forwarding behavior* of the device
+identity. It is independent of `PROP_MAC_PROMISCUOUS` (a session-scoped
+host-delivery mode) and of the host identity, which never forwards.
+
+The flag is device-domain state: it is part of the saved snapshot, so a
+`CMD_SAVE` arms an unattended repeater across power cycles, and it
+survives a change of host. Enabling it is accepted even when no device
+identity is yet configured (see (#prop-dev-key)); the setting is
+persisted and takes effect as soon as a device identity exists. Because
+repeating requires the device node, an NCP with no device identity
+provisioned simply does not forward until one is installed.
+
+Forwarding parameters other than the on/off switch — region codes,
+minimum RSSI/SNR, and flood-contention tuning — are not exposed by this
+property in the current protocol revision; a repeater applies its local
+defaults. Later revisions **MAY** define additional device-behavior
+properties (identifiers 70–95) to configure them.
 
 ### PROP 96: `PROP_HOST_KEY` {#prop-host-key}
 
@@ -1357,6 +1394,7 @@ Code | Name                | Requires          | Grants
 37   | `CAP_DEV_IDENTITY`  | —                 | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
 38   | `CAP_DEV_NAME`      | —                 | `PROP_DEV_NAME`
 39   | `CAP_BATTERY`       | —                 | Battery-powered operation and `PROP_BATTERY`
+40   | `CAP_REPEATER`      | `CAP_DEV_IDENTITY` | `PROP_MAC_REPEATER_ENABLED` and autonomous repeater forwarding by the device identity
 
 An NCP **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. `CMD_PROP_INSERT`/`CMD_PROP_REMOVE`, `CMD_CLEAR`,
