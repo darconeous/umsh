@@ -11,31 +11,45 @@
 //!   with this board's wiring, so the companion-NCP's `CAP_BATTERY`
 //!   snapshot path is board-agnostic.
 //!
-//! ## ⚠️ Provisional, UNCALIBRATED voltage curve (Phase 2-min)
+//! ## Voltage reading (MeshCore method, nominal — uncalibrated)
 //!
-//! Per the user's decision to skip bench calibration for now, the
-//! millivolt conversion below is a **good guess**, not a fitted curve.
-//! It assumes the SAADC is configured exactly as on the T1000-E (12-bit,
-//! `GAIN1_6`, 0.6 V internal reference → 3.6 V full scale) and applies a
-//! provisional divider multiplier of **3.15** — the midpoint of the
-//! MeshCore (3.0) and Meshtastic (3.3) formulas, which disagree by ~21%.
-//! Absolute voltages and the derived UX classification may be off until
-//! a real calibration (plan Phase 2) replaces [`DIVIDER_MICRO`]. The
-//! protective low-battery shutdown stays **disarmed (count-only)** until
-//! Phase 6 establishes the calibrated shutdown/recovery pair.
+//! Reads AIN7/P0.31 through the on-board 1 MΩ / 512 kΩ resistor bridge,
+//! matching MeshCore's `SenseCapSolarBoard::getBattMilliVolts`. Our SAADC
+//! is `embassy-nrf`'s default single-ended config: 12-bit, `Gain1_6`,
+//! 0.6 V internal reference → **3.6 V full scale** at the pin. The divider
+//! ratio is `(1M + 512k) / 512k = 2.953` (MeshCore rounds this to 3.0):
+//!
+//! ```text
+//! Vpin_mV = raw * 3600 / 4096            (12-bit, Gain1_6, 0.6 V ref)
+//! VBAT_mV = Vpin_mV * 1512 / 512         (1M/512k bridge, = ×2.953)
+//!         = raw * (3600 * 1512 / 512) / 4096 = raw * 10631 / 4096
+//! ```
+//!
+//! This is the *nominal* network value, not a fitted calibration —
+//! resistor tolerance (±1 %) dominates the residual error. Good enough
+//! for the protective low-battery cutoff; a bench calibration (plan
+//! Phase 2) can still replace [`DIVIDER_MICRO`] with a fitted slope.
+
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::signal::Signal;
+
+/// Single-consumer power-off trigger. Fired by the dedicated PWR-button
+/// state machine (hold-to-off), the low-battery protective cutoff in
+/// [`run_battery_monitor`], and [`PowerSignaler::request_power_off`]. The
+/// firmware's sensecap shutdown task ([`crate::shutdown::run`]) is the
+/// only consumer; it runs the System OFF teardown and arms PWR wake.
+pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 /// `umsh_hal::PowerControl` implementation for the SenseCAP Solar Node.
 ///
-/// - `request_power_off` is a **no-op** for now (Phase 6 wires the real
-///   System OFF teardown).
+/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`] so the firmware's
+///   sensecap shutdown task runs the System OFF teardown.
 /// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ`.
 pub struct PowerSignaler;
 
 impl umsh_hal::PowerControl for PowerSignaler {
     fn request_power_off(&self) {
-        // TODO (Phase 6): raise a SHUTDOWN_SIGNAL and run the board's
-        // System OFF teardown (radio sleep, GNSS off, LEDs off, divider
-        // gate disconnected, PWR-button + LPCOMP wake armed).
+        SHUTDOWN_SIGNAL.signal(());
     }
 
     fn request_reboot(&self) {
@@ -60,14 +74,15 @@ mod monitor {
         BatteryState, BatteryThresholds, LevelEstimator, LevelSample, classify,
     };
 
-    /// Provisional VBAT scaling, in microvolts-per-LSB × 4096, chosen so
-    /// integer math stays exact: `battery_mv = raw * DIVIDER_MICRO / 4096`.
+    /// VBAT scaling, chosen so integer math stays exact:
+    /// `battery_mv = raw * DIVIDER_MICRO / 4096`.
     ///
-    /// Derivation (all a GUESS — see module docs):
-    ///   Vadc_mV   = raw * 3600 / 4096            (12-bit, GAIN1_6, 0.6 V ref)
-    ///   VBAT_mV   = Vadc_mV * 3.15               (provisional divider mult)
-    ///           = raw * (3600 * 3.15) / 4096 = raw * 11340 / 4096
-    const DIVIDER_MICRO: u32 = 11_340;
+    /// Nominal 1M/512k-bridge value (see module docs), not a fitted
+    /// calibration:
+    ///   Vadc_mV = raw * 3600 / 4096              (12-bit, Gain1_6, 0.6 V ref)
+    ///   VBAT_mV = Vadc_mV * 1512 / 512           (×2.953 divider)
+    ///          = raw * (3600 * 1512 / 512) / 4096 = raw * 10631 / 4096
+    const DIVIDER_MICRO: u32 = 10_631;
 
     /// Current mutually exclusive user-facing battery mode.
     static BATTERY_STATE: AtomicU8 = AtomicU8::new(BatteryState::BatteryOnly as u8);
@@ -137,9 +152,11 @@ mod monitor {
     ///
     /// Unlike the T1000-E monitor this one owns no charge-detect or
     /// external-power GPIO (the CN3165 exposes nothing); external power is
-    /// inferred solely from `POWER.usbregstatus`. The consecutive-low
-    /// counter is kept but **takes no action** (log/count-only) until
-    /// Phase 6 arms a calibrated protective shutdown.
+    /// inferred solely from `POWER.usbregstatus`. `CONSECUTIVE_NEEDED`
+    /// samples below the critical threshold (≈3.1 V, sustained ~5 min,
+    /// only ever reached off-USB since `classify` reports Charging while
+    /// external power is present) fire [`SHUTDOWN_SIGNAL`] for a protective
+    /// System OFF — the unattended-node counterpart of the PWR button.
     ///
     /// Wrap in `#[embassy_executor::task]` in the firmware binary so the
     /// linker sees a concrete monomorphisation.
@@ -196,11 +213,16 @@ mod monitor {
                 });
             }
 
-            // Count-only for now: no protective shutdown until Phase 6
-            // arms a calibrated threshold/recovery pair.
-            if state == BatteryState::BatteryCritical {
+            // Protective cell cutoff: sustained critical voltage while on
+            // battery drives a System OFF so the pack is not deep-discharged
+            // when nobody is present. `!usb` is belt-and-suspenders — a
+            // Critical classification already implies no external power.
+            if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);
-                let _ = low_count >= CONSECUTIVE_NEEDED;
+                if low_count >= CONSECUTIVE_NEEDED {
+                    super::SHUTDOWN_SIGNAL.signal(());
+                    return;
+                }
             } else {
                 low_count = 0;
             }

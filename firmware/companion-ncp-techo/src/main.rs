@@ -2922,6 +2922,61 @@ mod firmware {
         umsh_bsp_sensecap_solar::power::run_battery_monitor(saadc, divider_gate).await;
     }
 
+    /// Dedicated power-button (P1.01, active-low) state machine for the
+    /// SenseCAP Solar Node. This board has a button reserved for power, so —
+    /// unlike the single-button boards that overload one button into a
+    /// gesture FSM — it drives *nothing but power*: a hold past `HOLD_OFF`
+    /// acknowledges with a blink on LED_A (white) and requests System OFF; a
+    /// short press does nothing while running. Powering back on happens by
+    /// pressing it while in System OFF — the press resets the chip.
+    #[cfg(feature = "power-button")]
+    #[embassy_executor::task]
+    async fn sensecap_pwr_button_task(mut button: Input<'static>, mut led: Output<'static>) {
+        const HOLD_OFF: Duration = Duration::from_millis(1500);
+        const DEBOUNCE: Duration = Duration::from_millis(20);
+
+        // If PWR is still held from the System OFF wake-press that just
+        // booted us, ignore it through release so the wake isn't misread as
+        // an immediate power-off hold.
+        if button.is_low() {
+            button.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
+        }
+
+        loop {
+            button.wait_for_low().await;
+            Timer::after(DEBOUNCE).await;
+            if button.is_high() {
+                continue; // bounce
+            }
+            // Power off only if held past HOLD_OFF; release before that is a
+            // short press with no power action.
+            match select(button.wait_for_high(), Timer::after(HOLD_OFF)).await {
+                Either::First(()) => {}
+                Either::Second(()) => {
+                    // Hold accepted: blink LED_A (white, active-high) to
+                    // acknowledge, then request the System OFF teardown.
+                    for _ in 0..3 {
+                        led.set_high();
+                        Timer::after(Duration::from_millis(120)).await;
+                        led.set_low();
+                        Timer::after(Duration::from_millis(120)).await;
+                    }
+                    umsh_bsp_sensecap_solar::power::SHUTDOWN_SIGNAL.signal(());
+                    // The shutdown task waits for PWR release before arming
+                    // wake; park here until it powers us off.
+                    button.wait_for_high().await;
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "power-button")]
+    #[embassy_executor::task]
+    async fn sensecap_shutdown_task() -> ! {
+        umsh_bsp_sensecap_solar::shutdown::run().await
+    }
+
     /// Controlled power-off: put the e-paper controller to sleep, tri-state
     /// peripheral signal pins, drop the rail, and enter System OFF.
     #[cfg(feature = "system-off-techo")]
@@ -3761,6 +3816,18 @@ mod firmware {
             );
             let divider_gate = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
+        }
+
+        // Dedicated power button (P1.01) + System OFF teardown. LED_A
+        // (P0.15, white) is the power-off acknowledgement blinker; the
+        // heartbeat keeps LED_B (P0.19). P1.01 is the physical power button
+        // (MeshCore's PIN_USER_BTN); P1.07 is the secondary user button.
+        #[cfg(feature = "power-button")]
+        {
+            let pwr_button = Input::new(p.P1_01, Pull::Up);
+            let pwr_led = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+            spawner.spawn(sensecap_pwr_button_task(pwr_button, pwr_led).unwrap());
+            spawner.spawn(sensecap_shutdown_task().unwrap());
         }
 
         #[cfg(not(feature = "t1000e"))]

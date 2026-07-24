@@ -13,7 +13,7 @@ repository.workspace = true
 default = ["board-t1000e"]
 board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
-board-sensecap-solar = ["cap-battery-saadc"]
+board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 t1000e = []
 cap-battery-saadc = []
 has-display = []
@@ -22,6 +22,9 @@ system-off-techo = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
+# Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
+# (SenseCAP Solar PWR button on P1.07).
+power-button = []
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only NCP) while
 # keeping the BLE clock configuration, to isolate the post-DFU
 # first-boot watchdog freeze. Not a production configuration.

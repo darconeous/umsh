@@ -67,6 +67,9 @@ pub mod platform;
 pub mod power;
 
 #[cfg(target_os = "none")]
+pub mod shutdown;
+
+#[cfg(target_os = "none")]
 pub use platform::{SensecapSolarMac, SensecapSolarPlatform};
 #[cfg(target_os = "none")]
 pub use power::PowerSignaler;

@@ -11,7 +11,7 @@ repository.workspace = true
 #     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
 board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
-board-sensecap-solar = ["cap-battery-saadc"]
+board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 
 # ─── Capability features (shared code shape, board-portable) ───
 # The historical `t1000e` flag still bundles the T-1000E-only capabilities
@@ -34,6 +34,10 @@ system-off-techo = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
+# Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
+# (SenseCAP Solar PWR button on P1.07). A board with a button reserved for
+# power, distinct from the single-button gesture FSM.
+power-button = []
 
 # Default build = T-Echo.
 default = ["board-techo"]
