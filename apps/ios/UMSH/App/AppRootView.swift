@@ -761,7 +761,7 @@ struct AppRootView: View {
             if !update.mutations.isEmpty || !update.deliveries.isEmpty {
                 await reloadApplicationState()
             }
-            postNotifications(for: update.mutations)
+            await postNotifications(for: update.mutations)
         } catch {
             // Effects remain idempotent and can safely be applied again if
             // the Rust facade re-emits them.
@@ -771,29 +771,30 @@ struct AppRootView: View {
         }
     }
 
-    /// Notify for newly inserted, complete inbound messages — never for
-    /// local echoes, delivery-state changes, edits, or deletions. Runs only
-    /// after the batch reached durable storage; the willPresent delegate
+    /// Notify whenever the engine flags a mutation `notify == true` — the
+    /// single, authoritative signal covering single-frame arrivals, fragment
+    /// completion, the 30 s fragment deadline, and late backfills. Never fires
+    /// for local echoes, placeholders, or control frames (the engine never
+    /// sets `notify` on those). The flag can ride an `UpdateBody` (which omits
+    /// peer/body), so the target is resolved from durable storage by handle.
+    /// Runs only after the batch reached storage; the willPresent delegate
     /// suppresses the banner when that conversation is visible in the
-    /// foreground. A batch redelivered after a failed acknowledgement can
-    /// repeat a banner; that is the accepted worst case.
-    @MainActor
-    private func postNotifications(for mutations: [MobileChatMutationRecord]) {
-        for mutation in mutations {
-            guard mutation.kind == .insert,
-                  mutation.direction == .inbound,
-                  mutation.complete != false,
-                  let peerAddress = mutation.peerAddress,
-                  let body = mutation.body,
-                  !body.isEmpty
-            else { continue }
+    /// foreground. A redelivered batch can repeat a banner; accepted worst case.
+    private func postNotifications(for mutations: [MobileChatMutationRecord]) async {
+        guard let applicationStore, let localIdentity else { return }
+        for mutation in mutations where mutation.notify {
+            guard let target = try? await applicationStore.chatNotificationTarget(
+                ownerIdentityID: localIdentity.id,
+                sessionID: mutation.sessionId,
+                handle: mutation.handle
+            ) else { continue }
             let displayName = peers.first {
-                $0.identity.canonicalAddress == peerAddress
-            }?.displayName ?? String(peerAddress.prefix(10))
+                $0.identity.canonicalAddress == target.peerAddress
+            }?.displayName ?? String(target.peerAddress.prefix(10))
             notificationService.postInboundMessage(
-                peerAddress: peerAddress,
+                peerAddress: target.peerAddress,
                 displayName: displayName,
-                body: body
+                body: target.body
             )
         }
     }
@@ -899,7 +900,12 @@ struct AppRootView: View {
                                 sessionID: $0.sessionID,
                                 handle: $0.handle,
                                 wireID: $0.wireID,
-                                epoch: $0.epoch
+                                epoch: $0.epoch,
+                                isGapPlaceholder: $0.isGapPlaceholder,
+                                isUnavailable: $0.isUnavailable,
+                                isReceivedLate: $0.receivedLate,
+                                isDeliveredLate: $0.deliveredLate,
+                                originalBody: $0.originalBody
                             )
                         }
                     )

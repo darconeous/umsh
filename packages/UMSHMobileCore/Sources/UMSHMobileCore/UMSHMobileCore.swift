@@ -2950,6 +2950,67 @@ public func FfiConverterTypeGattSegmentRecord_lower(_ value: GattSegmentRecord) 
 }
 
 
+/**
+ * Retire every archived fragment stored under one message ID. Emitted when
+ * an edit or delete supersedes that ID's content; the platform must apply
+ * these *before* the batch's archive upserts so an edit's replacement
+ * payloads land on a clean slate and the superseded content can never be
+ * served to a resend request again.
+ */
+public struct MobileChatArchiveDeleteRecord: Equatable, Hashable {
+    public var peerAddress: String
+    public var messageId: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peerAddress: String, messageId: UInt8) {
+        self.peerAddress = peerAddress
+        self.messageId = messageId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatArchiveDeleteRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatArchiveDeleteRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatArchiveDeleteRecord {
+        return
+            try MobileChatArchiveDeleteRecord(
+                peerAddress: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatArchiveDeleteRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterUInt8.write(value.messageId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveDeleteRecord_lift(_ buf: RustBuffer) throws -> MobileChatArchiveDeleteRecord {
+    return try FfiConverterTypeMobileChatArchiveDeleteRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatArchiveDeleteRecord_lower(_ value: MobileChatArchiveDeleteRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatArchiveDeleteRecord.lower(value)
+}
+
+
 public struct MobileChatArchiveLookupRecord: Equatable, Hashable {
     public var requestId: UInt32
     public var peerAddress: String
@@ -3136,6 +3197,11 @@ public struct MobileChatComposeBatchRecord: Equatable, Hashable {
     public var batchId: UInt64
     public var checkpoint: MobileChatCheckpointRecord
     /**
+     * Applied before `archives`: archive retirements for superseded
+     * (edited or deleted) message IDs.
+     */
+    public var archiveDeletes: [MobileChatArchiveDeleteRecord]
+    /**
      * These exact payloads must be committed with the checkpoint before the
      * batch is released to the radio.
      */
@@ -3146,11 +3212,16 @@ public struct MobileChatComposeBatchRecord: Equatable, Hashable {
     // declare one manually.
     public init(batchId: UInt64, checkpoint: MobileChatCheckpointRecord,
         /**
+         * Applied before `archives`: archive retirements for superseded
+         * (edited or deleted) message IDs.
+         */archiveDeletes: [MobileChatArchiveDeleteRecord],
+        /**
          * These exact payloads must be committed with the checkpoint before the
          * batch is released to the radio.
          */archives: [MobileChatArchiveRecord], mutations: [MobileChatMutationRecord]) {
         self.batchId = batchId
         self.checkpoint = checkpoint
+        self.archiveDeletes = archiveDeletes
         self.archives = archives
         self.mutations = mutations
     }
@@ -3173,6 +3244,7 @@ public struct FfiConverterTypeMobileChatComposeBatchRecord: FfiConverterRustBuff
             try MobileChatComposeBatchRecord(
                 batchId: FfiConverterUInt64.read(from: &buf),
                 checkpoint: FfiConverterTypeMobileChatCheckpointRecord.read(from: &buf),
+                archiveDeletes: FfiConverterSequenceTypeMobileChatArchiveDeleteRecord.read(from: &buf),
                 archives: FfiConverterSequenceTypeMobileChatArchiveRecord.read(from: &buf),
                 mutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf)
         )
@@ -3181,6 +3253,7 @@ public struct FfiConverterTypeMobileChatComposeBatchRecord: FfiConverterRustBuff
     public static func write(_ value: MobileChatComposeBatchRecord, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.batchId, into: &buf)
         FfiConverterTypeMobileChatCheckpointRecord.write(value.checkpoint, into: &buf)
+        FfiConverterSequenceTypeMobileChatArchiveDeleteRecord.write(value.archiveDeletes, into: &buf)
         FfiConverterSequenceTypeMobileChatArchiveRecord.write(value.archives, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.mutations, into: &buf)
     }
@@ -3299,6 +3372,22 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
     public var presentFragments: UInt16?
     public var fragmentCount: UInt8?
     public var finalized: Bool?
+    /**
+     * Ordered-slot presence for `Insert` records (spinner placeholder, real
+     * message, or loss marker). `UpdateBody`/`Edit`/`Delete` leave it at
+     * `Present`; the host does not reinterpret presence on those.
+     */
+    public var presence: MobileChatPresence
+    /**
+     * The record fills a slot reserved earlier by a gap, so it arrived out of
+     * order and should render a "received late" caption.
+     */
+    public var receivedLate: Bool
+    /**
+     * The host should raise a user notification for this record (single-frame
+     * arrival, fragment completion, or notify deadline; never placeholders).
+     */
+    public var notify: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3313,7 +3402,20 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
          * reference so the platform can resolve it against persisted rows:
          * the original's wire ID within `original_direction`'s stream of the
          * record's `peer_address` conversation.
-         */originalWireId: UInt8?, originalDirection: MobileChatDirection?, body: String?, complete: Bool?, presentFragments: UInt16?, fragmentCount: UInt8?, finalized: Bool?) {
+         */originalWireId: UInt8?, originalDirection: MobileChatDirection?, body: String?, complete: Bool?, presentFragments: UInt16?, fragmentCount: UInt8?, finalized: Bool?,
+        /**
+         * Ordered-slot presence for `Insert` records (spinner placeholder, real
+         * message, or loss marker). `UpdateBody`/`Edit`/`Delete` leave it at
+         * `Present`; the host does not reinterpret presence on those.
+         */presence: MobileChatPresence,
+        /**
+         * The record fills a slot reserved earlier by a gap, so it arrived out of
+         * order and should render a "received late" caption.
+         */receivedLate: Bool,
+        /**
+         * The host should raise a user notification for this record (single-frame
+         * arrival, fragment completion, or notify deadline; never placeholders).
+         */notify: Bool) {
         self.sessionId = sessionId
         self.handle = handle
         self.revision = revision
@@ -3337,6 +3439,9 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         self.presentFragments = presentFragments
         self.fragmentCount = fragmentCount
         self.finalized = finalized
+        self.presence = presence
+        self.receivedLate = receivedLate
+        self.notify = notify
     }
 
 
@@ -3377,7 +3482,10 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
                 complete: FfiConverterOptionBool.read(from: &buf),
                 presentFragments: FfiConverterOptionUInt16.read(from: &buf),
                 fragmentCount: FfiConverterOptionUInt8.read(from: &buf),
-                finalized: FfiConverterOptionBool.read(from: &buf)
+                finalized: FfiConverterOptionBool.read(from: &buf),
+                presence: FfiConverterTypeMobileChatPresence.read(from: &buf),
+                receivedLate: FfiConverterBool.read(from: &buf),
+                notify: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -3405,6 +3513,9 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt16.write(value.presentFragments, into: &buf)
         FfiConverterOptionUInt8.write(value.fragmentCount, into: &buf)
         FfiConverterOptionBool.write(value.finalized, into: &buf)
+        FfiConverterTypeMobileChatPresence.write(value.presence, into: &buf)
+        FfiConverterBool.write(value.receivedLate, into: &buf)
+        FfiConverterBool.write(value.notify, into: &buf)
     }
 }
 
@@ -4959,6 +5070,84 @@ public func FfiConverterTypeMobileChatMutationKind_lower(_ value: MobileChatMuta
 
 
 /**
+ * Ordered-slot presence of a transcript row (mirrors the engine's
+ * [`Presence`]). A `GapPending` row is a reserved spinner placeholder; an
+ * `Unavailable` row is a permanent loss marker.
+ */
+
+public enum MobileChatPresence: Equatable, Hashable {
+
+    case present
+    case gapPending
+    case unavailable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatPresence: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatPresence: FfiConverterRustBuffer {
+    typealias SwiftType = MobileChatPresence
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatPresence {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .present
+
+        case 2: return .gapPending
+
+        case 3: return .unavailable
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileChatPresence, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .present:
+            writeInt(&buf, Int32(1))
+
+
+        case .gapPending:
+            writeInt(&buf, Int32(2))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatPresence_lift(_ buf: RustBuffer) throws -> MobileChatPresence {
+    return try FfiConverterTypeMobileChatPresence.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatPresence_lower(_ value: MobileChatPresence) -> RustBuffer {
+    return FfiConverterTypeMobileChatPresence.lower(value)
+}
+
+
+
+/**
  * Stable error categories consumed by platform adapters.
  */
 public
@@ -5794,6 +5983,31 @@ fileprivate struct FfiConverterSequenceTypeGattSegmentRecord: FfiConverterRustBu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeGattSegmentRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatArchiveDeleteRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatArchiveDeleteRecord]
+
+    public static func write(_ value: [MobileChatArchiveDeleteRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatArchiveDeleteRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatArchiveDeleteRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatArchiveDeleteRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatArchiveDeleteRecord.read(from: &buf))
         }
         return seq
     }

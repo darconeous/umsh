@@ -67,6 +67,9 @@ pub struct EngineConfig {
     pub request_retry_ms: u64,
     /// Window in which duplicate resend requests are coalesced.
     pub coalesce_window_ms: u64,
+    /// Latency after the first fragment of an incomplete message before the
+    /// host is notified anyway (the sooner of this deadline and completion).
+    pub fragment_notify_ms: u64,
     pub sentinels: RenderSentinels,
 }
 
@@ -83,6 +86,7 @@ impl Default for EngineConfig {
             reassembly_ttl_ms: 90_000,
             request_retry_ms: 8_000,
             coalesce_window_ms: 10_000,
+            fragment_notify_ms: 30_000,
             sentinels: RenderSentinels::default(),
         }
     }
@@ -143,6 +147,22 @@ pub enum Direction {
     Outbound,
 }
 
+/// Presence of a message's ordered transcript slot.
+///
+/// Orthogonal to [`CompletionStatus`]: a `Present` message may still be
+/// `Partial` (fragments outstanding), and a `GapPending` placeholder carries
+/// no body at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    /// A real message occupies the slot.
+    Present,
+    /// A gap was detected; the slot is reserved and a repair is outstanding.
+    GapPending,
+    /// The gap could not be repaired (exhausted, expired, or disclaimed by
+    /// the sender); the slot is a permanent loss marker.
+    Unavailable,
+}
+
 /// Completeness of a message's body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionStatus {
@@ -184,11 +204,24 @@ pub enum MutationKind {
         text_color: Option<[u8; 3]>,
         body: BodyRef,
         status: CompletionStatus,
+        /// Ordered-slot presence (real message, reserved gap, or lost gap).
+        presence: Presence,
+        /// This record fills a slot reserved earlier by a gap placeholder, so
+        /// it arrived out of order and should be flagged "received late".
+        late: bool,
+        /// The user should be notified of this record (engine-owned
+        /// eligibility: single-frame arrival, fragment completion, or the
+        /// fragment notify deadline). Never set for placeholders or control.
+        notify: bool,
     },
     /// Replace the rendered body (reassembly progress or finalization).
     UpdateBody {
         body: BodyRef,
         status: CompletionStatus,
+        /// See [`MutationKind::Insert::late`].
+        late: bool,
+        /// See [`MutationKind::Insert::notify`].
+        notify: bool,
     },
     /// Apply an edit to the referenced original message.
     Edit {
@@ -342,6 +375,23 @@ pub enum Output {
         request_id: u32,
         conversation: ConversationKey,
         sequence: MessageSequence,
+    },
+    /// Store resendable material without transmitting it. Emitted when an
+    /// edit re-issues the original message ID's archive with the edited
+    /// body: a later resend request for that ID must serve the edited
+    /// content, never the superseded original.
+    StoreArchive {
+        key: ArchiveKey,
+        payload: heapless::Vec<u8, MAX_FRAME>,
+    },
+    /// Delete every archived fragment stored under this message ID (the
+    /// unfragmented entry included). Emitted before an edit's replacement
+    /// [`Output::StoreArchive`]s — so stale fragments of a differently
+    /// fragmented original can never be served — and on delete, where the
+    /// retracted content must no longer be resendable at all.
+    DeleteArchive {
+        conversation: ConversationKey,
+        message_id: u8,
     },
     StoreMessage(MessageMutation),
     Event(Event),
@@ -646,6 +696,22 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             stream.refs.record(message_id, handle);
         }
 
+        // Superseded content must never re-air. Retire the original ID's
+        // archived material; for an edit, re-issue it under the same ID with
+        // the edited body so a resend request serves current content (a
+        // delete leaves it empty, answered as Message Unavailable). The
+        // delete goes first so stale fragments of a differently fragmented
+        // original can never be served alongside the replacement.
+        if let Some(original_id) = editing {
+            self.push_output(Output::DeleteArchive {
+                conversation,
+                message_id: original_id,
+            });
+            if !body.is_empty() {
+                self.archive_replacement(conversation, original_id, body.as_bytes());
+            }
+        }
+
         // Emit the transcript mutation.
         let body_ref = self
             .arena_store(body)
@@ -686,6 +752,9 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 text_color: None,
                 body: body_ref,
                 status: CompletionStatus::Complete,
+                presence: Presence::Present,
+                late: false,
+                notify: false,
             },
         };
         self.emit_mutation(handle, kind);
@@ -785,7 +854,17 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             ArchiveResult::Found { payload } if payload.len() <= MAX_FRAME => {
                 let mut frame = heapless::Vec::new();
                 let _ = frame.extend_from_slice(payload);
-                self.queue_transmit(destination, None, frame, None);
+                // Track the re-transmission against the *original* outbound
+                // message's handle so its ack flips the original row from
+                // "Not Delivered" back to "Delivered", rather than dangling a
+                // throwaway handle. Falls back to untracked when the original
+                // ref has aged out of the outbound window.
+                let track = self
+                    .outbound
+                    .get(&lookup.conversation)
+                    .and_then(|stream| stream.refs.lookup(lookup.sequence.message_id))
+                    .map(|handle| (handle, lookup.sequence.fragment.map(|fragment| fragment.index)));
+                self.queue_transmit(destination, None, frame, track);
             }
             _ => {
                 // Deleted, evicted, unknown, or oversized stored material:
@@ -807,11 +886,48 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             .record(lookup.conversation, &lookup.sequence, now_ms);
     }
 
-    /// Advance timers: reassembly expiry and repair scheduling.
+    /// Advance timers: reassembly expiry, notify deadlines, repair scheduling.
     pub fn tick(&mut self, now_ms: u64) {
         self.expire_slots(now_ms);
+        self.notify_deadlines(now_ms);
         self.schedule_fragment_repairs(now_ms);
         self.transmit_due_repairs(now_ms);
+    }
+
+    /// Notify the host about a fragmented message that has stalled incomplete
+    /// past the notify deadline (`first_fragment_ms + fragment_notify_ms`),
+    /// emitting one partial-body update flagged for notification. Completion
+    /// notifies earlier via `publish_slot`; the `notified` bit fires once.
+    fn notify_deadlines(&mut self, now_ms: u64) {
+        for index in 0..SLOTS {
+            let due = self.pool.slots[index].as_ref().is_some_and(|slot| {
+                slot.announced
+                    && !slot.notified
+                    && !slot.is_complete()
+                    && now_ms >= slot.created_ms + self.config.fragment_notify_ms
+            });
+            if !due {
+                continue;
+            }
+            let body = self.render_to_arena(index, false);
+            let slot = self.pool.slots[index].as_mut().expect("occupied");
+            slot.notified = true;
+            let status = CompletionStatus::Partial {
+                present: slot.present,
+                count: slot.count,
+                finalized: false,
+            };
+            let handle = slot.handle;
+            self.emit_mutation(
+                handle,
+                MutationKind::UpdateBody {
+                    body,
+                    status,
+                    late: false,
+                    notify: true,
+                },
+            );
+        }
     }
 
     // ------------------------------------------------------------------
@@ -863,14 +979,31 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 // below. A retransmitted reset-bearing ID is still a
                 // duplicate; applying its reset again would erase the very
                 // state needed to suppress it.
+                let orphans: heapless::Vec<(u8, MessageHandle), 8> = stream
+                    .pending
+                    .iter()
+                    .filter_map(|pending| pending.handle.map(|h| (pending.message_id, h)))
+                    .collect();
                 stream.reset_epoch(None);
                 self.pool.drop_stream(&key);
+                for (missing, handle) in orphans {
+                    self.flip_placeholder_unavailable(key, missing, handle);
+                }
             }
         }
 
         let Some(sequence) = sequence else {
             // Unsequenced: display-only, unreferencable, no dedup possible.
-            self.insert_content(envelope, content, None, CompletionStatus::Complete, now_ms);
+            self.insert_content(
+                envelope,
+                content,
+                None,
+                CompletionStatus::Complete,
+                false,
+                true,
+                None,
+                now_ms,
+            );
             return;
         };
         let id = sequence.message_id;
@@ -896,6 +1029,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 SerialClass::Newer(delta) => {
                     let gap = delta - 1;
                     let collided = stream.collided;
+                    let epoch = stream.epoch;
                     let can_repair = gap > 0
                         && gap <= self.config.max_auto_repair_gap
                         && !collided
@@ -911,12 +1045,19 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                             } else {
                                 0
                             };
+                            // Reserve the ordered slot now, at the live edge:
+                            // the backfilled frame fills this same handle in
+                            // place instead of landing at the transcript
+                            // bottom. Emitted *before* the triggering
+                            // message's Insert so its rowid sorts above.
+                            let placeholder = self.emit_gap_placeholder(key, missing, epoch);
                             let stream = self.inbound.get_mut(&key).expect("present");
                             let _ = stream.pending.push(PendingRepair {
                                 message_id: missing,
                                 fragment: None,
                                 deadline_ms: base_deadline + jitter,
                                 attempts: 0,
+                                handle: Some(placeholder),
                             });
                         }
                     }
@@ -926,11 +1067,20 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     stream.seen.insert(id);
                 }
                 SerialClass::Ambiguous => {
-                    // Re-baseline without backfill or epoch change.
+                    // Re-baseline without backfill or epoch change; any
+                    // outstanding gap placeholders can no longer be repaired.
+                    let orphans: heapless::Vec<(u8, MessageHandle), 8> = stream
+                        .pending
+                        .iter()
+                        .filter_map(|pending| pending.handle.map(|h| (pending.message_id, h)))
+                        .collect();
                     stream.seen.clear();
                     stream.pending.clear();
                     stream.baseline = Some(id);
                     stream.seen.insert(id);
+                    for (missing, handle) in orphans {
+                        self.flip_placeholder_unavailable(key, missing, handle);
+                    }
                 }
             },
         }
@@ -992,7 +1142,32 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         id: u8,
         now_ms: u64,
     ) {
+        // A handle already registered for this wire ID is a gap placeholder
+        // reserved earlier at the live edge — this frame fills it in place.
+        let placeholder = self.inbound.get(&key).and_then(|stream| stream.refs.lookup(id));
+
         if let Some(original_id) = content.editing {
+            // The backfilled frame turned out to be an edit, not a standalone
+            // bubble: retire the spinner and apply the edit to its target.
+            if let Some(handle) = placeholder {
+                self.emit_mutation(
+                    handle,
+                    MutationKind::Delete {
+                        conversation: key.conversation,
+                        original: ResolvedRef::Handle(handle),
+                    },
+                );
+                if let Some(stream) = self.inbound.get_mut(&key) {
+                    stream.refs.retire(id);
+                }
+            }
+            // An edit whose *target* is a still-missing gap: the edit already
+            // carries that slot's current content, so fill (or, for a delete,
+            // remove) the placeholder instead of spinning until the repair of
+            // superseded content exhausts.
+            if self.fill_gap_with_edit(envelope, key, original_id, content.body) {
+                return;
+            }
             // Edits and deletes target the sender's own stream.
             let original = self
                 .inbound
@@ -1026,11 +1201,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             return;
         }
 
+        let late = placeholder.is_some();
         let handle = self.insert_content(
             envelope,
             content,
             Some(id),
             CompletionStatus::Complete,
+            late,
+            true,
+            placeholder,
             now_ms,
         );
         if let Some(stream) = self.inbound.get_mut(&key) {
@@ -1073,8 +1252,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 index
             }
             None => {
-                let handle = self.alloc_handle();
+                // A handle already registered for this wire ID is a gap
+                // placeholder reserved earlier; reuse it so the reassembly
+                // fills that ordered slot in place.
+                let placeholder = self.inbound.get(&key).and_then(|stream| stream.refs.lookup(id));
+                let handle = placeholder.unwrap_or_else(|| self.alloc_handle());
                 let mut slot = empty_slot(key, epoch, id, fragment.count, handle, now_ms);
+                slot.late = placeholder.is_some();
                 slot.deadline_ms = now_ms + self.config.reassembly_ttl_ms;
                 let group = matches!(key.conversation, ConversationKey::ChannelGroup { .. });
                 let jitter = if group {
@@ -1247,6 +1431,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let have_meta = slot.have_meta;
         let is_edit = slot.meta.editing.is_some();
         let announced = slot.announced;
+        let late = slot.late;
+        let notified = slot.notified;
         let id = slot.message_id;
         let present = slot.present;
         let count = slot.count;
@@ -1276,6 +1462,35 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     },
                 ));
             let body_ref = self.render_to_arena(slot_index, true);
+            // A reassembly that reused a gap placeholder turned out to be an
+            // edit, not a standalone bubble: retire the spinner row and apply
+            // the edit under a fresh handle.
+            if late {
+                self.emit_mutation(
+                    handle,
+                    MutationKind::Delete {
+                        conversation: key.conversation,
+                        original: ResolvedRef::Handle(handle),
+                    },
+                );
+                if let Some(stream) = self.inbound.get_mut(&key) {
+                    stream.refs.retire(id);
+                }
+            }
+            // An edit whose *target* is a still-missing gap fills that slot
+            // with the edited content instead of dangling until the repair of
+            // superseded content exhausts.
+            {
+                let mut scratch = [0u8; REASSEMBLED_BODY_MAX + 64];
+                let len = (body_ref.len as usize).min(scratch.len());
+                let start = body_ref.offset as usize;
+                scratch[..len].copy_from_slice(&self.arena[start..start + len]);
+                if self.fill_gap_with_edit(envelope, key, original_id, &scratch[..len]) {
+                    self.pool.close_slot(slot_index);
+                    return;
+                }
+            }
+            let edit_handle = if late { self.alloc_handle() } else { handle };
             let kind = if body_ref.len == 0 {
                 MutationKind::Delete {
                     conversation: key.conversation,
@@ -1288,7 +1503,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     body: body_ref,
                 }
             };
-            self.emit_mutation(handle, kind);
+            self.emit_mutation(edit_handle, kind);
             self.pool.close_slot(slot_index);
             return;
         }
@@ -1307,6 +1522,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             }
         };
         let body_ref = self.render_to_arena(slot_index, complete);
+        // Notify exactly once, when the message becomes complete (the notify
+        // deadline in `tick` covers messages that stall incomplete).
+        let notify = complete && !notified;
+        if notify && let Some(slot) = self.pool.slots[slot_index].as_mut() {
+            slot.notified = true;
+        }
 
         if !announced {
             let slot = self.pool.slots[slot_index].as_mut().expect("occupied");
@@ -1335,6 +1556,9 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     text_color: content.text_color,
                     body: body_ref,
                     status,
+                    presence: Presence::Present,
+                    late,
+                    notify,
                 },
             );
             if let Some(stream) = self.inbound.get_mut(&key) {
@@ -1346,6 +1570,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 MutationKind::UpdateBody {
                     body: body_ref,
                     status,
+                    late: false,
+                    notify,
                 },
             );
         }
@@ -1372,15 +1598,19 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let _ = now_ms;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_content(
         &mut self,
         envelope: &Envelope,
         content: &validate::ContentMessage<'_>,
         wire_id: Option<u8>,
         status: CompletionStatus,
+        late: bool,
+        notify: bool,
+        reuse: Option<MessageHandle>,
         now_ms: u64,
     ) -> MessageHandle {
-        let handle = self.alloc_handle();
+        let handle = reuse.unwrap_or_else(|| self.alloc_handle());
         let body = core::str::from_utf8(content.body).unwrap_or("");
         let body_ref = self
             .arena_store(body)
@@ -1415,6 +1645,9 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 text_color: content.text_color,
                 body: body_ref,
                 status,
+                presence: Presence::Present,
+                late,
+                notify,
             },
         );
         let _ = now_ms;
@@ -1528,6 +1761,16 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let id = sequence.message_id;
         let fragment = sequence.fragment.map(|fragment| fragment.index);
 
+        // A whole-message gap placeholder (no reassembly slot) reserved for
+        // this ID becomes a permanent loss marker below.
+        let placeholder = self.inbound.get(&key).and_then(|stream| {
+            stream
+                .pending
+                .iter()
+                .find(|pending| pending.message_id == id && pending.fragment.is_none())
+                .and_then(|pending| pending.handle)
+        });
+
         if let Some(stream) = self.inbound.get_mut(&key) {
             stream.cancel_pending(id, fragment);
             // The position is accounted for; it no longer counts as a gap.
@@ -1540,7 +1783,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             .get(&key)
             .map(|stream| stream.epoch)
             .unwrap_or(0);
-        if let Some(slot_index) = self.pool.find_slot(&key, epoch, id) {
+        let slot = self.pool.find_slot(&key, epoch, id);
+        if fragment.is_none()
+            && slot.is_none()
+            && let Some(handle) = placeholder
+        {
+            self.flip_placeholder_unavailable(key, id, handle);
+        }
+        if let Some(slot_index) = slot {
             match fragment {
                 Some(index) => {
                     let slot = self.pool.slots[slot_index].as_mut().expect("occupied");
@@ -1566,7 +1816,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                             finalized: false,
                         };
                         let handle = slot.handle;
-                        self.emit_mutation(handle, MutationKind::UpdateBody { body, status });
+                        self.emit_mutation(
+                            handle,
+                            MutationKind::UpdateBody {
+                                body,
+                                status,
+                                late: false,
+                                notify: false,
+                            },
+                        );
                     }
                 }
                 None => {
@@ -1633,6 +1891,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                         fragment: Some(fragment),
                         deadline_ms: now_ms,
                         attempts: 0,
+                        handle: None,
                     });
                     if let Some(slot) = self.pool.slots[index].as_mut() {
                         slot.repair_at_ms = now_ms + self.config.request_retry_ms;
@@ -1687,6 +1946,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                             message_id: pending.message_id,
                             outcome: RepairOutcome::Unaddressable,
                         }));
+                        if pending.fragment.is_none()
+                            && let Some(handle) = pending.handle
+                        {
+                            self.flip_placeholder_unavailable(key, pending.message_id, handle);
+                        }
                         continue;
                     }
                 },
@@ -1748,6 +2012,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if entry.attempts >= max_attempts {
                 let message_id = entry.message_id;
                 let fragment = entry.fragment;
+                let placeholder = entry.handle;
                 stream.pending.remove(position);
                 if let Some(fragment) = fragment
                     && let Some(slot_index) = self.pool.find_slot(&key, stream.epoch, message_id)
@@ -1761,6 +2026,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     message_id,
                     outcome: RepairOutcome::Exhausted,
                 }));
+                // A whole-message gap that exhausted its repair budget: turn
+                // its reserved slot into a permanent loss marker.
+                if fragment.is_none()
+                    && let Some(handle) = placeholder
+                {
+                    self.flip_placeholder_unavailable(key, message_id, handle);
+                }
             } else {
                 entry.deadline_ms = now_ms + retry_ms;
             }
@@ -1793,7 +2065,15 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 count: slot.count,
                 finalized: true,
             };
-            self.emit_mutation(handle, MutationKind::UpdateBody { body, status });
+            self.emit_mutation(
+                handle,
+                MutationKind::UpdateBody {
+                    body,
+                    status,
+                    late: false,
+                    notify: false,
+                },
+            );
         }
         self.pool.close_slot(slot_index);
         if evicted {
@@ -1891,6 +2171,74 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             );
         }
         Ok(())
+    }
+
+    /// Re-encode `body` under the original message ID and emit it as
+    /// archive-only material (never transmitted): the resend service will
+    /// serve this in place of the superseded original. The replacement is a
+    /// plain content frame — the option set the original carried is not
+    /// retained by the engine, and a requester that missed the original only
+    /// needs its current content at its sequence position. Best-effort: an
+    /// encode failure leaves the ID's archive empty (the preceding
+    /// [`Output::DeleteArchive`] already retired the original), which the
+    /// resend service answers as Message Unavailable — never stale content.
+    fn archive_replacement(&mut self, conversation: ConversationKey, message_id: u8, body: &[u8]) {
+        let mut template = TextMessage::basic("");
+        template.sequence = Some(MessageSequence::unfragmented(message_id));
+
+        let mut buffer = [0u8; MAX_FRAME];
+        let Ok(overhead) = codec::encode(&template, &mut buffer) else {
+            return;
+        };
+        let single_budget = MAX_FRAME.saturating_sub(overhead + 1);
+        let Ok(plan) = FragmentPlan::plan(body.len(), single_budget) else {
+            return;
+        };
+
+        let Some(plan) = plan else {
+            let mut message = template;
+            message.body = body;
+            let Ok(len) = codec::encode(&message, &mut buffer) else {
+                return;
+            };
+            let mut frame = heapless::Vec::new();
+            let _ = frame.extend_from_slice(&buffer[..len]);
+            self.push_output(Output::StoreArchive {
+                key: ArchiveKey {
+                    conversation,
+                    message_id,
+                    fragment: None,
+                },
+                payload: frame,
+            });
+            return;
+        };
+
+        for index in 0..plan.count {
+            let range = plan.range(index);
+            let mut message = TextMessage::basic("");
+            message.sequence = Some(MessageSequence {
+                message_id,
+                fragment: Some(Fragment {
+                    index,
+                    count: plan.count,
+                }),
+            });
+            message.body = &body[range];
+            let Ok(len) = codec::encode(&message, &mut buffer) else {
+                return;
+            };
+            let mut frame = heapless::Vec::new();
+            let _ = frame.extend_from_slice(&buffer[..len]);
+            self.push_output(Output::StoreArchive {
+                key: ArchiveKey {
+                    conversation,
+                    message_id,
+                    fragment: Some(index),
+                },
+                payload: frame,
+            });
+        }
     }
 
     fn queue_transmit(
@@ -2117,6 +2465,157 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         let handle = MessageHandle(self.next_handle);
         self.next_handle = self.next_handle.wrapping_add(1);
         handle
+    }
+
+    /// Reserve an ordered transcript slot for a detected sequence gap: emit a
+    /// `GapPending` placeholder (empty body, spinner on the host) and register
+    /// its handle so the backfilled frame fills the same slot in place.
+    fn emit_gap_placeholder(&mut self, key: StreamKey, id: u8, epoch: u16) -> MessageHandle {
+        let handle = self.alloc_handle();
+        self.emit_mutation(
+            handle,
+            MutationKind::Insert {
+                conversation: key.conversation,
+                sender: key.sender,
+                direction: Direction::Inbound,
+                message_type: MessageType::Basic,
+                wire_id: Some(id),
+                epoch,
+                client_token: None,
+                sender_handle: None,
+                regarding: None,
+                bg_color: None,
+                text_color: None,
+                body: BodyRef { offset: 0, len: 0 },
+                status: CompletionStatus::Complete,
+                presence: Presence::GapPending,
+                late: false,
+                notify: false,
+            },
+        );
+        if let Some(stream) = self.inbound.get_mut(&key) {
+            stream.refs.record(id, handle);
+        }
+        handle
+    }
+
+    /// An edit arrived whose target is a still-missing message with a
+    /// reserved gap slot. The edit *is* that slot's current content: fill the
+    /// placeholder with it (or remove the placeholder for a delete), cancel
+    /// the pending repair, and account for the original ID so the superseded
+    /// original — should it still arrive — is dropped as a duplicate instead
+    /// of overwriting the newer content. Returns whether a slot was filled.
+    fn fill_gap_with_edit(
+        &mut self,
+        envelope: &Envelope,
+        key: StreamKey,
+        original_id: u8,
+        body: &[u8],
+    ) -> bool {
+        let Some(placeholder) = self.inbound.get(&key).and_then(|stream| {
+            stream
+                .pending
+                .iter()
+                .find(|pending| pending.message_id == original_id && pending.fragment.is_none())
+                .and_then(|pending| pending.handle)
+        }) else {
+            return false;
+        };
+
+        if let Some(stream) = self.inbound.get_mut(&key) {
+            stream.cancel_pending(original_id, None);
+            stream.seen.insert(original_id);
+        }
+        self.push_output(Output::Event(Event::RepairFinished {
+            conversation: key.conversation,
+            sender: key.sender,
+            message_id: original_id,
+            outcome: RepairOutcome::Repaired,
+        }));
+
+        if body.is_empty() {
+            // The missing message was deleted; its slot simply goes away.
+            self.emit_mutation(
+                placeholder,
+                MutationKind::Delete {
+                    conversation: key.conversation,
+                    original: ResolvedRef::Handle(placeholder),
+                },
+            );
+            return true;
+        }
+
+        let text = core::str::from_utf8(body).unwrap_or("");
+        let body_ref = self
+            .arena_store(text)
+            .unwrap_or(BodyRef { offset: 0, len: 0 });
+        let epoch = self
+            .inbound
+            .get(&key)
+            .map(|stream| stream.epoch)
+            .unwrap_or(0);
+        self.emit_mutation(
+            placeholder,
+            MutationKind::Insert {
+                conversation: envelope.conversation,
+                sender: envelope.sender,
+                direction: Direction::Inbound,
+                message_type: MessageType::Basic,
+                wire_id: Some(original_id),
+                epoch,
+                client_token: None,
+                sender_handle: None,
+                regarding: None,
+                bg_color: None,
+                text_color: None,
+                body: body_ref,
+                status: CompletionStatus::Complete,
+                presence: Presence::Present,
+                late: true,
+                notify: true,
+            },
+        );
+        // The slot shows edited content; mark it as such.
+        self.emit_mutation(
+            placeholder,
+            MutationKind::Edit {
+                conversation: key.conversation,
+                original: ResolvedRef::Handle(placeholder),
+                body: body_ref,
+            },
+        );
+        true
+    }
+
+    /// Flip a still-outstanding gap placeholder to `Unavailable`: the repair
+    /// was exhausted, expired, disclaimed, or abandoned. The row stays in
+    /// place as a visible loss marker rather than silently vanishing.
+    fn flip_placeholder_unavailable(&mut self, key: StreamKey, id: u8, handle: MessageHandle) {
+        let epoch = self.inbound.get(&key).map(|stream| stream.epoch).unwrap_or(0);
+        self.emit_mutation(
+            handle,
+            MutationKind::Insert {
+                conversation: key.conversation,
+                sender: key.sender,
+                direction: Direction::Inbound,
+                message_type: MessageType::Basic,
+                wire_id: Some(id),
+                epoch,
+                client_token: None,
+                sender_handle: None,
+                regarding: None,
+                bg_color: None,
+                text_color: None,
+                body: BodyRef { offset: 0, len: 0 },
+                status: CompletionStatus::Complete,
+                presence: Presence::Unavailable,
+                late: false,
+                notify: false,
+            },
+        );
+        if let Some(stream) = self.inbound.get_mut(&key) {
+            stream.refs.retire(id);
+        }
     }
 
     fn emit_mutation(&mut self, handle: MessageHandle, kind: MutationKind) {

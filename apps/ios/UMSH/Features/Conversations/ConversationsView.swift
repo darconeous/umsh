@@ -284,8 +284,54 @@ extension EnvironmentValues {
     @Entry var visibleConversationReporter = VisibleConversationReporter()
 }
 
+/// A transcript row: a real message, or a collapsed run of one-or-more
+/// consecutive gap placeholders shown as a single spinner.
+private enum TranscriptItem: Identifiable {
+    case message(ChatMessageSummary)
+    case gap(id: String, count: Int)
+
+    var id: String {
+        switch self {
+        case let .message(message): return message.id
+        case let .gap(id, _): return "gap:\(id)"
+        }
+    }
+}
+
 struct DirectConversationView: View {
     private static let bottomAnchorID = "chat-transcript-bottom"
+
+    /// Collapse consecutive gap placeholders into a single `.gap` item so no
+    /// two spinner bubbles ever render adjacently. The run's stable id is its
+    /// first placeholder handle, keeping SwiftUI diffing cheap.
+    fileprivate static func transcriptItems(_ messages: [ChatMessageSummary]) -> [TranscriptItem] {
+        var items: [TranscriptItem] = []
+        var runStart: String?
+        var runCount = 0
+        func flushGap() {
+            if let start = runStart, runCount > 0 {
+                items.append(.gap(id: start, count: runCount))
+            }
+            runStart = nil
+            runCount = 0
+        }
+        for message in messages {
+            if message.isGapPlaceholder {
+                // A placeholder the engine deleted was filled by an edit (the
+                // missing frame was an edit, not a standalone bubble): it no
+                // longer holds a slot, so drop it. Any still-pending neighbors
+                // stay contiguous and keep the collapsed spinner.
+                if message.isDeleted { continue }
+                if runStart == nil { runStart = message.id }
+                runCount += 1
+            } else {
+                flushGap()
+                items.append(.message(message))
+            }
+        }
+        flushGap()
+        return items
+    }
     // Following the live edge is an explicit, sticky mode. Appending a row can
     // temporarily increase the measured distance from the bottom before the
     // compensating scroll runs; that layout change must not look like the user
@@ -353,21 +399,27 @@ struct DirectConversationView: View {
                             let lastOutboundID = conversation.messages.last(
                                 where: { $0.isOutbound && !$0.isDeleted }
                             )?.id
-                            ForEach(conversation.messages) { message in
-                                ChatMessageBubble(
-                                    message: message,
-                                    isMostRecentOutbound: message.id == lastOutboundID,
-                                    onEdit: message.isOutbound && !message.isDeleted
-                                        ? {
-                                            editDraft = message.body
-                                            editingMessage = message
-                                        }
-                                        : nil,
-                                    onDelete: message.isOutbound && !message.isDeleted
-                                        ? { deletingMessage = message }
-                                        : nil
-                                )
-                                .id(message.id)
+                            ForEach(Self.transcriptItems(conversation.messages)) { item in
+                                switch item {
+                                case let .message(message):
+                                    ChatMessageBubble(
+                                        message: message,
+                                        isMostRecentOutbound: message.id == lastOutboundID,
+                                        onEdit: message.isOutbound && !message.isDeleted
+                                            ? {
+                                                editDraft = message.body
+                                                editingMessage = message
+                                            }
+                                            : nil,
+                                        onDelete: message.isOutbound && !message.isDeleted
+                                            ? { deletingMessage = message }
+                                            : nil
+                                    )
+                                    .id(item.id)
+                                case let .gap(_, count):
+                                    GapPlaceholderBubble(count: count)
+                                        .id(item.id)
+                                }
                             }
                             Color.clear
                                 .frame(height: 1)
@@ -755,6 +807,29 @@ private struct MessageEditSheet: View {
     }
 }
 
+/// A placeholder bubble for a known sequence gap: an indeterminate spinner in
+/// an inbound-styled bubble, holding the missing message's ordered position
+/// until a repair fills or resolves it. One bubble stands for a whole run of
+/// adjacent gaps.
+private struct GapPlaceholderBubble: View {
+    let count: Int
+
+    var body: some View {
+        HStack(alignment: .bottom) {
+            ProgressView()
+                .controlSize(.small)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.secondary.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .accessibilityLabel(
+                    count > 1 ? "Waiting for \(count) missing messages" : "Waiting for a missing message"
+                )
+            Spacer(minLength: 44)
+        }
+    }
+}
+
 private struct ChatMessageBubble: View {
     let message: ChatMessageSummary
     /// Quiet states (Delivered/Sent) only annotate the newest outbound
@@ -762,6 +837,8 @@ private struct ChatMessageBubble: View {
     var isMostRecentOutbound = false
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
+
+    @State private var showsOriginalBody = false
 
     private var isFailed: Bool {
         message.deliveryState?.lowercased() == "failed"
@@ -775,6 +852,14 @@ private struct ChatMessageBubble: View {
                 .italic()
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: message.isOutbound ? .trailing : .leading)
+                .padding(.horizontal, 8)
+        } else if message.isUnavailable {
+            // A gap whose repair failed: a subtle loss marker in its slot.
+            Text("Message unavailable")
+                .font(.caption)
+                .italic()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
         } else {
             HStack(alignment: .bottom) {
@@ -813,6 +898,11 @@ private struct ChatMessageBubble: View {
                 Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = message.body
                 }
+                if message.originalBody != nil {
+                    Button("View Original", systemImage: "clock.arrow.circlepath") {
+                        showsOriginalBody = true
+                    }
+                }
                 if let onEdit {
                     Button("Edit", systemImage: "pencil", action: onEdit)
                 }
@@ -820,11 +910,17 @@ private struct ChatMessageBubble: View {
                     Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
                 }
             }
+            .alert("Original Message", isPresented: $showsOriginalBody) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(message.originalBody ?? "")
+            }
     }
 
     private var caption: String? {
         var parts: [String] = []
         if message.isEdited { parts.append("Edited") }
+        if message.isReceivedLate { parts.append("Received late") }
         if message.isOutbound, let label = deliveryLabel { parts.append(label) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -833,7 +929,11 @@ private struct ChatMessageBubble: View {
         guard let state = message.deliveryState else { return nil }
         switch state.lowercased() {
         case "failed": return "Not Delivered"
-        case "acknowledged": return isMostRecentOutbound ? "Delivered" : nil
+        case "acknowledged":
+            // A recovery from failure is noteworthy on its own row, unlike a
+            // routine "Delivered" which only annotates the newest message.
+            if message.isDeliveredLate { return "Delivered Late" }
+            return isMostRecentOutbound ? "Delivered" : nil
         case "sent": return isMostRecentOutbound ? "Sent" : nil
         default: return "Sending…"
         }

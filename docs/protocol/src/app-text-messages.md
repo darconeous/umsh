@@ -107,6 +107,10 @@ A forward delta greater than 1 within one conversation-and-sender stream means m
 - In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message — or a Message Unavailable naming it — arrives on the channel before the request is sent.
 - Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.
 
+A repaired message occupies its position in **sequence order** within the sender's stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed — rendering a pending-gap placeholder there while a repair is outstanding — and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.
+
+When a message is delivered in fragments, a receiver SHOULD raise any user-facing notification once the final fragment is received, or once a bounded latency (on the order of thirty seconds) has elapsed since the first fragment — whichever comes first — so a stalled reassembly still notifies without waiting for the full reassembly lifetime.
+
 ### Sequence Reset
 
 A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation — for example, after losing that conversation's persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.
@@ -137,6 +141,10 @@ An edit with a zero-length body signals deletion of the original message.
 For as long as a client retains sequence history for an edited or deleted message, it SHOULD retain the stable original-message identity or a tombstone so that references can still be resolved. A client MAY retain prior revision content, including deleted content, for edit-history display; this is a local storage and privacy policy rather than a protocol requirement.
 
 Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message's ID, not the edit's ID.
+
+Once a message has been edited or deleted, its superseded content MUST NOT be retransmitted: a resend request naming the original Message ID is answered with the current content re-issued under that ID, or with Message Unavailable — never with the pre-edit bytes. This obligation is durable; it survives restarts of the sending node. Retaining superseded content locally for the sender's own review remains permitted, per the retention note above.
+
+A receiver holding an unrepaired gap at an edited message's original ID MAY treat an arriving edit that references it as satisfying that gap — the edit already carries the position's current content — and cancel the pending repair rather than requesting content the sender is no longer willing to send.
 
 How edits are presented to users is implementation-defined. Implementations typically display only the most recent edit, with some indication that edits exist, and an optional mechanism to view edit history.
 

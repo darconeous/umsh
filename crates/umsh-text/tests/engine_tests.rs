@@ -8,8 +8,8 @@ use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveResult, CompletionStatus, ComposeError, ComposeIntent, ComposeRef, DeliveryState,
-    Destination, Diagnostic, Engine, EngineConfig, Event, MutationKind, Output, RepairOutcome,
-    ResolvedRef, StreamCheckpoint, destination_for,
+    Destination, Diagnostic, Engine, EngineConfig, Event, MutationKind, Output, Presence,
+    RepairOutcome, ResolvedRef, StreamCheckpoint, destination_for,
 };
 use umsh_text::validate::{DeliveryPath, DirectChannelProfile, Envelope};
 use umsh_text::{
@@ -67,6 +67,14 @@ enum Drained {
         conversation: ConversationKey,
         sequence: MessageSequence,
     },
+    StoreArchive {
+        message_id: u8,
+        fragment: Option<u8>,
+        payload: Vec<u8>,
+    },
+    DeleteArchive {
+        message_id: u8,
+    },
     Insert {
         handle: MessageHandle,
         wire_id: Option<u8>,
@@ -78,11 +86,16 @@ enum Drained {
         sender_handle: Option<String>,
         bg_color: Option<[u8; 3]>,
         text_color: Option<[u8; 3]>,
+        presence: Presence,
+        late: bool,
+        notify: bool,
     },
     UpdateBody {
         handle: MessageHandle,
         body: String,
         status: CompletionStatus,
+        late: bool,
+        notify: bool,
     },
     Edit {
         original: ResolvedRef,
@@ -120,6 +133,12 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                 conversation,
                 sequence,
             },
+            Output::StoreArchive { key, payload } => Drained::StoreArchive {
+                message_id: key.message_id,
+                fragment: key.fragment,
+                payload: payload.to_vec(),
+            },
+            Output::DeleteArchive { message_id, .. } => Drained::DeleteArchive { message_id },
             Output::StoreMessage(mutation) => match mutation.kind {
                 MutationKind::Insert {
                     wire_id,
@@ -131,6 +150,9 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     sender_handle,
                     bg_color,
                     text_color,
+                    presence,
+                    late,
+                    notify,
                     ..
                 } => Drained::Insert {
                     handle: mutation.handle,
@@ -143,11 +165,21 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     sender_handle: sender_handle.map(|text| engine.body(&text).to_string()),
                     bg_color,
                     text_color,
+                    presence,
+                    late,
+                    notify,
                 },
-                MutationKind::UpdateBody { body, status } => Drained::UpdateBody {
+                MutationKind::UpdateBody {
+                    body,
+                    status,
+                    late,
+                    notify,
+                } => Drained::UpdateBody {
                     handle: mutation.handle,
                     body: engine.body(&body).to_string(),
                     status,
+                    late,
+                    notify,
                 },
                 MutationKind::Edit {
                     original, body, ..
@@ -886,6 +918,574 @@ fn unavailable_accounts_for_gap() {
 }
 
 // ---------------------------------------------------------------------
+// Reserved gap slots + in-place fill (ordered repair)
+// ---------------------------------------------------------------------
+
+/// A gap reserves an ordered placeholder slot at the live edge; the backfill
+/// reuses that same handle in place instead of landing at the bottom.
+#[test]
+fn gap_reserves_placeholder_then_fills_in_place() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+    // ID 1 is lost; ID 2 opens a gap.
+    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    let outputs = drain(&mut engine);
+
+    let placeholder_pos = outputs
+        .iter()
+        .position(|output| {
+            matches!(output,
+                Drained::Insert { wire_id: Some(1), presence: Presence::GapPending, body, .. }
+                    if body.is_empty())
+        })
+        .expect("gap placeholder insert");
+    let trigger_pos = outputs
+        .iter()
+        .position(|output| {
+            matches!(output,
+                Drained::Insert { wire_id: Some(2), presence: Presence::Present, .. })
+        })
+        .expect("triggering message insert");
+    assert!(
+        placeholder_pos < trigger_pos,
+        "the placeholder must sort above the newer message"
+    );
+    let Drained::Insert {
+        handle: placeholder_handle,
+        ..
+    } = outputs[placeholder_pos]
+    else {
+        unreachable!()
+    };
+
+    // ID 1 finally arrives and fills the reserved slot in place.
+    feed(&mut engine, &direct_envelope(), None, &sequenced(1, "b"), 200);
+    let outputs = drain(&mut engine);
+    let fill = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                body,
+                presence,
+                late,
+                notify,
+                ..
+            } => Some((*handle, body.clone(), *presence, *late, *notify)),
+            _ => None,
+        })
+        .expect("backfill insert");
+    assert_eq!(fill.0, placeholder_handle, "fill reuses the reserved handle");
+    assert_eq!(fill.1, "b");
+    assert_eq!(fill.2, Presence::Present);
+    assert!(fill.3, "backfill is flagged received-late");
+    assert!(fill.4, "backfill notifies");
+}
+
+/// When the missing frame turns out to be an edit, the spinner placeholder is
+/// deleted and the edit applies to its referenced original.
+#[test]
+fn edit_filling_gap_deletes_placeholder() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "orig"), 0);
+    drain(&mut engine);
+    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    let outputs = drain(&mut engine);
+    let placeholder_handle = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::GapPending,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .expect("gap placeholder");
+
+    // ID 1 arrives, but it is an edit of ID 0, not a standalone bubble.
+    let mut edit = sequenced(1, "edited");
+    edit.editing = Some(0);
+    feed(&mut engine, &direct_envelope(), None, &edit, 200);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Delete { original: ResolvedRef::Handle(h) } if *h == placeholder_handle)),
+        "spinner placeholder is removed"
+    );
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::Edit { body, .. } if body == "edited")),
+        "the edit applies to the referenced original"
+    );
+}
+
+/// A gap whose repair budget is exhausted flips its placeholder to a visible
+/// "unavailable" loss marker rather than spinning forever.
+#[test]
+fn exhausted_gap_flips_placeholder_to_unavailable() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    let outputs = drain(&mut engine);
+    let placeholder_handle = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::GapPending,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .expect("gap placeholder");
+
+    let mut flipped = None;
+    for step in 0..12u64 {
+        engine.tick(2_200 + step * 8_200);
+        for output in drain(&mut engine) {
+            if let Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::Unavailable,
+                ..
+            } = output
+            {
+                flipped = Some(handle);
+            }
+        }
+    }
+    assert_eq!(
+        flipped,
+        Some(placeholder_handle),
+        "exhausted gap becomes an unavailable marker on the same handle"
+    );
+}
+
+/// A sender that disclaims the missing frame flips its placeholder to
+/// unavailable immediately.
+#[test]
+fn disclaimed_gap_flips_placeholder_to_unavailable() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 50);
+    let outputs = drain(&mut engine);
+    let placeholder_handle = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::GapPending,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .expect("gap placeholder");
+
+    let mut unavailable = TextMessage::basic("");
+    unavailable.message_type = MessageType::MessageUnavailable;
+    unavailable.sequence = Some(MessageSequence::unfragmented(1));
+    feed(&mut engine, &direct_envelope(), None, &unavailable, 100);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Insert { handle, wire_id: Some(1), presence: Presence::Unavailable, .. }
+                if *handle == placeholder_handle)),
+        "disclaimed gap becomes an unavailable marker in place"
+    );
+}
+
+/// Editing a message retires its archived original content and re-issues the
+/// archive under the same wire ID with the edited body, so a resend request
+/// can only ever serve current content.
+#[test]
+fn edit_replaces_archive_with_edited_content_only() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "original secret",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    engine
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Edit {
+                original: ComposeRef::Handle(original),
+                body: "edited",
+            },
+            100,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+
+    let delete_pos = outputs
+        .iter()
+        .position(|output| matches!(output, Drained::DeleteArchive { message_id: 0 }))
+        .expect("original archive retired");
+    let (store_pos, replacement) = outputs
+        .iter()
+        .enumerate()
+        .find_map(|(position, output)| match output {
+            Drained::StoreArchive {
+                message_id: 0,
+                fragment: None,
+                payload,
+            } => Some((position, payload.clone())),
+            _ => None,
+        })
+        .expect("replacement archived under the original ID");
+    assert!(
+        delete_pos < store_pos,
+        "retirement precedes the replacement so stale fragments cannot linger"
+    );
+    let parsed = parse_payload(&replacement);
+    assert_eq!(parsed.sequence, Some(MessageSequence::unfragmented(0)));
+    assert_eq!(parsed.body, b"edited");
+    assert_eq!(parsed.editing, None, "the replacement is a plain content frame");
+
+    // The resend service round trip serves the edited content.
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        1_000,
+    );
+    let outputs = drain(&mut engine);
+    let Drained::LookupOutbound { request_id, .. } = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::LookupOutbound { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    engine.archive_result(
+        *request_id,
+        ArchiveResult::Found {
+            payload: &replacement,
+        },
+        1_010,
+    );
+    let resent = drain(&mut engine)
+        .iter()
+        .find_map(|output| match output {
+            Drained::Transmit { payload, .. } => Some(parse_payload(payload)),
+            _ => None,
+        })
+        .expect("resend transmit");
+    assert_eq!(resent.body, b"edited");
+}
+
+/// Deleting a message retires its archive with no replacement: a later
+/// resend request is answered as Message Unavailable, never with content.
+#[test]
+fn delete_retires_archive_without_replacement() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "retract me",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    drain(&mut engine);
+
+    engine
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Delete {
+                original: ComposeRef::Handle(original),
+            },
+            100,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::DeleteArchive { message_id: 0 }))
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::StoreArchive { message_id: 0, .. })),
+        "deleted content is never re-archived"
+    );
+}
+
+/// An edit arriving for a still-missing original fills the reserved gap slot
+/// with the edited content, cancels the repair, and drops the superseded
+/// original as a duplicate should it still arrive.
+#[test]
+fn edit_of_missing_message_fills_placeholder() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+
+    // ID 1 (the original) is lost; ID 2 arrives and is an edit of 1.
+    let mut edit = sequenced(2, "edited");
+    edit.editing = Some(1);
+    feed(&mut engine, &direct_envelope(), None, &edit, 100);
+    let outputs = drain(&mut engine);
+
+    let placeholder_handle = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::GapPending,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .expect("gap placeholder for the missing original");
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::Present,
+                late: true,
+                notify: true,
+                body,
+                ..
+            } if *handle == placeholder_handle && body == "edited")),
+        "the edit's content fills the reserved slot in place"
+    );
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Event(Event::RepairFinished {
+                message_id: 1,
+                outcome: RepairOutcome::Repaired,
+                ..
+            })))
+    );
+
+    // No resend request goes out for content the edit superseded.
+    engine.tick(60_000);
+    assert!(
+        !drain(&mut engine)
+            .iter()
+            .any(|output| matches!(output, Drained::Transmit { .. }))
+    );
+
+    // The superseded original still arriving must not overwrite the edit.
+    feed(&mut engine, &direct_envelope(), None, &sequenced(1, "old"), 200);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::Diagnostic(Diagnostic::DuplicateMessage { message_id: 1 })))
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::Insert { body, .. } if body == "old")),
+        "stale original content never lands"
+    );
+}
+
+/// A delete arriving for a still-missing original removes the placeholder
+/// entirely: the slot's content was retracted, so nothing remains to show.
+#[test]
+fn delete_of_missing_message_removes_placeholder() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
+    drain(&mut engine);
+
+    let mut delete = sequenced(2, "");
+    delete.editing = Some(1);
+    feed(&mut engine, &direct_envelope(), None, &delete, 100);
+    let outputs = drain(&mut engine);
+
+    let placeholder_handle = outputs
+        .iter()
+        .find_map(|output| match output {
+            Drained::Insert {
+                handle,
+                wire_id: Some(1),
+                presence: Presence::GapPending,
+                ..
+            } => Some(*handle),
+            _ => None,
+        })
+        .expect("gap placeholder");
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Delete { original: ResolvedRef::Handle(handle) }
+                if *handle == placeholder_handle)),
+        "the placeholder is removed"
+    );
+    engine.tick(60_000);
+    assert!(
+        !drain(&mut engine)
+            .iter()
+            .any(|output| matches!(output, Drained::Transmit { .. }))
+    );
+}
+
+// ---------------------------------------------------------------------
+// Engine-owned notification eligibility
+// ---------------------------------------------------------------------
+
+#[test]
+fn single_frame_arrival_notifies() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "hi"), 0);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(output,
+            Drained::Insert { wire_id: Some(0), notify: true, .. })),
+        "a single-frame inbound message notifies on arrival"
+    );
+}
+
+#[test]
+fn fragmented_completion_notifies_exactly_once() {
+    let mut engine = engine();
+    feed_fragment(&mut engine, 5, 0, 2, b"hello ", 0);
+    let announce = drain(&mut engine);
+    assert!(
+        announce.iter().any(|output| matches!(output,
+            Drained::Insert { notify: false, status: CompletionStatus::Partial { .. }, .. })),
+        "the incomplete announcing insert does not notify"
+    );
+
+    feed_fragment(&mut engine, 5, 1, 2, b"world", 100);
+    let complete = drain(&mut engine);
+    let notifies = complete
+        .iter()
+        .filter(|output| {
+            matches!(output,
+                Drained::UpdateBody { notify: true, status: CompletionStatus::Complete, .. })
+        })
+        .count();
+    assert_eq!(notifies, 1, "completion notifies exactly once");
+}
+
+#[test]
+fn stalled_fragment_notifies_at_deadline_once() {
+    let mut engine = engine();
+    feed_fragment(&mut engine, 5, 0, 2, b"hello ", 0);
+    drain(&mut engine);
+
+    engine.tick(30_000);
+    let deadline = drain(&mut engine);
+    assert_eq!(
+        deadline
+            .iter()
+            .filter(|output| matches!(output, Drained::UpdateBody { notify: true, .. }))
+            .count(),
+        1,
+        "the notify deadline fires once"
+    );
+
+    engine.tick(60_000);
+    assert!(
+        !drain(&mut engine)
+            .iter()
+            .any(|output| matches!(output, Drained::UpdateBody { notify: true, .. })),
+        "the deadline never notifies twice"
+    );
+}
+
+#[test]
+fn control_frames_do_not_notify() {
+    let mut engine = engine();
+    feed(&mut engine, &direct_envelope(), None, &resend_request(0, false), 0);
+    let outputs = drain(&mut engine);
+    assert!(
+        !outputs.iter().any(|output| matches!(output,
+            Drained::Insert { notify: true, .. } | Drained::UpdateBody { notify: true, .. })),
+        "control frames never produce a notify"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Resend delivery reconciliation
+// ---------------------------------------------------------------------
+
+/// A resend that is acked flips the *original* outbound message's delivery
+/// state, rather than tracking a throwaway handle.
+#[test]
+fn resend_ack_reconciles_original_delivery() {
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "keep",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let mut archived = None;
+    while let Some(output) = engine.poll_output() {
+        if let Output::Transmit(transmission) = &output {
+            archived = Some(transmission.payload.to_vec());
+        }
+    }
+    let archived = archived.expect("archived payload");
+
+    feed(&mut engine, &direct_envelope(), None, &resend_request(0, false), 1_000);
+    let mut request_id = None;
+    while let Some(output) = engine.poll_output() {
+        if let Output::LookupOutbound { request_id: id, .. } = output {
+            request_id = Some(id);
+        }
+    }
+    let request_id = request_id.expect("lookup request");
+
+    engine.archive_result(request_id, ArchiveResult::Found { payload: &archived }, 1_010);
+    let mut resend_tx = None;
+    while let Some(output) = engine.poll_output() {
+        if let Output::Transmit(transmission) = output {
+            resend_tx = Some(transmission.transmission_id);
+        }
+    }
+    let resend_tx = resend_tx.expect("resend transmit");
+
+    engine.transmit_update(resend_tx, DeliveryState::Acked, 1_020);
+    let mut acked = false;
+    while let Some(output) = engine.poll_output() {
+        if let Output::Event(Event::DeliveryStateChanged {
+            handle,
+            state: DeliveryState::Acked,
+            ..
+        }) = output
+        {
+            assert_eq!(handle, original, "the original message's row is reconciled");
+            acked = true;
+        }
+    }
+    assert!(acked, "the resend ack reaches the original handle");
+}
+
+// ---------------------------------------------------------------------
 // Inbound edits, deletes, replies
 // ---------------------------------------------------------------------
 
@@ -1025,7 +1625,7 @@ fn fragmented_message_partial_render_then_completion() {
     let outputs = drain(&mut engine);
     assert!(outputs.iter().any(|output| matches!(
         output,
-        Drained::UpdateBody { handle: updated, body, status: CompletionStatus::Complete }
+        Drained::UpdateBody { handle: updated, body, status: CompletionStatus::Complete, .. }
             if *updated == handle && body == "one two three"
     )));
 }

@@ -71,6 +71,20 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let handle: UInt32
     let wireID: UInt8?
     let epoch: UInt16?
+    /// A reserved gap slot awaiting repair — rendered as a spinner placeholder,
+    /// not a real bubble.
+    var isGapPlaceholder: Bool = false
+    /// A gap whose repair failed — rendered as a subtle "message unavailable"
+    /// marker.
+    var isUnavailable: Bool = false
+    /// Filled its ordered slot out of order — annotated "Received late".
+    var isReceivedLate: Bool = false
+    /// Outbound message delivered on a resend after a transport failure —
+    /// annotated "Delivered Late".
+    var isDeliveredLate: Bool = false
+    /// Pre-edit text of the sender's own edited message, available for review
+    /// via the bubble's context menu. The wire archive never resends it.
+    var originalBody: String? = nil
 }
 
 enum MessageSendResult: Sendable {

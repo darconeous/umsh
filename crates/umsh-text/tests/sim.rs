@@ -190,6 +190,20 @@ impl Sim {
                         });
                     }
                     Output::StoreCheckpoint { .. } => {}
+                    Output::StoreArchive { key, payload } => {
+                        self.nodes[index].archive.insert(
+                            (key.conversation, key.message_id, key.fragment),
+                            payload.to_vec(),
+                        );
+                    }
+                    Output::DeleteArchive {
+                        conversation,
+                        message_id,
+                    } => {
+                        self.nodes[index].archive.retain(|(archived, id, _), _| {
+                            !(*archived == conversation && *id == message_id)
+                        });
+                    }
                     Output::LookupOutbound {
                         request_id,
                         conversation,
@@ -202,7 +216,7 @@ impl Sim {
                                 .transcript
                                 .insert(mutation.handle, (text, status));
                         }
-                        MutationKind::UpdateBody { body, status } => {
+                        MutationKind::UpdateBody { body, status, .. } => {
                             let text = self.nodes[index].engine.body(&body).to_string();
                             self.nodes[index]
                                 .transcript

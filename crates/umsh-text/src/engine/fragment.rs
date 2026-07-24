@@ -53,6 +53,12 @@ pub struct Slot {
     pub have_meta: bool,
     /// An Insert mutation has been emitted for this slot's handle.
     pub announced: bool,
+    /// This reassembly reused a gap placeholder handle, so its announcing
+    /// Insert should be flagged "received late".
+    pub late: bool,
+    /// A notify-eligible mutation (completion or notify deadline) has already
+    /// been emitted for this reassembly, so it must not fire again.
+    pub notified: bool,
     pub handle: MessageHandle,
     pub created_ms: u64,
     pub deadline_ms: u64,
@@ -309,6 +315,8 @@ pub fn empty_slot(
         meta: FirstMeta::default(),
         have_meta: false,
         announced: false,
+        late: false,
+        notified: false,
         handle,
         created_ms: now_ms,
         deadline_ms: now_ms,

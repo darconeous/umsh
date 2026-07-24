@@ -52,6 +52,27 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let wireID: UInt8?
     let epoch: UInt16?
     let isEdited: Bool
+    /// Ordered-repair presence: 0 = present, 1 = gap placeholder, 2 = unavailable.
+    let presence: Int
+    /// The message filled a reserved gap slot out of order.
+    let receivedLate: Bool
+    /// An outbound message that failed transport but was later acknowledged
+    /// via a resend.
+    let deliveredLate: Bool
+    /// Pre-edit text of the sender's own edited message, kept for review.
+    let originalBody: String?
+
+    var isGapPlaceholder: Bool { presence == 1 }
+    var isUnavailable: Bool { presence == 2 }
+}
+
+/// Maps the engine's presence enum to its stored integer code.
+private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
+    switch presence {
+    case .present: return 0
+    case .gapPending: return 1
+    case .unavailable: return 2
+    }
 }
 
 /// Phase 0 direct-SQLite prototype.
@@ -59,7 +80,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 8
+    static let currentSchemaVersion: Int32 = 11
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -353,6 +374,31 @@ actor SQLiteApplicationStore {
         return Self.optionalStringColumn(statement, at: 0)
     }
 
+    /// The persisted peer address and body of an inbound, displayable message,
+    /// for raising a notification. Returns `nil` for outbound rows, tombstones,
+    /// gap placeholders, unavailable markers, or empty bodies — nothing worth
+    /// alerting the user about. Resolves both fields from storage so a notify
+    /// carried on an `UpdateBody` (which omits peer/body) still works.
+    func chatNotificationTarget(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> (peerAddress: String, body: String)? {
+        let statement = try prepare(
+            """
+            SELECT peer_address, body FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(String(sessionID), to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return (Self.stringColumn(statement, at: 0), Self.stringColumn(statement, at: 1))
+    }
+
     func upsertCompanionRadioPeer(
         ownerIdentityID: String,
         publicAddress: String,
@@ -562,6 +608,12 @@ actor SQLiteApplicationStore {
     ) throws {
         try transaction {
             try upsertChatCheckpoint(ownerIdentityID: ownerIdentityID, batch.checkpoint)
+            // Retirements first: an edit's replacement payloads must land on a
+            // clean slate so no stale fragment of the superseded content can
+            // ever be served to a resend request.
+            for delete in batch.archiveDeletes {
+                try deleteChatArchive(ownerIdentityID: ownerIdentityID, delete)
+            }
             for archive in batch.archives {
                 try upsertChatArchive(ownerIdentityID: ownerIdentityID, archive)
             }
@@ -595,10 +647,13 @@ actor SQLiteApplicationStore {
                     ) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
                     DO UPDATE SET state = CASE
-                        WHEN chat_delivery_fragment.state = 'failed'
-                            OR excluded.state = 'failed' THEN 'failed'
+                        -- A positive ack is definitive proof the frame landed;
+                        -- it supersedes an earlier transport failure so a
+                        -- resent-and-acked fragment can recover from 'failed'.
                         WHEN chat_delivery_fragment.state = 'acknowledged'
                             OR excluded.state = 'acknowledged' THEN 'acknowledged'
+                        WHEN chat_delivery_fragment.state = 'failed'
+                            OR excluded.state = 'failed' THEN 'failed'
                         ELSE 'sent'
                     END
                     """
@@ -619,15 +674,27 @@ actor SQLiteApplicationStore {
                 )
                 try stepDone(fragmentStatement)
 
+                // Every fragment acknowledged wins over any earlier failure, so
+                // a resent-and-acked message recovers to 'acknowledged'. When
+                // that recovery crosses from a previously 'failed' row, flag it
+                // "delivered late". SQLite evaluates every SET right-hand side
+                // against the pre-update row, so `delivery_state` below reads
+                // the old value while the counts read the just-updated fragments.
                 let message = try prepare(
                     """
-                    UPDATE chat_message SET delivery_state = CASE
-                        WHEN EXISTS (
-                            SELECT 1 FROM chat_delivery_fragment f
-                            WHERE f.owner_identity_id = chat_message.owner_identity_id
-                                AND f.session_id = chat_message.session_id
-                                AND f.handle = chat_message.handle AND f.state = 'failed'
-                        ) THEN 'failed'
+                    UPDATE chat_message SET
+                        delivered_late = CASE
+                            WHEN chat_message.delivery_state = 'failed'
+                                AND (
+                                    SELECT COUNT(*) FROM chat_delivery_fragment f
+                                    WHERE f.owner_identity_id = chat_message.owner_identity_id
+                                        AND f.session_id = chat_message.session_id
+                                        AND f.handle = chat_message.handle
+                                        AND f.state = 'acknowledged'
+                                ) >= COALESCE(chat_message.fragment_count, 1) THEN 1
+                            ELSE chat_message.delivered_late
+                        END,
+                        delivery_state = CASE
                         WHEN (
                             SELECT COUNT(*) FROM chat_delivery_fragment f
                             WHERE f.owner_identity_id = chat_message.owner_identity_id
@@ -635,6 +702,12 @@ actor SQLiteApplicationStore {
                                 AND f.handle = chat_message.handle
                                 AND f.state = 'acknowledged'
                         ) >= COALESCE(chat_message.fragment_count, 1) THEN 'acknowledged'
+                        WHEN EXISTS (
+                            SELECT 1 FROM chat_delivery_fragment f
+                            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                                AND f.session_id = chat_message.session_id
+                                AND f.handle = chat_message.handle AND f.state = 'failed'
+                        ) THEN 'failed'
                         WHEN EXISTS (
                             SELECT 1 FROM chat_delivery_fragment f
                             WHERE f.owner_identity_id = chat_message.owner_identity_id
@@ -725,7 +798,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
-                   wire_id, epoch, edited
+                   wire_id, epoch, edited, presence, received_late, delivered_late, original_body
             FROM chat_message
             WHERE owner_identity_id = ? AND peer_address = ?
             ORDER BY created_at_ms ASC, rowid ASC
@@ -751,7 +824,11 @@ actor SQLiteApplicationStore {
                             ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
                         epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
                             ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8)),
-                        isEdited: sqlite3_column_int(statement, 9) != 0
+                        isEdited: sqlite3_column_int(statement, 9) != 0,
+                        presence: Int(sqlite3_column_int64(statement, 10)),
+                        receivedLate: sqlite3_column_int(statement, 11) != 0,
+                        deliveredLate: sqlite3_column_int(statement, 12) != 0,
+                        originalBody: Self.optionalStringColumn(statement, at: 13)
                     )
                 )
             case SQLITE_DONE: return messages
@@ -889,6 +966,26 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
+    /// Remove every archived fragment stored under one message ID (the
+    /// unfragmented entry included): its content was superseded by an edit or
+    /// retracted by a delete and must never be resent.
+    private func deleteChatArchive(
+        ownerIdentityID: String,
+        _ delete: MobileChatArchiveDeleteRecord
+    ) throws {
+        let statement = try prepare(
+            """
+            DELETE FROM chat_outbound_archive
+            WHERE owner_identity_id = ? AND peer_address = ? AND message_id = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(delete.peerAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int(statement, 3, Int32(delete.messageId)))
+        try stepDone(statement)
+    }
+
     private func upsertChatArchive(
         ownerIdentityID: String,
         _ archive: MobileChatArchiveRecord
@@ -946,14 +1043,20 @@ actor SQLiteApplicationStore {
                     direction, message_type, wire_id, epoch, client_token,
                     sender_handle, regarding_handle, background_color, text_color, body,
                     complete, present_fragments, fragment_count, finalized,
-                    delivery_state, deleted, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    delivery_state, deleted, created_at_ms, presence, received_late
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
                     present_fragments = excluded.present_fragments,
                     fragment_count = excluded.fragment_count,
-                    finalized = excluded.finalized
+                    finalized = excluded.finalized,
+                    message_type = excluded.message_type,
+                    sender_handle = excluded.sender_handle,
+                    background_color = excluded.background_color,
+                    text_color = excluded.text_color,
+                    presence = excluded.presence,
+                    received_late = MAX(chat_message.received_late, excluded.received_late)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -978,13 +1081,18 @@ actor SQLiteApplicationStore {
             try bindOptionalBool(mutation.finalized, to: statement, at: 19)
             try bindOptional(direction == .outbound ? "pending" : nil, to: statement, at: 20)
             try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds()))
+            try check(sqlite3_bind_int(statement, 22, presenceCode(mutation.presence)))
+            try check(sqlite3_bind_int(statement, 23, mutation.receivedLate ? 1 : 0))
             try stepDone(statement)
         case .updateBody:
             guard let body = mutation.body else { return }
+            // A fragment-completion or notify-deadline update can carry a late
+            // flag; never clear an existing one, and leave presence untouched.
             let statement = try prepare(
                 """
                 UPDATE chat_message SET body = ?, complete = ?, present_fragments = ?,
-                    fragment_count = ?, finalized = ?
+                    fragment_count = ?, finalized = ?,
+                    received_late = MAX(received_late, ?)
                 WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 """
             )
@@ -994,29 +1102,39 @@ actor SQLiteApplicationStore {
             try bindOptionalInt(mutation.presentFragments.map(Int64.init), to: statement, at: 3)
             try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 4)
             try bindOptionalBool(mutation.finalized, to: statement, at: 5)
-            try bind(ownerIdentityID, to: statement, at: 6)
-            try bind(sessionID, to: statement, at: 7)
-            try check(sqlite3_bind_int64(statement, 8, Int64(mutation.handle)))
+            try check(sqlite3_bind_int(statement, 6, mutation.receivedLate ? 1 : 0))
+            try bind(ownerIdentityID, to: statement, at: 7)
+            try bind(sessionID, to: statement, at: 8)
+            try check(sqlite3_bind_int64(statement, 9, Int64(mutation.handle)))
             try stepDone(statement)
         case .edit, .delete:
             let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
             let deleted: Int32 = mutation.kind == .delete ? 1 : 0
             let markEdited: Int32 = mutation.kind == .edit ? 1 : 0
             if let original = mutation.originalHandle {
+                // The first edit of the sender's own message captures its
+                // pre-edit text (`body` on the right-hand side reads the
+                // pre-update row) so the sender can still review it; the
+                // resend archive only ever holds the edited content.
                 let statement = try prepare(
                     """
-                    UPDATE chat_message SET body = ?, deleted = ?,
+                    UPDATE chat_message SET
+                        original_body = CASE WHEN ? = 1 AND direction = 1
+                            THEN COALESCE(original_body, body)
+                            ELSE original_body END,
+                        body = ?, deleted = ?,
                         edited = MAX(edited, ?)
                     WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                     """
                 )
                 defer { sqlite3_finalize(statement) }
-                try bind(body, to: statement, at: 1)
-                try check(sqlite3_bind_int(statement, 2, deleted))
-                try check(sqlite3_bind_int(statement, 3, markEdited))
-                try bind(ownerIdentityID, to: statement, at: 4)
-                try bind(sessionID, to: statement, at: 5)
-                try check(sqlite3_bind_int64(statement, 6, Int64(original)))
+                try check(sqlite3_bind_int(statement, 1, markEdited))
+                try bind(body, to: statement, at: 2)
+                try check(sqlite3_bind_int(statement, 3, deleted))
+                try check(sqlite3_bind_int(statement, 4, markEdited))
+                try bind(ownerIdentityID, to: statement, at: 5)
+                try bind(sessionID, to: statement, at: 6)
+                try check(sqlite3_bind_int64(statement, 7, Int64(original)))
                 try stepDone(statement)
             } else if let wireID = mutation.originalWireId,
                       let direction = mutation.originalDirection,
@@ -1027,7 +1145,11 @@ actor SQLiteApplicationStore {
                 // epoch/row with that ID is the one still referenceable.
                 let statement = try prepare(
                     """
-                    UPDATE chat_message SET body = ?, deleted = ?,
+                    UPDATE chat_message SET
+                        original_body = CASE WHEN ? = 1 AND direction = 1
+                            THEN COALESCE(original_body, body)
+                            ELSE original_body END,
+                        body = ?, deleted = ?,
                         edited = MAX(edited, ?)
                     WHERE rowid = (
                         SELECT rowid FROM chat_message
@@ -1039,13 +1161,14 @@ actor SQLiteApplicationStore {
                     """
                 )
                 defer { sqlite3_finalize(statement) }
-                try bind(body, to: statement, at: 1)
-                try check(sqlite3_bind_int(statement, 2, deleted))
-                try check(sqlite3_bind_int(statement, 3, markEdited))
-                try bind(ownerIdentityID, to: statement, at: 4)
-                try bind(peerAddress, to: statement, at: 5)
-                try check(sqlite3_bind_int(statement, 6, direction == .outbound ? 1 : 0))
-                try check(sqlite3_bind_int(statement, 7, Int32(wireID)))
+                try check(sqlite3_bind_int(statement, 1, markEdited))
+                try bind(body, to: statement, at: 2)
+                try check(sqlite3_bind_int(statement, 3, deleted))
+                try check(sqlite3_bind_int(statement, 4, markEdited))
+                try bind(ownerIdentityID, to: statement, at: 5)
+                try bind(peerAddress, to: statement, at: 6)
+                try check(sqlite3_bind_int(statement, 7, direction == .outbound ? 1 : 0))
+                try check(sqlite3_bind_int(statement, 8, Int32(wireID)))
                 try stepDone(statement)
             }
         }
@@ -1381,6 +1504,68 @@ actor SQLiteApplicationStore {
                     sql: """
                     ALTER TABLE node ADD COLUMN last_heard_at REAL;
                     PRAGMA user_version = 8;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 9 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Ordered-repair transcript metadata: `presence` marks a row as
+                // a real message (0), a reserved gap placeholder (1), or a
+                // permanent loss marker (2); `received_late` flags a backfill
+                // that filled its slot out of order.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN presence INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE chat_message ADD COLUMN received_late INTEGER NOT NULL DEFAULT 0;
+                    PRAGMA user_version = 9;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 10 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // An outbound message that failed transport but was later
+                // acknowledged via a resend is "Delivered Late".
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN delivered_late INTEGER NOT NULL DEFAULT 0;
+                    PRAGMA user_version = 10;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 11 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // An edited outbound message keeps its pre-edit text here so
+                // the sender can still review what the original said. Only the
+                // first edit captures it; the wire archive holds edited
+                // content only and can never serve the original again.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN original_body TEXT;
+                    PRAGMA user_version = 11;
                     """
                 )
                 try execute(database, sql: "COMMIT")

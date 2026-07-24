@@ -126,6 +126,10 @@ pub struct PendingRepair {
     /// Earliest time the request may be transmitted (grace plus jitter).
     pub deadline_ms: u64,
     pub attempts: u8,
+    /// Ordered-slot placeholder reserved for this missing whole message, so a
+    /// terminal repair outcome can flip the same slot to `Unavailable`.
+    /// `None` for fragment repairs (their slot already exists).
+    pub handle: Option<MessageHandle>,
 }
 
 /// Inbound stream state for one `(conversation, sender)` pair.

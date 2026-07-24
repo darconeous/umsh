@@ -11,8 +11,8 @@ use umsh_core::PublicKey;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Destination,
-    Direction, Engine, EngineConfig, Event, MessageMutation, MutationKind, Output, ResolvedRef,
-    StreamCheckpoint, Transmission,
+    Direction, Engine, EngineConfig, Event, MessageMutation, MutationKind, Output, Presence,
+    ResolvedRef, StreamCheckpoint, Transmission,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
 use umsh_text::validate::DirectChannelProfile;
@@ -34,6 +34,17 @@ pub struct MobileChatArchiveRecord {
     pub payload: Vec<u8>,
 }
 
+/// Retire every archived fragment stored under one message ID. Emitted when
+/// an edit or delete supersedes that ID's content; the platform must apply
+/// these *before* the batch's archive upserts so an edit's replacement
+/// payloads land on a clean slate and the superseded content can never be
+/// served to a resend request again.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatArchiveDeleteRecord {
+    pub peer_address: String,
+    pub message_id: u8,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum MobileChatMutationKind {
     Insert,
@@ -46,6 +57,16 @@ pub enum MobileChatMutationKind {
 pub enum MobileChatDirection {
     Inbound,
     Outbound,
+}
+
+/// Ordered-slot presence of a transcript row (mirrors the engine's
+/// [`Presence`]). A `GapPending` row is a reserved spinner placeholder; an
+/// `Unavailable` row is a permanent loss marker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileChatPresence {
+    Present,
+    GapPending,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -80,6 +101,16 @@ pub struct MobileChatMutationRecord {
     pub present_fragments: Option<u16>,
     pub fragment_count: Option<u8>,
     pub finalized: Option<bool>,
+    /// Ordered-slot presence for `Insert` records (spinner placeholder, real
+    /// message, or loss marker). `UpdateBody`/`Edit`/`Delete` leave it at
+    /// `Present`; the host does not reinterpret presence on those.
+    pub presence: MobileChatPresence,
+    /// The record fills a slot reserved earlier by a gap, so it arrived out of
+    /// order and should render a "received late" caption.
+    pub received_late: bool,
+    /// The host should raise a user notification for this record (single-frame
+    /// arrival, fragment completion, or notify deadline; never placeholders).
+    pub notify: bool,
 }
 
 /// Platform-persisted identity of a previously composed outbound message,
@@ -129,6 +160,9 @@ pub enum MobileChatArchiveResultKind {
 pub struct MobileChatComposeBatchRecord {
     pub batch_id: u64,
     pub checkpoint: MobileChatCheckpointRecord,
+    /// Applied before `archives`: archive retirements for superseded
+    /// (edited or deleted) message IDs.
+    pub archive_deletes: Vec<MobileChatArchiveDeleteRecord>,
     /// These exact payloads must be committed with the checkpoint before the
     /// batch is released to the radio.
     pub archives: Vec<MobileChatArchiveRecord>,
@@ -148,6 +182,7 @@ pub(crate) struct ComposedChatBatch {
 pub(crate) struct ChatDrain {
     pub checkpoint: Option<MobileChatCheckpointRecord>,
     pub transmissions: Vec<Transmission>,
+    pub archive_deletes: Vec<MobileChatArchiveDeleteRecord>,
     pub archives: Vec<MobileChatArchiveRecord>,
     pub mutations: Vec<MobileChatMutationRecord>,
     pub deliveries: Vec<MobileChatDeliveryRecord>,
@@ -160,6 +195,7 @@ impl ChatDrain {
         Self {
             checkpoint: None,
             transmissions: Vec::new(),
+            archive_deletes: Vec::new(),
             archives: Vec::new(),
             mutations: Vec::new(),
             deliveries: Vec::new(),
@@ -305,6 +341,7 @@ impl MobileChatState {
             record: MobileChatComposeBatchRecord {
                 batch_id,
                 checkpoint,
+                archive_deletes: drain.archive_deletes,
                 archives: drain.archives,
                 mutations: drain.mutations,
             },
@@ -345,6 +382,22 @@ impl MobileChatState {
                             peer_address,
                             message_id: sequence.message_id,
                             fragment_index: sequence.fragment.map(|fragment| fragment.index),
+                        });
+                    }
+                }
+                Output::StoreArchive { key, payload } => {
+                    if let Some(record) = archive_record(key, payload.as_slice()) {
+                        drained.archives.push(record);
+                    }
+                }
+                Output::DeleteArchive {
+                    conversation,
+                    message_id,
+                } => {
+                    if let Some(peer_address) = direct_peer_address(conversation) {
+                        drained.archive_deletes.push(MobileChatArchiveDeleteRecord {
+                            peer_address,
+                            message_id,
                         });
                     }
                 }
@@ -401,6 +454,9 @@ impl MobileChatState {
             present_fragments: None,
             fragment_count: None,
             finalized: None,
+            presence: MobileChatPresence::Present,
+            received_late: false,
+            notify: false,
         };
         match mutation.kind {
             MutationKind::Insert {
@@ -417,6 +473,9 @@ impl MobileChatState {
                 text_color,
                 body,
                 status,
+                presence,
+                late,
+                notify,
             } => {
                 record.peer_address = direct_peer_address(conversation);
                 record.sender_address = sender_address(sender);
@@ -434,11 +493,21 @@ impl MobileChatState {
                 record.background_color = bg_color.map(|color| color.to_vec());
                 record.text_color = text_color.map(|color| color.to_vec());
                 record.body = Some(self.engine.body(&body).to_owned());
+                record.presence = mobile_presence(presence);
+                record.received_late = late;
+                record.notify = notify;
                 apply_completion(&mut record, status);
             }
-            MutationKind::UpdateBody { body, status } => {
+            MutationKind::UpdateBody {
+                body,
+                status,
+                late,
+                notify,
+            } => {
                 record.kind = MobileChatMutationKind::UpdateBody;
                 record.body = Some(self.engine.body(&body).to_owned());
+                record.received_late = late;
+                record.notify = notify;
                 apply_completion(&mut record, status);
             }
             MutationKind::Edit {
@@ -461,6 +530,14 @@ impl MobileChatState {
             }
         }
         Some(record)
+    }
+}
+
+fn mobile_presence(presence: Presence) -> MobileChatPresence {
+    match presence {
+        Presence::Present => MobileChatPresence::Present,
+        Presence::GapPending => MobileChatPresence::GapPending,
+        Presence::Unavailable => MobileChatPresence::Unavailable,
     }
 }
 
@@ -628,6 +705,42 @@ mod tests {
         );
         assert_eq!(edit.peer_address, insert.peer_address);
         assert_eq!(edit.body.as_deref(), Some("v2"));
+
+        // Superseded content is retired and re-issued under the original wire
+        // ID: a resend request served from the archive can only carry "v2".
+        assert!(
+            edited
+                .record
+                .archive_deletes
+                .iter()
+                .any(|delete| Some(delete.message_id) == insert.wire_id)
+        );
+        assert!(
+            edited
+                .record
+                .archives
+                .iter()
+                .any(|archive| Some(archive.message_id) == insert.wire_id)
+        );
+
+        // Deleting retires the archive without replacing it.
+        let deleted = restarted
+            .compose_delete(PEER, 9, &original, 2)
+            .expect("delete composes");
+        assert!(
+            deleted
+                .record
+                .archive_deletes
+                .iter()
+                .any(|delete| Some(delete.message_id) == insert.wire_id)
+        );
+        assert!(
+            !deleted
+                .record
+                .archives
+                .iter()
+                .any(|archive| Some(archive.message_id) == insert.wire_id)
+        );
 
         // Without continuity (no restored checkpoint) the same reference is
         // rejected instead of silently starting a dangling edit.
