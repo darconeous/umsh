@@ -1316,6 +1316,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-companion-cli-sensecap-solar"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "heapless 0.8.0",
+ "static_cell",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-sensecap-solar",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "firmware-companion-cli-t1000e"
 version = "0.1.0"
 dependencies = [
@@ -3249,6 +3269,20 @@ dependencies = [
  "rand 0.10.1",
  "umsh-flash-store",
  "umsh-hal",
+]
+
+[[package]]
+name = "umsh-bsp-sensecap-solar"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "umsh-bsp-nrf52840",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-radio-loraphy",
 ]
 
 [[package]]

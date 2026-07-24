@@ -25,6 +25,9 @@ Boards
                    app @ 0x27000, /Volumes/TRACKER L1).
   t1000e           Seeed SenseCAP T1000-E (Seeed family 0x28860057,
                    S140 v7.3.0, app @ 0x27000, /Volumes/T1000-E).
+  sensecap-solar   SenseCAP Solar Node P1 / P1-Pro (Seeed family
+                   0x28860044, S140 v7.3.0, app @ 0x27000,
+                   /Volumes/SENSECAP; confirmed Phase 0 2026-07-23).
 
 Examples
 --------
@@ -103,6 +106,20 @@ BOARDS = {
         "family": 0x28860057,        # Seeed family (VID 0x2886 | PID 0x0057)
         "mount":  "/Volumes/T1000-E",
         "description": "Seeed SenseCAP T1000-E",
+    },
+    "sensecap-solar": {
+        # Confirmed Phase 0 against an in-hand P1-Pro's INFO_UF2.TXT +
+        # CURRENT.UF2 (2026-07-23):
+        #   Bootloader: UF2 Bootloader 0.9.2-OTAFIX2.2-BP1.3
+        #   Model: Seeed Solar Node P1
+        #   Board-ID: nRF52840-SeeedSenseCAPSolarP1-v1
+        #   SoftDevice: S140 7.3.0  → app starts at 0x27000
+        #   Family ID (from CURRENT.UF2): 0x28860044  ← NOT VID<<16|PID
+        #   Bootloader volume name: SENSECAP
+        "base":   0x00027000,        # S140 v7.3.0 reserves 156 KiB (confirmed)
+        "family": 0x28860044,        # Seeed Solar Node P1 family (confirmed from CURRENT.UF2)
+        "mount":  "/Volumes/SENSECAP",
+        "description": "SenseCAP Solar Node P1 / P1-Pro",
     },
 }
 

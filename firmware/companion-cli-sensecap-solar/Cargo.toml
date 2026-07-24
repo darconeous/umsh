@@ -1,0 +1,45 @@
+[package]
+name = "firmware-companion-cli-sensecap-solar"
+description = "SenseCAP Solar Node P1-Pro bringup firmware (Phase 1: USB-CDC + heartbeat + GPIO/LED/button identification)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Bringup firmware for the SenseCAP Solar Node P1 / P1-Pro.
+# See docs/firmware-plan-sensecap-solar-node-p1-pro.md for the full plan.
+#
+# Phase 1 is intentionally a *stripped* copy of the Wio Tracker L1
+# bringup binary: no OLED (this board has no display), no MAC / CLI yet
+# (that is Phase 4 parity). It brings up USB-CDC, the safety primitives
+# (CdcAcmRescue, panic capture/replay, WDT), a heartbeat LED, and an
+# interactive GPIO/LED/button identification mode over CDC.
+#
+# Like the other firmware crates, this is in `workspace.members` but NOT
+# in `default-members`, so root-level `cargo check` does not try to
+# cross-compile it on the developer's host.
+
+[[bin]]
+name = "firmware-companion-cli-sensecap-solar"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-sensecap-solar = { path = "../../crates/umsh-bsp-sensecap-solar", default-features = false }
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+heapless = { version = "0.8", default-features = false }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+static_cell = "2"
+# The BSP's Platform bundle transitively links lora-phy, which
+# unconditionally depends on defmt 0.3. Provide a no-op global logger so
+# the firmware links without a debug transport (matches the other boards).
+defmt = "0.3"

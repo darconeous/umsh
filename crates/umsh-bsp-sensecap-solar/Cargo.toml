@@ -1,0 +1,51 @@
+[package]
+name = "umsh-bsp-sensecap-solar"
+description = "Board support for the SenseCAP Solar Node P1 / P1-Pro (nRF52840 + SX1262)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Board-level BSP for the SenseCAP Solar Node P1 / P1-Pro. Composes
+# umsh-bsp-nrf52840 (chip plumbing) with this board's pinout. The same
+# crate is intended to cover both the P1 and the P1-Pro, which are
+# believed to differ only in GNSS module and battery pack (open question
+# 16 in the hardware doc).
+#
+# This is the fourth nRF52840 + SX1262 board, after the T-Echo, Wio
+# Tracker L1, and T1000-E. The radio path is byte-for-byte the Wio
+# Tracker L1 configuration (external RXEN, DIO2-as-RF-switch, DIO3 TCXO
+# at 1.8 V) on a different pin map, so the Platform bundle is a verbatim
+# copy of WioTrackerPlatform.
+#
+# Initial scope is intentionally minimal — only what the bringup
+# firmware needs. See docs/firmware-plan-sensecap-solar-node-p1-pro.md.
+#
+# In scope for bringup:
+#   * USB-CDC over the nRF native USB peripheral (chip BSP)
+#   * two user LEDs (P0.15 / P0.19) + two buttons (P1.01 / P1.07)
+#   * calibrated battery measurement (SAADC AIN7/P0.31 + gated divider) — Phase 2
+#   * SX1262 LoRa radio + external RXEN pin (P0.05) — Phase 3
+#
+# Out of scope for bringup (planned but not yet):
+#   * Quectel L76K GNSS UART (P1.11/P1.12) — Phase 7, deferrable
+#   * Grove / expansion I²C bus (P0.09/P0.10, NFC pins)
+#   * QSPI external flash (P25Q16H) — reserved, NV stays on internal NVMC
+#   * Low-battery System OFF + LPCOMP solar-recovery wake — Phase 6
+
+[features]
+default = []
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
+umsh-hal          = { path = "../umsh-hal", default-features = false }
+
+# Used by the `Platform` type bundle.
+umsh-mac    = { path = "../umsh-mac", default-features = false }
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
+embassy-time      = { version = "0.5", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+cortex-m          = { version = "0.7" }

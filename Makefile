@@ -3,6 +3,7 @@
 	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
 	build-companion-cli-t1000e flash-companion-cli-t1000e \
 	flash-companion-cli-t1000e-serial \
+	build-companion-cli-sensecap-solar flash-companion-cli-sensecap-solar \
 	build-companion-ncp-t1000e flash-companion-ncp-t1000e-serial \
 	build-companion-ncp-techo flash-companion-ncp-techo \
 	build-hello-heltec-v2 flash-hello-heltec-v2 \
@@ -63,6 +64,17 @@ DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
 flash-companion-cli-t1000e-serial: build-companion-cli-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
 		$(TARGET_DIR)/firmware-companion-cli-t1000e
+
+# SenseCAP Solar Node P1-Pro. Same UF2/DFU posture as the Wio Tracker
+# (Seeed XIAO nRF52840 bootloader, UF2 mass-storage drive). The board
+# preset in scripts/flash.py is EXPECTED pending Phase 0 confirmation of
+# the family ID and volume name; see docs/firmware-plan-sensecap-solar-node-p1-pro.md.
+build-companion-cli-sensecap-solar:
+	cd firmware/companion-cli-sensecap-solar && cargo build --release
+
+flash-companion-cli-sensecap-solar: build-companion-cli-sensecap-solar
+	scripts/flash.py --board sensecap-solar --copy-default \
+		$(TARGET_DIR)/firmware-companion-cli-sensecap-solar
 
 build-companion-ncp-t1000e:
 	cd firmware/companion-ncp-t1000e && cargo build --release
