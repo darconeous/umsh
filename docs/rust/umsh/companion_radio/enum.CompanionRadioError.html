@@ -2,15 +2,15 @@
     Io(<a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>),
     Disconnected,
     Protocol(&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>),
-    Status(Status),
-    UnexpectedReset(Status),
+    Status(<a class="struct" href="../../umsh_companion/status/struct.Status.html" title="struct umsh_companion::status::Status">Status</a>),
+    UnexpectedReset(<a class="struct" href="../../umsh_companion/status/struct.Status.html" title="struct umsh_companion::status::Status">Status</a>),
     FrameTooLarge(<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>),
     Timeout,
     Transport(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>),
 }</code></pre><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Io" class="variant"><a href="#variant.Io" class="anchor">§</a><h3 class="code-header">Io(<a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>)</h3></section><section id="variant.Disconnected" class="variant"><a href="#variant.Disconnected" class="anchor">§</a><h3 class="code-header">Disconnected</h3></section><div class="docblock"><p>The stream reached end-of-file; the NCP link is gone.</p>
 </div><section id="variant.Protocol" class="variant"><a href="#variant.Protocol" class="anchor">§</a><h3 class="code-header">Protocol(&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>)</h3></section><div class="docblock"><p>The NCP violated the companion-radio protocol.</p>
-</div><section id="variant.Status" class="variant"><a href="#variant.Status" class="anchor">§</a><h3 class="code-header">Status(Status)</h3></section><div class="docblock"><p>The NCP reported a failure status for a command.</p>
-</div><section id="variant.UnexpectedReset" class="variant"><a href="#variant.UnexpectedReset" class="anchor">§</a><h3 class="code-header">UnexpectedReset(Status)</h3></section><div class="docblock"><p>The NCP reset outside of an initialization handshake, losing
+</div><section id="variant.Status" class="variant"><a href="#variant.Status" class="anchor">§</a><h3 class="code-header">Status(<a class="struct" href="../../umsh_companion/status/struct.Status.html" title="struct umsh_companion::status::Status">Status</a>)</h3></section><div class="docblock"><p>The NCP reported a failure status for a command.</p>
+</div><section id="variant.UnexpectedReset" class="variant"><a href="#variant.UnexpectedReset" class="anchor">§</a><h3 class="code-header">UnexpectedReset(<a class="struct" href="../../umsh_companion/status/struct.Status.html" title="struct umsh_companion::status::Status">Status</a>)</h3></section><div class="docblock"><p>The NCP reset outside of an initialization handshake, losing
 its configuration. The radio must be re-initialized.</p>
 </div><section id="variant.FrameTooLarge" class="variant"><a href="#variant.FrameTooLarge" class="anchor">§</a><h3 class="code-header">FrameTooLarge(<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>)</h3></section><div class="docblock"><p>The frame exceeds the NCP’s advertised MTU.</p>
 </div><section id="variant.Timeout" class="variant"><a href="#variant.Timeout" class="anchor">§</a><h3 class="code-header">Timeout</h3></section><div class="docblock"><p>The NCP did not answer a command in time.</p>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-36a6efb9.js";
+            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6c1064ad.js"></script>
@@ -185,11 +185,11 @@
 <p>Where:</p>
 <ul>
 <li><code>FHOPS</code> is present if the FCF flood hop count flag is set</li>
-<li><code>DST</code> is a 3-byte destination hint (in MAC Ack packets it is a 3-byte prefix of the original sender’s public key)</li>
+<li><code>DST</code> is a 3-byte destination hint (MAC Ack packets carry no <code>DST</code>)</li>
 <li><code>CHAN</code> is a 2-byte channel identifier</li>
 <li><code>SRC</code> is a compact 3-byte source hint (when <code>S</code> flag is clear) or 32-byte source public key (when <code>S</code> flag is set); in multicast and blind unicast packets with encryption enabled, <code>SRC</code> is encrypted inside the ciphertext rather than appearing as a separate field</li>
 <li><code>SECINFO</code> is present on authenticated/encrypted packet types</li>
-<li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry an <a href="security.html#ack-tag-construction">ack tag</a> instead</li>
+<li><code>MIC</code> is present on authenticated/encrypted packet types; MAC acks carry a fixed <a href="security.html#ack-tag-construction">ack trailer (ack MIC + ack tag)</a> instead</li>
 </ul>
 <p>Not all fields are supported for all packet types.</p>
 <h2 id="frame-control-field"><a class="header" href="#frame-control-field">Frame Control Field</a></h2>
@@ -288,7 +288,7 @@ Source routed hops do not increment this number.</p>
 <p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.</p>
 <p>Parsing proceeds as follows:</p>
 <ol>
-<li>Determine the <strong>options+payload region</strong>: <code>buf[options_start .. packet_end − trailer_len]</code>, where <code>trailer_len</code> is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for ACK_TAG, or 0 for broadcast). The trailer length is known before options are parsed.</li>
+<li>Determine the <strong>options+payload region</strong>: <code>buf[options_start .. packet_end − trailer_len]</code>, where <code>trailer_len</code> is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for the MAC ack trailer, or 0 for broadcast). The trailer length is known before options are parsed.</li>
 <li>Scan options in order through that region, consuming each delta-length-value record. Because option records are variable-length, this scan is the only way to locate the end of the options block.</li>
 <li>If a <code>0xFF</code> byte is encountered during the scan, the bytes remaining in the region (between the <code>0xFF</code> and the trailer) are the payload. A <code>0xFF</code> with zero bytes remaining is a valid empty payload.</li>
 <li>If the region is exhausted without encountering a <code>0xFF</code>, there is no payload.</li>

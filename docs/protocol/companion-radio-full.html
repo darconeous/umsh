@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-36a6efb9.js";
+            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6c1064ad.js"></script>
@@ -210,8 +210,9 @@ host is attached to observe the result.</p>
 <ul>
 <li>
 <p><strong>The device identity</strong> — a node belonging to the companion radio itself,
-used for in-band management, diagnostics, and (in future revisions)
-repeater and advertisement behavior. Its Ed25519 private key is held by
+used for in-band management, diagnostics, repeater forwarding (see
+(#prop-mac-repeater-enabled)), and (in future revisions) periodic
+advertisement behavior. Its Ed25519 private key is held by
 the NCP: it is either generated on the device or installed once by the
 host (see (#prop-dev-private-key)), and it is never readable through this
 protocol.</p>
@@ -254,9 +255,10 @@ list ((#prop-dev-peers))</li>
 the duty-cycle limit</li>
 <li>the human-readable device name (<code>PROP_DEV_NAME</code>)</li>
 <li>live battery telemetry (<code>PROP_BATTERY</code>), when <code>CAP_BATTERY</code> is present</li>
-<li>device behavior settings (property identifiers 70–95, reserved for
-future definition: repeater policy, positioning, periodic advertisement
-of the device identity, and similar)</li>
+<li>device behavior settings (property identifiers 70–95): the repeater
+forwarding switch (<code>PROP_MAC_REPEATER_ENABLED</code>), with the rest of the
+range reserved for future definition (further repeater policy,
+positioning, periodic advertisement of the device identity, and similar)</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
 </ul>
 <p>The RF configuration is deliberately device-domain: a site repeater keeps
@@ -740,6 +742,7 @@ host domain fully in effect and the new host key not installed.</li>
 <tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
 <tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
 <tr><td>69</td><td><code>PROP_BATTERY</code></td><td>Get, Is</td><td>Battery status snapshot</td></tr>
+<tr><td>70</td><td><code>PROP_MAC_REPEATER_ENABLED</code></td><td>Get, Set</td><td>Autonomous repeater forwarding enable</td></tr>
 <tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
 <tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
 <tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
@@ -981,6 +984,36 @@ saved snapshot and is not changed by <code>CMD_RESTORE</code>. An NCP <strong>MA
 unsolicited <code>CMD_PROP_IS</code> updates when the reported snapshot changes. Such
 updates <strong>SHOULD</strong> be coalesced or rate-limited so that measurement noise
 does not produce excessive companion traffic.</p>
+<h3 id="prop-mac-repeater-enabled"><a class="header" href="#prop-mac-repeater-enabled">PROP 70: <code>PROP_MAC_REPEATER_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>The first of the device-behavior settings (property identifiers 70–95).
+When true, the companion radio’s <strong>device identity</strong> acts as an
+autonomous mesh repeater: its on-board node forwards overheard routable
+frames according to <a href="repeater-operation.html">Repeater Operation</a>, and it
+advertises <code>NodeRole::Repeater</code> (with the repeater capability) in its
+<a href="node-identity.html">node identity</a>. When false, the device identity does
+not forward.</p>
+<p>This property governs only the <em>forwarding behavior</em> of the device
+identity. It is independent of <code>PROP_MAC_PROMISCUOUS</code> (a session-scoped
+host-delivery mode) and of the host identity, which never forwards.</p>
+<p>The flag is device-domain state: it is part of the saved snapshot, so a
+<code>CMD_SAVE</code> arms an unattended repeater across power cycles, and it
+survives a change of host. Enabling it is accepted even when no device
+identity is yet configured (see (#prop-dev-key)); the setting is
+persisted and takes effect as soon as a device identity exists. Because
+repeating requires the device node, an NCP with no device identity
+provisioned simply does not forward until one is installed.</p>
+<p>Forwarding parameters other than the on/off switch — region codes,
+minimum RSSI/SNR, and flood-contention tuning — are not exposed by this
+property in the current protocol revision; a repeater applies its local
+defaults. Later revisions <strong>MAY</strong> define additional device-behavior
+properties (identifiers 70–95) to configure them.</p>
 <h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1312,12 +1345,14 @@ failure is documented in (#saved-state). Implementations that persist the
 queue provide durable custody, but hosts and application protocols
 <strong>MUST NOT</strong> rely on it.</p>
 <p>The acknowledgement is an ordinary
-<a href="packet-types.html#mac-ack-packet">MAC Ack packet</a>: <code>DST</code> is the first 3
-bytes of the peer’s public key, and the 8-byte ack tag is computed as
-specified in <a href="security.html#ack-tag-construction">Ack Tag Construction</a>,
-using the provisioned pairwise keys (combined with the channel keys for
-<code>BUAR</code>). If the original frame carried a flood hop count, the ack’s
-<code>FHOPS_REM</code> is initialized from the original frame’s <code>FHOPS_ACC</code>.</p>
+<a href="packet-types.html#mac-ack-packet">MAC Ack packet</a>: the <code>ack MIC</code> is the
+first 4 bytes of the acknowledged frame’s MIC and the 4-byte <code>ack tag</code> is
+computed as specified in
+<a href="security.html#ack-tag-construction">Ack Tag Construction</a>, using the
+provisioned pairwise keys (combined with the channel keys for <code>BUAR</code>). The
+ack carries no destination hint. If the original frame carried a flood hop
+count, the ack’s <code>FHOPS_REM</code> is initialized from the original frame’s
+<code>FHOPS_ACC</code>.</p>
 <p>Delegated ack transmissions use the NCP’s normal transmit path and are
 subject to the configured duty-cycle limit; the NCP <strong>MUST NOT</strong> exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame
@@ -1427,6 +1462,7 @@ not indicate a problem.</dd>
 <tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
 <tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
+<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_MAC_REPEATER_ENABLED</code> and autonomous repeater forwarding by the device identity</td></tr>
 </tbody>
 </table>
 </div>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-36a6efb9.js";
+            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-6c1064ad.js"></script>
@@ -326,9 +326,9 @@
 <li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
 </ul>
 <p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression">cache key</a> — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
-<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max
+<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + D_ack
 </code></pre>
-<p>where <code>W_max</code> is the maximum intentional forwarding-delay window permitted for the path. With the suggested default <code>W_max = 2 × T_frame</code>, this yields <code>confirm_timeout = 4 × T_frame</code>.</p>
+<p>where <code>W_max</code> is the maximum intentional forwarding-delay window permitted for the path and <code>D_ack</code> is the <a href="channel-access.html#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = 2 × T_frame</code> and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 4.25 × T_frame</code>.</p>
 <p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed.</p>
 <p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered exponential delay:</p>
 <pre><code class="language-text">retry_delay_n = uniform_random(0, min(2^(n−1) × T_frame, 4 × T_frame))
