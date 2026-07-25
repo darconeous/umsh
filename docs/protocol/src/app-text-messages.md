@@ -25,6 +25,7 @@ Repeated unrecognized options remain ignorable.
 | 6 | Background Color | 3 bytes, RGB |
 | 7 | Text Color | 3 bytes, RGB |
 | 8 | Channel Group Resend | 0 bytes (flag) |
+| 9 | Padding | Anything |
 
 ### Message Type
 
@@ -155,6 +156,12 @@ Three bytes (red, green, blue) specifying a suggested background color for the t
 ### Text Color
 
 Three bytes (red, green, blue) specifying a suggested text color. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the background color.
+
+### Padding
+
+The padding option is used to add padding to a message to obfuscate the true
+length of the message. All instances of this option and their values SHALL be
+ignored by the receiver.
 
 ## Message Body
 
