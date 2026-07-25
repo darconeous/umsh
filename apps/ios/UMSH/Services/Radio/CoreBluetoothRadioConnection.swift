@@ -21,6 +21,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private struct PendingRawFrame {
         var data: Data
         var meshFrameID: UInt64
+        /// TX_FLAG_NOCCA: transmit without the companion's channel-activity
+        /// check. Set by the Rust MAC for immediate acks.
+        var nocca: Bool
         var busyRetries = 0
     }
 
@@ -1659,7 +1662,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         do {
             let update = meshSession.pollUpdate()
             pendingRawFrames.append(contentsOf: update.outboundFrames.map {
-                PendingRawFrame(data: $0.data, meshFrameID: $0.id)
+                PendingRawFrame(data: $0.data, meshFrameID: $0.id, nocca: $0.nocca)
             })
             try startRawTransmits(on: peripheral)
             for event in update.pingEvents {
@@ -1745,7 +1748,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         while rawTransmitsInFlight.count < Self.maximumRawTransmitsInFlight,
               let submission = pendingRawFrames.first
         {
-            let update = try companionSession.transmitRaw(data: submission.data)
+            let update = try companionSession.transmitRaw(data: submission.data, nocca: submission.nocca)
             guard let transactionID = update.rawTransmitStartedTransactionId,
                   rawTransmitsInFlight[transactionID] == nil
             else {

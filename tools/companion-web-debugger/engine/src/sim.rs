@@ -6,7 +6,7 @@ use umsh_companion::battery::{BatteryChargeState, BatteryStatus};
 use umsh_companion::{Status, hdlc};
 use umsh_companion_ncp::{
     BatteryFields, DutyLedger, Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, Session,
-    SessionConfig,
+    SessionConfig, TxOutcome,
 };
 use umsh_core::{NodeHint, PacketBuilder};
 use umsh_crypto::{
@@ -139,7 +139,8 @@ impl SimulatedNcp {
             None | Some(Effect::ApplyRadio(_)) | Some(Effect::DeviceNameChanged) => {}
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());
-                self.session.on_tx_result(true, self.now_ms, &mut emit);
+                self.session
+                    .on_tx_result(TxOutcome::Sent, self.now_ms, &mut emit);
             }
             Some(Effect::SampleRssi { tid }) => {
                 self.session.respond_rssi(tid, Ok(-77), &mut emit);

@@ -218,6 +218,11 @@ pub struct MobileMeshSessionUpdateRecord {
 pub struct MobileMeshOutboundFrameRecord {
     pub id: u64,
     pub data: Vec<u8>,
+    /// `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+    /// pre-transmit channel-activity check. Set for immediate MAC acks, which
+    /// own the channel-access window the moment the received frame ends; clear
+    /// for originated and forwarded traffic, which must listen before talking.
+    pub nocca: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -418,11 +423,15 @@ impl Radio for BridgeRadio {
     async fn transmit(
         &mut self,
         data: &[u8],
-        _options: TxOptions,
+        options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
         if data.len() > MAX_FRAME_SIZE {
             return Err(TxError::Io(BridgeRadioError::FrameTooLarge));
         }
+        // The MAC skips CAD only for immediate acks (channel-access.md
+        // § Immediate ACK Transmission); every other policy asks the
+        // companion to listen before talking.
+        let nocca = matches!(options.cad, umsh_hal::CadPolicy::Skip);
         let (completion_tx, completion_rx) = oneshot::channel();
         let generation = self.completions.generation();
         let Some(id) = self
@@ -439,6 +448,7 @@ impl Radio for BridgeRadio {
             .send(MobileMeshOutboundFrameRecord {
                 id,
                 data: data.to_vec(),
+                nocca,
             })
             .is_err()
         {

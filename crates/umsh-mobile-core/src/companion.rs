@@ -413,8 +413,14 @@ impl MobileCompanionSession {
     ///
     /// The platform adapter supplies only opaque bytes from `MobileMeshSession`;
     /// Rust owns the companion command, stream identifier, metadata, TID, and
-    /// confirmation matching.
-    pub fn transmit_raw(&self, data: Vec<u8>) -> Result<CompanionSessionUpdateRecord, MobileError> {
+    /// confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the companion
+    /// transmits without its pre-transmit channel-activity check — used for
+    /// immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+    pub fn transmit_raw(
+        &self,
+        data: Vec<u8>,
+        nocca: bool,
+    ) -> Result<CompanionSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("companion session mutex poisoned");
         let raw_pipeline_active = state
             .expected
@@ -434,9 +440,17 @@ impl MobileCompanionSession {
         let tid = available_tid.ok_or(MobileError::InvalidCompanionFrame)?;
         state.expected.insert(tid, ExpectedResponse::RawTransmit);
         let mut metadata = [0u8; umsh_companion::TxMeta::WIRE_LEN];
-        umsh_companion::TxMeta::default()
-            .encode(&mut metadata)
-            .map_err(|_| MobileError::InvalidCompanionFrame)?;
+        let flags = if nocca {
+            umsh_companion::meta::TX_FLAG_NOCCA
+        } else {
+            0
+        };
+        umsh_companion::TxMeta {
+            flags,
+            ..umsh_companion::TxMeta::default()
+        }
+        .encode(&mut metadata)
+        .map_err(|_| MobileError::InvalidCompanionFrame)?;
         let mut frame = vec![0u8; data.len() + 16];
         let len = umsh_companion::frame::str_send(
             &mut frame,
@@ -620,7 +634,11 @@ impl MobileCompanionSession {
                     status_name: format!("{status:?}"),
                     disposition: if status == umsh_companion::Status::OK {
                         CompanionRawTransmitDisposition::Sent
-                    } else if status == umsh_companion::Status::BUSY {
+                    } else if status == umsh_companion::Status::BUSY
+                        || status == umsh_companion::Status::CCA_FAILURE
+                    {
+                        // Both are transient channel-contention refusals: the
+                        // frame never left the radio, so retry with backoff.
                         CompanionRawTransmitDisposition::Retry
                     } else {
                         CompanionRawTransmitDisposition::Rejected
@@ -1858,11 +1876,11 @@ mod tests {
             );
         assert_eq!(attached.snapshot.phase, CompanionSessionPhase::Attached);
 
-        let transmit = session.transmit_raw(vec![1, 2, 3]).unwrap();
+        let transmit = session.transmit_raw(vec![1, 2, 3], false).unwrap();
         assert!(transmit.raw_transmit_pending);
         assert_eq!(transmit.raw_transmit_result, None);
         assert_eq!(transmit.outbound_frames.len(), 1);
-        let second_transmit = session.transmit_raw(vec![4]).unwrap();
+        let second_transmit = session.transmit_raw(vec![4], false).unwrap();
         assert_ne!(
             transmit.raw_transmit_started_transaction_id,
             second_transmit.raw_transmit_started_transaction_id
@@ -1899,7 +1917,7 @@ mod tests {
 
         // A radio-level rejection completes only that send; the attached
         // session remains usable for the next raw frame.
-        let retryable = session.transmit_raw(vec![5]).unwrap();
+        let retryable = session.transmit_raw(vec![5], false).unwrap();
         let request = Frame::parse(&retryable.outbound_frames[0]).unwrap();
         let busy = session
             .consume(property_response(
@@ -1913,7 +1931,7 @@ mod tests {
             CompanionRawTransmitDisposition::Retry
         );
 
-        let abandoned = session.transmit_raw(vec![6]).unwrap();
+        let abandoned = session.transmit_raw(vec![6], false).unwrap();
         let abandoned_request = Frame::parse(&abandoned.outbound_frames[0]).unwrap();
         assert!(
             !session
@@ -1966,7 +1984,7 @@ mod tests {
             final_update.unwrap().snapshot.phase,
             CompanionSessionPhase::Attached
         );
-        assert!(session.transmit_raw(vec![6]).is_ok());
+        assert!(session.transmit_raw(vec![6], false).is_ok());
     }
 
     #[test]

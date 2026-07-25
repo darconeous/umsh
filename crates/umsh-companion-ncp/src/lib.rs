@@ -33,5 +33,5 @@ pub mod session;
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use session::{
     BatteryFields, Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN,
-    PRIVATE_KEY_LEN, RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TxPower,
+    PRIVATE_KEY_LEN, RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TxOutcome, TxPower,
 };

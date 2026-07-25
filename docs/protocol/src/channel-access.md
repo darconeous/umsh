@@ -43,7 +43,7 @@ For the first forwarding decision after reception, compute the contention window
 ```text
 quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
 W       = W_min + (W_max − W_min) × (1 − quality)
-delay = uniform_random(0, W)
+delay   = D_ack + uniform_random(0, W)
 ```
 
 Where:
@@ -53,23 +53,33 @@ Where:
 - `W_min` is the minimum contention window for strong receptions. The suggested default is **0.2 × T_frame**.
 - `W_max` is the maximum intentional forwarding-delay window. The suggested default is **2 × T_frame**.
 - `received_SNR` is the SNR measured during reception of the packet being forwarded.
+- `D_ack` is the [ACK protection interval](#ack-protection-interval): a guard delay that applies when the forwarded packet may elicit an immediate ACK from its destination, and zero otherwise.
 
 If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.
 
 After computing the delay, the repeater waits.
 
-If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit immediately. A safe default is to resample a delay using the same `W_min`/`W_max` limits and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
+If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit immediately. A safe default is to resample a delay using the same `W_min`/`W_max` limits — including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
 
 This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by [Repeater Operation](repeater-operation.md#forwarding-confirmation).
 
 Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:
 
+- up to `D_ack` of ACK protection delay, when it applies
 - up to `W_max` of intentional forwarding delay
 - up to `T_frame` for the forwarded transmission itself
 - an additional guard margin of up to `T_frame`
 
+## ACK Protection Interval
+
+The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see [Immediate ACK Transmission](#immediate-ack-transmission)). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the sampled contention delay `uniform_random(0, W)` may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.
+
+`D_ack` therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least `D_ack` before transmitting, in addition to the sampled contention delay. `D_ack` SHOULD cover the destination's receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is **0.25 × T_frame**; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.
+
+A packet received with source-route hops still pending does not elicit an immediate ACK from its destination, so `D_ack` does not apply when forwarding it.
+
 ## Immediate ACK Transmission
 
-When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended.
+When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the [ACK protection interval](#ack-protection-interval) so the ACK gets first use of the channel.
 
 If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.

@@ -46,7 +46,8 @@ use lora_phy::{
     },
     mod_traits::{IrqState, RadioKind},
 };
-use umsh_hal::{RxInfo, Snr, TxError, TxOptions};
+pub use umsh_hal::{CadPolicy, TxError};
+use umsh_hal::{RxInfo, Snr, TxOptions};
 
 /// Maximum SX1262 LoRa payload: 255 bytes.
 pub const MAX_PAYLOAD: usize = 255;
@@ -65,6 +66,10 @@ pub struct TxRequest {
     /// Per-frame TX power override in dBm; `None` uses the runner's
     /// configured power.
     pub power_dbm: Option<i32>,
+    /// Channel-activity-detection policy applied by the runner before
+    /// keying up. A busy channel completes the request with
+    /// [`TxError::CadTimeout`] instead of transmitting.
+    pub cad: CadPolicy,
 }
 
 // ─── Channels ────────────────────────────────────────────────────────────────
@@ -77,7 +82,7 @@ pub struct TxRequest {
 pub struct Channels<M: RawMutex, const RX: usize, const TX: usize> {
     pub rx: Channel<M, RxFrame, RX>,
     pub tx: Channel<M, TxRequest, TX>,
-    pub tx_done: Signal<M, Result<(), RadioError>>,
+    pub tx_done: Signal<M, Result<(), TxError<RadioError>>>,
     pub rx_waker: AtomicWaker,
 }
 
@@ -121,7 +126,7 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
     async fn transmit(
         &mut self,
         data: &[u8],
-        _options: TxOptions,
+        options: TxOptions,
     ) -> Result<(), TxError<Self::Error>> {
         let mut frame_data: Vec<u8, MAX_PAYLOAD> = Vec::new();
         frame_data
@@ -132,9 +137,10 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
             .send(TxRequest {
                 data: frame_data,
                 power_dbm: None,
+                cad: options.cad,
             })
             .await;
-        self.ch.tx_done.wait().await.map_err(TxError::Io)
+        self.ch.tx_done.wait().await
     }
 
     fn poll_receive(
@@ -173,6 +179,48 @@ fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> RxInfo {
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
+
+/// Execute one transmit request: CAD gate (listen-before-talk) per the
+/// request's [`CadPolicy`], then transmit.
+///
+/// `CadPolicy::RetryFor` is intentionally handled as a single gate, like
+/// `Gate`: the runner has no time source, and the MAC coordinator already
+/// owns retry pacing by backing off on [`TxError::CadTimeout`] and
+/// re-queueing the frame.
+///
+/// NOT cancel-safe (`cad`, `prepare_for_tx`, and `tx` must all run to
+/// completion) — call outside any `select` branch, like the TX arm it
+/// replaces.
+async fn perform_tx<RK, DLY>(
+    lora: &mut LoRa<RK, DLY>,
+    mdltn: &ModulationParams,
+    tx_pkt: &mut PacketParams,
+    default_power_dbm: i32,
+    tx_req: &TxRequest,
+) -> Result<(), TxError<RadioError>>
+where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+{
+    if !matches!(tx_req.cad, CadPolicy::Skip) {
+        let busy = async {
+            lora.prepare_for_cad(mdltn).await?;
+            lora.cad(mdltn).await
+        }
+        .await
+        .map_err(TxError::Io)?;
+        if busy {
+            return Err(TxError::CadTimeout);
+        }
+    }
+    let power = tx_req.power_dbm.unwrap_or(default_power_dbm);
+    async {
+        lora.prepare_for_tx(mdltn, tx_pkt, power, &tx_req.data).await?;
+        lora.tx().await
+    }
+    .await
+    .map_err(TxError::Io)
+}
 
 /// Background loop: owns the `lora_phy::LoRa` instance, switches between
 /// continuous RX and TX as requests arrive. Never returns.
@@ -256,17 +304,12 @@ where
                 }
                 Either::First(Err(_)) => continue 'outer,
                 Either::Second(tx_req) => {
-                    // TX is also NOT cancel-safe — run prepare_for_tx + tx
-                    // to completion outside any select.
-                    let power = tx_req.power_dbm.unwrap_or(power_dbm);
-                    let result = async {
-                        lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
-                            .await?;
-                        lora.tx().await
-                    }
-                    .await;
+                    // TX is also NOT cancel-safe — run the CAD gate and
+                    // prepare_for_tx + tx to completion outside any select.
+                    let result =
+                        perform_tx(&mut lora, &mdltn, &mut tx_pkt, power_dbm, &tx_req).await;
                     ch.tx_done.signal(result);
-                    continue 'outer; // tx() leaves the chip in standby — re-prepare RX
+                    continue 'outer; // chip is left in standby — re-prepare RX
                 }
             }
         }
@@ -503,13 +546,9 @@ where
                     }
                     Either4::First(Err(_)) => continue 'rx,
                     Either4::Second(tx_req) => {
-                        let power = tx_req.power_dbm.unwrap_or(active.power_dbm);
-                        let result = async {
-                            lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
-                                .await?;
-                            lora.tx().await
-                        }
-                        .await;
+                        let result =
+                            perform_tx(&mut lora, &mdltn, &mut tx_pkt, active.power_dbm, &tx_req)
+                                .await;
                         ch.tx_done.signal(result);
                         continue 'rx;
                     }

@@ -3780,6 +3780,76 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
 }
 
 #[test]
+fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet() {
+    for ack_requested in [true, false] {
+        let mut mac = make_mac();
+        {
+            let repeater = mac.repeater_config_mut();
+            repeater.enabled = true;
+            // Collapse the random contention window so the ACK protection
+            // interval is the only delay component.
+            repeater.flood_contention_min_window_percent = 0;
+            repeater.flood_contention_max_window_frames = 0;
+        }
+        let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+        let remote = DummyIdentity::new([0xAB; 32]);
+        let pairwise = PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        };
+        let channel_key = ChannelKey([0x5A; 32]);
+        let channel_id = mac.crypto().derive_channel_id(&channel_key);
+        mac.add_channel(channel_key.clone()).unwrap();
+        let channel_keys = mac
+            .channels()
+            .lookup_by_id(&channel_id)
+            .next()
+            .unwrap()
+            .derived
+            .clone();
+
+        let engine = CryptoEngine::new(DummyAes, DummySha);
+        let blind_keys = engine.derive_blind_keys(&pairwise, &channel_keys);
+        let mut buf = [0u8; 256];
+        let builder = PacketBuilder::new(&mut buf)
+            .blind_unicast(
+                channel_keys.channel_id,
+                umsh_core::NodeHint([0x77, 0x66, 0x55]),
+            )
+            .source_full(remote.public_key())
+            .frame_counter(13)
+            .flood_hops(3);
+        let builder = if ack_requested {
+            builder.ack_requested()
+        } else {
+            builder
+        };
+        let mut packet = builder.payload(b"ping").build().unwrap();
+        engine
+            .seal_blind_packet(&mut packet, &blind_keys, &channel_keys)
+            .unwrap();
+
+        mac.radio_mut().queue_received_frame(packet.as_bytes());
+        let now_ms = mac.clock().now_ms();
+        let guard_ms = u64::from(mac.radio_mut().t_frame_ms())
+            * u64::from(mac.repeater_config().flood_contention_ack_guard_percent)
+            / 100;
+        assert!(guard_ms > 0);
+
+        let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+        assert!(handled);
+        let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+        assert_eq!(forwarded.priority, TxPriority::Forward);
+        if ack_requested {
+            assert_eq!(forwarded.not_before_ms, now_ms + guard_ms);
+        } else {
+            assert_eq!(forwarded.not_before_ms, now_ms);
+        }
+    }
+}
+
+#[test]
 fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;

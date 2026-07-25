@@ -753,9 +753,11 @@ public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
      *
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
      * Rust owns the companion command, stream identifier, metadata, TID, and
-     * confirmation matching.
+     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the companion
+     * transmits without its pre-transmit channel-activity check — used for
+     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
      */
-    func transmitRaw(data: Data) throws  -> CompanionSessionUpdateRecord
+    func transmitRaw(data: Data, nocca: Bool) throws  -> CompanionSessionUpdateRecord
 
 }
 /**
@@ -944,14 +946,17 @@ open func reset() -> CompanionSessionUpdateRecord  {
      *
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
      * Rust owns the companion command, stream identifier, metadata, TID, and
-     * confirmation matching.
+     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the companion
+     * transmits without its pre-transmit channel-activity check — used for
+     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
      */
-open func transmitRaw(data: Data)throws  -> CompanionSessionUpdateRecord  {
+open func transmitRaw(data: Data, nocca: Bool)throws  -> CompanionSessionUpdateRecord  {
     return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_transmit_raw(
             self.uniffiCloneHandle(),
-        FfiConverterData.lower(data),uniffiCallStatus
+        FfiConverterData.lower(data),
+        FfiConverterBool.lower(nocca),uniffiCallStatus
     )
 })
 }
@@ -3679,12 +3684,26 @@ public func FfiConverterTypeMobileMeshAdvertisementRecord_lower(_ value: MobileM
 public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
     public var id: UInt64
     public var data: Data
+    /**
+     * `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+     * pre-transmit channel-activity check. Set for immediate MAC acks, which
+     * own the channel-access window the moment the received frame ends; clear
+     * for originated and forwarded traffic, which must listen before talking.
+     */
+    public var nocca: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: UInt64, data: Data) {
+    public init(id: UInt64, data: Data,
+        /**
+         * `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+         * pre-transmit channel-activity check. Set for immediate MAC acks, which
+         * own the channel-access window the moment the received frame ends; clear
+         * for originated and forwarded traffic, which must listen before talking.
+         */nocca: Bool) {
         self.id = id
         self.data = data
+        self.nocca = nocca
     }
 
 
@@ -3704,13 +3723,15 @@ public struct FfiConverterTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuf
         return
             try MobileMeshOutboundFrameRecord(
                 id: FfiConverterUInt64.read(from: &buf),
-                data: FfiConverterData.read(from: &buf)
+                data: FfiConverterData.read(from: &buf),
+                nocca: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMeshOutboundFrameRecord, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.id, into: &buf)
         FfiConverterData.write(value.data, into: &buf)
+        FfiConverterBool.write(value.nocca, into: &buf)
     }
 }
 
@@ -6607,7 +6628,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_reset() != 64513) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_transmit_raw() != 47138) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_transmit_raw() != 47935) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 2566) {

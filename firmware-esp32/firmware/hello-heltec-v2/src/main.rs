@@ -214,6 +214,7 @@ async fn main(spawner: Spawner) {
                         .send(TxRequest {
                             data,
                             power_dbm: None,
+                            cad: umsh_radio_loraphy::CadPolicy::Skip,
                         })
                         .await;
                     match RADIO_CH.tx_done.wait().await {
@@ -481,6 +482,8 @@ async fn radio_task(
                 Either3::First(Err(_)) => continue 'outer,
                 Either3::Second(tx_req) => {
                     // TX is also NOT cancel-safe — run to completion.
+                    // This hand-rolled runner ignores the request's CAD
+                    // policy; bringup test transmits always use Skip.
                     let power = tx_req.power_dbm.unwrap_or(TX_POWER_DBM);
                     let result = async {
                         lora.prepare_for_tx(&mdltn, &mut tx_pkt, power, &tx_req.data)
@@ -488,7 +491,9 @@ async fn radio_task(
                         lora.tx().await
                     }
                     .await;
-                    RADIO_CH.tx_done.signal(result);
+                    RADIO_CH
+                        .tx_done
+                        .signal(result.map_err(umsh_radio_loraphy::TxError::Io));
                     continue 'outer;
                 }
             }

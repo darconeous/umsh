@@ -574,6 +574,11 @@ pub struct RepeaterConfig {
     pub flood_contention_min_window_percent: u8,
     /// Maximum forwarding contention window as a multiple of `T_frame`.
     pub flood_contention_max_window_frames: u8,
+    /// ACK protection interval as a percentage of `T_frame`, added to the
+    /// contention delay when flood-forwarding an ack-requested packet that was
+    /// received with no remaining source-route hops (see channel-access.md
+    /// § ACK Protection Interval).
+    pub flood_contention_ack_guard_percent: u8,
     /// Maximum number of overheard-repeat deferrals before abandoning a pending forward.
     pub flood_contention_max_deferrals: u8,
     /// Amateur-radio operating mode for forwarding.
@@ -593,6 +598,7 @@ impl Default for RepeaterConfig {
             flood_contention_snr_high_db: 15,
             flood_contention_min_window_percent: 20,
             flood_contention_max_window_frames: 2,
+            flood_contention_ack_guard_percent: 25,
             flood_contention_max_deferrals: 3,
             amateur_radio_mode: AmateurRadioMode::Unlicensed,
             station_callsign: None,
@@ -3875,7 +3881,7 @@ impl<
             return false;
         };
         if self.dup_cache.contains(&cache_key) {
-            self.defer_pending_forward(&cache_key, rx, &options);
+            self.defer_pending_forward(&cache_key, header, rx, &options);
             return false;
         }
 
@@ -3998,6 +4004,13 @@ impl<
                 insert_region_code = self.repeater.regions.first().copied();
             }
             delay_ms = self.sample_flood_contention_delay_ms(rx, options);
+            // An ack-requested packet received with no remaining source-route
+            // hops elicits an immediate, CAD-skipping ACK from its destination
+            // (channel-access.md § Immediate ACK Transmission); hold the
+            // forward back long enough for that ACK to clear the channel.
+            if !consume_source_route && header.ack_requested() {
+                delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
+            }
         }
 
         Some(ForwardPlan {
@@ -4447,6 +4460,14 @@ impl<
         }
     }
 
+    /// ACK protection interval: minimum head start granted to a destination's
+    /// immediate ACK before any flood forward of the same packet may transmit.
+    fn ack_guard_delay_ms(&self) -> u64 {
+        u64::from(self.radio.t_frame_ms())
+            .saturating_mul(u64::from(self.repeater.flood_contention_ack_guard_percent))
+            / 100
+    }
+
     /// Routing identity used for duplicate suppression at repeaters.
     ///
     /// This is intentionally not the same thing as the destination's logical
@@ -4481,7 +4502,13 @@ impl<
         })
     }
 
-    fn defer_pending_forward(&mut self, key: &DupCacheKey, rx: &RxInfo, options: &ParsedOptions) {
+    fn defer_pending_forward(
+        &mut self,
+        key: &DupCacheKey,
+        header: &PacketHeader,
+        rx: &RxInfo,
+        options: &ParsedOptions,
+    ) {
         let Some(queued) = self.tx_queue.remove_first_matching(|entry| {
             entry.priority == TxPriority::Forward
                 && Self::confirmation_key(entry.frame.as_slice())
@@ -4496,7 +4523,17 @@ impl<
         }
 
         let now_ms = self.clock.now_ms();
-        let delay_ms = self.sample_flood_contention_delay_ms(rx, options);
+        let mut delay_ms = self.sample_flood_contention_delay_ms(rx, options);
+        // The overheard copy may itself elicit an immediate ACK from the
+        // destination; give that ACK the same head start as on first receipt.
+        let overheard_has_route_hops = options
+            .source_route
+            .as_ref()
+            .map(|range| !range.is_empty())
+            .unwrap_or(false);
+        if header.ack_requested() && !overheard_has_route_hops {
+            delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
+        }
         let _ = self.tx_queue.enqueue_with_state(
             queued.priority,
             queued.frame.as_slice(),
@@ -4589,6 +4626,7 @@ impl<
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         t_frame_ms
             .saturating_add(self.max_forward_contention_delay_ms())
+            .saturating_add(self.ack_guard_delay_ms())
             .saturating_add(t_frame_ms)
     }
 

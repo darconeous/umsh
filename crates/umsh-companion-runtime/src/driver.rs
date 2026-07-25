@@ -27,13 +27,15 @@ use embassy_sync::channel::Channel;
 use embassy_time::Instant;
 
 use umsh_companion_ncp::{
-    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, SNAPSHOT_MAX, Session, TxPower,
+    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, SNAPSHOT_MAX, Session, TxOutcome,
+    TxPower,
 };
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
 use umsh_journal_store::proto;
 use umsh_radio_loraphy::{
-    Channels, MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest, bandwidth_from_hz,
+    CadPolicy, Channels, MAX_PAYLOAD, NcpControl, NcpSettings, RxFrame, TxRequest,
+    bandwidth_from_hz,
     coding_rate_from_denom, spreading_factor_from_u8,
 };
 
@@ -303,7 +305,19 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
             // Mark the load for the board's battery level estimator (the
             // radio runner transmits within milliseconds of this).
             env.note_transmit_load();
-            rt.radio.tx.send(TxRequest { data, power_dbm }).await;
+            let cad = if session.tx_nocca() {
+                CadPolicy::Skip
+            } else {
+                CadPolicy::Gate
+            };
+            rt.radio
+                .tx
+                .send(TxRequest {
+                    data,
+                    power_dbm,
+                    cad,
+                })
+                .await;
         }
         Some(Effect::DeviceNameChanged) => {
             env.publish_device_name(session.device_name()).await;
@@ -625,7 +639,12 @@ where
             }
             Either3::Third(result) => {
                 let now_ms = Instant::now().as_millis();
-                let effect = session.on_tx_result(result.is_ok(), now_ms, &mut |frame: &[u8]| {
+                let outcome = match result {
+                    Ok(()) => TxOutcome::Sent,
+                    Err(umsh_hal::TxError::CadTimeout) => TxOutcome::ChannelBusy,
+                    Err(umsh_hal::TxError::Io(_)) => TxOutcome::Failed,
+                };
+                let effect = session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| {
                     emitter.push(frame)
                 });
                 emitter.flush(arbitration.destination(), rt.out).await;

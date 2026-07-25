@@ -264,6 +264,7 @@ async fn main(spawner: Spawner) {
                         .send(TxRequest {
                             data,
                             power_dbm: None,
+                            cad: umsh_radio_loraphy::CadPolicy::Skip,
                         })
                         .await;
                     match RADIO_CH.tx_done.wait().await {

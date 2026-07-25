@@ -126,6 +126,20 @@ pub struct SessionConfig {
     pub battery: Option<BatteryFields>,
 }
 
+/// Physical-radio outcome of the transmit started by
+/// [`Effect::StartTransmit`], reported via [`Session::on_tx_result`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxOutcome {
+    /// The frame left the radio.
+    Sent,
+    /// The pre-transmit channel-activity check found the channel busy;
+    /// the frame was never transmitted. Completes a host transmit with
+    /// `STATUS_CCA_FAILURE`.
+    ChannelBusy,
+    /// The radio failed to transmit the frame.
+    Failed,
+}
+
 /// A radio side effect for the caller to execute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
@@ -219,6 +233,9 @@ struct PendingTx {
     /// `RX_FLAG_ACKED` — the host MUST NOT re-ack a flagged frame, so
     /// the flag must never assert an ack that was not actually sent.
     ack_for: Option<u16>,
+    /// `TX_FLAG_NOCCA`: transmit without the pre-transmit
+    /// channel-activity check.
+    nocca: bool,
 }
 
 /// A delegated MAC acknowledgement ready to transmit.
@@ -1322,6 +1339,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.max_tx_power_dbm
     }
 
+    /// Whether the pending transmit requested `TX_FLAG_NOCCA` — skip the
+    /// pre-transmit channel-activity check.
+    pub fn tx_nocca(&self) -> bool {
+        self.session
+            .pending
+            .front()
+            .map(|pending| pending.nocca)
+            .unwrap_or(false)
+    }
+
     /// Whether a transmit is awaiting [`Session::on_tx_result`].
     pub fn has_pending_tx(&self) -> bool {
         !self.session.pending.is_empty()
@@ -1924,6 +1951,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 power: TxPower::Default,
                 autonomous: true,
                 ack_for,
+                // Delegated acks are immediate MAC acks: the channel was
+                // clear when the acknowledged frame ended, and the ACK
+                // protection interval reserves this window for them
+                // (channel-access.md § Immediate ACK Transmission).
+                nocca: true,
             })
             .ok()?;
         Some(Effect::StartTransmit)
@@ -1933,30 +1965,40 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// [`Effect::StartTransmit`].
     pub fn on_tx_result(
         &mut self,
-        success: bool,
+        outcome: TxOutcome,
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
         let Some(pending) = self.session.pending.pop_front() else {
             return None;
         };
-        if success {
-            self.config.duty.record(now_ms, pending.airtime_ms);
-            if pending.autonomous {
-                // NCP-initiated: PROP_LAST_STATUS is left alone so a
-                // pending reset code still reaches the next host. Only
-                // now — with the ack actually on the air — does the
-                // acknowledged frame earn RX_FLAG_ACKED. A handle whose
-                // entry has since been drained, evicted, or discarded
-                // marks nothing.
-                if let Some(seq) = pending.ack_for {
-                    self.host.queue.mark_acked(seq);
+        match outcome {
+            TxOutcome::Sent => {
+                self.config.duty.record(now_ms, pending.airtime_ms);
+                if pending.autonomous {
+                    // NCP-initiated: PROP_LAST_STATUS is left alone so a
+                    // pending reset code still reaches the next host. Only
+                    // now — with the ack actually on the air — does the
+                    // acknowledged frame earn RX_FLAG_ACKED. A handle whose
+                    // entry has since been drained, evicted, or discarded
+                    // marks nothing.
+                    if let Some(seq) = pending.ack_for {
+                        self.host.queue.mark_acked(seq);
+                    }
+                } else {
+                    self.complete(pending.tid, Status::OK, emit);
                 }
-            } else {
-                self.complete(pending.tid, Status::OK, emit);
             }
-        } else if !pending.autonomous {
-            self.complete(pending.tid, Status::FAILURE, emit);
+            // The frame never left the radio: no duty accounting, no
+            // RX_FLAG_ACKED. Hosts learn CCA refusals distinctly so they
+            // can apply their own backoff (spec § STATUS_CCA_FAILURE).
+            TxOutcome::ChannelBusy if !pending.autonomous => {
+                self.complete(pending.tid, Status::CCA_FAILURE, emit);
+            }
+            TxOutcome::Failed if !pending.autonomous => {
+                self.complete(pending.tid, Status::FAILURE, emit);
+            }
+            TxOutcome::ChannelBusy | TxOutcome::Failed => {}
         }
         (!self.session.pending.is_empty()).then_some(Effect::StartTransmit)
     }
@@ -2748,9 +2790,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.complete(tid, Status::DUTY_LIMIT, emit);
             return None;
         }
-        // v0: the CCA flag is ignored — this firmware's radio path has
-        // no CAD gate, so every transmit behaves as NOCCA.
-
         let was_empty = self.session.pending.is_empty();
         let mut data = HeaplessVec::new();
         // The MTU check above proves this fixed-capacity copy can succeed.
@@ -2767,6 +2806,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             },
             autonomous: false,
             ack_for: None,
+            nocca: tx_meta.flags & meta::TX_FLAG_NOCCA != 0,
         });
         debug_assert!(queued.is_ok(), "queue fullness checked above");
         was_empty.then_some(Effect::StartTransmit)
@@ -3348,7 +3388,7 @@ mod tests {
         let (_, effect) = send_packet(&mut session, 1, &[0xAB; 8], &[], 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
         let mut emitted = Vec::new();
-        session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         let duty_before = get(&mut session, prop::PHY_DUTY_NOW);
         assert_ne!(duty_before, 0u16.to_le_bytes());
 
@@ -3405,7 +3445,7 @@ mod tests {
         session.attach(true);
         assert!(!session.has_pending_tx());
         let mut emitted = Vec::new();
-        session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         assert!(emitted.is_empty());
 
         // The new session is free to transmit (no stale BUSY).
@@ -3736,7 +3776,7 @@ mod tests {
 
         // Completion emits OK with the original TID and records duty.
         let mut emitted = Vec::new();
-        session.on_tx_result(true, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
         expect_status(&emitted[0], 4, Status::OK);
         assert!(!session.has_pending_tx());
         let duty = get(&mut session, prop::PHY_DUTY_NOW);
@@ -3766,7 +3806,7 @@ mod tests {
         for tid in 2..=4 {
             assert_eq!(session.tx_data(), &[tid; 8]);
             let mut emitted = Vec::new();
-            let effect = session.on_tx_result(true, 0, &mut |bytes| emitted.push(bytes.to_vec()));
+            let effect = session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes| emitted.push(bytes.to_vec()));
             expect_status(&emitted[0], tid, Status::OK);
             assert_eq!(effect, (tid != 4).then_some(Effect::StartTransmit));
         }
@@ -3810,6 +3850,59 @@ mod tests {
         let meta = [meta::TX_POWER_DEFAULT as u8, meta::TX_FLAG_NODUTY];
         let (_, effect) = send_packet(&mut session, 3, &packet, &meta, 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
+    }
+
+    #[test]
+    fn nocca_flag_controls_channel_sensing() {
+        let mut session = test_session();
+        enable(&mut session);
+
+        // Default (no flags): the transmit must be channel-sensed.
+        let (_, effect) = send_packet(&mut session, 3, &[0u8; 8], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        assert!(!session.tx_nocca());
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // TX_FLAG_NOCCA requests transmit without channel sensing.
+        let meta = [meta::TX_POWER_DEFAULT as u8, meta::TX_FLAG_NOCCA];
+        let (_, effect) = send_packet(&mut session, 4, &[0u8; 8], &meta, 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        assert!(session.tx_nocca());
+    }
+
+    #[test]
+    fn channel_busy_completes_host_send_with_cca_failure() {
+        let mut session = test_session();
+        enable(&mut session);
+
+        let (_, effect) = send_packet(&mut session, 7, &[0u8; 8], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+
+        // A busy channel refuses the transmit; the host learns it distinctly
+        // from an ordinary failure so it can back off and retry.
+        let mut emitted = Vec::new();
+        session.on_tx_result(TxOutcome::ChannelBusy, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], 7, Status::CCA_FAILURE);
+
+        // The refused frame never left the radio: no duty was charged.
+        assert_eq!(get(&mut session, prop::PHY_DUTY_NOW), 0u16.to_le_bytes());
+    }
+
+    #[test]
+    fn delegated_ack_transmits_without_channel_sensing() {
+        // A delegated MAC ack owns its channel-access window the moment the
+        // acknowledged frame ends (the ACK protection interval), so it must
+        // transmit without a channel-activity check.
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        let effect = rx_effect(&mut session, &sealed_unar(5, &keys, false), 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        assert!(
+            session.tx_nocca(),
+            "delegated ack must skip the channel-activity check"
+        );
     }
 
     /// The ledger is shared with every other radio client on the
@@ -4980,7 +5073,7 @@ mod tests {
         if let Some(tag) = tag {
             assert_eq!(session.tx_data()[header.mic_range.clone()], tag);
         }
-        session.on_tx_result(true, 0, &mut |_: &[u8]| {
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {
             panic!("autonomous ack must be silent")
         });
     }
@@ -5481,7 +5574,7 @@ mod tests {
         // must not claim an ack that never went out.
         let effect = rx_effect(&mut session, &frame, 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
-        session.on_tx_result(false, 0, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+        session.on_tx_result(TxOutcome::Failed, 0, &mut |_: &[u8]| panic!("autonomous ack is silent"));
 
         // The sender retransmits; the duplicate re-ack completes, which
         // marks the original (still queued, still unacked) entry.
@@ -5491,7 +5584,7 @@ mod tests {
             Some(Effect::StartTransmit),
             "re-ack after failed TX"
         );
-        session.on_tx_result(true, 10, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+        session.on_tx_result(TxOutcome::Sent, 10, &mut |_: &[u8]| panic!("autonomous ack is silent"));
 
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1, "duplicate coalesced");
@@ -5509,7 +5602,7 @@ mod tests {
         // Frame 1's ack fails; its entry stays unacked.
         let effect = rx_effect(&mut session, &sealed_unar(1, &keys, false), 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
-        session.on_tx_result(false, 0, &mut |_: &[u8]| {});
+        session.on_tx_result(TxOutcome::Failed, 0, &mut |_: &[u8]| {});
 
         // Evict frame 1 with newer traffic while an ack for frame 2 is
         // in flight, then confirm it: the stale handle for the evicted
@@ -5522,7 +5615,7 @@ mod tests {
             // Radio busy: these queue unacked, no effect.
             assert!(rx_effect(&mut session, &sealed_unar(counter, &keys, false), 0).is_none());
         }
-        session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
 
         session.attach(true);
         assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
@@ -5570,7 +5663,7 @@ mod tests {
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(header.flood_hops, None);
-        session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
 
         // Flooded traffic: the ack's remaining hops seed from the
         // received frame's accumulated count.
@@ -5590,7 +5683,7 @@ mod tests {
                 expected_remaining,
                 "accumulated={accumulated}"
             );
-            session.on_tx_result(true, 0, &mut |_: &[u8]| {});
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
         }
 
         // A duplicate re-ack routes from the retransmission itself: the

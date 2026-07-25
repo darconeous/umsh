@@ -134,7 +134,7 @@ mod tests {
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
     use lora_phy::mod_params::RadioError;
     use std::sync::Arc;
-    use umsh_hal::{RxInfo, Snr};
+    use umsh_hal::{CadPolicy, RxInfo, Snr, TxError};
 
     type TestCh = Channels<NoopRawMutex, 4, 2>;
 
@@ -188,6 +188,7 @@ mod tests {
         TxRequest {
             data,
             power_dbm: None,
+            cad: CadPolicy::Skip,
         }
     }
 
@@ -211,7 +212,8 @@ mod tests {
                 "B granted while A in flight"
             );
 
-            real.tx_done.signal(Err(RadioError::TransmitTimeout));
+            real.tx_done
+                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
             assert!(a.tx_done.wait().await.is_err());
             assert!(b.tx_done.try_take().is_none(), "completion leaked to B");
 
@@ -333,7 +335,8 @@ mod tests {
 
         run(real, clients, async {
             // A previous requester abandoned its completion.
-            a.tx_done.signal(Err(RadioError::TransmitTimeout));
+            a.tx_done
+                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
 
             a.tx.send(tx_request(0xA1)).await;
             let granted = real.tx.receive().await;

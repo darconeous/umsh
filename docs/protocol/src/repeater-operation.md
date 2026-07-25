@@ -109,10 +109,10 @@ This applies to:
 After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
 
 ```text
-confirm_timeout = 2 × T_frame + W_max
+confirm_timeout = 2 × T_frame + W_max + D_ack
 ```
 
-where `W_max` is the maximum intentional forwarding-delay window permitted for the path. With the suggested default `W_max = 2 × T_frame`, this yields `confirm_timeout = 4 × T_frame`.
+where `W_max` is the maximum intentional forwarding-delay window permitted for the path and `D_ack` is the [ACK protection interval](channel-access.md#ack-protection-interval) when it applies. With the suggested defaults `W_max = 2 × T_frame` and `D_ack = 0.25 × T_frame`, this yields `confirm_timeout = 4.25 × T_frame`.
 
 If the packet is heard before `confirm_timeout` expires, forwarding is confirmed.
 
