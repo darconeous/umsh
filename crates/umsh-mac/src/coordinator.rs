@@ -1423,11 +1423,10 @@ impl<
     pub fn queue_mac_ack_for_peer(
         &mut self,
         peer_id: PeerId,
-        dst: NodeHint,
-        ack_tag: [u8; 8],
+        ack_trailer: [u8; 8],
     ) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag);
+        let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
         if let Some(peer) = self.peer_registry.get(peer_id) {
             match peer.route.as_ref() {
                 Some(CachedRoute::Direct) | None => {}
@@ -1453,9 +1452,9 @@ impl<
     }
 
     /// Enqueues an immediate direct MAC ACK frame.
-    pub fn queue_mac_ack(&mut self, dst: NodeHint, ack_tag: [u8; 8]) -> Result<(), SendError> {
+    pub fn queue_mac_ack(&mut self, ack_trailer: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
-        let frame = PacketBuilder::new(&mut buf).mac_ack(dst, ack_tag).build()?;
+        let frame = PacketBuilder::new(&mut buf).mac_ack(ack_trailer).build()?;
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
@@ -2217,28 +2216,28 @@ impl<
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        let Some(ack_dst) = header.ack_dst else {
-            return false;
-        };
-        let target_peer = self
-            .identities
-            .iter()
-            .filter_map(|slot| slot.as_ref())
-            .find(|slot| slot.identity().public_key().hint() == ack_dst)
-            .and_then(|slot| self.match_pending_peer_for_ack(slot, &buf[header.mic_range.clone()]));
-        if let Some(target_peer) = target_peer {
-            let mut ack_tag = [0u8; 8];
-            ack_tag.copy_from_slice(&buf[header.mic_range.clone()]);
-            if let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_tag) {
-                on_event(
-                    identity_id,
-                    crate::MacEventRef::AckReceived {
-                        peer: target_peer,
-                        receipt,
-                    },
-                );
-                return true;
-            }
+        // MAC acks carry no destination hint. Correlation is by the 8-byte
+        // ack trailer (`ack_mic || ack_tag`): the public `ack_mic` half links
+        // the ack to an outstanding request, and the keyed `ack_tag` half
+        // authenticates it. A colliding `ack_mic` from an unrelated exchange
+        // fails the full-trailer comparison and falls through to forwarding.
+        if header.mic_range.len() != 8 {
+            return forwarding_confirmed
+                || self.maybe_forward_received(&buf[..frame_len], header, rx, false);
+        }
+        let mut ack_trailer = [0u8; 8];
+        ack_trailer.copy_from_slice(&buf[header.mic_range.clone()]);
+        if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
+            && let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_trailer)
+        {
+            on_event(
+                identity_id,
+                crate::MacEventRef::AckReceived {
+                    peer: target_peer,
+                    receipt,
+                },
+            );
+            return true;
         }
         forwarding_confirmed || self.maybe_forward_received(&buf[..frame_len], header, rx, false)
     }
@@ -2283,13 +2282,13 @@ impl<
                         &buf[..frame_len],
                     )
                 {
-                    let ack_tag = self.compute_received_ack_tag(
+                    let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
                         header,
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer)
                         .ok();
                     handled = true;
                     break;
@@ -2350,13 +2349,13 @@ impl<
                 if header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header)
                 {
-                    let ack_tag = self.compute_received_ack_tag(
+                    let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
                         header,
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer)
                         .ok();
                 }
 
@@ -2574,13 +2573,13 @@ impl<
                                 &buf[..frame_len],
                             )
                         {
-                            let ack_tag = self.compute_received_ack_tag(
+                            let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
                                 header,
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer)
                                 .ok();
                             handled = true;
                             break;
@@ -2628,13 +2627,13 @@ impl<
                         if header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header)
                         {
-                            let ack_tag = self.compute_received_ack_tag(
+                            let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
                                 header,
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, peer_key.hint(), ack_tag)
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer)
                                 .ok();
                         }
 
@@ -2726,7 +2725,7 @@ impl<
     pub fn complete_ack(
         &mut self,
         peer: &PublicKey,
-        ack_tag: &[u8; 8],
+        ack_trailer: &[u8; 8],
     ) -> Option<(LocalIdentityId, SendReceipt)> {
         for (index, slot) in self.identities.iter_mut().enumerate() {
             let Some(slot) = slot.as_mut() else {
@@ -2734,7 +2733,7 @@ impl<
             };
 
             let receipt = slot.pending_acks.iter().find_map(|(receipt, pending)| {
-                (pending.peer == *peer && pending.ack_tag == *ack_tag).then_some(*receipt)
+                (pending.peer == *peer && pending.ack_trailer == *ack_trailer).then_some(*receipt)
             });
 
             if let Some(receipt) = receipt {
@@ -3090,7 +3089,7 @@ impl<
         feed_aad(&header, packet.as_bytes(), |chunk| cmac.update(chunk));
         cmac.update(packet.body());
         let full_mac = cmac.finalize();
-        let ack_tag = self.crypto.compute_ack_tag(&full_mac, &keys.k_enc);
+        let ack_trailer = self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc);
         let is_forwarded = options
             .source_route
             .as_ref()
@@ -3106,9 +3105,9 @@ impl<
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let receipt = slot.next_receipt();
         let pending = if is_forwarded {
-            PendingAck::forwarded(ack_tag, peer, resend)
+            PendingAck::forwarded(ack_trailer, peer, resend)
         } else {
-            PendingAck::direct(ack_tag, peer, resend)
+            PendingAck::direct(ack_trailer, peer, resend)
         };
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
@@ -3252,7 +3251,7 @@ impl<
         Ok(LocalIdentityId(next_id as u8))
     }
 
-    fn compute_received_ack_tag(
+    fn compute_received_ack_trailer(
         &self,
         buf: &[u8],
         header: &PacketHeader,
@@ -3263,7 +3262,7 @@ impl<
         feed_aad(header, buf, |chunk| cmac.update(chunk));
         cmac.update(&buf[body_range]);
         let full_mac = cmac.finalize();
-        self.crypto.compute_ack_tag(&full_mac, &keys.k_enc)
+        self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc)
     }
 
     fn requeue_tx(&mut self, queued: &crate::QueuedTx<FRAME>) -> Result<u32, CapacityError> {
@@ -4741,11 +4740,11 @@ impl<
                 }
             }
             PacketType::MacAck => {
-                if let Some(dst) = header.ack_dst {
-                    Self::hash_bytes(&mut hash, &dst.0);
-                }
-                if let Some(tag) = frame.get(header.mic_range.clone()) {
-                    Self::hash_bytes(&mut hash, tag);
+                // The ack trailer (`ack_mic || ack_tag`) uniquely identifies
+                // the acknowledged exchange; the ack carries no other
+                // distinguishing fields.
+                if let Some(trailer) = frame.get(header.mic_range.clone()) {
+                    Self::hash_bytes(&mut hash, trailer);
                 }
             }
             _ => {
@@ -4806,18 +4805,28 @@ impl<
         Some((listen.identity_id, listen.receipt))
     }
 
+    /// Find the destination peer of the outstanding ack-requested send whose
+    /// expected ack trailer (`ack_mic || ack_tag`) equals `ack_trailer`,
+    /// searching every local identity's pending table.
+    fn peer_for_ack_trailer(&self, ack_trailer: &[u8; 8]) -> Option<PublicKey> {
+        self.identities
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .find_map(|slot| self.match_pending_peer_for_ack(slot, ack_trailer))
+    }
+
     fn match_pending_peer_for_ack(
         &self,
         slot: &IdentitySlot<P::Identity, PEERS, ACKS, FRAME>,
-        ack_tag_bytes: &[u8],
+        ack_trailer_bytes: &[u8],
     ) -> Option<PublicKey> {
-        if ack_tag_bytes.len() != 8 {
+        if ack_trailer_bytes.len() != 8 {
             return None;
         }
 
-        slot.pending_acks
-            .iter()
-            .find_map(|(_, pending)| (pending.ack_tag == ack_tag_bytes).then_some(pending.peer))
+        slot.pending_acks.iter().find_map(|(_, pending)| {
+            (pending.ack_trailer == ack_trailer_bytes).then_some(pending.peer)
+        })
     }
 }
 

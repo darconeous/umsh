@@ -240,9 +240,9 @@ struct PendingTx {
 
 /// A delegated MAC acknowledgement ready to transmit.
 struct AckPlan {
-    /// The acknowledged frame's source hint — the ack's destination.
-    dst: [u8; 3],
-    tag: [u8; 8],
+    /// The 8-byte ack trailer (`ack_mic || ack_tag`). The ack carries no
+    /// destination hint — it is correlated by this trailer.
+    trailer: [u8; 8],
     /// Flood-return radius when the acknowledged frame arrived by
     /// flood: its accumulated hop count seeds the ack's remaining hops
     /// (mirroring the MAC's cached flood-route behavior). `None` for
@@ -811,6 +811,51 @@ impl DevPeerTable {
     }
 }
 
+/// Number of recently-transmitted ack-requested frames whose ack MICs we
+/// remember for filtering returning MAC acks. Sized to cover the acks that
+/// can be in flight over a round trip; 4 bytes each, so the whole ring is
+/// tiny.
+const EXPECTED_ACK_MIC_SLOTS: usize = 16;
+
+/// A small ring of `ack_mic` values (the first 4 bytes of an ack-requested
+/// frame's on-wire MIC) for frames this radio has transmitted. A returning
+/// MAC ack carries no destination hint, so this is how a filtering host
+/// recognizes an ack as belonging to one of its own sends.
+///
+/// Eviction is **lazy**: entries are displaced oldest-first only when the
+/// ring fills, and are *never* removed on a match. A single send can be
+/// acknowledged by several acks arriving over different routes (flood copies,
+/// source-routed copies) carrying distinct routing state; keeping the entry
+/// live lets the host collect all of them.
+#[derive(Default)]
+struct ExpectedAckMics {
+    slots: [[u8; 4]; EXPECTED_ACK_MIC_SLOTS],
+    /// Number of populated slots, saturating at `EXPECTED_ACK_MIC_SLOTS`.
+    filled: usize,
+    /// Next write position (ring cursor).
+    cursor: usize,
+}
+
+impl ExpectedAckMics {
+    /// Record an expected `ack_mic`, skipping duplicates so repeated sends of
+    /// the same frame don't crowd out other pending acks.
+    fn note(&mut self, mic: [u8; 4]) {
+        if self.contains(&mic) {
+            return;
+        }
+        self.slots[self.cursor] = mic;
+        self.cursor = (self.cursor + 1) % EXPECTED_ACK_MIC_SLOTS;
+        if self.filled < EXPECTED_ACK_MIC_SLOTS {
+            self.filled += 1;
+        }
+    }
+
+    /// Whether `mic` matches a still-remembered transmitted frame.
+    fn contains(&self, mic: &[u8; 4]) -> bool {
+        self.slots[..self.filled].iter().any(|slot| slot == mic)
+    }
+}
+
 /// State belonging to the configured tethered host identity (spec
 /// §State Classes, host domain): host key, key tables, filters,
 /// auto-ACK policy, and the inbound queue. The `CAP_HOST_AUTO_ACK`
@@ -830,6 +875,9 @@ struct HostDomain {
     auto_ack: bool,
     /// The inbound queue, populated while the host is detached.
     queue: RxQueue,
+    /// Ack MICs of ack-requested frames we have transmitted, used to
+    /// recognize returning MAC acks (which carry no destination hint).
+    expected_ack_mics: ExpectedAckMics,
 }
 
 impl HostDomain {
@@ -844,6 +892,24 @@ impl HostDomain {
         self.peer_keys = PeerKeyTable::default();
         self.auto_ack = false;
         self.queue.clear();
+        self.expected_ack_mics = ExpectedAckMics::default();
+    }
+
+    /// Record the public `ack_mic` of an ack-requested frame we are about to
+    /// transmit, so its returning MAC ack can be recognized as ours. Non
+    /// ack-requested frames (including MAC acks we relay or emit) are ignored.
+    fn note_tx_ack_mic(&mut self, frame: &[u8]) {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return;
+        };
+        if !header.ack_requested() {
+            return;
+        }
+        if let Some(mic) = frame.get(header.mic_range.clone())
+            && mic.len() >= 4
+        {
+            self.expected_ack_mics.note([mic[0], mic[1], mic[2], mic[3]]);
+        }
     }
 
     /// Spec §Receive Filtering compatibility rule: with no host key, no
@@ -865,9 +931,22 @@ impl HostDomain {
         let Ok(header) = PacketHeader::parse(data) else {
             return false;
         };
-        // A MAC ack's DST field carries the destination's 3-byte
-        // public-key prefix just like a unicast destination hint.
-        let dst = header.dst.or(header.ack_dst).map(|hint| hint.0);
+        // MAC acks carry no destination hint. We can only ever receive an ack
+        // for an ack-requested frame we transmitted, so accept one implicitly
+        // when its public ack_mic (the leading 4 bytes of the trailer) matches
+        // a frame we sent. Entries evict lazily, so duplicate acks for the same
+        // send — arriving over different routes — all pass. A miss falls
+        // through to the explicit filters below (a FILTER_PKT_TYPE entry for
+        // MacAck must still be honored), preserving the union-of-filters rule.
+        if header.fcf.packet_type() == PacketType::MacAck
+            && let Some(ack_mic) = data.get(header.mic_range.start..header.mic_range.start + 4)
+            && self
+                .expected_ack_mics
+                .contains(&[ack_mic[0], ack_mic[1], ack_mic[2], ack_mic[3]])
+        {
+            return true;
+        }
+        let dst = header.dst.map(|hint| hint.0);
         if let Some(key) = &self.key
             && dst == Some([key[0], key[1], key[2]])
         {
@@ -1865,14 +1944,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk));
             cmac.update(&scratch[body_range.clone()]);
             let full_mac = cmac.finalize();
-            let public_key = &self.host.peer_keys.entries[peer_index]
-                .as_ref()
-                .expect("resolved index is populated")
-                .entry
-                .public_key;
             AckPlan {
-                dst: [public_key[0], public_key[1], public_key[2]],
-                tag: self.engine.compute_ack_tag(&full_mac, &keys.k_enc),
+                trailer: self.engine.compute_ack_trailer(&full_mac, &keys.k_enc),
                 // Flooded traffic gets a flood-return ack seeded from
                 // the received frame's accumulated hop count, exactly
                 // as the MAC routes acks from its learned flood routes.
@@ -1923,7 +1996,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return None;
         }
         let mut buf = [0u8; 24];
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(NodeHint(plan.dst), plan.tag);
+        let mut builder = PacketBuilder::new(&mut buf).mac_ack(plan.trailer);
         if let Some(hops) = plan.flood_hops {
             // Mirror the MAC's flood-return acks: seed the remaining
             // hops from the acknowledged frame's accumulated count,
@@ -2809,6 +2882,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             nocca: tx_meta.flags & meta::TX_FLAG_NOCCA != 0,
         });
         debug_assert!(queued.is_ok(), "queue fullness checked above");
+        // Remember this frame's ack_mic if it requests an ack, so the
+        // returning (destination-hintless) MAC ack can be recognized as ours.
+        self.host.note_tx_ack_mic(payload.data);
         was_empty.then_some(Effect::StartTransmit)
     }
 
@@ -4134,10 +4210,13 @@ mod tests {
             .to_vec()
     }
 
-    fn mac_ack_to(dst: [u8; 3]) -> Vec<u8> {
+    fn mac_ack_with_mic(ack_mic: [u8; 4]) -> Vec<u8> {
+        let mut trailer = [0u8; 8];
+        trailer[..4].copy_from_slice(&ack_mic);
+        trailer[4..].copy_from_slice(&[0x5A; 4]); // arbitrary keyed-tag half
         let mut buf = [0u8; 32];
         PacketBuilder::new(&mut buf)
-            .mac_ack(NodeHint(dst), [0xA5; 8])
+            .mac_ack(trailer)
             .build()
             .unwrap()
             .to_vec()
@@ -4218,14 +4297,66 @@ mod tests {
         install_host_key(&mut session, &key);
         assert_eq!(get(&mut session, prop::HOST_KEY), key);
 
-        // The implicit destination-hint filter: traffic to the host's
-        // 3-byte prefix (unicast and returning MAC acks) is accepted,
-        // everything else — including unparseable frames — is not.
+        // The implicit destination-hint filter: unicast traffic to the
+        // host's 3-byte prefix is accepted, everything else — including
+        // unparseable frames — is not. A MAC ack carries no destination
+        // hint; with nothing transmitted, its ack_mic matches no expected
+        // send, so it is dropped (see mac_ack_accepted_only_when_expected).
         assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
-        assert!(delivered(&mut session, &mac_ack_to([0xC4, 0xC4, 0xC4])));
+        assert!(!delivered(&mut session, &mac_ack_with_mic([0xC4, 0xC4, 0xC4, 0xC4])));
         assert!(!delivered(&mut session, &unicast_to([1, 2, 3])));
         assert!(!delivered(&mut session, &broadcast_frame()));
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn mac_ack_accepted_only_when_expected() {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &[0xC4; 32]); // configure filtering
+
+        // Before sending anything, no ack is expected.
+        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+
+        // Transmit an ack-requested frame; its MIC prefix is now expected.
+        let frame = sealed_unar(7, &test_pairwise(), false);
+        let header = PacketHeader::parse(&frame).unwrap();
+        let mic = &frame[header.mic_range.clone()];
+        let ack_mic = [mic[0], mic[1], mic[2], mic[3]];
+        let (_emitted, effect) = send_packet(&mut session, 4, &frame, &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // An ack echoing that ack_mic is now accepted...
+        assert!(delivered(&mut session, &mac_ack_with_mic(ack_mic)));
+        // ...and is NOT evicted on match: a duplicate arriving over another
+        // route still passes (lazy eviction).
+        assert!(delivered(&mut session, &mac_ack_with_mic(ack_mic)));
+        // An ack for a different (unsent) frame is still rejected.
+        assert!(!delivered(&mut session, &mac_ack_with_mic([0x99, 0x88, 0x77, 0x66])));
+    }
+
+    #[test]
+    fn explicit_pkt_type_filter_accepts_unexpected_mac_ack() {
+        // The implicit ack_mic match is one arm of the union of filters; an
+        // explicit FILTER_PKT_TYPE for MacAck must still accept an ack whose
+        // mic we never recorded.
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &[0xC4; 32]); // configure filtering
+
+        // No matching send, so the implicit ack_mic filter rejects it.
+        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+
+        // Explicitly request MacAck frames by type.
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::MacAck as u8],
+        );
+
+        // Now the same unexpected ack is accepted via the explicit filter.
+        assert!(delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
     }
 
     #[test]
@@ -4460,7 +4591,8 @@ mod tests {
             &[items::FILTER_DEST_HINT, 0x11, 0x22, 0x33],
         );
         assert!(delivered(&mut session, &unicast_to([0x11, 0x22, 0x33])));
-        assert!(delivered(&mut session, &mac_ack_to([0x11, 0x22, 0x33])));
+        // A MAC ack for a frame we never sent is dropped.
+        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
         assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
         assert!(!delivered(&mut session, &broadcast_frame()));
 
@@ -5049,29 +5181,29 @@ mod tests {
         })
     }
 
-    /// The expected ack tag for an unencrypted sealed frame.
-    fn expected_ack_tag(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
+    /// The expected 8-byte ack trailer (`ack_mic || ack_tag`) for an
+    /// unencrypted sealed frame.
+    fn expected_ack_trailer(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
         let engine = test_engine();
         let header = PacketHeader::parse(frame).unwrap();
         let mut cmac = engine.cmac_state(&keys.k_mic);
         umsh_core::feed_aad(&header, frame, |chunk| cmac.update(chunk));
         cmac.update(&frame[header.body_range.clone()]);
-        engine.compute_ack_tag(&cmac.finalize(), &keys.k_enc)
+        engine.compute_ack_trailer(&cmac.finalize(), &keys.k_enc)
     }
 
-    /// Assert the staged transmit is a MAC ack to the test peer, and
-    /// complete it.
+    /// Assert the staged transmit is a MAC ack (which carries no
+    /// destination hint), and complete it.
     fn expect_ack_transmit(
         session: &mut TestSession,
         effect: Option<Effect>,
-        tag: Option<[u8; 8]>,
+        trailer: Option<[u8; 8]>,
     ) {
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-        assert_eq!(header.ack_dst, Some(NodeHint([0x0A, 0x0A, 0x0A])));
-        if let Some(tag) = tag {
-            assert_eq!(session.tx_data()[header.mic_range.clone()], tag);
+        if let Some(trailer) = trailer {
+            assert_eq!(session.tx_data()[header.mic_range.clone()], trailer);
         }
         session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {
             panic!("autonomous ack must be silent")
@@ -5086,7 +5218,7 @@ mod tests {
         expect_ack_transmit(
             &mut session,
             effect,
-            Some(expected_ack_tag(&frame, &test_pairwise())),
+            Some(expected_ack_trailer(&frame, &test_pairwise())),
         );
 
         // The autonomous ack leaves PROP_LAST_STATUS alone: the boot
@@ -5193,11 +5325,11 @@ mod tests {
 
         let first = sealed_unar(5, &keys, false);
         let effect = rx_effect(&mut session, &first, 0);
-        expect_ack_transmit(&mut session, effect, Some(expected_ack_tag(&first, &keys)));
+        expect_ack_transmit(&mut session, effect, Some(expected_ack_trailer(&first, &keys)));
 
         // Exact retransmission: coalesced (no new entry) and re-acked.
         let effect = rx_effect(&mut session, &first, 10);
-        expect_ack_transmit(&mut session, effect, Some(expected_ack_tag(&first, &keys)));
+        expect_ack_transmit(&mut session, effect, Some(expected_ack_trailer(&first, &keys)));
 
         // Advance the baseline well past the re-ack window.
         for counter in 6..=14 {

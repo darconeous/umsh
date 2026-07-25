@@ -1128,12 +1128,19 @@ can only over-accept, never mis-reject, and the host performs full
 cryptographic verification as usual.
 
 The implicit destination-hint filter matches unicast traffic addressed to
-the host identity and also [MAC Ack](packet-types.md#mac-ack-packet)
-packets returning to it, since a MAC ack's `DST` field carries the same
-3-byte public-key prefix. Encrypted blind unicast addressed to the host is
+the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the NCP MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.
+
+[MAC Ack](packet-types.md#mac-ack-packet) packets carry no destination hint,
+so no implicit filter can address them. Instead the NCP records the public
+`ack_mic` of each ack-requesting frame it transmits on the host's behalf and
+implicitly accepts a MAC Ack whose `ack_mic` matches one — the only acks the
+host can legitimately receive are for frames it sent. These records evict
+lazily, so multiple acks for one send (arriving over different return routes)
+are all delivered. A MAC Ack whose `ack_mic` matches no recorded frame is
+still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
 Traffic the implicit filters do not cover — broadcasts and beacons, for
 example — must be requested explicitly (e.g., a `FILTER_PKT_TYPE` entry

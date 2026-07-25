@@ -262,9 +262,10 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
 /// `PendingAck` records keyed by [`SendReceipt`], one per active ACK-requested send. The
 /// record holds everything needed to detect completion, detect timeout, and retransmit:
 ///
-/// - **`ack_tag`** — the 8-byte CMAC-derived value that will appear in the destination's
-///   MAC ACK packet. Only a node that received and successfully decrypted the original frame
-///   can produce the correct tag, so a matching `ack_tag` is cryptographic proof of delivery.
+/// - **`ack_trailer`** — the 8-byte `ack_mic || ack_tag` value that will appear as the
+///   destination's MAC ACK trailer. The `ack_mic` half correlates the ack to this request;
+///   the keyed `ack_tag` half can only be produced by a node that received and successfully
+///   decrypted the original frame, so a matching trailer is cryptographic proof of delivery.
 /// - **`peer`** — the destination's full public key, used to look up the correct pending
 ///   entry when matching an inbound MAC ACK against the pending table.
 /// - **`resend`** — a verbatim copy of the sealed frame for retransmission. See
@@ -282,8 +283,9 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
 /// [`PendingAck::forwarded`] when routing through a repeater.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
-    /// Internal ACK tag used for inbound matching.
-    pub ack_tag: [u8; 8],
+    /// Expected 8-byte MAC ack trailer (`ack_mic || ack_tag`) used for inbound
+    /// matching.
+    pub ack_trailer: [u8; 8],
     /// Final destination peer.
     pub peer: PublicKey,
     /// Retransmission data.
@@ -300,9 +302,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
 
 impl<const FRAME: usize> PendingAck<FRAME> {
     /// Create pending-ACK state for a direct send.
-    pub fn direct(ack_tag: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
+    pub fn direct(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
-            ack_tag,
+            ack_trailer,
             peer,
             resend,
             sent_ms: 0,
@@ -315,9 +317,9 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     }
 
     /// Create pending-ACK state for a forwarded send.
-    pub fn forwarded(ack_tag: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
+    pub fn forwarded(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
-            ack_tag,
+            ack_trailer,
             peer,
             resend,
             sent_ms: 0,

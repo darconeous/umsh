@@ -322,14 +322,17 @@ function M.verify_and_decrypt(keys, pkt)
 end
 
 -- ---------------------------------------------------------------------------
--- Compute the 8-byte ACK tag from a full 16-byte CMAC and k_enc.
--- ack_tag = truncate_8( AES-ECB(k_enc, full_cmac) )
+-- Compute the 4-byte keyed ACK tag from a full 16-byte CMAC and k_enc.
+--   ack_tag = truncate_4( AES-ECB(k_enc, full_cmac) )
+-- This is the authenticating half of the MAC ack trailer. The other half,
+-- ack_mic = first_4( on-wire MIC ), is public and needs no key (the caller
+-- reads it straight off the wire), so it is not computed here.
 -- ---------------------------------------------------------------------------
 
 function M.compute_ack_tag(full_cmac, k_enc)
   if not _has_aes then return nil end
   local encrypted = aes_ecb_fn(k_enc, full_cmac)
-  return encrypted:sub(1, 8)
+  return encrypted:sub(1, 4)
 end
 
 -- ---------------------------------------------------------------------------

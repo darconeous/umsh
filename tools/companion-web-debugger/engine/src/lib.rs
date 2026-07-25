@@ -1502,7 +1502,7 @@ fn summarize_packet(bytes: &[u8], header: &PacketHeader) -> PacketSummary {
     PacketSummary {
         packet_type: format!("{:?}", header.packet_type()),
         source,
-        destination: header.dst.or(header.ack_dst).map(|hint| hint.to_string()),
+        destination: header.dst.map(|hint| hint.to_string()),
         channel_hex: header.channel.map(|channel| hex(&channel.0)),
         frame_counter: header.sec_info.map(|info| info.frame_counter),
         encrypted,

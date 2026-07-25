@@ -538,7 +538,6 @@ mod tests {
             flood_hops: None,
             dst: None,
             channel: None,
-            ack_dst: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
             body_range: 0..wire.len(),

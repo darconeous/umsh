@@ -36,11 +36,15 @@ impl<'a> PacketBuilder<'a> {
         Builder::new(self.buf, PacketType::Broadcast)
     }
 
-    /// Build a MAC ACK packet with all required addressing fixed up front.
-    pub fn mac_ack(self, dst: NodeHint, ack_tag: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
+    /// Build a MAC ACK packet.
+    ///
+    /// The ack carries no destination hint — it is a return-routed token
+    /// correlated by its trailer. `ack_trailer` is the 8-byte
+    /// `ack_mic || ack_tag` value (see the crypto engine's
+    /// `compute_ack_trailer`).
+    pub fn mac_ack(self, ack_trailer: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
         let mut builder = Builder::new(self.buf, PacketType::MacAck);
-        builder.ack_dst = Some(dst);
-        builder.ack_tag = Some(ack_tag);
+        builder.ack_tag = Some(ack_trailer);
         builder
     }
 
@@ -109,7 +113,6 @@ pub struct Builder<'a, K, S> {
     source: Option<SourceValue>,
     dst: Option<NodeHint>,
     channel: Option<ChannelId>,
-    ack_dst: Option<NodeHint>,
     ack_tag: Option<[u8; 8]>,
     frame_counter: Option<u32>,
     encrypted: bool,
@@ -133,7 +136,6 @@ impl<'a, K, S> Builder<'a, K, S> {
             source: None,
             dst: None,
             channel: None,
-            ack_dst: None,
             ack_tag: None,
             frame_counter: None,
             encrypted: matches!(
@@ -160,7 +162,6 @@ impl<'a, K, S> Builder<'a, K, S> {
             source: self.source,
             dst: self.dst,
             channel: self.channel,
-            ack_dst: self.ack_dst,
             ack_tag: self.ack_tag,
             frame_counter: self.frame_counter,
             encrypted: self.encrypted,
@@ -603,22 +604,17 @@ impl<'a> BroadcastBuilder<'a, state::Complete> {
 impl<'a> MacAckBuilder<'a, state::Configuring> {
     /// Finalize the MAC ACK packet and return the written frame bytes.
     ///
-    /// Layout: `FCF [FHOPS] DST OPTIONS ACK_TAG(8)`
-    /// The `0xFF` end-marker is omitted — the ACK_TAG trailer is at a fixed offset.
+    /// Layout: `FCF [FHOPS] OPTIONS ACK_TRAILER(8)` where the trailer is
+    /// `ack_mic(4) || ack_tag(4)`. There is no destination hint. The `0xFF`
+    /// end-marker is omitted — the trailer is at a fixed offset from the end.
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
-        let dst = self.ack_dst.ok_or(BuildError::MissingDestination)?;
-        self.buf
-            .get_mut(cursor..cursor + 3)
-            .ok_or(BuildError::BufferTooSmall)?
-            .copy_from_slice(&dst.0);
-        cursor += 3;
         self.emit_options(&mut cursor, false)?;
-        let ack_tag = self.ack_tag.ok_or(BuildError::MissingAckTag)?;
+        let ack_trailer = self.ack_tag.ok_or(BuildError::MissingAckTag)?;
         self.buf
             .get_mut(cursor..cursor + 8)
             .ok_or(BuildError::BufferTooSmall)?
-            .copy_from_slice(&ack_tag);
+            .copy_from_slice(&ack_trailer);
         cursor += 8;
         Ok(&self.buf[..cursor])
     }

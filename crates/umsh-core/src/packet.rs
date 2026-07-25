@@ -546,7 +546,6 @@ pub struct PacketHeader {
     pub flood_hops: Option<FloodHops>,
     pub dst: Option<NodeHint>,
     pub channel: Option<ChannelId>,
-    pub ack_dst: Option<NodeHint>,
     pub source: SourceAddrRef,
     pub sec_info: Option<SecInfo>,
     pub body_range: Range<usize>,
@@ -584,7 +583,6 @@ impl PacketHeader {
         let packet_type = fcf.packet_type();
         let mut dst = None;
         let mut channel = None;
-        let mut ack_dst = None;
         let mut source = SourceAddrRef::None;
         let mut sec_info = None;
 
@@ -612,7 +610,6 @@ impl PacketHeader {
                     flood_hops,
                     dst,
                     channel,
-                    ack_dst,
                     source,
                     sec_info,
                     body_range: body_start..body_end,
@@ -621,20 +618,20 @@ impl PacketHeader {
                 })
             }
             PacketType::MacAck => {
-                ensure_len(buf, cursor, 3)?;
-                ack_dst = Some(NodeHint([buf[cursor], buf[cursor + 1], buf[cursor + 2]]));
-                cursor += 3;
+                // MAC acks carry no destination hint: options follow the
+                // header directly, then a fixed 8-byte ack trailer
+                // (`ack_mic` || `ack_tag`).
                 let options_start = cursor;
                 let options_end = buf.len().checked_sub(8).ok_or(ParseError::Truncated)?;
                 if options_end < options_start {
                     return Err(ParseError::Truncated);
                 }
                 // MAC ACK has no payload — the options region is bounded by
-                // the fixed 8-byte ACK_TAG trailer. The scan must consume
-                // the entire region: either the marker is absent (and the
-                // scan exhausts the region), or the marker is the last byte
-                // (and `consumed` includes it). Any other case means there
-                // are bytes between an end-of-options marker and ACK_TAG,
+                // the fixed 8-byte ack trailer. The scan must consume the
+                // entire region: either the marker is absent (and the scan
+                // exhausts the region), or the marker is the last byte (and
+                // `consumed` includes it). Any other case means there are
+                // bytes between an end-of-options marker and the trailer,
                 // which the wire format does not assign meaning to.
                 let region = &buf[options_start..options_end];
                 let (consumed, _has_marker) = scan_options_bounded(region)?;
@@ -642,19 +639,18 @@ impl PacketHeader {
                     return Err(ParseError::MalformedOption);
                 }
                 let options_range = options_start..options_start + consumed;
-                let ack_tag_start = options_end;
+                let trailer_start = options_end;
                 Ok(Self {
                     fcf,
                     options_range,
                     flood_hops,
                     dst,
                     channel,
-                    ack_dst,
                     source,
                     sec_info,
-                    body_range: ack_tag_start..ack_tag_start + 8,
-                    mic_range: ack_tag_start..ack_tag_start + 8,
-                    total_len: ack_tag_start + 8,
+                    body_range: trailer_start..trailer_start + 8,
+                    mic_range: trailer_start..trailer_start + 8,
+                    total_len: trailer_start + 8,
                 })
             }
             PacketType::Unicast | PacketType::UnicastAckReq => {
@@ -693,7 +689,6 @@ impl PacketHeader {
                     flood_hops,
                     dst,
                     channel,
-                    ack_dst,
                     source,
                     sec_info,
                     body_range: body_start..body_end,
@@ -733,7 +728,6 @@ impl PacketHeader {
                         flood_hops,
                         dst,
                         channel,
-                        ack_dst,
                         source,
                         sec_info,
                         body_range: cursor..mic_start,
@@ -762,7 +756,6 @@ impl PacketHeader {
                         flood_hops,
                         dst,
                         channel,
-                        ack_dst,
                         source,
                         sec_info,
                         body_range: body_start..body_end,
@@ -823,7 +816,6 @@ impl PacketHeader {
                     flood_hops,
                     dst,
                     channel,
-                    ack_dst,
                     source,
                     sec_info,
                     body_range: body_start..body_end,

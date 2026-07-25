@@ -483,14 +483,29 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         }
     }
 
-    /// Compute the 8-byte transport ACK tag from a full CMAC and `k_enc`.
-    pub fn compute_ack_tag(&self, full_cmac: &[u8; 16], k_enc: &[u8; 16]) -> [u8; 8] {
+    /// Compute the 8-byte MAC ack trailer (`ack_mic || ack_tag`) from a full
+    /// CMAC and `k_enc`.
+    ///
+    /// The trailer splits into two 4-byte halves:
+    ///
+    /// - **`ack_mic`** = the first 4 bytes of `full_cmac`. Because the on-wire
+    ///   MIC is a prefix-truncation of the full CMAC, this equals the first
+    ///   4 bytes of the acknowledged packet's on-wire MIC — a *public*
+    ///   correlation handle any node that received the original packet
+    ///   (including forwarding repeaters) can compute.
+    /// - **`ack_tag`** = `truncate_4( AES-128-ECB(k_enc, full_cmac) )`. A keyed
+    ///   value only the original sender and final destination can produce; it
+    ///   authenticates the standalone ack.
+    ///
+    /// See the spec's *Ack Tag Construction* section.
+    pub fn compute_ack_trailer(&self, full_cmac: &[u8; 16], k_enc: &[u8; 16]) -> [u8; 8] {
         let cipher = self.aes.new_cipher(k_enc);
         let mut block = *full_cmac;
         cipher.encrypt_block(&mut block);
-        let mut ack = [0u8; 8];
-        ack.copy_from_slice(&block[..8]);
-        ack
+        let mut trailer = [0u8; 8];
+        trailer[..4].copy_from_slice(&full_cmac[..4]); // ack_mic (public)
+        trailer[4..].copy_from_slice(&block[..4]); // ack_tag (keyed)
+        trailer
     }
 
     /// Create a reusable incremental CMAC state.
@@ -1061,39 +1076,42 @@ mod tests {
         assert_eq!(&wire[range], b"blind");
     }
 
-    /// Verify compute_ack_tag produces a deterministic 8-byte value and that
-    /// the same CMAC+key always yields the same tag.
+    /// Verify compute_ack_trailer produces a deterministic 8-byte value and
+    /// that its two halves are the public `ack_mic` (CMAC prefix) and the
+    /// keyed `ack_tag`.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn compute_ack_tag_is_deterministic() {
+    fn compute_ack_trailer_is_deterministic() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
         let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
         let cmac = hex_16("070a16b46b4d4144f79bdd9dd04a287c"); // RFC 4493 example 2
-        let tag1 = engine.compute_ack_tag(&cmac, &key);
-        let tag2 = engine.compute_ack_tag(&cmac, &key);
-        assert_eq!(tag1, tag2);
-        assert_eq!(tag1.len(), 8);
-        // Tag should be the first 8 bytes of AES-ECB(key, cmac)
+        let t1 = engine.compute_ack_trailer(&cmac, &key);
+        let t2 = engine.compute_ack_trailer(&cmac, &key);
+        assert_eq!(t1, t2);
+        assert_eq!(t1.len(), 8);
+        // ack_mic half is the first 4 bytes of the full CMAC (public).
+        assert_eq!(t1[..4], cmac[..4]);
+        // ack_tag half is the first 4 bytes of AES-ECB(key, cmac) (keyed).
         let cipher = SoftwareAes.new_cipher(&key);
         let mut block = cmac;
         cipher.encrypt_block(&mut block);
-        assert_eq!(tag1, block[..8]);
+        assert_eq!(t1[4..], block[..4]);
     }
 
-    /// Verify that compute_ack_tag with different CMACs produces different tags,
-    /// and that the tag is the first 8 bytes of AES-ECB(k_enc, cmac).
+    /// Verify that compute_ack_trailer with different CMACs produces different
+    /// trailers in both the mic and tag halves.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn compute_ack_tag_differs_for_different_cmacs() {
+    fn compute_ack_trailer_differs_for_different_cmacs() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
         let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
         let cmac_a = hex_16("070a16b46b4d4144f79bdd9dd04a287c");
         let cmac_b = hex_16("51f0bebf7e3b9d92fc49741779363cfe");
-        let tag_a = engine.compute_ack_tag(&cmac_a, &key);
-        let tag_b = engine.compute_ack_tag(&cmac_b, &key);
-        assert_ne!(tag_a, tag_b);
-        assert_ne!(tag_a, [0u8; 8]);
-        assert_ne!(tag_b, [0u8; 8]);
+        let t_a = engine.compute_ack_trailer(&cmac_a, &key);
+        let t_b = engine.compute_ack_trailer(&cmac_b, &key);
+        assert_ne!(t_a, t_b);
+        assert_ne!(t_a, [0u8; 8]);
+        assert_ne!(t_b, [0u8; 8]);
     }
 
     #[cfg(feature = "software-crypto")]

@@ -69,10 +69,10 @@ f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Optio
 
 -- Addresses
 f.dst_hint     = ProtoField.bytes  ("umsh.dst",          "Destination Hint")
-f.ack_dst      = ProtoField.bytes  ("umsh.mack.dst",     "ACK Destination")
 f.src_hint     = ProtoField.bytes  ("umsh.src_hint",     "Source Hint")
 f.src_key      = ProtoField.bytes  ("umsh.src_key",      "Source Public Key")
 f.channel_id   = ProtoField.bytes  ("umsh.channel_id",   "Channel ID")
+f.ack_mic      = ProtoField.bytes  ("umsh.ack_mic",      "ACK MIC")
 f.ack_tag      = ProtoField.bytes  ("umsh.ack_tag",      "ACK Tag")
 
 -- Keystore annotations (virtual string fields)
@@ -101,22 +101,29 @@ f.dec_src      = ProtoField.bytes  ("umsh.dec_src",           "Decrypted SRC")
 -- ACK tracking (cross-frame references)
 f.ack_req_frame = ProtoField.framenum("umsh.ack.request_frame", "Acknowledges packet in frame",
                                        base.NONE, frametype.ACK)
+-- Public ack_mic correlated the ack to a request, but a configured key proved
+-- the keyed tag wrong: a forensic link only, not a valid acknowledgement.
+f.ack_correlate_frame = ProtoField.framenum("umsh.ack.correlate_frame",
+                                       "Correlates with packet in frame (unverified)",
+                                       base.NONE, frametype.NONE)
 f.ack_rsp_frame = ProtoField.framenum("umsh.ack.response_frame","Acknowledged in frame",
                                        base.NONE, frametype.RESPONSE)
 f.ack_rsp_time  = ProtoField.string  ("umsh.ack.response_time", "ACK Response Time")
 f.ack_expected  = ProtoField.bytes   ("umsh.ack.expected_tag",  "Expected ACK Tag")
+f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag Verified")
 
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
   f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr, f.opt_unknown,
-  f.dst_hint, f.ack_dst, f.src_hint, f.src_key, f.channel_id, f.ack_tag,
+  f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
   f.frame_ctr, f.salt, f.mic,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
-  f.ack_req_frame, f.ack_rsp_frame, f.ack_rsp_time, f.ack_expected,
+  f.ack_req_frame, f.ack_correlate_frame, f.ack_rsp_frame, f.ack_rsp_time,
+  f.ack_expected, f.ack_verified,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -173,13 +180,22 @@ local _udp_table       = DissectorTable.get("udp.port")
 local _registered_port = 0
 
 -- ACK tracking tables (cleared on each new capture via init)
--- _ack_by_tag:  ack_tag_hex → {frame=N, timestamp=T, src_label=S, dst_label=D}
+--
+-- Correlation is keyed by the public ack_mic (the first 4 bytes of the
+-- acknowledged packet's on-wire MIC), so it works WITHOUT any keys: an
+-- ack-requested packet exposes its MIC on the wire, and the returning MAC
+-- ack echoes that prefix. When a private key is available the expected keyed
+-- ack_tag is also recorded, letting a matched ack be cryptographically
+-- verified (not just correlated).
+--
+-- _ack_by_mic:   ack_mic_hex → {frame=N, timestamp=T, src_label=S,
+--                               dst_label=D, exp_tag_hex=<4B hex or nil>}
 -- _ack_by_frame: frame_num → {ack_frame=N, rsp_time=delta_seconds} (back-annotation)
-local _ack_by_tag   = {}
+local _ack_by_mic   = {}
 local _ack_by_frame = {}
 
 function umsh.init()
-  _ack_by_tag   = {}
+  _ack_by_mic   = {}
   _ack_by_frame = {}
 end
 
@@ -376,41 +392,52 @@ end
 local function dissect_uack(buf, pinfo, tree, off)
   local buf_len = buf:len()
 
-  if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
-  local dst_bytes = tvb_bytes(buf, off, 3)
-  tree:add(f.ack_dst, buf(off, 3))
-  local dst_name = keystore.lookup_node(dst_bytes)
-  if dst_name and dst_name ~= "" then tree:add(f.dst_name, buf(off, 3), dst_name) end
-  off = off + 3
-
-  -- OPTIONS block (always present; no 0xFF since ACK_TAG is fixed-size trailer)
+  -- A MAC ack carries no destination hint: OPTIONS follow the header
+  -- directly, then a fixed 8-byte trailer (ack_mic(4) || ack_tag(4)). No
+  -- 0xFF terminator, since the trailer is at a fixed offset from the end.
   local dummy_opts = {}
   off = parse_options(buf, off, buf_len - 8, tree, dummy_opts)
 
   if off + 8 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
-  local tag_bytes = tvb_bytes(buf, off, 8)
-  tree:add(f.ack_tag, buf(off, 8))
+  local mic_bytes = tvb_bytes(buf, off, 4)      -- ack_mic (public correlation)
+  local tag_bytes = tvb_bytes(buf, off + 4, 4)  -- ack_tag (keyed auth)
+  tree:add(f.ack_mic, buf(off, 4))
+  tree:add(f.ack_tag, buf(off + 4, 4))
 
-  local to_label = dst_name or hint_hex(dst_bytes)
-  pinfo.cols.info = "UMSH UACK to " .. to_label
+  pinfo.cols.info = "UMSH UACK"
 
-  -- ACK correlation: look up the tag in the tracking table
-  local tag_hex = bytes_to_hex(tag_bytes)
-  local origin = _ack_by_tag[tag_hex]
+  -- ACK correlation: look up the public ack_mic. This needs no keys —
+  -- the acknowledged packet's MIC prefix is visible on the wire.
+  local mic_hex = bytes_to_hex(mic_bytes)
+  local origin = _ack_by_mic[mic_hex]
   if origin then
-    tree:add(f.ack_req_frame, buf(off, 8), origin.frame)
+    -- If a key let us precompute the expected keyed tag, verify it. A public
+    -- ack_mic match establishes only correlation; when a configured key proves
+    -- the tag wrong the frame is NOT a valid acknowledgement, so we downgrade
+    -- to a "correlates with" forensic link and suppress the ack/back-reference.
+    local verified = nil
+    if origin.exp_tag_hex then
+      verified = (origin.exp_tag_hex == bytes_to_hex(tag_bytes))
+      tree:add(f.ack_verified, buf(off + 4, 4), verified)
+    end
     local rsp_time = pinfo.abs_ts - origin.timestamp
     tree:add(f.ack_rsp_time, buf(off, 8),
       string.format("%.6f seconds", rsp_time)):set_text(
       string.format("ACK Response Time: %.3f ms", rsp_time * 1000))
-    pinfo.cols.info = "UMSH UACK to " .. to_label
-      .. " (ack for #" .. origin.frame .. ")"
-    -- Store back-reference so the UNAR/BUAR frame can show "Acknowledged in frame N"
-    if not pinfo.visited then
-      _ack_by_frame[origin.frame] = {
-        ack_frame = pinfo.number,
-        rsp_time  = rsp_time,
-      }
+    if verified == false then
+      -- Correlation only: link the frames but claim no acknowledgement.
+      tree:add(f.ack_correlate_frame, buf(off, 4), origin.frame)
+      pinfo.cols.info = "UMSH UACK (correlates with #" .. origin.frame .. ", TAG MISMATCH)"
+    else
+      tree:add(f.ack_req_frame, buf(off, 4), origin.frame)
+      pinfo.cols.info = "UMSH UACK (ack for #" .. origin.frame .. ")"
+      -- Store back-reference so the UNAR/BUAR frame can show "Acknowledged in frame N"
+      if not pinfo.visited then
+        _ack_by_frame[origin.frame] = {
+          ack_frame = pinfo.number,
+          rsp_time  = rsp_time,
+        }
+      end
     end
   end
 end
@@ -472,6 +499,22 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   local dl = dst_name or hint_hex(dst_bytes)
   pinfo.cols.info = (ack_req and "UMSH UNAR" or "UMSH UNIC") .. " " .. sl .. " -> " .. dl
 
+  -- ACK correlation (keyless): an ack-requested packet publishes its MIC on
+  -- the wire, and the returning MAC ack echoes the first 4 bytes as its
+  -- ack_mic. Record that prefix now so the ack matches even with no keys.
+  -- A keyed expected-tag (filled in below when we can decrypt) is preserved.
+  if ack_req and mic_len >= 4 and not pinfo.visited then
+    local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+    local prior = _ack_by_mic[mic_hex]
+    _ack_by_mic[mic_hex] = {
+      frame       = pinfo.number,
+      timestamp   = pinfo.abs_ts,
+      src_label   = sl,
+      dst_label   = dl,
+      exp_tag_hex = prior and prior.exp_tag_hex or nil,
+    }
+  end
+
   -- Crypto: try to decrypt / verify MIC
   if not crypto then return end
   local pkt_info = {
@@ -496,20 +539,25 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
     end
     if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
 
-    -- ACK tracking: compute expected ACK tag for UNAR packets
+    -- ACK tracking: compute the expected keyed ACK tag for UNAR packets and
+    -- attach it to the (already recorded) ack_mic entry, so a matched ack can
+    -- be cryptographically verified rather than merely correlated.
     if ack_req and dec_keys and full_cmac then
       local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
       if ack_tag then
         local tag_hex = bytes_to_hex(ack_tag)
         tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
           :set_text("Expected ACK Tag: " .. tag_hex)
-        if not pinfo.visited then
-          _ack_by_tag[tag_hex] = {
+        if not pinfo.visited and mic_len >= 4 then
+          local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+          local entry = _ack_by_mic[mic_hex] or {
             frame     = pinfo.number,
             timestamp = pinfo.abs_ts,
             src_label = sl,
             dst_label = dl,
           }
+          entry.exp_tag_hex = tag_hex
+          _ack_by_mic[mic_hex] = entry
         end
         -- Back-annotation: show UACK frame if already matched
         local back = _ack_by_frame[pinfo.number]
@@ -708,6 +756,20 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local mic_bytes = tvb_bytes(buf, off, mic_len)
     tree:add(f.mic, buf(off, mic_len))
 
+    -- ACK correlation (keyless): record the public ack_mic even though the
+    -- endpoints are concealed — the ack echoes this MIC prefix regardless.
+    if ack_req and mic_len >= 4 and not pinfo.visited then
+      local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+      local prior = _ack_by_mic[mic_hex]
+      _ack_by_mic[mic_hex] = {
+        frame       = pinfo.number,
+        timestamp   = pinfo.abs_ts,
+        src_label   = prior and prior.src_label or "?",
+        dst_label   = prior and prior.dst_label or "?",
+        exp_tag_hex = prior and prior.exp_tag_hex or nil,
+      }
+    end
+
     -- Crypto (E=1)
     if not crypto then return end
     local pkt_info = {
@@ -753,13 +815,16 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
           local tag_hex = bytes_to_hex(ack_tag)
           tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
             :set_text("Expected ACK Tag: " .. tag_hex)
-          if not pinfo.visited then
-            _ack_by_tag[tag_hex] = {
+          if not pinfo.visited and mic_len >= 4 then
+            local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+            local entry = _ack_by_mic[mic_hex] or {
               frame     = pinfo.number,
               timestamp = pinfo.abs_ts,
-              src_label = s_name or (dec_src and bytes_to_hex(dec_src:sub(1,3))) or "?",
-              dst_label = d_name or (dst_hint and hint_hex(dst_hint)) or "?",
             }
+            entry.src_label   = s_name or (dec_src and bytes_to_hex(dec_src:sub(1,3))) or "?"
+            entry.dst_label   = d_name or (dst_hint and hint_hex(dst_hint)) or "?"
+            entry.exp_tag_hex = tag_hex
+            _ack_by_mic[mic_hex] = entry
           end
           local back = _ack_by_frame[pinfo.number]
           if back then
@@ -815,6 +880,19 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local sl = src_name or hint_hex(src_bytes:sub(1, 3))
     local dl = dst_name or hint_hex(dst_bytes)
     pinfo.cols.info = type_label .. " [" .. ch_label .. "] " .. sl .. " -> " .. dl
+
+    -- ACK correlation (keyless): endpoints are already in cleartext here.
+    if ack_req and mic_len >= 4 and not pinfo.visited then
+      local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+      local prior = _ack_by_mic[mic_hex]
+      _ack_by_mic[mic_hex] = {
+        frame       = pinfo.number,
+        timestamp   = pinfo.abs_ts,
+        src_label   = sl,
+        dst_label   = dl,
+        exp_tag_hex = prior and prior.exp_tag_hex or nil,
+      }
+    end
 
     -- Crypto (E=0): need channel key + privkey pair → derive blind keys
     if not crypto or not ch_entry or not ch_entry.derived_keys then
@@ -873,13 +951,16 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
               local tag_hex = bytes_to_hex(ack_tag)
               tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
                 :set_text("Expected ACK Tag: " .. tag_hex)
-              if not pinfo.visited then
-                _ack_by_tag[tag_hex] = {
+              if not pinfo.visited and mic_len >= 4 then
+                local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+                local entry = _ack_by_mic[mic_hex] or {
                   frame     = pinfo.number,
                   timestamp = pinfo.abs_ts,
                   src_label = sl,
                   dst_label = dl,
                 }
+                entry.exp_tag_hex = tag_hex
+                _ack_by_mic[mic_hex] = entry
               end
               local back = _ack_by_frame[pinfo.number]
               if back then
@@ -984,7 +1065,7 @@ end
 -- FCF(1) + type-specific minimums.
 local MIN_LEN = {
   [0] = 1 + 3,    -- BCST:  FCF + SRC_hint (beacon)
-  [1] = 1 + 3 + 8,-- UACK:  FCF + DST_hint + ACK_TAG
+  [1] = 1 + 8,    -- UACK:  FCF + ACK trailer (ack_mic||ack_tag); no DST hint
   [2] = 1 + 3 + 3 + 5 + 4,  -- UNIC:  FCF+DST+SRC_hint+SECINFO+MIC4
   [3] = 1 + 3 + 3 + 5 + 4,  -- UNAR:  same
   [4] = 1 + 2 + 5 + 4,       -- MCST:  FCF+CHANNEL+SECINFO+MIC4
