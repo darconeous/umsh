@@ -21,7 +21,10 @@ use umsh::hal::Radio;
 
 const USAGE: &str = "\
 usage: umsh-capture <serial-port> [options]\n\
-       umsh-capture --ble [selector] [options]\n\n\
+       umsh-capture --ble [selector] [options]\n\
+       umsh-capture --scan-ble\n\n\
+--scan-ble lists nearby companion radios (id, name, RSSI) without\n\
+connecting; the id works as a --ble selector.\n\n\
 Options (RF defaults shown):\n\
   --freq-khz=910525\n\
   --bw-hz=62500\n\
@@ -438,6 +441,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if first == "--help" || first == "-h" {
         print!("{USAGE}");
         return Ok(());
+    }
+
+    if first == "--scan-ble" {
+        if let Some(extra) = args.next() {
+            return Err(format!("--scan-ble takes no arguments (got {extra:?})\n\n{USAGE}").into());
+        }
+        #[cfg(feature = "ble-radio")]
+        {
+            use umsh::companion_radio::BleFrameLink;
+            let timeout = std::time::Duration::from_secs(5);
+            println!("scanning for companion radios ({timeout:?})...");
+            let results = BleFrameLink::scan(timeout).await?;
+            if results.is_empty() {
+                println!("no companion radios found");
+            } else {
+                for result in results {
+                    let name = result.name.as_deref().unwrap_or("(no name)");
+                    match result.rssi {
+                        Some(rssi) => println!("{}  {name}  rssi {rssi} dBm", result.id),
+                        None => println!("{}  {name}", result.id),
+                    }
+                }
+            }
+            return Ok(());
+        }
+        #[cfg(not(feature = "ble-radio"))]
+        return Err("the ble-radio feature is required for --scan-ble".into());
     }
 
     let mut rest: Vec<String> = args.collect();

@@ -23,7 +23,7 @@ use umsh::core::PublicKey;
 const USAGE: &str = "\
 usage: umsh-companionctl <serial-port> <command> [options]\n\
        umsh-companionctl --ble[=selector] <command> [options]\n\
-       umsh-companionctl --ble-scan\n\n\
+       umsh-companionctl --scan-ble\n\n\
 Manages a companion-radio NCP without disturbing it: attaches with the\n\
 non-resetting full-protocol handshake, so an autonomously operating\n\
 board keeps its configuration unless the command changes it.\n\n\
@@ -67,7 +67,7 @@ Commands:\n\
   dev-peer [list]       list device-identity peer public keys\n\
   dev-peer add <KEY>       add a device peer public key\n\
   dev-peer remove <KEY>    remove a device peer public key\n\n\
---ble-scan lists nearby companion radios (id, name, RSSI) without\n\
+--scan-ble lists nearby companion radios (id, name, RSSI) without\n\
 connecting; the id works as a --ble= selector.\n\n\
 Options:\n\
   --baud=115200           serial bit rate\n\
@@ -329,9 +329,9 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
     let mut index = 0;
     let first = args.get(index).ok_or("missing transport")?.clone();
     index += 1;
-    let transport = if first == "--ble-scan" {
+    let transport = if first == "--scan-ble" || first == "--ble-scan" {
         if let Some(extra) = args.get(index) {
-            return Err(format!("--ble-scan takes no arguments (got {extra:?})"));
+            return Err(format!("{first} takes no arguments (got {extra:?})"));
         }
         return Ok(Invocation {
             transport: Transport::BleScan,
@@ -1358,7 +1358,7 @@ async fn run(invocation: Invocation) -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             #[cfg(not(feature = "ble-radio"))]
-            Err("the ble-radio feature is required for --ble-scan".into())
+            Err("the ble-radio feature is required for --scan-ble".into())
         }
     }
 }
