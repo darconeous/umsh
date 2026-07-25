@@ -331,16 +331,24 @@ Using 2-byte fields for both `number` and `length` ensures that option numbers a
 
 ### Ack Tag Construction
 
-When a packet type requests an acknowledgement (UNAR or BUAR), both the sender and receiver independently compute an **ack tag** — an 8-byte value that the receiver includes in the MAC ack and the sender uses to match incoming acks to outstanding requests.
+When a packet type requests an acknowledgement (UNAR or BUAR), the acknowledgement carries two fields that are computed independently by both the sender and the receiver: an **ack MIC** for correlation and an **ack tag** for authentication.
 
-The ack tag is computed as follows:
+The **ack MIC** is simply the first 4 bytes of the original packet's on-wire MIC:
+
+```text
+ack_mic = first_4_bytes( on_wire_MIC )
+```
+
+It is public — any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.
+
+The **ack tag** is a keyed value that only the original sender and the final destination can produce. It is computed as follows:
 
 1. Compute the full 16-byte AES-CMAC over the AAD and plaintext using `K_mic` (this is the same computation used to produce the packet MIC, before any truncation).
 2. Encrypt the 16-byte CMAC with a single AES-128-ECB block encryption using the pairwise `K_enc`.
-3. Truncate the result to 8 bytes.
+3. Truncate the result to 4 bytes.
 
 ```text
-ack_tag = truncate_to_8( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
+ack_tag = truncate_to_4( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
 ```
 
 Where:
@@ -348,7 +356,11 @@ Where:
 - `K_enc` is the encryption key used for the packet — the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
 - `full_16B_CMAC` is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length
 
-The ack tag is never transmitted in the original packet — it appears only in the [MAC Ack](packet-types.md#mac-ack-packet) response. Because it requires knowledge of `K_enc`, a passive observer who intercepts the original packet cannot forge a valid ack, regardless of the MIC size used on the wire. The ack tag also bears no visible relationship to the on-wire MIC, preventing observers from correlating ack packets with the original packets by comparing values.
+The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`ack_mic` followed by `ack_tag`, 8 bytes total). The [Ack MIC option](packet-options.md#ack-mic-option-8) carries only `ack_mic`, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.
+
+The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. The keyed `ack_tag`, by contrast, never appears in the original packet: producing it requires knowledge of `K_enc`, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though `ack_mic` is public. With a 4-byte keyed tag, a blind forgery succeeds with probability `2^-32` per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break.
+
+The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own — which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
 
 AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
 

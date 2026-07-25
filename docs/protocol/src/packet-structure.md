@@ -14,11 +14,11 @@ All UMSH packets begin with a one-byte Frame Control Field (`FCF`). Optional com
 Where:
 
 - `FHOPS` is present if the FCF flood hop count flag is set
-- `DST` is a 3-byte destination hint (in MAC Ack packets it is a 3-byte prefix of the original sender's public key)
+- `DST` is a 3-byte destination hint (MAC Ack packets carry no `DST`)
 - `CHAN` is a 2-byte channel identifier
 - `SRC` is a compact 3-byte source hint (when `S` flag is clear) or 32-byte source public key (when `S` flag is set); in multicast and blind unicast packets with encryption enabled, `SRC` is encrypted inside the ciphertext rather than appearing as a separate field
 - `SECINFO` is present on authenticated/encrypted packet types
-- `MIC` is present on authenticated/encrypted packet types; MAC acks carry an [ack tag](security.md#ack-tag-construction) instead
+- `MIC` is present on authenticated/encrypted packet types; MAC acks carry a fixed [ack trailer (ack MIC + ack tag)](security.md#ack-tag-construction) instead
 
 Not all fields are supported for all packet types.
 
@@ -131,7 +131,7 @@ The byte `0xFF` (delta nibble = 15, length nibble = 15) separates the options bl
 
 Parsing proceeds as follows:
 
-1. Determine the **options+payload region**: `buf[options_start .. packet_end − trailer_len]`, where `trailer_len` is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for ACK_TAG, or 0 for broadcast). The trailer length is known before options are parsed.
+1. Determine the **options+payload region**: `buf[options_start .. packet_end − trailer_len]`, where `trailer_len` is the length of the fixed-size trailer at the end of the packet (MIC length from SECINFO, or 8 for the MAC ack trailer, or 0 for broadcast). The trailer length is known before options are parsed.
 2. Scan options in order through that region, consuming each delta-length-value record. Because option records are variable-length, this scan is the only way to locate the end of the options block.
 3. If a `0xFF` byte is encountered during the scan, the bytes remaining in the region (between the `0xFF` and the trailer) are the payload. A `0xFF` with zero bytes remaining is a valid empty payload.
 4. If the region is exhausted without encountering a `0xFF`, there is no payload.

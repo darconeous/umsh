@@ -46,7 +46,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 | 5 | Minimum RSSI | Critical, Static | 0–1 bytes |
 | 6 | Route Retry | Non-Critical, Dynamic | 0 bytes |
 | 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
-| 8 | ACK Tag | Non-Critical, Static | 8 bytes|
+| 8 | Ack MIC | Non-Critical, Static | 4 bytes|
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
 | 10 | Trace Signal | Non-Critical, Dynamic | 0–1 bytes |
 | 11 | Region Code | Critical, Dynamic | 2 bytes |
@@ -106,11 +106,13 @@ This distinction allows forwarding-related metadata (source routes, trace routes
   - in `Hybrid` mode, repeaters also replace or insert it on every forwarded packet
   - in `Unlicensed` mode, repeaters remove it if present and do not add their own
 
-### ACK Tag (option 8)
+### Ack MIC (option 8)
 
-This option represents a piggy-backed MAC ACK that, when received, behaves as if it was an ACK for the given packet, instead of sending both a UACK and an application-level response in two separate packets. 
+This option represents a piggy-backed MAC ack that, when received, behaves as if it was an ack for the referenced packet, instead of sending both a MAC ack and an application-level response in two separate packets.
 
-- Type: 8-byte ACK tag.
+- Type: 4-byte ack MIC — the first 4 bytes of the acknowledged packet's on-wire MIC (see [Ack Tag Construction](security.md#ack-tag-construction)).
+
+The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The `ack_mic` value simply identifies which outstanding request the reply acknowledges.
 
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB

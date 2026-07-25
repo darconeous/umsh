@@ -1285,12 +1285,14 @@ queue provide durable custody, but hosts and application protocols
 **MUST NOT** rely on it.
 
 The acknowledgement is an ordinary
-[MAC Ack packet](packet-types.md#mac-ack-packet): `DST` is the first 3
-bytes of the peer's public key, and the 8-byte ack tag is computed as
-specified in [Ack Tag Construction](security.md#ack-tag-construction),
-using the provisioned pairwise keys (combined with the channel keys for
-`BUAR`). If the original frame carried a flood hop count, the ack's
-`FHOPS_REM` is initialized from the original frame's `FHOPS_ACC`.
+[MAC Ack packet](packet-types.md#mac-ack-packet): the `ack MIC` is the
+first 4 bytes of the acknowledged frame's MIC and the 4-byte `ack tag` is
+computed as specified in
+[Ack Tag Construction](security.md#ack-tag-construction), using the
+provisioned pairwise keys (combined with the channel keys for `BUAR`). The
+ack carries no destination hint. If the original frame carried a flood hop
+count, the ack's `FHOPS_REM` is initialized from the original frame's
+`FHOPS_ACC`.
 
 Delegated ack transmissions use the NCP's normal transmit path and are
 subject to the configured duty-cycle limit; the NCP **MUST NOT** exceed the

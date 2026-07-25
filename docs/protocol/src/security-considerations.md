@@ -94,6 +94,7 @@ Even with encryption enabled, the following information is visible to a passive 
 | Flood hop count | All with FHOPS | Reveals approximate distance from the original sender |
 | Packet size | All | May correlate with payload type or content length |
 | MIC | All authenticated | Unique per-packet; usable as a packet fingerprint for correlation across hops |
+| Ack MIC (4 bytes) | MAC Ack | Prefix of the acknowledged packet's MIC; links the ack to the original packet and confirms its delivery. Carries no explicit endpoint identifier (the MAC Ack has no destination hint), but the link to the original packet remains a correlation vector |
 
 In encrypted multicast, the source address is encrypted inside the ciphertext. In blind unicast, both the source and destination addresses are encrypted using the channel key — only the channel identifier remains in the clear. Normal unicast exposes both the destination hint and source hint (or full source key) to passive observers.
 

@@ -2,7 +2,7 @@
 
 ### Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?
 
-No. A MAC Ack contains an [ack tag](security.md#ack-tag-construction) — an 8-byte value derived by encrypting the full 16-byte CMAC with `K_enc`. Computing a valid ack tag requires knowledge of the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC, but cannot derive the ack tag from it without `K_enc`. Ack forgery is therefore as hard as breaking the underlying key agreement.
+Not without the pairwise key. A MAC Ack carries two fields: a public [ack MIC](security.md#ack-tag-construction) (the first 4 bytes of the original packet's on-wire MIC, used only for correlation) and a keyed 4-byte [ack tag](security.md#ack-tag-construction) derived by encrypting the full 16-byte CMAC with `K_enc`. Only the `ack tag` authenticates the ack, and computing it requires the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC and thus reproduce the public `ack MIC`, but cannot derive the keyed `ack tag` without `K_enc`. Blind forgery of the 4-byte tag succeeds with probability `2^-32` per attempt, which is infeasible to brute-force online over a bandwidth-limited LoRa channel; and even a successful forgery only causes a false delivery confirmation (a reliability denial-of-service), never a confidentiality or integrity break.
 
 ### Doesn't blind unicast have a circular dependency between the MIC and address decryption?
 
