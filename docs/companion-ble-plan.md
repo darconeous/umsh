@@ -1262,11 +1262,12 @@ tradeoff isn't relitigated later):
   is generically useful, so the fork is expected to be temporary. If
   upstream lands a different shape, converge on theirs at the next
   deliberate pin move; until then the pin only moves deliberately.
-- The C4 lockout and D's bond capacity reuse the same gate: overall,
-  `pairing_enabled = bond_count < 4 && (pairing_mode ||
-  (pin_configured && !locked_out))`.
-  With a PIN configured, this gate is what actually stops passkey
-  bit-leak probing once the failure counter trips.
+- The C4 lockout is the gate: overall, `pairing_enabled = pairing_mode
+  || (pin_configured && !locked_out)`. Bond-store capacity is *not* a
+  term — a full store evicts its least-recently-used bond (Phase D)
+  rather than refusing to pair. With a PIN configured, this gate is
+  what actually stops passkey bit-leak probing once the failure counter
+  trips.
 
 ## Phase 0 — BLE stack spike (gate)
 
@@ -1655,9 +1656,10 @@ Policy truth table:
     hidden pairing gesture.
   - Exit: new bond completes | bonded host establishes an encrypted
     connection | timer expiry.
-  - Pairing acceptance is the fork's gate, driven from one place (with D's
-    capacity term included once persistence lands): `pairing_enabled =
-    bond_count < 4 && (pairing_mode || (pin_configured && !locked_out))`.
+  - Pairing acceptance is the fork's gate, driven from one place:
+    `pairing_enabled = pairing_mode || (pin_configured && !locked_out)`.
+    Bond-store capacity never appears in this gate; Phase D makes room by
+    evicting the least-recently-used bond.
   - LED: add a pairing-mode pattern to `LedEngine` timings.
 - **Lockout**: failed-pairing counter in `ble_task` (RAM; resets on a
   successful pairing or reboot). At 3, `locked_out = true` — the gate
@@ -1730,9 +1732,9 @@ bonded reconnect kills pairing mode.
   through the MPSL-coordinated flash interface (`nrf-mpsl` flash
   feature). This firmware persists nothing else, so this is the only
   flash/BLE interaction.
-- Persist: bond store (identity keys + LTKs; cap 4 bonds — at
-  capacity, new pairing fails per spec §Bond Management) and the
-  pairing PIN (write-only at the protocol; never logged or echoed in
+- Persist: bond store (identity keys + LTKs; cap 4 bonds, with a separate
+  most-recently-used slot-order record — at capacity a new pairing evicts
+  the bond at the back of that list) and the pairing PIN (write-only at the protocol; never logged or echoed in
   diagnostics). PIN updates are transactional: validate, commit the
   new value with the MPSL-coordinated flash interface, then publish it
   to the live SMP state through an infallible assignment. Until the
@@ -1741,17 +1743,49 @@ bonded reconnect kills pairing mode.
   storage record format/commit protocol must also make power loss at
   any point select either the complete old value or the complete new
   value on reboot, never a partial record.
-- The runtime pairing gate tracks the number of durably stored bonds. At four
-  bonds it rejects pairing before constructing an SMP state machine, even when
-  pairing mode or a static PIN would otherwise enable pairing; a successful
-  local wipe immediately reopens capacity. Host policy tests cover every term
-  in this combined gate.
+- Bond-store capacity never blocks pairing. Recency lives in a single
+  persisted record separate from the bonds themselves: an ordered list of
+  the occupied bond slots, most-recently-used first. Bond records hold
+  only keys and never carry recency, so a reconnect never rewrites one.
+  - The list is reordered when a bond is created (new slot goes to the
+    front) and when a peer completes an encrypted reconnect (its slot
+    moves to the front). **If the slot is already at the front, nothing is
+    written** — the common case of the same phone reconnecting repeatedly
+    costs no flash writes at all, and the worst case is one small
+    fixed-size record rewrite.
+  - When a new bond must be committed and all four slots are occupied, the
+    slot at the *back* of the list is the victim: its bond record is
+    overwritten with the new keys and the slot moves to the front.
+  - Eviction is deliberate, not silent: the evicted peer's stale bond is
+    also deleted from the volatile controller/host store so it cannot keep
+    an encrypted link, and the display reports that an older pairing was
+    replaced.
+  - The list is the authority on occupancy and order. On boot, reconcile it
+    against the bond records: a slot present in one but not the other is
+    resolved by dropping the bond (fail-closed), and a missing or
+    unparseable list is rebuilt in arbitrary order over whatever bonds
+    exist rather than wiping them.
+  - Any bond backing an active encrypted connection is skipped as a
+    victim — walk toward the front of the list until an unpinned slot is
+    found. If every slot is pinned that way, the new pairing fails rather
+    than tearing down a live link.
+  - The pairing gate stays `pairing_mode || (pin_configured &&
+    !locked_out)`. LRU eviction changes *which* bond survives, not who is
+    allowed to pair; a stranger who satisfies the gate can still displace
+    the oldest bond, which is the intended trade of capacity-DoS
+    resistance for usability. Host policy tests cover every term in the
+    gate plus the eviction ordering.
 - Bond persistence failure is fail-closed. A newly completed SMP bond
   is not eligible to attach until its keys have been committed. If
   that commit fails, disconnect the peer and delete the volatile bond
   from the controller/host store so it cannot use an apparently valid
-  but non-durable bond for characteristic access. Capacity is checked
-  before accepting a new pairing.
+  but non-durable bond for characteristic access. Eviction and insertion
+  are ordered so power loss is always recoverable: commit the new bond
+  record into the victim's slot first, then rewrite the order list. A
+  reboot between the two shows the new bond in the store with a stale
+  position in the list — correct keys, merely imprecise recency — which
+  the boot-time reconciliation above repairs. There is never a store
+  missing the victim without the replacement, and never five bonds.
 - Local bond deletion (spec requirement) is an explicit destructive action
   in the T-Echo's on-screen BLE UI. It must display what will be cleared and
   require confirmation before clearing bonds and the PIN. A boot-time
@@ -1762,7 +1796,13 @@ bonded reconnect kills pairing mode.
 after power cycle needs no re-pairing; on-screen wipe flow verified; BLE
 connection stays up across a persistence write burst; injected PIN-
 and bond-write failures preserve the previous PIN, reject the new
-bond, and leave storage recoverable after an immediate power cycle.
+bond, and leave storage recoverable after an immediate power cycle;
+pairing a fifth phone against a full store evicts the least-recently-used
+bond, leaves the other three usable without re-pairing, and forces the
+evicted phone to re-pair; a power cycle interrupting the eviction leaves
+every surviving bond usable, with boot-time reconciliation repairing the
+order list. Reconnecting the same phone repeatedly issues no flash writes
+after the first (the order list is already fronted on that slot).
 
 ## Phase E — hardware validation and polish
 

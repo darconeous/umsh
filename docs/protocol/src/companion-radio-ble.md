@@ -251,9 +251,11 @@ ceremony itself, which the following requirements bound.
 
 ### Pairing Mode {#pairing-mode}
 
-Except as provided for configured-PIN and OOB pairing below, the NCP
-accepts pairing requests from unbonded devices only while in **pairing
-mode**; at all other times such requests **MUST** be rejected.
+Except as provided for OOB pairing below, the NCP accepts pairing
+requests from unbonded devices only while in **pairing mode**; at all
+other times such requests **MUST** be rejected. A configured pairing PIN
+selects the association model but does not bypass the pairing-mode
+requirement.
 
 Entering pairing mode:
 
@@ -289,9 +291,9 @@ serial transports.
   unauthenticated; the pairing-mode gesture is the entire trust
   decision.
 * Devices with a pairing PIN configured (see (#pairing-pin)) use LESC
-  Passkey Entry with the configured PIN as a static passkey. Such
-  pairing **MAY** be accepted outside pairing mode. The NCP **MUST**
-  count consecutive passkey authentication failures — pairing
+  Passkey Entry with the configured PIN as a static passkey. New bonds
+  still **MUST** be accepted only while in pairing mode. The NCP
+  **MUST** count consecutive passkey authentication failures — pairing
   attempts that fail the LESC confirm-value or DHKey check — since
   power-on; the counter resets on a successful pairing or a power
   cycle. Rejections that never reach passkey authentication
@@ -358,8 +360,9 @@ BLE.
   mechanism is implementation-specific but **MUST NOT** be invocable
   through the companion-radio protocol itself over an unauthenticated
   path.
-* NCPs **MAY** limit the number of stored bonds; when full, new
-  pairing attempts fail until a bond is deleted locally.
+* NCPs **MAY** limit the number of stored bonds. When a new bond is
+  enrolled while the store is full, the NCP **MUST** evict the
+  least-recently-used bond to make room.
 
 ### Layering Note
 
