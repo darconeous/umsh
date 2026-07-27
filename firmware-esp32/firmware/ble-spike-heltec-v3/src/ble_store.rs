@@ -5,7 +5,7 @@
 //! nRF path). This module supplies the Espressif flash primitive, the
 //! two-page rotation policy, and the runtime handles — the exact
 //! analogue of the `JournalFlash` / `BleStore` / `ProtoStore` trio in
-//! `companion-ncp-techo/src/main.rs`, backed by `esp_storage::FlashStorage`
+//! `techo/src/main.rs`, backed by `esp_storage::FlashStorage`
 //! behind an embassy mutex instead of the MPSL-shared nRF NVMC.
 //!
 //! ## Region placement
@@ -249,7 +249,7 @@ impl BleStore {
         Ok((self.snapshot.bonds.len(), true))
     }
 
-    /// Kept for parity with the NCP's security-wipe path (and a future
+    /// Kept for parity with the device's security-wipe path (and a future
     /// recovery build); unused by the spike's happy path.
     #[allow(dead_code)]
     pub async fn clear_security(&mut self) -> Result<(), ()> {
@@ -268,7 +268,7 @@ pub type BootPayload = heapless08::Vec<u8, { proto::MAX_PAYLOAD }>;
 
 /// Runtime handle for one full-protocol record journal: the snapshot
 /// journal or the device-identity journal, selected by its first page.
-/// Port of the nRF NCP's `ProtoStore`.
+/// Port of the nRF firmware's `ProtoStore`.
 pub struct ProtoStore {
     flash: &'static SharedFlash,
     /// First page of this journal's two-page rotation.
@@ -350,7 +350,7 @@ impl ProtoStore {
     }
 }
 
-// ─── Trouble bond conversion helpers (verbatim from the nRF NCP) ────────
+// ─── Trouble bond conversion helpers (verbatim from the nRF firmware) ────────
 
 /// Encode a live trouble bond for the flash journal. `addr.to_bytes()`
 /// prepends the address-kind byte, so `[0]` is the kind and `[1..]` is the

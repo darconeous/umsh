@@ -31,7 +31,7 @@ use umsh::{
 };
 
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, FrameLink};
+use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -329,19 +329,19 @@ async fn run_serial_chat(
     #[cfg(feature = "serial-radio")]
     {
         // The companion-radio path follows the same API story as UDP mode. Only the
-        // concrete radio transport differs: the NCP owns the LoRa PHY and this host
-        // owns the MAC, linked by the minimal companion-radio protocol over serial.
-        // RF profile matching the companion-ncp firmware defaults
+        // concrete radio transport differs: the device owns the LoRa PHY and this host
+        // owns the MAC, linked by the minimal ULCP over serial.
+        // RF profile matching the device firmware defaults
         // (MeshCore-US bringup: 910.525 MHz / SF7 / BW62.5 kHz / CR4-5).
-        let mut radio_config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+        let mut radio_config = UlcpDeviceConfig::new(910_525, 62_500, 7, 5);
         radio_config.tx_power_dbm = 14;
-        let radio = CompanionRadio::open_serial(&serial_path, baud_rate, radio_config)
+        let radio = UlcpDevice::open_serial(&serial_path, baud_rate, radio_config)
             .await
             .map_err(|error| {
-                std::io::Error::other(format!("companion attach failed: {error:?}"))
+                std::io::Error::other(format!("radio attach failed: {error:?}"))
             })?;
-        println!("companion radio: {}", radio.ncp_version());
-        run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await
+        println!("companion radio: {}", radio.dev_version());
+        run_radio_chat(identity_path, skip_counter_load, peer_key, radio).await
     }
 
     #[cfg(not(feature = "serial-radio"))]
@@ -369,13 +369,13 @@ async fn run_ble_chat(
         eprintln!(
             "Linux pairing is OS-mediated. Pair/trust with `bluetoothctl` and an enabled agent if the security-gated subscription is rejected."
         );
-        let mut radio_config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+        let mut radio_config = UlcpDeviceConfig::new(910_525, 62_500, 7, 5);
         radio_config.tx_power_dbm = 14;
-        let radio = CompanionRadio::open_ble(selector.as_deref(), radio_config)
+        let radio = UlcpDevice::open_ble(selector.as_deref(), radio_config)
             .await
             .map_err(|error| std::io::Error::other(format!("BLE attach failed: {error:?}")))?;
-        println!("companion radio: {}", radio.ncp_version());
-        run_companion_chat(identity_path, skip_counter_load, peer_key, radio).await
+        println!("companion radio: {}", radio.dev_version());
+        run_radio_chat(identity_path, skip_counter_load, peer_key, radio).await
     }
     #[cfg(not(feature = "ble-radio"))]
     {
@@ -385,25 +385,25 @@ async fn run_ble_chat(
 }
 
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-async fn run_companion_chat<L: FrameLink>(
+async fn run_radio_chat<L: FrameLink>(
     identity_path: PathBuf,
     skip_counter_load: bool,
     peer_key: PublicKey,
-    mut radio: CompanionRadio<L>,
+    mut radio: UlcpDevice<L>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // This host owns the MAC and does its own filtering, so a
-    // provisioned NCP's host-domain receive filters must not gate live
+    // provisioned device's host-domain receive filters must not gate live
     // delivery: enable the session-scoped promiscuous mode (reverts on
-    // detach, touches no provisioning). NCPs predating the property
+    // detach, touches no provisioning). devices predating the property
     // refuse the set; delivery then follows their filtering.
     match radio
-        .set_prop(umsh::companion::ids::prop::MAC_PROMISCUOUS, &[1])
+        .set_prop(umsh::ulcp_wire::ids::prop::MAC_PROMISCUOUS, &[1])
         .await
     {
         Ok(_) => {}
-        Err(umsh::companion_radio::CompanionRadioError::Status(status)) => eprintln!(
-            "warning: NCP refused promiscuous mode ({status:?}); reception is limited \
-             to the NCP's provisioned receive filtering"
+        Err(umsh::ulcp::UlcpError::Status(status)) => eprintln!(
+            "warning: device refused promiscuous mode ({status:?}); reception is limited \
+             to the device's provisioned receive filtering"
         ),
         Err(error) => return Err(error.into()),
     }

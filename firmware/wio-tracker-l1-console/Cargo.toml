@@ -1,0 +1,55 @@
+[package]
+name = "firmware-wio-tracker-l1-console"
+description = "Seeed Wio Tracker L1 / L1 Pro bringup firmware (USB-CDC + OLED + LoRa + MAC)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Bringup firmware for the Seeed Wio Tracker L1 family.
+# See docs/firmware-plan-wio-tracker-l1.md for the full plan.
+#
+# Like the other firmware crates, this is in `workspace.members` but
+# NOT in `default-members`, so root-level `cargo check` does not try
+# to cross-compile it on the developer's host.
+
+[[bin]]
+name = "firmware-wio-tracker-l1-console"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-wio-tracker-l1 = { path = "../../crates/umsh-bsp-wio-tracker-l1", default-features = false }
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+heapless = { version = "0.8", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+static_cell = "2"
+# SX1262 LoRa radio driver and supporting crates. Pinned via workspace dep
+# so the patched lora-rs fork applies uniformly across all firmware.
+lora-phy = { workspace = true }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3; provide a no-op
+# global logger so the firmware links without a debug transport.
+defmt = "0.3"
+# UMSH MAC coordinator and software crypto (Phase 4: MAC integration).
+# embedded-alloc provides the global heap required by umsh-sync (alloc).
+embedded-alloc = { version = "0.5", default-features = false }
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-cli = { path = "../../crates/umsh-cli", default-features = false, features = ["alloc"] }
+umsh-core = { path = "../../crates/umsh-core", default-features = false }
+umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
+rand = { workspace = true }

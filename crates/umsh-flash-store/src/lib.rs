@@ -4,8 +4,7 @@
 //! This is the storage engine every UMSH board shares. It is generic over
 //! the async flash driver (`F: MultiwriteNorFlash`) and the sharing mutex
 //! (`M: RawMutex`); chip BSPs supply concrete backings and alias the
-//! types. See `docs/firmware-storage-plan.md` for the architectural
-//! rationale (sizing, why not littlefs/ekv, accepted limitations).
+//! types.
 //!
 //! The same map serves every trait. Logical separation is by ASCII key
 //! prefix decided at the call site:
@@ -763,8 +762,7 @@ where
 /// View implementing [`umsh_hal::CounterStore`] on top of a shared
 /// [`FlashStore`]. Counters are stored as little-endian u32 values
 /// keyed by the caller-supplied context bytes (the MAC layer is
-/// expected to prefix them with `mac.tx:` / `mac.rx:` per the layout
-/// in `docs/firmware-storage-plan.md`).
+/// expected to prefix them with `mac.tx:` / `mac.rx:`).
 pub struct CounterView<F, M>
 where
     F: MultiwriteNorFlash + 'static,

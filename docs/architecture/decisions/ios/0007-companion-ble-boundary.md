@@ -18,7 +18,7 @@ raw device-key canonicalization, and battery-value decoding. Swift passes
 complete ATT values into one opaque session object and receives outbound frames
 plus immutable typed snapshots and validated raw receive events; feature views
 never retain CoreBluetooth or generated types. The desktop and mobile hosts use
-the same `umsh-companion` transaction-ID allocator and property-notification
+the same `umsh-ulcp` transaction-ID allocator and property-notification
 classifier even though their transport orchestration remains platform-specific.
 
 CoreBluetooth runs on a dedicated serial queue. Only immutable

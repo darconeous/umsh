@@ -11,12 +11,12 @@
 
 use std::time::Duration;
 
-use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, SerialFrameLink};
+use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, SerialFrameLink};
 use umsh::core::{NodeHint, PacketBuilder};
 use umsh::hal::{CadPolicy, Radio, TxOptions};
 
-fn config() -> CompanionRadioConfig {
-    let mut config = CompanionRadioConfig::new(910_525, 62_500, 7, 5);
+fn config() -> UlcpDeviceConfig {
+    let mut config = UlcpDeviceConfig::new(910_525, 62_500, 7, 5);
     config.tx_power_dbm = 14;
     config.response_timeout = Duration::from_secs(2);
     config
@@ -42,8 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // broadcast (source hint AB:CD:EF) for an external sniffer to watch.
     if args.get(1).map(String::as_str) == Some("tx") {
         let stream = tokio_serial::new(args[2].as_str(), 115_200).open_native_async()?;
-        let mut tx = CompanionRadio::new(SerialFrameLink::new(stream), config()).await?;
-        println!("tx-only {} on {} @ MeshCore US (src hint AB:CD:EF)", tx.ncp_version(), args[2]);
+        let mut tx = UlcpDevice::new(SerialFrameLink::new(stream), config()).await?;
+        println!("tx-only {} on {} @ MeshCore US (src hint AB:CD:EF)", tx.dev_version(), args[2]);
         for counter in 0u32..40 {
             match Radio::transmit(&mut tx, &beacon(counter), TxOptions { cad: CadPolicy::Skip }).await
             {
@@ -58,14 +58,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (rx_port, tx_port) = (&args[1], &args[2]);
 
     let tx_stream = tokio_serial::new(tx_port.as_str(), 115_200).open_native_async()?;
-    let mut tx = CompanionRadio::new(SerialFrameLink::new(tx_stream), config()).await?;
-    println!("tx {} on {tx_port}", tx.ncp_version());
+    let mut tx = UlcpDevice::new(SerialFrameLink::new(tx_stream), config()).await?;
+    println!("tx {} on {tx_port}", tx.dev_version());
 
     let rx_stream = tokio_serial::new(rx_port.as_str(), 115_200).open_native_async()?;
-    let mut rx = CompanionRadio::attach_existing(SerialFrameLink::new(rx_stream), config()).await?;
-    println!("rx {} on {rx_port} (attached, non-resetting)", rx.ncp_version());
+    let mut rx = UlcpDevice::attach_existing(SerialFrameLink::new(rx_stream), config()).await?;
+    println!("rx {} on {rx_port} (attached, non-resetting)", rx.dev_version());
     // Live delivery bypassing whatever host filters the board carries.
-    rx.set_prop(umsh::companion::ids::prop::MAC_PROMISCUOUS, &[1])
+    rx.set_prop(umsh::ulcp_wire::ids::prop::MAC_PROMISCUOUS, &[1])
         .await?;
 
     let rx_fut = async {

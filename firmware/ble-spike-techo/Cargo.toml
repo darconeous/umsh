@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-companion = { path = "../../crates/umsh-companion" }
+umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = { version = "0.7" }

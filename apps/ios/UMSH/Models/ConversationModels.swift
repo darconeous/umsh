@@ -16,10 +16,10 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     var lastHeard: Date? = nil
 
     var displayName: String {
-        alias ?? advertisedName ?? (isCompanionRadio ? "Companion radio" : identity.hint.text)
+        alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
     }
 
-    var isCompanionRadio: Bool { systemRole == "companion_radio" }
+    var isUlcpDevice: Bool { systemRole == "companion_radio" }
 }
 
 enum PeerKind: String, CaseIterable, Hashable, Sendable, Identifiable {

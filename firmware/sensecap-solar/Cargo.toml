@@ -1,0 +1,90 @@
+[package]
+name = "firmware-sensecap-solar"
+description = "SenseCAP Solar Node P1-Pro ULCP device firmware over USB-CDC and BLE GATT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# See firmware/techo/Cargo.toml for the capability-feature
+# rationale; this block is kept identical across the device boards, only the
+# `default` differs. Default build = SenseCAP Solar Node.
+#
+# SenseCAP Solar is a hybrid: SX1262 radio (like the T-Echo) + SAADC
+# battery monitor (like the T-1000E) + no display + active-high LED. It
+# therefore enables `cap-battery-saadc` but NOT `t1000e` / `has-display`
+# / `button-techo` / `system-off-techo` / `led-active-low`.
+default = ["board-sensecap-solar"]
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-t1000e = ["t1000e", "cap-battery-saadc"]
+board-sensecap-solar = ["cap-battery-saadc", "power-button"]
+t1000e = []
+cap-battery-saadc = []
+has-display = []
+button-techo = []
+system-off-techo = []
+led-active-low = []
+# LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
+lfclk-rc = []
+# Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
+# (SenseCAP Solar PWR button on P1.07).
+power-button = []
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).
+no-ble = []
+# Hardware-diagnostic mode: mirror BLE security/GATT lifecycle events as
+# ASCII on the USB serial endpoint.
+ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
+ble-store-fault-inject = ["ble-debug"]
+ble-wipe-on-boot = ["ble-debug"]
+
+[[bin]]
+name = "firmware-sensecap-solar"
+# The protocol, security, transport-arbitration, and BLE implementation are
+# shared with the T-Echo / T-1000E device firmware. Board differences are selected by
+# the capability + `board-sensecap-solar` features above.
+path = "../techo/src/main.rs"
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-bsp-sensecap-solar = { path = "../../crates/umsh-bsp-sensecap-solar", default-features = false }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ulcp = { path = "../../crates/umsh-ulcp" }
+umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime" }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
+umsh-journal-store = { path = "../../crates/umsh-journal-store" }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+heapless = { version = "0.8", default-features = false }
+heapless09 = { package = "heapless", version = "0.9", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+log = { version = "0.4", default-features = false, optional = true }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7" }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
+embassy-usb = { version = "0.6", default-features = false }
+static_cell = "2"
+lora-phy = { workspace = true }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-alloc = { version = "0.5", default-features = false }
+defmt = "0.3"
+nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
+nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+rand_core = { workspace = true }
+rand_chacha = { version = "0.3", default-features = false }
+umsh-core = { path = "../../crates/umsh-core", default-features = false }
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
+rand = { workspace = true }
+
+[dev-dependencies]
+lora-phy = { workspace = true }
+critical-section = { version = "1", features = ["std"] }

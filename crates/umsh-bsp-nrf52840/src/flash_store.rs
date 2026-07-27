@@ -8,8 +8,7 @@
 //! region, then re-exports the resulting concrete types under their
 //! historical `Nvmc*` names.
 //!
-//! See `docs/firmware-storage-plan.md` for the architectural rationale and
-//! [`umsh_flash_store`] for the key layout and the CPU-stall warning
+//! See [`umsh_flash_store`] for the key layout and the CPU-stall warning
 //! (every NVMC page erase blocks the entire executor for ~85 ms — callers
 //! MUST batch writes).
 

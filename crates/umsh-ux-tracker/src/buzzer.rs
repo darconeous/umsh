@@ -5,7 +5,7 @@
 //! Symmetric in shape to the [`led`](crate::led) module, but with
 //! tones instead of on/off pulses and with silence semantics.
 //!
-//! Per `docs/firmware-plan-t1000e.md`:
+//! UX rules:
 //!
 //! - **Power-on:** rising melody.
 //! - **Power-off:** falling melody.

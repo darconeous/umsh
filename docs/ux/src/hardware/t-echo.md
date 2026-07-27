@@ -5,7 +5,7 @@ button, a capacitive touch control used for the display light, and an RGB LED.
 The standard model has no buzzer. The phone remains the primary UMSH interface,
 but the display makes status and sensitive device actions visible.
 
-## Current companion NCP interface
+## Current firmware BLE menu
 
 The current e-paper BLE menu contains Status, Start pairing, and Clear bonds.
 It shows bond count and whether pairing is open, closed, or locked.

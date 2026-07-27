@@ -4,8 +4,8 @@ This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
 knowledge that make a restored identity immediately useful. It is produced
 and consumed by host implementations — phones, tablets, and desktops. A
-companion radio never generates, stores, or parses an export artifact, and a
-companion radio's own device identity is never exported through this format.
+ULCP device never generates, stores, or parses an export artifact, and a
+device's own identity is never exported through this format.
 
 The artifact is a single binary object with two layers:
 

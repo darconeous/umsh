@@ -832,7 +832,7 @@ struct AppRootView: View {
               let localIdentity
         else { return }
         do {
-            try await applicationStore.upsertCompanionRadioPeer(
+            try await applicationStore.upsertUlcpDevicePeer(
                 ownerIdentityID: localIdentity.id,
                 publicAddress: radioIdentity.canonicalAddress,
                 advertisedName: snapshot.name,
@@ -932,7 +932,7 @@ private extension View {
     ) -> some View {
         toolbar {
             ToolbarItem(placement: .principal) {
-                CompanionToolbarItem(snapshot: snapshot, action: action)
+                RadioToolbarItem(snapshot: snapshot, action: action)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {

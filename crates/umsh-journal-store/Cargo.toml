@@ -6,9 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Board-independent journal machinery extracted from the nRF companion
-# NCP firmware (companion-ncp-techo's ble_store / proto_store /
-# counter_map modules), so the ESP32-S3 companion port shares the same
+# Board-independent journal machinery extracted from the nRF device
+# firmware (techo's ble_store / proto_store /
+# counter_map modules), so the ESP32-S3 port shares the same
 # tested record engine. Generic over the flash driver via the
 # `RecordWriter` / `PageEraser` traits; flash *addresses* are memory-map
 # facts and stay with each firmware (the nRF map lives in the T-Echo

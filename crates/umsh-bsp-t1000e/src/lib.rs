@@ -8,8 +8,7 @@
 //! power rails — and exposes a `Board::init()` entry point that returns a
 //! struct implementing `umsh::Platform` and the board-capability traits.
 //!
-//! See `docs/firmware-plan-t1000e.md` for the safety contract and phasing,
-//! and `docs/t1000e-hardware.md` for the firmware-derived hardware reference.
+//! See `docs/t1000e-hardware.md` for the firmware-derived hardware reference.
 
 pub use umsh_bsp_nrf52840::panic_persist;
 
@@ -45,7 +44,7 @@ pub use radio::RF_SWITCH;
 
 // TODO: implement.
 //
-// Planned modules (see docs/firmware-plan-t1000e.md):
+// Planned modules:
 //   pub mod pins;          // typed pin handles per t1000e-hardware.md.
 //   pub mod board;          // `Board::init()` + the composed Platform impl.
 //   pub mod rails;          // SwitchedRails (sensor/accel/buzzer enables).

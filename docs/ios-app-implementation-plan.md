@@ -149,7 +149,7 @@ Swift mobile-core adapter
 Rust umsh-mobile-core
     ↓
 umsh-core / umsh-crypto / umsh-mac / umsh-node / umsh-text /
-umsh-uri / umsh-chat-room / umsh-companion
+umsh-uri / umsh-chat-room / umsh-ulcp
 ```
 
 ### Binary packaging

@@ -1312,11 +1312,54 @@ dependencies = [
  "static_cell",
  "trouble-host",
  "umsh-bsp-nrf52840",
- "umsh-companion",
+ "umsh-ulcp",
 ]
 
 [[package]]
-name = "firmware-companion-cli-sensecap-solar"
+name = "firmware-sensecap-solar"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "log",
+ "lora-phy",
+ "nrf-mpsl",
+ "nrf-sdc",
+ "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-sensecap-solar",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-sensecap-solar-console"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -1336,7 +1379,49 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-companion-cli-t1000e"
+name = "firmware-t1000e"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "log",
+ "lora-phy",
+ "nrf-mpsl",
+ "nrf-sdc",
+ "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-t1000e",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-t1000e-console"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -1354,7 +1439,7 @@ dependencies = [
  "lora-phy",
  "rand 0.10.1",
  "static_cell",
- "umsh-app-companion-cli",
+ "umsh-app-ulcp-cli",
  "umsh-bsp-nrf52840",
  "umsh-bsp-t1000e",
  "umsh-cli",
@@ -1369,7 +1454,51 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-companion-cli-techo"
+name = "firmware-techo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "log",
+ "lora-phy",
+ "nrf-mpsl",
+ "nrf-sdc",
+ "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-techo",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-techo-console"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -1402,7 +1531,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-companion-cli-wio-tracker-l1"
+name = "firmware-wio-tracker-l1-console"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -1427,135 +1556,6 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-companion-ncp-sensecap-solar"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "critical-section",
- "defmt 0.3.100",
- "embassy-executor 0.10.0",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "heapless 0.9.3",
- "log",
- "lora-phy",
- "nrf-mpsl",
- "nrf-sdc",
- "rand 0.10.1",
- "rand_chacha",
- "rand_core 0.6.4",
- "static_cell",
- "trouble-host",
- "umsh-bsp-nrf52840",
- "umsh-bsp-sensecap-solar",
- "umsh-companion",
- "umsh-companion-ncp",
- "umsh-companion-runtime",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-journal-store",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-companion-ncp-t1000e"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor 0.10.0",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "heapless 0.9.3",
- "log",
- "lora-phy",
- "nrf-mpsl",
- "nrf-sdc",
- "rand 0.10.1",
- "rand_chacha",
- "rand_core 0.6.4",
- "static_cell",
- "trouble-host",
- "umsh-bsp-nrf52840",
- "umsh-bsp-t1000e",
- "umsh-companion",
- "umsh-companion-ncp",
- "umsh-companion-runtime",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-journal-store",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-companion-ncp-techo"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "critical-section",
- "defmt 0.3.100",
- "embassy-executor 0.10.0",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-graphics",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "heapless 0.9.3",
- "log",
- "lora-phy",
- "nrf-mpsl",
- "nrf-sdc",
- "rand 0.10.1",
- "rand_chacha",
- "rand_core 0.6.4",
- "static_cell",
- "trouble-host",
- "umsh-bsp-nrf52840",
- "umsh-bsp-techo",
- "umsh-companion",
- "umsh-companion-ncp",
- "umsh-companion-runtime",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-journal-store",
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
@@ -3278,8 +3278,6 @@ dependencies = [
  "tokio-serial",
  "umsh-chat-room",
  "umsh-cli",
- "umsh-companion",
- "umsh-companion-ncp",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
@@ -3287,12 +3285,14 @@ dependencies = [
  "umsh-node",
  "umsh-sync",
  "umsh-text",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
  "umsh-uri",
  "uuid",
 ]
 
 [[package]]
-name = "umsh-app-companion-cli"
+name = "umsh-app-ulcp-cli"
 version = "0.1.0"
 
 [[package]]
@@ -3405,54 +3405,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "umsh-companion"
-version = "0.1.0"
-
-[[package]]
-name = "umsh-companion-ncp"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-sync 0.8.0",
- "heapless 0.8.0",
- "umsh-companion",
- "umsh-core",
- "umsh-crypto",
-]
-
-[[package]]
-name = "umsh-companion-runtime"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "heapless 0.8.0",
- "lora-phy",
- "umsh-companion",
- "umsh-companion-ncp",
- "umsh-crypto",
- "umsh-hal",
- "umsh-journal-store",
- "umsh-radio-loraphy",
-]
-
-[[package]]
-name = "umsh-companion-web-engine"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "serde",
- "serde_json",
- "umsh-companion",
- "umsh-companion-ncp",
- "umsh-core",
- "umsh-crypto",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [
@@ -3522,7 +3474,6 @@ dependencies = [
  "rand 0.10.1",
  "tempfile",
  "tokio",
- "umsh-companion",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
@@ -3530,6 +3481,7 @@ dependencies = [
  "umsh-node",
  "umsh-sync",
  "umsh-text",
+ "umsh-ulcp",
  "umsh-uri",
  "uniffi",
  "zeroize",
@@ -3577,6 +3529,54 @@ dependencies = [
  "umsh-core",
  "umsh-mac",
  "umsh-node",
+]
+
+[[package]]
+name = "umsh-ulcp"
+version = "0.1.0"
+
+[[package]]
+name = "umsh-ulcp-device"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
+ "heapless 0.8.0",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-ulcp",
+]
+
+[[package]]
+name = "umsh-ulcp-runtime"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "heapless 0.8.0",
+ "lora-phy",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-radio-loraphy",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+]
+
+[[package]]
+name = "umsh-ulcp-web-engine"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "serde",
+ "serde_json",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "wasm-bindgen",
 ]
 
 [[package]]

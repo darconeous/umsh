@@ -1,6 +1,6 @@
-//! Live inspection and pcap capture from a companion-radio NCP.
+//! Live inspection and pcap capture from a ULCP radio device.
 //!
-//! The default RF profile matches the T-Echo NCP bringup profile:
+//! The default RF profile matches the T-Echo bringup profile:
 //! 910.525 MHz, LoRa SF7 / BW62.5 kHz / CR4-5, sync word 0x1424.
 
 #![cfg_attr(
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use umsh::companion_radio::{CompanionRadio, CompanionRadioConfig, FrameLink};
+use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
 use umsh::core::{PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, SourceAddrRef};
 use umsh::hal::Radio;
 
@@ -32,10 +32,10 @@ Options (RF defaults shown):\n\
   --cr=5                 coding-rate denominator (4/5)\n\
   --sync-word=0x1424\n\
   --tx-power=14\n\
-  --idle-probe-secs=10    verify BLE/NCP/radio health while RF is quiet\n\
+  --idle-probe-secs=10    verify BLE/ULCP/radio health while RF is quiet\n\
   --umsh-only             suppress raw/decoded output for non-UMSH frames\n\
   --pcap=PATH             write a Wireshark-compatible capture\n\
-  --capture=radio         pcap layer: radio, companion, or both\n\
+  --capture=radio         pcap layer: radio, ulcp, or both\n\
   --pcap-raw              store exact raw LoRa frames (radio layer only)\n\
   --pcap-linktype=N       pcap LINKTYPE value required by --pcap-raw\n\
   --reconnect-delay-secs=2\n\
@@ -44,7 +44,7 @@ Options (RF defaults shown):\n\
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CaptureLayers {
     Radio,
-    Companion,
+    Ulcp,
     Both,
 }
 
@@ -52,10 +52,10 @@ impl CaptureLayers {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "radio" => Ok(Self::Radio),
-            "companion" => Ok(Self::Companion),
+            "ulcp" | "companion" => Ok(Self::Ulcp),
             "both" => Ok(Self::Both),
             _ => Err(format!(
-                "invalid capture layer {value:?}; expected radio, companion, or both"
+                "invalid capture layer {value:?}; expected radio, ulcp, or both"
             )),
         }
     }
@@ -64,8 +64,8 @@ impl CaptureLayers {
         matches!(self, Self::Radio | Self::Both)
     }
 
-    fn companion(self) -> bool {
-        matches!(self, Self::Companion | Self::Both)
+    fn ulcp(self) -> bool {
+        matches!(self, Self::Ulcp | Self::Both)
     }
 }
 
@@ -186,8 +186,8 @@ impl RfArgs {
         Ok(rf)
     }
 
-    fn config(&self) -> CompanionRadioConfig {
-        let mut config = CompanionRadioConfig::new(
+    fn config(&self) -> UlcpDeviceConfig {
+        let mut config = UlcpDeviceConfig::new(
             self.freq_khz,
             self.bandwidth_hz,
             self.spreading_factor,
@@ -214,8 +214,8 @@ fn parse_u32(value: &str) -> Result<u32, String> {
 
 #[derive(Clone, Copy)]
 enum CaptureDirection {
-    HostToNcp,
-    NcpToHost,
+    HostToDevice,
+    DeviceToHost,
 }
 
 /// Shared classic-pcap sink. Frames use the repository's established
@@ -225,8 +225,8 @@ type SharedCapture = Rc<RefCell<PcapWriter>>;
 
 const PCAP_LINKTYPE_ETHERNET: u32 = 1;
 const RADIO_UDP_PORT: u16 = 4242;
-const COMPANION_HOST_UDP_PORT: u16 = 4243;
-const COMPANION_NCP_UDP_PORT: u16 = 4244;
+const ULCP_HOST_UDP_PORT: u16 = 4243;
+const ULCP_DEVICE_UDP_PORT: u16 = 4244;
 
 #[derive(Clone, Copy)]
 enum PcapEncapsulation {
@@ -272,7 +272,7 @@ impl PcapWriter {
         if self.layers.radio() {
             match self.encapsulation {
                 PcapEncapsulation::Ethernet => self.write_udp(
-                    CaptureDirection::NcpToHost,
+                    CaptureDirection::DeviceToHost,
                     RADIO_UDP_PORT,
                     RADIO_UDP_PORT,
                     frame,
@@ -283,18 +283,18 @@ impl PcapWriter {
         Ok(())
     }
 
-    fn write_companion(
+    fn write_ulcp(
         &mut self,
         direction: CaptureDirection,
         frame: &[u8],
     ) -> std::io::Result<()> {
-        if !self.layers.companion() {
+        if !self.layers.ulcp() {
             return Ok(());
         }
         debug_assert!(matches!(self.encapsulation, PcapEncapsulation::Ethernet));
         let (src_port, dst_port) = match direction {
-            CaptureDirection::HostToNcp => (COMPANION_HOST_UDP_PORT, COMPANION_NCP_UDP_PORT),
-            CaptureDirection::NcpToHost => (COMPANION_NCP_UDP_PORT, COMPANION_HOST_UDP_PORT),
+            CaptureDirection::HostToDevice => (ULCP_HOST_UDP_PORT, ULCP_DEVICE_UDP_PORT),
+            CaptureDirection::DeviceToHost => (ULCP_DEVICE_UDP_PORT, ULCP_HOST_UDP_PORT),
         };
         self.write_udp(direction, src_port, dst_port, frame)
     }
@@ -317,13 +317,13 @@ impl PcapWriter {
         let mut packet = Vec::with_capacity(frame_len);
 
         // Synthetic Ethernet and loopback IPv4 endpoints. Direction remains
-        // visible in both endpoint addresses and companion UDP ports.
+        // visible in both endpoint addresses and ULCP UDP ports.
         packet.extend_from_slice(&[0x02, 0, 0, 0, 0, 2]);
         packet.extend_from_slice(&[0x02, 0, 0, 0, 0, 1]);
         packet.extend_from_slice(&0x0800u16.to_be_bytes());
         let (src_ip, dst_ip) = match direction {
-            CaptureDirection::HostToNcp => ([127, 0, 0, 1], [127, 0, 0, 2]),
-            CaptureDirection::NcpToHost => ([127, 0, 0, 2], [127, 0, 0, 1]),
+            CaptureDirection::HostToDevice => ([127, 0, 0, 1], [127, 0, 0, 2]),
+            CaptureDirection::DeviceToHost => ([127, 0, 0, 2], [127, 0, 0, 1]),
         };
         let ip_start = packet.len();
         packet.extend_from_slice(&[
@@ -401,7 +401,7 @@ impl<L> CapturingFrameLink<L> {
 
     fn record(&self, direction: CaptureDirection, frame: &[u8]) -> std::io::Result<()> {
         if let Some(capture) = &self.capture {
-            capture.borrow_mut().write_companion(direction, frame)?;
+            capture.borrow_mut().write_ulcp(direction, frame)?;
         }
         Ok(())
     }
@@ -411,18 +411,18 @@ impl<L: FrameLink> FrameLink for CapturingFrameLink<L> {
     async fn send_frame(
         &mut self,
         frame: &[u8],
-    ) -> Result<(), umsh::companion_radio::CompanionRadioError> {
-        self.record(CaptureDirection::HostToNcp, frame)?;
+    ) -> Result<(), umsh::ulcp::UlcpError> {
+        self.record(CaptureDirection::HostToDevice, frame)?;
         self.inner.send_frame(frame).await
     }
 
     fn poll_recv_frame(
         &mut self,
         cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<Vec<u8>, umsh::companion_radio::CompanionRadioError>> {
+    ) -> core::task::Poll<Result<Vec<u8>, umsh::ulcp::UlcpError>> {
         match self.inner.poll_recv_frame(cx) {
             core::task::Poll::Ready(Ok(frame)) => {
-                match self.record(CaptureDirection::NcpToHost, &frame) {
+                match self.record(CaptureDirection::DeviceToHost, &frame) {
                     Ok(()) => core::task::Poll::Ready(Ok(frame)),
                     Err(error) => core::task::Poll::Ready(Err(error.into())),
                 }
@@ -449,7 +449,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "ble-radio")]
         {
-            use umsh::companion_radio::BleFrameLink;
+            use umsh::ulcp::BleFrameLink;
             let timeout = std::time::Duration::from_secs(5);
             println!("scanning for companion radios ({timeout:?})...");
             let results = BleFrameLink::scan(timeout).await?;
@@ -517,12 +517,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "serial-radio")]
     {
         use tokio_serial::SerialPortBuilderExt;
-        use umsh::companion_radio::SerialFrameLink;
+        use umsh::ulcp::SerialFrameLink;
 
         println!("attaching to {first} ...");
         let stream = tokio_serial::new(&first, 115_200).open_native_async()?;
         let link = CapturingFrameLink::new(SerialFrameLink::new(stream), capture.clone());
-        let radio = CompanionRadio::new(link, config).await?;
+        let radio = UlcpDevice::new(link, config).await?;
         let mut stats = DumpStats::new();
         stats.sessions = 1;
         return run_dump(radio, &rf, &mut stats, capture.as_ref()).await;
@@ -556,18 +556,18 @@ impl DumpStats {
 #[cfg(feature = "ble-radio")]
 async fn run_ble_dump(
     selector: Option<&str>,
-    config: CompanionRadioConfig,
+    config: UlcpDeviceConfig,
     rf: RfArgs,
     capture: Option<SharedCapture>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use umsh::companion_radio::{BleFrameLink, BleFrameLinkConfig};
+    use umsh::ulcp::{BleFrameLink, BleFrameLinkConfig};
 
     let mut stats = DumpStats::new();
     loop {
         println!("discovering BLE companion radio ...");
         let failure: Box<dyn std::error::Error> =
             match BleFrameLink::connect(selector, BleFrameLinkConfig::default()).await {
-                Ok(link) => match CompanionRadio::new(
+                Ok(link) => match UlcpDevice::new(
                     CapturingFrameLink::new(link, capture.clone()),
                     config.clone(),
                 )
@@ -602,36 +602,36 @@ async fn run_ble_dump(
 }
 
 async fn run_dump<L: FrameLink>(
-    mut radio: CompanionRadio<L>,
+    mut radio: UlcpDevice<L>,
     rf: &RfArgs,
     stats: &mut DumpStats,
     capture: Option<&SharedCapture>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
-        "session #{}: ncp={} boot_status={:?}",
+        "session #{}: device={} boot_status={:?}",
         stats.sessions,
-        radio.ncp_version(),
+        radio.dev_version(),
         radio.boot_status(),
     );
     println!(
         "radio: {} kHz, BW {} Hz, SF{}, CR 4/{}, sync 0x{:04x}",
         rf.freq_khz, rf.bandwidth_hz, rf.spreading_factor, rf.coding_rate_denom, rf.sync_word,
     );
-    // A capture is a promiscuous listener. An NCP with a provisioned
+    // A capture is a promiscuous listener. A device with a provisioned
     // (or saved-and-restored) host domain filters receptions, so the
     // factory deliver-everything rule cannot be relied on; bypass the
     // filtering for this session (`PROP_MAC_PROMISCUOUS` is
-    // session-scoped and reverts on detach). An NCP that predates the
+    // session-scoped and reverts on detach). A device that predates the
     // property refuses the set — capture then sees only frames
     // matching its receive filtering.
     match radio
-        .set_prop(umsh::companion::ids::prop::MAC_PROMISCUOUS, &[1])
+        .set_prop(umsh::ulcp_wire::ids::prop::MAC_PROMISCUOUS, &[1])
         .await
     {
         Ok(_) => println!("promiscuous mode enabled"),
-        Err(umsh::companion_radio::CompanionRadioError::Status(status)) => eprintln!(
-            "warning: NCP refused promiscuous mode ({status:?}); \
-             capture is limited to the NCP's receive filtering"
+        Err(umsh::ulcp::UlcpError::Status(status)) => eprintln!(
+            "warning: device refused promiscuous mode ({status:?}); \
+             capture is limited to the device's receive filtering"
         ),
         Err(error) => return Err(error.into()),
     }
@@ -645,7 +645,7 @@ async fn run_dump<L: FrameLink>(
             Ok(result) => result?,
             Err(_) => {
                 let value = radio
-                    .get_prop(umsh::companion::ids::prop::PHY_RSSI)
+                    .get_prop(umsh::ulcp_wire::ids::prop::PHY_RSSI)
                     .await
                     .map_err(|error| {
                         format!(
@@ -888,13 +888,13 @@ mod tests {
     }
 
     #[test]
-    fn ethernet_pcap_preserves_companion_direction_and_payload() {
-        let path = temp_capture_path("companion");
+    fn ethernet_pcap_preserves_ulcp_direction_and_payload() {
+        let path = temp_capture_path("ulcp");
         let mut writer =
-            PcapWriter::create(&path, CaptureLayers::Companion, PcapEncapsulation::Ethernet)
+            PcapWriter::create(&path, CaptureLayers::Ulcp, PcapEncapsulation::Ethernet)
                 .unwrap();
         writer
-            .write_companion(CaptureDirection::HostToNcp, &[0x81, 0x02, 0x26])
+            .write_ulcp(CaptureDirection::HostToDevice, &[0x81, 0x02, 0x26])
             .unwrap();
         drop(writer);
 
@@ -905,11 +905,11 @@ mod tests {
         assert_eq!(packet[23], 17);
         assert_eq!(
             u16::from_be_bytes(packet[34..36].try_into().unwrap()),
-            COMPANION_HOST_UDP_PORT,
+            ULCP_HOST_UDP_PORT,
         );
         assert_eq!(
             u16::from_be_bytes(packet[36..38].try_into().unwrap()),
-            COMPANION_NCP_UDP_PORT,
+            ULCP_DEVICE_UDP_PORT,
         );
         assert_eq!(&packet[42..], &[0x81, 0x02, 0x26]);
     }

@@ -255,7 +255,7 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if snapshot.linkState == .attaching {
-                    Text("Bluetooth transport is attached. Waiting to start companion synchronization.")
+                    Text("Bluetooth transport is attached. Waiting to start radio synchronization.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if snapshot.linkState == .synchronizing {
@@ -277,7 +277,7 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if snapshot.hostState == .belongsToAnotherIdentity {
-                    Text("This radio belongs to another host. Replacing it clears that host's keys, filters, queued traffic, and saved host provisioning.")
+                    Text("This radio belongs to another host. Replacing it clears that host's keys, filters, and queued traffic.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -316,7 +316,7 @@ struct RadioDetailView: View {
                 Section("Radio state") {
                     LabeledContent(
                         "Protocol tier",
-                        value: provisioning.hasHostFiltering ? "Full companion" : "Transparent baseline"
+                        value: provisioning.hasHostFiltering ? "Full ULCP" : "Transparent baseline"
                     )
                     LabeledContent("Capabilities", value: "\(provisioning.capabilityCount)")
                     LabeledContent("Radio enabled", value: provisioning.phyEnabled ? "Yes" : "No")
@@ -332,7 +332,12 @@ struct RadioDetailView: View {
                         LabeledContent("Coding rate", value: "4/\(codingRate)")
                     }
                     if let saved = provisioning.saved {
-                        LabeledContent("Saved for restart", value: saved ? "Yes" : "No")
+                        LabeledContent("Saved for restart", value: saved.summary)
+                        if let warning = saved.warning {
+                            Text(warning)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     if let dutyNow = provisioning.dutyCycleNow {
                         LabeledContent("Past-hour duty usage", value: dutyPercentage(dutyNow))
@@ -414,7 +419,7 @@ struct RadioDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The previous host's keys, filters, queued traffic, and saved host provisioning will be permanently erased. The radio's own identity and device settings remain unchanged.")
+            Text("The previous host's keys, filters, and queued traffic will be erased. The radio's own identity and device settings remain unchanged.")
         }
         .confirmationDialog(
             "Forget this companion radio?",

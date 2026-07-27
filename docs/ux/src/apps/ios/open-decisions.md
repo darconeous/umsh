@@ -172,7 +172,7 @@ without suggesting that individual member removal is available.
 
 ## Radio ownership model
 
-The companion protocol allows exactly one provisioned tethered host identity,
+ULCP allows exactly one provisioned tethered host identity,
 while BLE may retain multiple bonds. Decide how the app explains:
 
 - a trusted phone whose identity is not currently provisioned;

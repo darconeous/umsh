@@ -10,8 +10,7 @@
 //!   Boards with a 32.768 kHz crystal can override this in the BSP
 //!   if the timing precision matters (e.g. for BLE).
 //! - Default interrupt priorities, leaving room for the SoftDevice
-//!   to claim the top priorities if it is ever enabled later
-//!   (see docs/firmware-plan-t1000e.md → BLE future-proofing).
+//!   to claim the top priorities if it is ever enabled later.
 
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 

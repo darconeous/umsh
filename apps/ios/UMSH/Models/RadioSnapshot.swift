@@ -1,4 +1,5 @@
 import Foundation
+import UMSHMobileCore
 
 struct RadioSnapshot: Equatable, Sendable {
     var linkState: RadioLinkState
@@ -66,7 +67,7 @@ struct RadioSnapshot: Equatable, Sendable {
             codingRateDenominator: 5,
             dutyCycleNow: 65,
             dutyCycleLimit: 655,
-            saved: true,
+            saved: .current,
             queuedFrames: 0,
             droppedFrames: 0,
             filterCount: 2,
@@ -196,13 +197,38 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let codingRateDenominator: UInt8?
     let dutyCycleNow: UInt16?
     let dutyCycleLimit: UInt16?
-    let saved: Bool?
+    let saved: SavedSnapshotRecord?
     let queuedFrames: Int?
     let droppedFrames: UInt32?
     let filterCount: Int?
     let hostChannelCount: Int?
     let hostPeerCount: Int?
     let autoAcknowledgementEnabled: Bool?
+}
+
+extension SavedSnapshotRecord {
+    /// One-line answer to "is this radio armed for restart?".
+    var summary: String {
+        switch self {
+        case .none: "No"
+        case .current: "Yes"
+        case .fallback: "Yes, out of date"
+        case .unreadable: "No — save failed to load"
+        }
+    }
+
+    /// What the operator has to do about it, when there is something.
+    /// A radio in either failure state works normally and looks normal;
+    /// this text is the only place it surfaces.
+    var warning: String? {
+        switch self {
+        case .none, .current: nil
+        case .fallback:
+            "The radio recovered older settings after its last save could not be read. Save again to store the current configuration."
+        case .unreadable:
+            "The radio's saved settings could not be read and it started with factory defaults. Save again to restore autonomous operation."
+        }
+    }
 }
 
 struct RadioSettings: Equatable, Sendable {

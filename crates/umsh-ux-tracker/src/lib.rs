@@ -24,7 +24,7 @@
 //!
 //! Policy (which event maps to which action, which CLI commands
 //! exist, how the MAC integrates) belongs in the consuming app
-//! crate, e.g. `umsh-app-companion-cli`.
+//! crate, e.g. `umsh-app-ulcp-cli`.
 //!
 //! Devices in a different class (handheld with screen + speaker +
 //! keyboard, headless mesh nodes) need their own `umsh-ux-<class>`

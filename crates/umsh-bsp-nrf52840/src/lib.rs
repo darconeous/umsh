@@ -43,5 +43,5 @@ pub use rng::Nrf52840Rng;
 
 // TODO: implement.
 //
-// Planned modules (see docs/firmware-plan-t1000e.md):
+// Planned modules:
 //   pub mod usb;           // embassy-nrf USB driver wrapper.

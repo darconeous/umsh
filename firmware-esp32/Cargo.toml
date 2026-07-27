@@ -5,7 +5,7 @@
 # driver constraints must not enter the root Cargo.lock. Shared UMSH crates
 # come in as path dependencies from ../crates.
 #
-# See docs/firmware-plan-heltec-lora32-v2.md and docs/firmware-architecture.md.
+# See docs/firmware-architecture.md.
 [workspace]
 members = [
     "crates/umsh-bsp-esp32",
@@ -14,9 +14,9 @@ members = [
     "firmware/hello-heltec-v2",
     "firmware/ble-spike-heltec-v2",
     "firmware/hello-heltec-v3",
-    "firmware/companion-cli-heltec-v3",
+    "firmware/heltec-v3-console",
     "firmware/ble-spike-heltec-v3",
-    "firmware/companion-ncp-heltec-v3",
+    "firmware/heltec-v3",
 ]
 resolver = "2"
 

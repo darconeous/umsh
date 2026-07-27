@@ -7,7 +7,7 @@
 //! out-of-order delivery, and a bounded cache of recently accepted MICs
 //! used both to reject backward-window replays and to recognize
 //! duplicates eligible for an idempotent re-acknowledgement. It is used
-//! by the host MAC per peer and per identity, and by the companion NCP
+//! by the host MAC per peer and per identity, and by the device
 //! per provisioned host peer for detached acknowledgement delegation.
 
 use heapless::Deque;

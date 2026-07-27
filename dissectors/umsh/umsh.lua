@@ -1139,8 +1139,8 @@ pcall(function()
 end)
 
 -- Synthetic UDP encapsulation used by the `umsh-capture` tool for raw
--- companion-protocol frames. Kept in a sibling module so the mesh dissector's
--- protocol logic remains independent of the host/NCP control plane.
+-- ULCP frames. Kept in a sibling module so the mesh dissector's
+-- protocol logic remains independent of the host/device control plane.
 pcall(function()
-  require("companion").register()
+  require("ulcp").register()
 end)

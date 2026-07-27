@@ -14,8 +14,8 @@ and hardware testing.
 
 ## T1000-E migration
 
-- What role-neutral result should single-click have in autonomous and NCP
-  firmware?
+- What role-neutral result should single-click have in autonomous and
+  tethered operation?
 - What unambiguous local feedback should distinguish request accepted,
   transmitted, and failed?
 

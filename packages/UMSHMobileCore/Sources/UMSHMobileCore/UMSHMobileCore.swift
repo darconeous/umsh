@@ -688,330 +688,6 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * Stateful mobile host session for the companion protocol.
- *
- * This is the protocol boundary: it consumes complete reassembled companion
- * frames and owns TIDs, response matching, capability-driven synchronization,
- * host ownership, and claim/save choreography. Platform code owns only the
- * transport lifecycle, byte shuttling, and timers.
- */
-public protocol MobileCompanionSessionProtocol: AnyObject, Sendable {
-
-    /**
-     * Abandon raw transactions whose GATT writes were rejected locally.
-     * Their late correlated responses are ignored once; the attachment and
-     * all non-raw session state remain intact.
-     */
-    func abandonRawTransmits(transactionIds: Data)  -> CompanionSessionUpdateRecord
-
-    /**
-     * Begin post-attach synchronization for a new transport generation.
-     */
-    func begin(selectedHostKey: Data?) throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Replace an unclaimed or other-host configuration with this phone's key.
-     */
-    func claim(hostKey: Data) throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Apply, verify, and persist a complete radio-settings snapshot.
-     */
-    func configure(settings: CompanionRadioSettingsRecord) throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Consume one complete companion frame and advance the session reducer.
-     */
-    func consume(frame: Data) throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Erase ALL mutable state on the radio (saved provisioning, device
-     * identity, BLE bonds, pairing PIN, every persisted journal) and
-     * reboot it. The radio does not reply — the reset drops the link —
-     * so this is fire-and-forget: send the frame, then treat the ensuing
-     * disconnect as completion. Permitted from any stage so a misbehaving
-     * radio can always be wiped; unlike `claim`/`configure` it makes no
-     * stage or ownership demands.
-     */
-    func factoryReset() throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Re-read every capability-gated property represented by the mobile
-     * snapshot. The existing snapshot remains usable while the bounded
-     * refresh is in flight; authoritative provisioning is published when
-     * the full capability-gated read completes.
-     */
-    func refresh() throws  -> CompanionSessionUpdateRecord
-
-    /**
-     * Invalidate all outstanding transactions for a disconnected transport.
-     */
-    func reset()  -> CompanionSessionUpdateRecord
-
-    /**
-     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
-     *
-     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
-     * Rust owns the companion command, stream identifier, metadata, TID, and
-     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the companion
-     * transmits without its pre-transmit channel-activity check — used for
-     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
-     */
-    func transmitRaw(data: Data, nocca: Bool) throws  -> CompanionSessionUpdateRecord
-
-}
-/**
- * Stateful mobile host session for the companion protocol.
- *
- * This is the protocol boundary: it consumes complete reassembled companion
- * frames and owns TIDs, response matching, capability-driven synchronization,
- * host ownership, and claim/save choreography. Platform code owns only the
- * transport lifecycle, byte shuttling, and timers.
- */
-open class MobileCompanionSession: MobileCompanionSessionProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilecompanionsession(self.handle, $0) }
-    }
-public convenience init() {
-    let handle =
-        try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_constructor_mobilecompanionsession_new(uniffiCallStatus
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilecompanionsession(handle, $0) }
-    }
-
-
-
-
-    /**
-     * Abandon raw transactions whose GATT writes were rejected locally.
-     * Their late correlated responses are ignored once; the attachment and
-     * all non-raw session state remain intact.
-     */
-open func abandonRawTransmits(transactionIds: Data) -> CompanionSessionUpdateRecord  {
-    return try!  FfiConverterTypeCompanionSessionUpdateRecord_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_abandon_raw_transmits(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(transactionIds),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Begin post-attach synchronization for a new transport generation.
-     */
-open func begin(selectedHostKey: Data?)throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_begin(
-            self.uniffiCloneHandle(),
-        FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Replace an unclaimed or other-host configuration with this phone's key.
-     */
-open func claim(hostKey: Data)throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_claim(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(hostKey),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Apply, verify, and persist a complete radio-settings snapshot.
-     */
-open func configure(settings: CompanionRadioSettingsRecord)throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_configure(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeCompanionRadioSettingsRecord_lower(settings),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Consume one complete companion frame and advance the session reducer.
-     */
-open func consume(frame: Data)throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_consume(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(frame),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Erase ALL mutable state on the radio (saved provisioning, device
-     * identity, BLE bonds, pairing PIN, every persisted journal) and
-     * reboot it. The radio does not reply — the reset drops the link —
-     * so this is fire-and-forget: send the frame, then treat the ensuing
-     * disconnect as completion. Permitted from any stage so a misbehaving
-     * radio can always be wiped; unlike `claim`/`configure` it makes no
-     * stage or ownership demands.
-     */
-open func factoryReset()throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_factory_reset(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Re-read every capability-gated property represented by the mobile
-     * snapshot. The existing snapshot remains usable while the bounded
-     * refresh is in flight; authoritative provisioning is published when
-     * the full capability-gated read completes.
-     */
-open func refresh()throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_refresh(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Invalidate all outstanding transactions for a disconnected transport.
-     */
-open func reset() -> CompanionSessionUpdateRecord  {
-    return try!  FfiConverterTypeCompanionSessionUpdateRecord_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_reset(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
-     *
-     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
-     * Rust owns the companion command, stream identifier, metadata, TID, and
-     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the companion
-     * transmits without its pre-transmit channel-activity check — used for
-     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
-     */
-open func transmitRaw(data: Data, nocca: Bool)throws  -> CompanionSessionUpdateRecord  {
-    return try  FfiConverterTypeCompanionSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilecompanionsession_transmit_raw(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(data),
-        FfiConverterBool.lower(nocca),uniffiCallStatus
-    )
-})
-}
-
-
-
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMobileCompanionSession: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = MobileCompanionSession
-
-    public static func lift(_ handle: UInt64) throws -> MobileCompanionSession {
-        return MobileCompanionSession(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: MobileCompanionSession) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCompanionSession {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: MobileCompanionSession, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileCompanionSession_lift(_ handle: UInt64) throws -> MobileCompanionSession {
-    return try FfiConverterTypeMobileCompanionSession.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMobileCompanionSession_lower(_ value: MobileCompanionSession) -> UInt64 {
-    return FfiConverterTypeMobileCompanionSession.lower(value)
-}
-
-
-
-
-
-
-/**
  * Durable adapter used by the iOS `umsh_hal::CounterStore` boundary.
  *
  * Each commit writes and synchronizes a temporary record, atomically renames
@@ -1172,7 +848,7 @@ public func FfiConverterTypeMobileCounterStore_lower(_ value: MobileCounterStore
 public protocol MobileGattReassemblerProtocol: AnyObject, Sendable {
 
     /**
-     * Consume one ATT value, returning a complete companion frame when the
+     * Consume one ATT value, returning a complete ULCP frame when the
      * segment ends one. Invalid input resets the shared reassembly state.
      */
     func push(segment: Data) throws  -> Data?
@@ -1245,7 +921,7 @@ public convenience init() {
 
 
     /**
-     * Consume one ATT value, returning a complete companion frame when the
+     * Consume one ATT value, returning a complete ULCP frame when the
      * segment ends one. Invalid input resets the shared reassembly state.
      */
 open func push(segment: Data)throws  -> Data?  {
@@ -1476,7 +1152,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func commitChatBatch(batchId: UInt64) async throws
 
     /**
-     * Report the actual physical companion-radio result for an outbound
+     * Report the actual physical radio result for an outbound
      * frame. This is intentionally distinct from accepting the frame into the
      * BLE/CRP queue: the MAC starts ACK and retry timing only after success.
      */
@@ -1500,7 +1176,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     /**
      * Fail every chat transmission currently owned by the mobile radio
-     * bridge. The platform calls this when companion-link delivery failed
+     * bridge. The platform calls this when ULCP-link delivery failed
      * after the MAC had accepted the frames, ensuring optimistic UI rows do
      * not remain in `Sending` indefinitely.
      */
@@ -1684,7 +1360,7 @@ open func commitChatBatch(batchId: UInt64)async throws   {
 }
 
     /**
-     * Report the actual physical companion-radio result for an outbound
+     * Report the actual physical radio result for an outbound
      * frame. This is intentionally distinct from accepting the frame into the
      * BLE/CRP queue: the MAC starts ACK and retry timing only after success.
      */
@@ -1758,7 +1434,7 @@ open func composeText(peerAddress: String, clientToken: UInt32, body: String)asy
 
     /**
      * Fail every chat transmission currently owned by the mobile radio
-     * bridge. The platform calls this when companion-link delivery failed
+     * bridge. The platform calls this when ULCP-link delivery failed
      * after the MAC had accepted the frames, ensuring optimistic UI rows do
      * not remain in `Sending` indefinitely.
      */
@@ -2163,726 +1839,341 @@ public func FfiConverterTypeMobileMeshWakeListener_lower(_ value: MobileMeshWake
 
 
 
-/**
- * UI-relevant fields from a validated `PROP_BATTERY` value.
- */
-public struct CompanionBatteryRecord: Equatable, Hashable {
-    public var percentage: UInt8?
-    public var isExternallyPowered: Bool?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(percentage: UInt8?, isExternallyPowered: Bool?) {
-        self.percentage = percentage
-        self.isExternallyPowered = isExternallyPowered
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionBatteryRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionBatteryRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionBatteryRecord {
-        return
-            try CompanionBatteryRecord(
-                percentage: FfiConverterOptionUInt8.read(from: &buf),
-                isExternallyPowered: FfiConverterOptionBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionBatteryRecord, into buf: inout [UInt8]) {
-        FfiConverterOptionUInt8.write(value.percentage, into: &buf)
-        FfiConverterOptionBool.write(value.isExternallyPowered, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionBatteryRecord_lift(_ buf: RustBuffer) throws -> CompanionBatteryRecord {
-    return try FfiConverterTypeCompanionBatteryRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionBatteryRecord_lower(_ value: CompanionBatteryRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionBatteryRecord.lower(value)
-}
 
 
 /**
- * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
- * This is an operation failure, never evidence that the transport framing is
- * corrupt or that the BLE connection should be closed.
+ * Stateful mobile host session for the ULCP.
+ *
+ * This is the protocol boundary: it consumes complete reassembled ULCP
+ * frames and owns TIDs, response matching, capability-driven synchronization,
+ * host ownership, and claim/save choreography. Platform code owns only the
+ * transport lifecycle, byte shuttling, and timers.
  */
-public struct CompanionOperationErrorRecord: Equatable, Hashable {
-    public var operation: String
-    public var statusCode: UInt32
-    public var statusName: String
+public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
 
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(operation: String, statusCode: UInt32, statusName: String) {
-        self.operation = operation
-        self.statusCode = statusCode
-        self.statusName = statusName
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionOperationErrorRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionOperationErrorRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionOperationErrorRecord {
-        return
-            try CompanionOperationErrorRecord(
-                operation: FfiConverterString.read(from: &buf),
-                statusCode: FfiConverterUInt32.read(from: &buf),
-                statusName: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionOperationErrorRecord, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.operation, into: &buf)
-        FfiConverterUInt32.write(value.statusCode, into: &buf)
-        FfiConverterString.write(value.statusName, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionOperationErrorRecord_lift(_ buf: RustBuffer) throws -> CompanionOperationErrorRecord {
-    return try FfiConverterTypeCompanionOperationErrorRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionOperationErrorRecord_lower(_ value: CompanionOperationErrorRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionOperationErrorRecord.lower(value)
-}
-
-
-/**
- * A validated property-bearing companion frame.
- */
-public struct CompanionPropertyFrameRecord: Equatable, Hashable {
-    public var transactionId: UInt8
-    public var command: UInt8
-    public var propertyId: UInt32
-    public var value: Data
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(transactionId: UInt8, command: UInt8, propertyId: UInt32, value: Data) {
-        self.transactionId = transactionId
-        self.command = command
-        self.propertyId = propertyId
-        self.value = value
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionPropertyFrameRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionPropertyFrameRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionPropertyFrameRecord {
-        return
-            try CompanionPropertyFrameRecord(
-                transactionId: FfiConverterUInt8.read(from: &buf),
-                command: FfiConverterUInt8.read(from: &buf),
-                propertyId: FfiConverterUInt32.read(from: &buf),
-                value: FfiConverterData.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionPropertyFrameRecord, into buf: inout [UInt8]) {
-        FfiConverterUInt8.write(value.transactionId, into: &buf)
-        FfiConverterUInt8.write(value.command, into: &buf)
-        FfiConverterUInt32.write(value.propertyId, into: &buf)
-        FfiConverterData.write(value.value, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionPropertyFrameRecord_lift(_ buf: RustBuffer) throws -> CompanionPropertyFrameRecord {
-    return try FfiConverterTypeCompanionPropertyFrameRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionPropertyFrameRecord_lower(_ value: CompanionPropertyFrameRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionPropertyFrameRecord.lower(value)
-}
-
-
-/**
- * Complete desired live radio configuration. Capability-gated fields must be
- * omitted when the companion does not advertise their associated capability.
- */
-public struct CompanionRadioSettingsRecord: Equatable, Hashable {
-    public var deviceName: String?
-    public var phyEnabled: Bool
-    public var frequencyKhz: UInt32
-    public var transmitPowerDbm: Int8
-    public var bandwidthHz: UInt32?
-    public var spreadingFactor: UInt8?
-    public var codingRateDenom: UInt8?
-    public var dutyCycleLimit: UInt16?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(deviceName: String?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleLimit: UInt16?) {
-        self.deviceName = deviceName
-        self.phyEnabled = phyEnabled
-        self.frequencyKhz = frequencyKhz
-        self.transmitPowerDbm = transmitPowerDbm
-        self.bandwidthHz = bandwidthHz
-        self.spreadingFactor = spreadingFactor
-        self.codingRateDenom = codingRateDenom
-        self.dutyCycleLimit = dutyCycleLimit
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionRadioSettingsRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionRadioSettingsRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRadioSettingsRecord {
-        return
-            try CompanionRadioSettingsRecord(
-                deviceName: FfiConverterOptionString.read(from: &buf),
-                phyEnabled: FfiConverterBool.read(from: &buf),
-                frequencyKhz: FfiConverterUInt32.read(from: &buf),
-                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
-                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
-                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
-                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
-                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionRadioSettingsRecord, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.deviceName, into: &buf)
-        FfiConverterBool.write(value.phyEnabled, into: &buf)
-        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
-        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
-        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
-        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
-        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
-        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionRadioSettingsRecord_lift(_ buf: RustBuffer) throws -> CompanionRadioSettingsRecord {
-    return try FfiConverterTypeCompanionRadioSettingsRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionRadioSettingsRecord_lower(_ value: CompanionRadioSettingsRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionRadioSettingsRecord.lower(value)
-}
-
-
-/**
- * Typed completion of one host-requested raw PHY transmission.
- */
-public struct CompanionRawTransmitResultRecord: Equatable, Hashable {
-    public var transactionId: UInt8
-    public var statusCode: UInt32
-    public var statusName: String
-    public var disposition: CompanionRawTransmitDisposition
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(transactionId: UInt8, statusCode: UInt32, statusName: String, disposition: CompanionRawTransmitDisposition) {
-        self.transactionId = transactionId
-        self.statusCode = statusCode
-        self.statusName = statusName
-        self.disposition = disposition
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionRawTransmitResultRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionRawTransmitResultRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRawTransmitResultRecord {
-        return
-            try CompanionRawTransmitResultRecord(
-                transactionId: FfiConverterUInt8.read(from: &buf),
-                statusCode: FfiConverterUInt32.read(from: &buf),
-                statusName: FfiConverterString.read(from: &buf),
-                disposition: FfiConverterTypeCompanionRawTransmitDisposition.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionRawTransmitResultRecord, into buf: inout [UInt8]) {
-        FfiConverterUInt8.write(value.transactionId, into: &buf)
-        FfiConverterUInt32.write(value.statusCode, into: &buf)
-        FfiConverterString.write(value.statusName, into: &buf)
-        FfiConverterTypeCompanionRawTransmitDisposition.write(value.disposition, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionRawTransmitResultRecord_lift(_ buf: RustBuffer) throws -> CompanionRawTransmitResultRecord {
-    return try FfiConverterTypeCompanionRawTransmitResultRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionRawTransmitResultRecord_lower(_ value: CompanionRawTransmitResultRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionRawTransmitResultRecord.lower(value)
-}
-
-
-/**
- * One validated raw mesh frame delivered by the companion radio.
- */
-public struct CompanionReceivedFrameRecord: Equatable, Hashable {
-    public var data: Data
-    public var rssiDbm: Int16?
-    public var lqi: UInt8?
-    public var snrCb: Int16?
-    public var wasBuffered: Bool
-    public var wasAcknowledged: Bool
-    public var ageSeconds: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?, wasBuffered: Bool, wasAcknowledged: Bool, ageSeconds: UInt32) {
-        self.data = data
-        self.rssiDbm = rssiDbm
-        self.lqi = lqi
-        self.snrCb = snrCb
-        self.wasBuffered = wasBuffered
-        self.wasAcknowledged = wasAcknowledged
-        self.ageSeconds = ageSeconds
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionReceivedFrameRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionReceivedFrameRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionReceivedFrameRecord {
-        return
-            try CompanionReceivedFrameRecord(
-                data: FfiConverterData.read(from: &buf),
-                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
-                lqi: FfiConverterOptionUInt8.read(from: &buf),
-                snrCb: FfiConverterOptionInt16.read(from: &buf),
-                wasBuffered: FfiConverterBool.read(from: &buf),
-                wasAcknowledged: FfiConverterBool.read(from: &buf),
-                ageSeconds: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionReceivedFrameRecord, into buf: inout [UInt8]) {
-        FfiConverterData.write(value.data, into: &buf)
-        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
-        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
-        FfiConverterOptionInt16.write(value.snrCb, into: &buf)
-        FfiConverterBool.write(value.wasBuffered, into: &buf)
-        FfiConverterBool.write(value.wasAcknowledged, into: &buf)
-        FfiConverterUInt32.write(value.ageSeconds, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionReceivedFrameRecord_lift(_ buf: RustBuffer) throws -> CompanionReceivedFrameRecord {
-    return try FfiConverterTypeCompanionReceivedFrameRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionReceivedFrameRecord_lower(_ value: CompanionReceivedFrameRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionReceivedFrameRecord.lower(value)
-}
-
-
-/**
- * Typed state published after each bounded companion-session transition.
- */
-public struct CompanionSessionSnapshotRecord: Equatable, Hashable {
-    public var generation: UInt64
-    public var phase: CompanionSessionPhase
-    public var hostOwnership: CompanionHostOwnership
-    public var deviceKey: Data?
-    public var deviceName: String?
-    public var battery: CompanionBatteryRecord?
-    public var provisioning: CompanionSyncRecord?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(generation: UInt64, phase: CompanionSessionPhase, hostOwnership: CompanionHostOwnership, deviceKey: Data?, deviceName: String?, battery: CompanionBatteryRecord?, provisioning: CompanionSyncRecord?) {
-        self.generation = generation
-        self.phase = phase
-        self.hostOwnership = hostOwnership
-        self.deviceKey = deviceKey
-        self.deviceName = deviceName
-        self.battery = battery
-        self.provisioning = provisioning
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CompanionSessionSnapshotRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionSessionSnapshotRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionSnapshotRecord {
-        return
-            try CompanionSessionSnapshotRecord(
-                generation: FfiConverterUInt64.read(from: &buf),
-                phase: FfiConverterTypeCompanionSessionPhase.read(from: &buf),
-                hostOwnership: FfiConverterTypeCompanionHostOwnership.read(from: &buf),
-                deviceKey: FfiConverterOptionData.read(from: &buf),
-                deviceName: FfiConverterOptionString.read(from: &buf),
-                battery: FfiConverterOptionTypeCompanionBatteryRecord.read(from: &buf),
-                provisioning: FfiConverterOptionTypeCompanionSyncRecord.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionSessionSnapshotRecord, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.generation, into: &buf)
-        FfiConverterTypeCompanionSessionPhase.write(value.phase, into: &buf)
-        FfiConverterTypeCompanionHostOwnership.write(value.hostOwnership, into: &buf)
-        FfiConverterOptionData.write(value.deviceKey, into: &buf)
-        FfiConverterOptionString.write(value.deviceName, into: &buf)
-        FfiConverterOptionTypeCompanionBatteryRecord.write(value.battery, into: &buf)
-        FfiConverterOptionTypeCompanionSyncRecord.write(value.provisioning, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionSessionSnapshotRecord_lift(_ buf: RustBuffer) throws -> CompanionSessionSnapshotRecord {
-    return try FfiConverterTypeCompanionSessionSnapshotRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionSessionSnapshotRecord_lower(_ value: CompanionSessionSnapshotRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionSessionSnapshotRecord.lower(value)
-}
-
-
-/**
- * Work produced by the Rust companion session. Frames are complete companion
- * frames; the platform adapter remains responsible for GATT segmentation and
- * write backpressure.
- */
-public struct CompanionSessionUpdateRecord: Equatable, Hashable {
-    public var outboundFrames: [Data]
-    public var receivedFrames: [CompanionReceivedFrameRecord]
-    public var snapshot: CompanionSessionSnapshotRecord
-    public var waitingForResponses: Bool
     /**
-     * True while one host-requested raw PHY transmission is awaiting the
-     * radio's `PROP_LAST_STATUS` completion.
+     * Abandon raw transactions whose GATT writes were rejected locally.
+     * Their late correlated responses are ignored once; the attachment and
+     * all non-raw session state remain intact.
      */
-    public var rawTransmitPending: Bool
+    func abandonRawTransmits(transactionIds: Data)  -> UlcpSessionUpdateRecord
+
     /**
-     * Transaction allocated by `transmit_raw` in this update, if any.
+     * Which relationship this session represents.
      */
-    public var rawTransmitStartedTransactionId: UInt8?
+    func attachMode()  -> UlcpAttachMode
+
     /**
-     * Completion for the raw PHY transmission consumed by this update.
-     * Rejections are ordinary radio-level send failures, not malformed
-     * companion frames.
+     * Begin post-attach synchronization for a new transport generation.
      */
-    public var rawTransmitResult: CompanionRawTransmitResultRecord?
+    func begin(selectedHostKey: Data?) throws  -> UlcpSessionUpdateRecord
+
     /**
-     * Non-transmit operation error consumed by this update. The companion
-     * session has already recovered to a stable stage and remains usable.
+     * Replace an unclaimed or other-host configuration with this phone's key.
      */
-    public var operationError: CompanionOperationErrorRecord?
+    func claim(hostKey: Data) throws  -> UlcpSessionUpdateRecord
 
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(outboundFrames: [Data], receivedFrames: [CompanionReceivedFrameRecord], snapshot: CompanionSessionSnapshotRecord, waitingForResponses: Bool,
-        /**
-         * True while one host-requested raw PHY transmission is awaiting the
-         * radio's `PROP_LAST_STATUS` completion.
-         */rawTransmitPending: Bool,
-        /**
-         * Transaction allocated by `transmit_raw` in this update, if any.
-         */rawTransmitStartedTransactionId: UInt8?,
-        /**
-         * Completion for the raw PHY transmission consumed by this update.
-         * Rejections are ordinary radio-level send failures, not malformed
-         * companion frames.
-         */rawTransmitResult: CompanionRawTransmitResultRecord?,
-        /**
-         * Non-transmit operation error consumed by this update. The companion
-         * session has already recovered to a stable stage and remains usable.
-         */operationError: CompanionOperationErrorRecord?) {
-        self.outboundFrames = outboundFrames
-        self.receivedFrames = receivedFrames
-        self.snapshot = snapshot
-        self.waitingForResponses = waitingForResponses
-        self.rawTransmitPending = rawTransmitPending
-        self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
-        self.rawTransmitResult = rawTransmitResult
-        self.operationError = operationError
-    }
+    /**
+     * Apply, verify, and persist a complete radio-settings snapshot.
+     */
+    func configure(settings: UlcpRadioSettingsRecord) throws  -> UlcpSessionUpdateRecord
 
+    /**
+     * Consume one complete ULCP frame and advance the session reducer.
+     */
+    func consume(frame: Data) throws  -> UlcpSessionUpdateRecord
 
+    /**
+     * Erase ALL mutable state on the radio (saved provisioning, device
+     * identity, BLE bonds, pairing PIN, every persisted journal) and
+     * reboot it. The radio does not reply — the reset drops the link —
+     * so this is fire-and-forget: send the frame, then treat the ensuing
+     * disconnect as completion. Permitted from any stage so a misbehaving
+     * radio can always be wiped; unlike `claim`/`configure` it makes no
+     * stage or ownership demands.
+     */
+    func factoryReset() throws  -> UlcpSessionUpdateRecord
 
+    /**
+     * Re-read every capability-gated property represented by the mobile
+     * snapshot. The existing snapshot remains usable while the bounded
+     * refresh is in flight; authoritative provisioning is published when
+     * the full capability-gated read completes.
+     */
+    func refresh() throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Invalidate all outstanding transactions for a disconnected transport.
+     */
+    func reset()  -> UlcpSessionUpdateRecord
+
+    /**
+     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
+     *
+     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
+     * Rust owns the ULCP command, stream identifier, metadata, TID, and
+     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
+     * transmits without its pre-transmit channel-activity check — used for
+     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+     */
+    func transmitRaw(data: Data, nocca: Bool) throws  -> UlcpSessionUpdateRecord
 
 }
-
-#if compiler(>=6)
-extension CompanionSessionUpdateRecord: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCompanionSessionUpdateRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionUpdateRecord {
-        return
-            try CompanionSessionUpdateRecord(
-                outboundFrames: FfiConverterSequenceData.read(from: &buf),
-                receivedFrames: FfiConverterSequenceTypeCompanionReceivedFrameRecord.read(from: &buf),
-                snapshot: FfiConverterTypeCompanionSessionSnapshotRecord.read(from: &buf),
-                waitingForResponses: FfiConverterBool.read(from: &buf),
-                rawTransmitPending: FfiConverterBool.read(from: &buf),
-                rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
-                rawTransmitResult: FfiConverterOptionTypeCompanionRawTransmitResultRecord.read(from: &buf),
-                operationError: FfiConverterOptionTypeCompanionOperationErrorRecord.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CompanionSessionUpdateRecord, into buf: inout [UInt8]) {
-        FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
-        FfiConverterSequenceTypeCompanionReceivedFrameRecord.write(value.receivedFrames, into: &buf)
-        FfiConverterTypeCompanionSessionSnapshotRecord.write(value.snapshot, into: &buf)
-        FfiConverterBool.write(value.waitingForResponses, into: &buf)
-        FfiConverterBool.write(value.rawTransmitPending, into: &buf)
-        FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
-        FfiConverterOptionTypeCompanionRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)
-        FfiConverterOptionTypeCompanionOperationErrorRecord.write(value.operationError, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionSessionUpdateRecord_lift(_ buf: RustBuffer) throws -> CompanionSessionUpdateRecord {
-    return try FfiConverterTypeCompanionSessionUpdateRecord.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCompanionSessionUpdateRecord_lower(_ value: CompanionSessionUpdateRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionSessionUpdateRecord.lower(value)
-}
-
-
 /**
- * Read-only, capability-gated companion state gathered after host ownership
- * has been resolved. Counts describe digest forms and contain no key material.
+ * Stateful mobile host session for the ULCP.
+ *
+ * This is the protocol boundary: it consumes complete reassembled ULCP
+ * frames and owns TIDs, response matching, capability-driven synchronization,
+ * host ownership, and claim/save choreography. Platform code owns only the
+ * transport lifecycle, byte shuttling, and timers.
  */
-public struct CompanionSyncRecord: Equatable, Hashable {
-    public var capabilityCount: UInt32
-    public var hasHostFiltering: Bool
-    public var supportsOfflineQueue: Bool
-    public var supportsDelegatedAck: Bool
-    public var supportsDeviceName: Bool
-    public var supportsLora: Bool
-    public var supportsDutyCycleLimit: Bool
-    public var phyEnabled: Bool
-    public var frequencyKhz: UInt32
-    public var transmitPowerDbm: Int8
-    public var bandwidthHz: UInt32?
-    public var spreadingFactor: UInt8?
-    public var codingRateDenom: UInt8?
-    public var dutyCycleNow: UInt16?
-    public var dutyCycleLimit: UInt16?
-    public var saved: Bool?
-    public var queuedFrames: UInt16?
-    public var droppedFrames: UInt32?
-    public var filterCount: UInt32?
-    public var hostChannelCount: UInt32?
-    public var hostPeerCount: UInt32?
-    public var autoAck: Bool?
+open class MobileUlcpSession: MobileUlcpSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
 
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: Bool?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
-        self.capabilityCount = capabilityCount
-        self.hasHostFiltering = hasHostFiltering
-        self.supportsOfflineQueue = supportsOfflineQueue
-        self.supportsDelegatedAck = supportsDelegatedAck
-        self.supportsDeviceName = supportsDeviceName
-        self.supportsLora = supportsLora
-        self.supportsDutyCycleLimit = supportsDutyCycleLimit
-        self.phyEnabled = phyEnabled
-        self.frequencyKhz = frequencyKhz
-        self.transmitPowerDbm = transmitPowerDbm
-        self.bandwidthHz = bandwidthHz
-        self.spreadingFactor = spreadingFactor
-        self.codingRateDenom = codingRateDenom
-        self.dutyCycleNow = dutyCycleNow
-        self.dutyCycleLimit = dutyCycleLimit
-        self.saved = saved
-        self.queuedFrames = queuedFrames
-        self.droppedFrames = droppedFrames
-        self.filterCount = filterCount
-        self.hostChannelCount = hostChannelCount
-        self.hostPeerCount = hostPeerCount
-        self.autoAck = autoAck
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
     }
 
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileulcpsession(self.handle, $0) }
+    }
+    /**
+     * A session for the phone's own radio: the one it tethers to.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileulcpsession_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileulcpsession(handle, $0) }
+    }
+
+
+    /**
+     * A session for a radio this phone administers but does not claim.
+     * [`Self::claim`] is refused; everything else behaves identically.
+     */
+public static func administrative() -> MobileUlcpSession  {
+    return try!  FfiConverterTypeMobileUlcpSession_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileulcpsession_administrative(uniffiCallStatus
+    )
+})
+}
+
+
+
+    /**
+     * Abandon raw transactions whose GATT writes were rejected locally.
+     * Their late correlated responses are ignored once; the attachment and
+     * all non-raw session state remain intact.
+     */
+open func abandonRawTransmits(transactionIds: Data) -> UlcpSessionUpdateRecord  {
+    return try!  FfiConverterTypeUlcpSessionUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_abandon_raw_transmits(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(transactionIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Which relationship this session represents.
+     */
+open func attachMode() -> UlcpAttachMode  {
+    return try!  FfiConverterTypeUlcpAttachMode_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_attach_mode(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Begin post-attach synchronization for a new transport generation.
+     */
+open func begin(selectedHostKey: Data?)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Replace an unclaimed or other-host configuration with this phone's key.
+     */
+open func claim(hostKey: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_claim(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(hostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply, verify, and persist a complete radio-settings snapshot.
+     */
+open func configure(settings: UlcpRadioSettingsRecord)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeUlcpRadioSettingsRecord_lower(settings),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Consume one complete ULCP frame and advance the session reducer.
+     */
+open func consume(frame: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_consume(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Erase ALL mutable state on the radio (saved provisioning, device
+     * identity, BLE bonds, pairing PIN, every persisted journal) and
+     * reboot it. The radio does not reply — the reset drops the link —
+     * so this is fire-and-forget: send the frame, then treat the ensuing
+     * disconnect as completion. Permitted from any stage so a misbehaving
+     * radio can always be wiped; unlike `claim`/`configure` it makes no
+     * stage or ownership demands.
+     */
+open func factoryReset()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_factory_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Re-read every capability-gated property represented by the mobile
+     * snapshot. The existing snapshot remains usable while the bounded
+     * refresh is in flight; authoritative provisioning is published when
+     * the full capability-gated read completes.
+     */
+open func refresh()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Invalidate all outstanding transactions for a disconnected transport.
+     */
+open func reset() -> UlcpSessionUpdateRecord  {
+    return try!  FfiConverterTypeUlcpSessionUpdateRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
+     *
+     * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
+     * Rust owns the ULCP command, stream identifier, metadata, TID, and
+     * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
+     * transmits without its pre-transmit channel-activity check — used for
+     * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+     */
+open func transmitRaw(data: Data, nocca: Bool)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_transmit_raw(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(data),
+        FfiConverterBool.lower(nocca),uniffiCallStatus
+    )
+})
+}
 
 
 
 }
 
-#if compiler(>=6)
-extension CompanionSyncRecord: Sendable {}
-#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSyncRecord {
-        return
-            try CompanionSyncRecord(
-                capabilityCount: FfiConverterUInt32.read(from: &buf),
-                hasHostFiltering: FfiConverterBool.read(from: &buf),
-                supportsOfflineQueue: FfiConverterBool.read(from: &buf),
-                supportsDelegatedAck: FfiConverterBool.read(from: &buf),
-                supportsDeviceName: FfiConverterBool.read(from: &buf),
-                supportsLora: FfiConverterBool.read(from: &buf),
-                supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
-                phyEnabled: FfiConverterBool.read(from: &buf),
-                frequencyKhz: FfiConverterUInt32.read(from: &buf),
-                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
-                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
-                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
-                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
-                dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
-                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
-                saved: FfiConverterOptionBool.read(from: &buf),
-                queuedFrames: FfiConverterOptionUInt16.read(from: &buf),
-                droppedFrames: FfiConverterOptionUInt32.read(from: &buf),
-                filterCount: FfiConverterOptionUInt32.read(from: &buf),
-                hostChannelCount: FfiConverterOptionUInt32.read(from: &buf),
-                hostPeerCount: FfiConverterOptionUInt32.read(from: &buf),
-                autoAck: FfiConverterOptionBool.read(from: &buf)
-        )
+public struct FfiConverterTypeMobileUlcpSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileUlcpSession
+
+    public static func lift(_ handle: UInt64) throws -> MobileUlcpSession {
+        return MobileUlcpSession(unsafeFromHandle: handle)
     }
 
-    public static func write(_ value: CompanionSyncRecord, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.capabilityCount, into: &buf)
-        FfiConverterBool.write(value.hasHostFiltering, into: &buf)
-        FfiConverterBool.write(value.supportsOfflineQueue, into: &buf)
-        FfiConverterBool.write(value.supportsDelegatedAck, into: &buf)
-        FfiConverterBool.write(value.supportsDeviceName, into: &buf)
-        FfiConverterBool.write(value.supportsLora, into: &buf)
-        FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
-        FfiConverterBool.write(value.phyEnabled, into: &buf)
-        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
-        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
-        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
-        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
-        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
-        FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
-        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
-        FfiConverterOptionBool.write(value.saved, into: &buf)
-        FfiConverterOptionUInt16.write(value.queuedFrames, into: &buf)
-        FfiConverterOptionUInt32.write(value.droppedFrames, into: &buf)
-        FfiConverterOptionUInt32.write(value.filterCount, into: &buf)
-        FfiConverterOptionUInt32.write(value.hostChannelCount, into: &buf)
-        FfiConverterOptionUInt32.write(value.hostPeerCount, into: &buf)
-        FfiConverterOptionBool.write(value.autoAck, into: &buf)
+    public static func lower(_ value: MobileUlcpSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileUlcpSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileUlcpSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
     }
 }
 
@@ -2890,20 +2181,22 @@ public struct FfiConverterTypeCompanionSyncRecord: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionSyncRecord_lift(_ buf: RustBuffer) throws -> CompanionSyncRecord {
-    return try FfiConverterTypeCompanionSyncRecord.lift(buf)
+public func FfiConverterTypeMobileUlcpSession_lift(_ handle: UInt64) throws -> MobileUlcpSession {
+    return try FfiConverterTypeMobileUlcpSession.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionSyncRecord_lower(_ value: CompanionSyncRecord) -> RustBuffer {
-    return FfiConverterTypeCompanionSyncRecord.lower(value)
+public func FfiConverterTypeMobileUlcpSession_lower(_ value: MobileUlcpSession) -> UInt64 {
+    return FfiConverterTypeMobileUlcpSession.lower(value)
 }
+
+
 
 
 /**
- * One header-prefixed ATT value produced by companion GATT segmentation.
+ * One header-prefixed ATT value produced by ULCP GATT segmentation.
  */
 public struct GattSegmentRecord: Equatable, Hashable {
     public var value: Data
@@ -3685,7 +2978,7 @@ public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
     public var id: UInt64
     public var data: Data
     /**
-     * `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+     * `TX_FLAG_NOCCA`: the device should transmit this frame without the
      * pre-transmit channel-activity check. Set for immediate MAC acks, which
      * own the channel-access window the moment the received frame ends; clear
      * for originated and forwarded traffic, which must listen before talking.
@@ -3696,7 +2989,7 @@ public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
     // declare one manually.
     public init(id: UInt64, data: Data,
         /**
-         * `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+         * `TX_FLAG_NOCCA`: the device should transmit this frame without the
          * pre-transmit channel-activity check. Set for immediate MAC acks, which
          * own the channel-access window the moment the received frame ends; clear
          * for originated and forwarded traffic, which must listen before talking.
@@ -3915,8 +3208,8 @@ public func FfiConverterTypeMobileMeshRxRecord_lower(_ value: MobileMeshRxRecord
 
 public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     /**
-     * Complete raw UMSH frames ready for the companion PHY transport. Each
-     * frame must be completed after the companion reports the physical radio
+     * Complete raw UMSH frames ready for the ULCP PHY transport. Each
+     * frame must be completed after the device reports the physical radio
      * result; queue acceptance is not transmit completion.
      */
     public var outboundFrames: [MobileMeshOutboundFrameRecord]
@@ -3936,8 +3229,8 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Complete raw UMSH frames ready for the companion PHY transport. Each
-         * frame must be completed after the companion reports the physical radio
+         * Complete raw UMSH frames ready for the ULCP PHY transport. Each
+         * frame must be completed after the device reports the physical radio
          * result; queue acceptance is not transmit completion.
          */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord],
         /**
@@ -4346,18 +3639,18 @@ public func FfiConverterTypePublicIdentityRecord_lower(_ value: PublicIdentityRe
 
 
 /**
- * Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
+ * UI-relevant fields from a validated `PROP_BATTERY` value.
  */
+public struct UlcpBatteryRecord: Equatable, Hashable {
+    public var percentage: UInt8?
+    public var isExternallyPowered: Bool?
 
-public enum CompanionHostOwnership: Equatable, Hashable {
-
-    case unknown
-    case localIdentityUnavailable
-    case unsupported
-    case unclaimed
-    case ours
-    case otherHost
-
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(percentage: UInt8?, isExternallyPowered: Bool?) {
+        self.percentage = percentage
+        self.isExternallyPowered = isExternallyPowered
+    }
 
 
 
@@ -4365,63 +3658,24 @@ public enum CompanionHostOwnership: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension CompanionHostOwnership: Sendable {}
+extension UlcpBatteryRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeCompanionHostOwnership: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionHostOwnership
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionHostOwnership {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .unknown
-
-        case 2: return .localIdentityUnavailable
-
-        case 3: return .unsupported
-
-        case 4: return .unclaimed
-
-        case 5: return .ours
-
-        case 6: return .otherHost
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
+public struct FfiConverterTypeUlcpBatteryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpBatteryRecord {
+        return
+            try UlcpBatteryRecord(
+                percentage: FfiConverterOptionUInt8.read(from: &buf),
+                isExternallyPowered: FfiConverterOptionBool.read(from: &buf)
+        )
     }
 
-    public static func write(_ value: CompanionHostOwnership, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .unknown:
-            writeInt(&buf, Int32(1))
-
-
-        case .localIdentityUnavailable:
-            writeInt(&buf, Int32(2))
-
-
-        case .unsupported:
-            writeInt(&buf, Int32(3))
-
-
-        case .unclaimed:
-            writeInt(&buf, Int32(4))
-
-
-        case .ours:
-            writeInt(&buf, Int32(5))
-
-
-        case .otherHost:
-            writeInt(&buf, Int32(6))
-
-        }
+    public static func write(_ value: UlcpBatteryRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt8.write(value.percentage, into: &buf)
+        FfiConverterOptionBool.write(value.isExternallyPowered, into: &buf)
     }
 }
 
@@ -4429,29 +3683,35 @@ public struct FfiConverterTypeCompanionHostOwnership: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionHostOwnership_lift(_ buf: RustBuffer) throws -> CompanionHostOwnership {
-    return try FfiConverterTypeCompanionHostOwnership.lift(buf)
+public func FfiConverterTypeUlcpBatteryRecord_lift(_ buf: RustBuffer) throws -> UlcpBatteryRecord {
+    return try FfiConverterTypeUlcpBatteryRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionHostOwnership_lower(_ value: CompanionHostOwnership) -> RustBuffer {
-    return FfiConverterTypeCompanionHostOwnership.lower(value)
+public func FfiConverterTypeUlcpBatteryRecord_lower(_ value: UlcpBatteryRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpBatteryRecord.lower(value)
 }
-
 
 
 /**
- * What the platform adapter should do after a completed raw PHY request.
+ * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
+ * This is an operation failure, never evidence that the transport framing is
+ * corrupt or that the BLE connection should be closed.
  */
+public struct UlcpOperationErrorRecord: Equatable, Hashable {
+    public var operation: String
+    public var statusCode: UInt32
+    public var statusName: String
 
-public enum CompanionRawTransmitDisposition: Equatable, Hashable {
-
-    case sent
-    case retry
-    case rejected
-
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operation: String, statusCode: UInt32, statusName: String) {
+        self.operation = operation
+        self.statusCode = statusCode
+        self.statusName = statusName
+    }
 
 
 
@@ -4459,45 +3719,26 @@ public enum CompanionRawTransmitDisposition: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension CompanionRawTransmitDisposition: Sendable {}
+extension UlcpOperationErrorRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeCompanionRawTransmitDisposition: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionRawTransmitDisposition
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionRawTransmitDisposition {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .sent
-
-        case 2: return .retry
-
-        case 3: return .rejected
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
+public struct FfiConverterTypeUlcpOperationErrorRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpOperationErrorRecord {
+        return
+            try UlcpOperationErrorRecord(
+                operation: FfiConverterString.read(from: &buf),
+                statusCode: FfiConverterUInt32.read(from: &buf),
+                statusName: FfiConverterString.read(from: &buf)
+        )
     }
 
-    public static func write(_ value: CompanionRawTransmitDisposition, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .sent:
-            writeInt(&buf, Int32(1))
-
-
-        case .retry:
-            writeInt(&buf, Int32(2))
-
-
-        case .rejected:
-            writeInt(&buf, Int32(3))
-
-        }
+    public static func write(_ value: UlcpOperationErrorRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.operation, into: &buf)
+        FfiConverterUInt32.write(value.statusCode, into: &buf)
+        FfiConverterString.write(value.statusName, into: &buf)
     }
 }
 
@@ -4505,33 +3746,35 @@ public struct FfiConverterTypeCompanionRawTransmitDisposition: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionRawTransmitDisposition_lift(_ buf: RustBuffer) throws -> CompanionRawTransmitDisposition {
-    return try FfiConverterTypeCompanionRawTransmitDisposition.lift(buf)
+public func FfiConverterTypeUlcpOperationErrorRecord_lift(_ buf: RustBuffer) throws -> UlcpOperationErrorRecord {
+    return try FfiConverterTypeUlcpOperationErrorRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionRawTransmitDisposition_lower(_ value: CompanionRawTransmitDisposition) -> RustBuffer {
-    return FfiConverterTypeCompanionRawTransmitDisposition.lower(value)
+public func FfiConverterTypeUlcpOperationErrorRecord_lower(_ value: UlcpOperationErrorRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpOperationErrorRecord.lower(value)
 }
-
 
 
 /**
- * Long-lived host-session phase. Swift maps this value to UI link state but
- * does not implement companion protocol transitions itself.
+ * A validated property-bearing ULCP frame.
  */
+public struct UlcpPropertyFrameRecord: Equatable, Hashable {
+    public var transactionId: UInt8
+    public var command: UInt8
+    public var propertyId: UInt32
+    public var value: Data
 
-public enum CompanionSessionPhase: Equatable, Hashable {
-
-    case idle
-    case synchronizing
-    case awaitingHost
-    case claiming
-    case configuring
-    case attached
-
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(transactionId: UInt8, command: UInt8, propertyId: UInt32, value: Data) {
+        self.transactionId = transactionId
+        self.command = command
+        self.propertyId = propertyId
+        self.value = value
+    }
 
 
 
@@ -4539,63 +3782,28 @@ public enum CompanionSessionPhase: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension CompanionSessionPhase: Sendable {}
+extension UlcpPropertyFrameRecord: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeCompanionSessionPhase: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionSessionPhase
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CompanionSessionPhase {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .idle
-
-        case 2: return .synchronizing
-
-        case 3: return .awaitingHost
-
-        case 4: return .claiming
-
-        case 5: return .configuring
-
-        case 6: return .attached
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
+public struct FfiConverterTypeUlcpPropertyFrameRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpPropertyFrameRecord {
+        return
+            try UlcpPropertyFrameRecord(
+                transactionId: FfiConverterUInt8.read(from: &buf),
+                command: FfiConverterUInt8.read(from: &buf),
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                value: FfiConverterData.read(from: &buf)
+        )
     }
 
-    public static func write(_ value: CompanionSessionPhase, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .idle:
-            writeInt(&buf, Int32(1))
-
-
-        case .synchronizing:
-            writeInt(&buf, Int32(2))
-
-
-        case .awaitingHost:
-            writeInt(&buf, Int32(3))
-
-
-        case .claiming:
-            writeInt(&buf, Int32(4))
-
-
-        case .configuring:
-            writeInt(&buf, Int32(5))
-
-
-        case .attached:
-            writeInt(&buf, Int32(6))
-
-        }
+    public static func write(_ value: UlcpPropertyFrameRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.transactionId, into: &buf)
+        FfiConverterUInt8.write(value.command, into: &buf)
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterData.write(value.value, into: &buf)
     }
 }
 
@@ -4603,17 +3811,570 @@ public struct FfiConverterTypeCompanionSessionPhase: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionSessionPhase_lift(_ buf: RustBuffer) throws -> CompanionSessionPhase {
-    return try FfiConverterTypeCompanionSessionPhase.lift(buf)
+public func FfiConverterTypeUlcpPropertyFrameRecord_lift(_ buf: RustBuffer) throws -> UlcpPropertyFrameRecord {
+    return try FfiConverterTypeUlcpPropertyFrameRecord.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCompanionSessionPhase_lower(_ value: CompanionSessionPhase) -> RustBuffer {
-    return FfiConverterTypeCompanionSessionPhase.lower(value)
+public func FfiConverterTypeUlcpPropertyFrameRecord_lower(_ value: UlcpPropertyFrameRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpPropertyFrameRecord.lower(value)
 }
 
+
+/**
+ * Complete desired live radio configuration. Capability-gated fields must be
+ * omitted when the device does not advertise their associated capability.
+ */
+public struct UlcpRadioSettingsRecord: Equatable, Hashable {
+    public var deviceName: String?
+    public var phyEnabled: Bool
+    public var frequencyKhz: UInt32
+    public var transmitPowerDbm: Int8
+    public var bandwidthHz: UInt32?
+    public var spreadingFactor: UInt8?
+    public var codingRateDenom: UInt8?
+    public var dutyCycleLimit: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceName: String?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleLimit: UInt16?) {
+        self.deviceName = deviceName
+        self.phyEnabled = phyEnabled
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
+        self.dutyCycleLimit = dutyCycleLimit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpRadioSettingsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpRadioSettingsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRadioSettingsRecord {
+        return
+            try UlcpRadioSettingsRecord(
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                phyEnabled: FfiConverterBool.read(from: &buf),
+                frequencyKhz: FfiConverterUInt32.read(from: &buf),
+                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
+                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpRadioSettingsRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterBool.write(value.phyEnabled, into: &buf)
+        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRadioSettingsRecord_lift(_ buf: RustBuffer) throws -> UlcpRadioSettingsRecord {
+    return try FfiConverterTypeUlcpRadioSettingsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRadioSettingsRecord_lower(_ value: UlcpRadioSettingsRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpRadioSettingsRecord.lower(value)
+}
+
+
+/**
+ * Typed completion of one host-requested raw PHY transmission.
+ */
+public struct UlcpRawTransmitResultRecord: Equatable, Hashable {
+    public var transactionId: UInt8
+    public var statusCode: UInt32
+    public var statusName: String
+    public var disposition: UlcpRawTransmitDisposition
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(transactionId: UInt8, statusCode: UInt32, statusName: String, disposition: UlcpRawTransmitDisposition) {
+        self.transactionId = transactionId
+        self.statusCode = statusCode
+        self.statusName = statusName
+        self.disposition = disposition
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpRawTransmitResultRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpRawTransmitResultRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRawTransmitResultRecord {
+        return
+            try UlcpRawTransmitResultRecord(
+                transactionId: FfiConverterUInt8.read(from: &buf),
+                statusCode: FfiConverterUInt32.read(from: &buf),
+                statusName: FfiConverterString.read(from: &buf),
+                disposition: FfiConverterTypeUlcpRawTransmitDisposition.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpRawTransmitResultRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.transactionId, into: &buf)
+        FfiConverterUInt32.write(value.statusCode, into: &buf)
+        FfiConverterString.write(value.statusName, into: &buf)
+        FfiConverterTypeUlcpRawTransmitDisposition.write(value.disposition, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRawTransmitResultRecord_lift(_ buf: RustBuffer) throws -> UlcpRawTransmitResultRecord {
+    return try FfiConverterTypeUlcpRawTransmitResultRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRawTransmitResultRecord_lower(_ value: UlcpRawTransmitResultRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpRawTransmitResultRecord.lower(value)
+}
+
+
+/**
+ * One validated raw mesh frame delivered by the companion radio.
+ */
+public struct UlcpReceivedFrameRecord: Equatable, Hashable {
+    public var data: Data
+    public var rssiDbm: Int16?
+    public var lqi: UInt8?
+    public var snrCb: Int16?
+    public var wasBuffered: Bool
+    public var wasAcknowledged: Bool
+    public var ageSeconds: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?, wasBuffered: Bool, wasAcknowledged: Bool, ageSeconds: UInt32) {
+        self.data = data
+        self.rssiDbm = rssiDbm
+        self.lqi = lqi
+        self.snrCb = snrCb
+        self.wasBuffered = wasBuffered
+        self.wasAcknowledged = wasAcknowledged
+        self.ageSeconds = ageSeconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpReceivedFrameRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpReceivedFrameRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpReceivedFrameRecord {
+        return
+            try UlcpReceivedFrameRecord(
+                data: FfiConverterData.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                lqi: FfiConverterOptionUInt8.read(from: &buf),
+                snrCb: FfiConverterOptionInt16.read(from: &buf),
+                wasBuffered: FfiConverterBool.read(from: &buf),
+                wasAcknowledged: FfiConverterBool.read(from: &buf),
+                ageSeconds: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpReceivedFrameRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.data, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionUInt8.write(value.lqi, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCb, into: &buf)
+        FfiConverterBool.write(value.wasBuffered, into: &buf)
+        FfiConverterBool.write(value.wasAcknowledged, into: &buf)
+        FfiConverterUInt32.write(value.ageSeconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpReceivedFrameRecord_lift(_ buf: RustBuffer) throws -> UlcpReceivedFrameRecord {
+    return try FfiConverterTypeUlcpReceivedFrameRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpReceivedFrameRecord_lower(_ value: UlcpReceivedFrameRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpReceivedFrameRecord.lower(value)
+}
+
+
+/**
+ * Typed state published after each bounded ULCP-session transition.
+ */
+public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
+    public var generation: UInt64
+    public var phase: UlcpSessionPhase
+    public var hostOwnership: UlcpHostOwnership
+    public var deviceKey: Data?
+    public var deviceName: String?
+    public var battery: UlcpBatteryRecord?
+    public var provisioning: UlcpSyncRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(generation: UInt64, phase: UlcpSessionPhase, hostOwnership: UlcpHostOwnership, deviceKey: Data?, deviceName: String?, battery: UlcpBatteryRecord?, provisioning: UlcpSyncRecord?) {
+        self.generation = generation
+        self.phase = phase
+        self.hostOwnership = hostOwnership
+        self.deviceKey = deviceKey
+        self.deviceName = deviceName
+        self.battery = battery
+        self.provisioning = provisioning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpSessionSnapshotRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpSessionSnapshotRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpSessionSnapshotRecord {
+        return
+            try UlcpSessionSnapshotRecord(
+                generation: FfiConverterUInt64.read(from: &buf),
+                phase: FfiConverterTypeUlcpSessionPhase.read(from: &buf),
+                hostOwnership: FfiConverterTypeUlcpHostOwnership.read(from: &buf),
+                deviceKey: FfiConverterOptionData.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
+                provisioning: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpSessionSnapshotRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.generation, into: &buf)
+        FfiConverterTypeUlcpSessionPhase.write(value.phase, into: &buf)
+        FfiConverterTypeUlcpHostOwnership.write(value.hostOwnership, into: &buf)
+        FfiConverterOptionData.write(value.deviceKey, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionTypeUlcpSyncRecord.write(value.provisioning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionSnapshotRecord_lift(_ buf: RustBuffer) throws -> UlcpSessionSnapshotRecord {
+    return try FfiConverterTypeUlcpSessionSnapshotRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionSnapshotRecord_lower(_ value: UlcpSessionSnapshotRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpSessionSnapshotRecord.lower(value)
+}
+
+
+/**
+ * Work produced by the Rust ULCP session. Frames are complete ULCP
+ * frames; the platform adapter remains responsible for GATT segmentation and
+ * write backpressure.
+ */
+public struct UlcpSessionUpdateRecord: Equatable, Hashable {
+    public var outboundFrames: [Data]
+    public var receivedFrames: [UlcpReceivedFrameRecord]
+    public var snapshot: UlcpSessionSnapshotRecord
+    public var waitingForResponses: Bool
+    /**
+     * True while one host-requested raw PHY transmission is awaiting the
+     * radio's `PROP_LAST_STATUS` completion.
+     */
+    public var rawTransmitPending: Bool
+    /**
+     * Transaction allocated by `transmit_raw` in this update, if any.
+     */
+    public var rawTransmitStartedTransactionId: UInt8?
+    /**
+     * Completion for the raw PHY transmission consumed by this update.
+     * Rejections are ordinary radio-level send failures, not malformed
+     * ULCP frames.
+     */
+    public var rawTransmitResult: UlcpRawTransmitResultRecord?
+    /**
+     * Non-transmit operation error consumed by this update. The ULCP
+     * session has already recovered to a stable stage and remains usable.
+     */
+    public var operationError: UlcpOperationErrorRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(outboundFrames: [Data], receivedFrames: [UlcpReceivedFrameRecord], snapshot: UlcpSessionSnapshotRecord, waitingForResponses: Bool,
+        /**
+         * True while one host-requested raw PHY transmission is awaiting the
+         * radio's `PROP_LAST_STATUS` completion.
+         */rawTransmitPending: Bool,
+        /**
+         * Transaction allocated by `transmit_raw` in this update, if any.
+         */rawTransmitStartedTransactionId: UInt8?,
+        /**
+         * Completion for the raw PHY transmission consumed by this update.
+         * Rejections are ordinary radio-level send failures, not malformed
+         * ULCP frames.
+         */rawTransmitResult: UlcpRawTransmitResultRecord?,
+        /**
+         * Non-transmit operation error consumed by this update. The ULCP
+         * session has already recovered to a stable stage and remains usable.
+         */operationError: UlcpOperationErrorRecord?) {
+        self.outboundFrames = outboundFrames
+        self.receivedFrames = receivedFrames
+        self.snapshot = snapshot
+        self.waitingForResponses = waitingForResponses
+        self.rawTransmitPending = rawTransmitPending
+        self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
+        self.rawTransmitResult = rawTransmitResult
+        self.operationError = operationError
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpSessionUpdateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpSessionUpdateRecord {
+        return
+            try UlcpSessionUpdateRecord(
+                outboundFrames: FfiConverterSequenceData.read(from: &buf),
+                receivedFrames: FfiConverterSequenceTypeUlcpReceivedFrameRecord.read(from: &buf),
+                snapshot: FfiConverterTypeUlcpSessionSnapshotRecord.read(from: &buf),
+                waitingForResponses: FfiConverterBool.read(from: &buf),
+                rawTransmitPending: FfiConverterBool.read(from: &buf),
+                rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
+                rawTransmitResult: FfiConverterOptionTypeUlcpRawTransmitResultRecord.read(from: &buf),
+                operationError: FfiConverterOptionTypeUlcpOperationErrorRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpSessionUpdateRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceData.write(value.outboundFrames, into: &buf)
+        FfiConverterSequenceTypeUlcpReceivedFrameRecord.write(value.receivedFrames, into: &buf)
+        FfiConverterTypeUlcpSessionSnapshotRecord.write(value.snapshot, into: &buf)
+        FfiConverterBool.write(value.waitingForResponses, into: &buf)
+        FfiConverterBool.write(value.rawTransmitPending, into: &buf)
+        FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
+        FfiConverterOptionTypeUlcpRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)
+        FfiConverterOptionTypeUlcpOperationErrorRecord.write(value.operationError, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionUpdateRecord_lift(_ buf: RustBuffer) throws -> UlcpSessionUpdateRecord {
+    return try FfiConverterTypeUlcpSessionUpdateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionUpdateRecord_lower(_ value: UlcpSessionUpdateRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpSessionUpdateRecord.lower(value)
+}
+
+
+/**
+ * Read-only, capability-gated device state gathered after host ownership
+ * has been resolved. Counts describe digest forms and contain no key material.
+ */
+public struct UlcpSyncRecord: Equatable, Hashable {
+    public var capabilityCount: UInt32
+    public var hasHostFiltering: Bool
+    public var supportsOfflineQueue: Bool
+    public var supportsDelegatedAck: Bool
+    public var supportsDeviceName: Bool
+    public var supportsLora: Bool
+    public var supportsDutyCycleLimit: Bool
+    public var phyEnabled: Bool
+    public var frequencyKhz: UInt32
+    public var transmitPowerDbm: Int8
+    public var bandwidthHz: UInt32?
+    public var spreadingFactor: UInt8?
+    public var codingRateDenom: UInt8?
+    public var dutyCycleNow: UInt16?
+    public var dutyCycleLimit: UInt16?
+    public var saved: SavedSnapshotRecord?
+    public var queuedFrames: UInt16?
+    public var droppedFrames: UInt32?
+    public var filterCount: UInt32?
+    public var hostChannelCount: UInt32?
+    public var hostPeerCount: UInt32?
+    public var autoAck: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
+        self.capabilityCount = capabilityCount
+        self.hasHostFiltering = hasHostFiltering
+        self.supportsOfflineQueue = supportsOfflineQueue
+        self.supportsDelegatedAck = supportsDelegatedAck
+        self.supportsDeviceName = supportsDeviceName
+        self.supportsLora = supportsLora
+        self.supportsDutyCycleLimit = supportsDutyCycleLimit
+        self.phyEnabled = phyEnabled
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
+        self.dutyCycleNow = dutyCycleNow
+        self.dutyCycleLimit = dutyCycleLimit
+        self.saved = saved
+        self.queuedFrames = queuedFrames
+        self.droppedFrames = droppedFrames
+        self.filterCount = filterCount
+        self.hostChannelCount = hostChannelCount
+        self.hostPeerCount = hostPeerCount
+        self.autoAck = autoAck
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpSyncRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpSyncRecord {
+        return
+            try UlcpSyncRecord(
+                capabilityCount: FfiConverterUInt32.read(from: &buf),
+                hasHostFiltering: FfiConverterBool.read(from: &buf),
+                supportsOfflineQueue: FfiConverterBool.read(from: &buf),
+                supportsDelegatedAck: FfiConverterBool.read(from: &buf),
+                supportsDeviceName: FfiConverterBool.read(from: &buf),
+                supportsLora: FfiConverterBool.read(from: &buf),
+                supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
+                phyEnabled: FfiConverterBool.read(from: &buf),
+                frequencyKhz: FfiConverterUInt32.read(from: &buf),
+                transmitPowerDbm: FfiConverterInt8.read(from: &buf),
+                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
+                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
+                saved: FfiConverterOptionTypeSavedSnapshotRecord.read(from: &buf),
+                queuedFrames: FfiConverterOptionUInt16.read(from: &buf),
+                droppedFrames: FfiConverterOptionUInt32.read(from: &buf),
+                filterCount: FfiConverterOptionUInt32.read(from: &buf),
+                hostChannelCount: FfiConverterOptionUInt32.read(from: &buf),
+                hostPeerCount: FfiConverterOptionUInt32.read(from: &buf),
+                autoAck: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpSyncRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.capabilityCount, into: &buf)
+        FfiConverterBool.write(value.hasHostFiltering, into: &buf)
+        FfiConverterBool.write(value.supportsOfflineQueue, into: &buf)
+        FfiConverterBool.write(value.supportsDelegatedAck, into: &buf)
+        FfiConverterBool.write(value.supportsDeviceName, into: &buf)
+        FfiConverterBool.write(value.supportsLora, into: &buf)
+        FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
+        FfiConverterBool.write(value.phyEnabled, into: &buf)
+        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterOptionTypeSavedSnapshotRecord.write(value.saved, into: &buf)
+        FfiConverterOptionUInt16.write(value.queuedFrames, into: &buf)
+        FfiConverterOptionUInt32.write(value.droppedFrames, into: &buf)
+        FfiConverterOptionUInt32.write(value.filterCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.hostChannelCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.hostPeerCount, into: &buf)
+        FfiConverterOptionBool.write(value.autoAck, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSyncRecord_lift(_ buf: RustBuffer) throws -> UlcpSyncRecord {
+    return try FfiConverterTypeUlcpSyncRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSyncRecord_lower(_ value: UlcpSyncRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpSyncRecord.lower(value)
+}
 
 
 public
@@ -5184,8 +4945,12 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidPublicKeyLength
     case InvalidUri
     case InvalidIdentityData
-    case InvalidCompanionFrame
+    case InvalidUlcpFrame
     case InvalidGattSegment
+    /**
+     * A tethering operation was attempted on an administrative session.
+     */
+    case AdministrativeSession
 
 
 
@@ -5223,8 +4988,9 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 6: return .InvalidPublicKeyLength
         case 7: return .InvalidUri
         case 8: return .InvalidIdentityData
-        case 9: return .InvalidCompanionFrame
+        case 9: return .InvalidUlcpFrame
         case 10: return .InvalidGattSegment
+        case 11: return .AdministrativeSession
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -5269,12 +5035,16 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(8))
 
 
-        case .InvalidCompanionFrame:
+        case .InvalidUlcpFrame:
             writeInt(&buf, Int32(9))
 
 
         case .InvalidGattSegment:
             writeInt(&buf, Int32(10))
+
+
+        case .AdministrativeSession:
+            writeInt(&buf, Int32(11))
 
         }
     }
@@ -5472,6 +5242,461 @@ public func FfiConverterTypeMobileMeshPingOutcome_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileMeshPingOutcome_lower(_ value: MobileMeshPingOutcome) -> RustBuffer {
     return FfiConverterTypeMobileMeshPingOutcome.lower(value)
+}
+
+
+
+/**
+ * `PROP_SAVED`: what the radio reports about its stored snapshot.
+ *
+ * `Fallback` and `Unreadable` are the values worth surfacing: the radio
+ * is running on configuration older than the one last saved, or on none
+ * at all, and looks healthy otherwise.
+ */
+
+public enum SavedSnapshotRecord: Equatable, Hashable {
+
+    /**
+     * Nothing is saved.
+     */
+    case none
+    /**
+     * The newest saved generation is in effect.
+     */
+    case current
+    /**
+     * A newer generation was rejected at boot; an older one is in
+     * effect. Saving again clears it.
+     */
+    case fallback
+    /**
+     * A snapshot exists but could not be read; the radio booted with
+     * factory defaults.
+     */
+    case unreadable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SavedSnapshotRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSavedSnapshotRecord: FfiConverterRustBuffer {
+    typealias SwiftType = SavedSnapshotRecord
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SavedSnapshotRecord {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .current
+
+        case 3: return .fallback
+
+        case 4: return .unreadable
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SavedSnapshotRecord, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case .current:
+            writeInt(&buf, Int32(2))
+
+
+        case .fallback:
+            writeInt(&buf, Int32(3))
+
+
+        case .unreadable:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSavedSnapshotRecord_lift(_ buf: RustBuffer) throws -> SavedSnapshotRecord {
+    return try FfiConverterTypeSavedSnapshotRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSavedSnapshotRecord_lower(_ value: SavedSnapshotRecord) -> RustBuffer {
+    return FfiConverterTypeSavedSnapshotRecord.lower(value)
+}
+
+
+
+/**
+ * The two relationships a phone can have with a radio.
+ *
+ * They are different things with different lifecycles, and Swift should
+ * model them as different objects: "my radio" is exactly one, tethered,
+ * and re-provisioned on every attach; "radios I administer" is any
+ * number, configured but never claimed. One list must not serve both.
+ */
+
+public enum UlcpAttachMode: Equatable, Hashable {
+
+    /**
+     * This phone is the radio's tethered host: it claims the radio and
+     * the radio filters, queues and acknowledges on its behalf.
+     */
+    case tethered
+    /**
+     * This phone is administering the radio without claiming it. A
+     * phone commissioning ten repeaters must not write its host key on
+     * any of them.
+     */
+    case administrative
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpAttachMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpAttachMode: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpAttachMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpAttachMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .tethered
+
+        case 2: return .administrative
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpAttachMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .tethered:
+            writeInt(&buf, Int32(1))
+
+
+        case .administrative:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAttachMode_lift(_ buf: RustBuffer) throws -> UlcpAttachMode {
+    return try FfiConverterTypeUlcpAttachMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAttachMode_lower(_ value: UlcpAttachMode) -> RustBuffer {
+    return FfiConverterTypeUlcpAttachMode.lower(value)
+}
+
+
+
+/**
+ * Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
+ */
+
+public enum UlcpHostOwnership: Equatable, Hashable {
+
+    case unknown
+    case localIdentityUnavailable
+    case unsupported
+    case unclaimed
+    case ours
+    case otherHost
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpHostOwnership: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpHostOwnership: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpHostOwnership
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpHostOwnership {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .localIdentityUnavailable
+
+        case 3: return .unsupported
+
+        case 4: return .unclaimed
+
+        case 5: return .ours
+
+        case 6: return .otherHost
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpHostOwnership, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .localIdentityUnavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(3))
+
+
+        case .unclaimed:
+            writeInt(&buf, Int32(4))
+
+
+        case .ours:
+            writeInt(&buf, Int32(5))
+
+
+        case .otherHost:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpHostOwnership_lift(_ buf: RustBuffer) throws -> UlcpHostOwnership {
+    return try FfiConverterTypeUlcpHostOwnership.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpHostOwnership_lower(_ value: UlcpHostOwnership) -> RustBuffer {
+    return FfiConverterTypeUlcpHostOwnership.lower(value)
+}
+
+
+
+/**
+ * What the platform adapter should do after a completed raw PHY request.
+ */
+
+public enum UlcpRawTransmitDisposition: Equatable, Hashable {
+
+    case sent
+    case retry
+    case rejected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpRawTransmitDisposition: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpRawTransmitDisposition: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpRawTransmitDisposition
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRawTransmitDisposition {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .sent
+
+        case 2: return .retry
+
+        case 3: return .rejected
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpRawTransmitDisposition, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .sent:
+            writeInt(&buf, Int32(1))
+
+
+        case .retry:
+            writeInt(&buf, Int32(2))
+
+
+        case .rejected:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRawTransmitDisposition_lift(_ buf: RustBuffer) throws -> UlcpRawTransmitDisposition {
+    return try FfiConverterTypeUlcpRawTransmitDisposition.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRawTransmitDisposition_lower(_ value: UlcpRawTransmitDisposition) -> RustBuffer {
+    return FfiConverterTypeUlcpRawTransmitDisposition.lower(value)
+}
+
+
+
+/**
+ * Long-lived host-session phase. Swift maps this value to UI link state but
+ * does not implement ULCP transitions itself.
+ */
+
+public enum UlcpSessionPhase: Equatable, Hashable {
+
+    case idle
+    case synchronizing
+    case awaitingHost
+    case claiming
+    case configuring
+    case attached
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpSessionPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpSessionPhase: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpSessionPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpSessionPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .synchronizing
+
+        case 3: return .awaitingHost
+
+        case 4: return .claiming
+
+        case 5: return .configuring
+
+        case 6: return .attached
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpSessionPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .synchronizing:
+            writeInt(&buf, Int32(2))
+
+
+        case .awaitingHost:
+            writeInt(&buf, Int32(3))
+
+
+        case .claiming:
+            writeInt(&buf, Int32(4))
+
+
+        case .configuring:
+            writeInt(&buf, Int32(5))
+
+
+        case .attached:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionPhase_lift(_ buf: RustBuffer) throws -> UlcpSessionPhase {
+    return try FfiConverterTypeUlcpSessionPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpSessionPhase_lower(_ value: UlcpSessionPhase) -> RustBuffer {
+    return FfiConverterTypeUlcpSessionPhase.lower(value)
 }
 
 
@@ -5718,102 +5943,6 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeCompanionBatteryRecord: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionBatteryRecord?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCompanionBatteryRecord.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCompanionBatteryRecord.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeCompanionOperationErrorRecord: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionOperationErrorRecord?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCompanionOperationErrorRecord.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCompanionOperationErrorRecord.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeCompanionRawTransmitResultRecord: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionRawTransmitResultRecord?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCompanionRawTransmitResultRecord.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCompanionRawTransmitResultRecord.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeCompanionSyncRecord: FfiConverterRustBuffer {
-    typealias SwiftType = CompanionSyncRecord?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCompanionSyncRecord.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCompanionSyncRecord.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeNodeIdentityRecord: FfiConverterRustBuffer {
     typealias SwiftType = NodeIdentityRecord?
 
@@ -5838,6 +5967,102 @@ fileprivate struct FfiConverterOptionTypeNodeIdentityRecord: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpBatteryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpBatteryRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpBatteryRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpBatteryRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpOperationErrorRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpOperationErrorRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpOperationErrorRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpOperationErrorRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpRawTransmitResultRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpRawTransmitResultRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpRawTransmitResultRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpRawTransmitResultRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpSyncRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpSyncRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpSyncRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpSyncRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatDirection?
 
@@ -5854,6 +6079,30 @@ fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileChatDirection.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSavedSnapshotRecord: FfiConverterRustBuffer {
+    typealias SwiftType = SavedSnapshotRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSavedSnapshotRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSavedSnapshotRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -5929,56 +6178,6 @@ fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterData.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCompanionPropertyFrameRecord: FfiConverterRustBuffer {
-    typealias SwiftType = [CompanionPropertyFrameRecord]
-
-    public static func write(_ value: [CompanionPropertyFrameRecord], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCompanionPropertyFrameRecord.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CompanionPropertyFrameRecord] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CompanionPropertyFrameRecord]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCompanionPropertyFrameRecord.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCompanionReceivedFrameRecord: FfiConverterRustBuffer {
-    typealias SwiftType = [CompanionReceivedFrameRecord]
-
-    public static func write(_ value: [CompanionReceivedFrameRecord], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCompanionReceivedFrameRecord.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CompanionReceivedFrameRecord] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CompanionReceivedFrameRecord]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCompanionReceivedFrameRecord.read(from: &buf))
         }
         return seq
     }
@@ -6233,6 +6432,56 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPingEventRecord: FfiConvert
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpPropertyFrameRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpPropertyFrameRecord]
+
+    public static func write(_ value: [UlcpPropertyFrameRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpPropertyFrameRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpPropertyFrameRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpPropertyFrameRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpPropertyFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpReceivedFrameRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpReceivedFrameRecord]
+
+    public static func write(_ value: [UlcpReceivedFrameRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpReceivedFrameRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpReceivedFrameRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpReceivedFrameRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpReceivedFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -6386,7 +6635,7 @@ public func nodeUriWithIdentity(address: String, identityPayload: Data)throws  -
 })
 }
 /**
- * Decode a canonical address to the raw public-key bytes carried by companion
+ * Decode a canonical address to the raw public-key bytes carried by ULCP
  * `PROP_HOST_KEY`.
  */
 public func publicIdentityBytes(address: String)throws  -> Data  {
@@ -6409,24 +6658,69 @@ public func renderNodeHint(bytes: Data)throws  -> NodeHintRecord  {
 })
 }
 /**
- * Encode a `CMD_FACTORY_RESET` request with the shared companion protocol codec.
+ * Validate and reduce a `PROP_BATTERY` value to fields used by mobile UI.
  */
-public func companionFactoryReset(transactionId: UInt8)throws  -> Data  {
+public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
+    return try  FfiConverterTypeUlcpBatteryRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_battery(
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
+ * Parse and validate a property notification or response.
+ */
+public func inspectUlcpPropertyFrame(bytes: Data)throws  -> UlcpPropertyFrameRecord  {
+    return try  FfiConverterTypeUlcpPropertyFrameRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_property_frame(
+        FfiConverterData.lower(bytes),uniffiCallStatus
+    )
+})
+}
+/**
+ * Decode an exact packed status value from `PROP_LAST_STATUS`.
+ */
+public func inspectUlcpStatus(value: Data)throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_status(
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
+ * Validate and reduce the property responses from the read-only post-attach
+ * inspection. Every capability-gated property must be present and well formed.
+ */
+public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> UlcpSyncRecord  {
+    return try  FfiConverterTypeUlcpSyncRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_sync(
+        FfiConverterSequenceTypeUlcpPropertyFrameRecord.lower(responses),uniffiCallStatus
+    )
+})
+}
+/**
+ * Encode a `CMD_FACTORY_RESET` request with the shared ULCP codec.
+ */
+public func ulcpFactoryReset(transactionId: UInt8)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_factory_reset(
+    uniffi_umsh_mobile_core_fn_func_ulcp_factory_reset(
         FfiConverterUInt8.lower(transactionId),uniffiCallStatus
     )
 })
 }
 /**
- * Split a companion frame into ATT values using the negotiated maximum write
+ * Split a ULCP frame into ATT values using the negotiated maximum write
  * length. The returned values include the one-octet SAR header.
  */
-public func companionGattSegments(frame: Data, maximumValueLength: UInt16)throws  -> [GattSegmentRecord]  {
+public func ulcpGattSegments(frame: Data, maximumValueLength: UInt16)throws  -> [GattSegmentRecord]  {
     return try  FfiConverterSequenceTypeGattSegmentRecord.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_gatt_segments(
+    uniffi_umsh_mobile_core_fn_func_ulcp_gatt_segments(
         FfiConverterData.lower(frame),
         FfiConverterUInt16.lower(maximumValueLength),uniffiCallStatus
     )
@@ -6436,33 +6730,33 @@ public func companionGattSegments(frame: Data, maximumValueLength: UInt16)throws
  * Return the authoritative properties needed for the read-only post-attach
  * inspection, gated by the supplied `PROP_CAPS` value.
  */
-public func companionInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
+public func ulcpInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
     return try  FfiConverterSequenceUInt32.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_inspection_properties(
+    uniffi_umsh_mobile_core_fn_func_ulcp_inspection_properties(
         FfiConverterData.lower(capabilities),uniffiCallStatus
     )
 })
 }
 /**
- * Encode a `CMD_PROP_GET` request with the shared companion protocol codec.
+ * Encode a `CMD_PROP_GET` request with the shared ULCP codec.
  */
-public func companionPropGet(transactionId: UInt8, propertyId: UInt32)throws  -> Data  {
+public func ulcpPropGet(transactionId: UInt8, propertyId: UInt32)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_prop_get(
+    uniffi_umsh_mobile_core_fn_func_ulcp_prop_get(
         FfiConverterUInt8.lower(transactionId),
         FfiConverterUInt32.lower(propertyId),uniffiCallStatus
     )
 })
 }
 /**
- * Encode a `CMD_PROP_SET` request with the shared companion protocol codec.
+ * Encode a `CMD_PROP_SET` request with the shared ULCP codec.
  */
-public func companionPropSet(transactionId: UInt8, propertyId: UInt32, value: Data)throws  -> Data  {
+public func ulcpPropSet(transactionId: UInt8, propertyId: UInt32, value: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_prop_set(
+    uniffi_umsh_mobile_core_fn_func_ulcp_prop_set(
         FfiConverterUInt8.lower(transactionId),
         FfiConverterUInt32.lower(propertyId),
         FfiConverterData.lower(value),uniffiCallStatus
@@ -6470,58 +6764,13 @@ public func companionPropSet(transactionId: UInt8, propertyId: UInt32, value: Da
 })
 }
 /**
- * Encode a `CMD_SAVE` request with the shared companion protocol codec.
+ * Encode a `CMD_SAVE` request with the shared ULCP codec.
  */
-public func companionSave(transactionId: UInt8)throws  -> Data  {
+public func ulcpSave(transactionId: UInt8)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_companion_save(
+    uniffi_umsh_mobile_core_fn_func_ulcp_save(
         FfiConverterUInt8.lower(transactionId),uniffiCallStatus
-    )
-})
-}
-/**
- * Validate and reduce a `PROP_BATTERY` value to fields used by mobile UI.
- */
-public func inspectCompanionBattery(value: Data)throws  -> CompanionBatteryRecord  {
-    return try  FfiConverterTypeCompanionBatteryRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_companion_battery(
-        FfiConverterData.lower(value),uniffiCallStatus
-    )
-})
-}
-/**
- * Parse and validate a property notification or response.
- */
-public func inspectCompanionPropertyFrame(bytes: Data)throws  -> CompanionPropertyFrameRecord  {
-    return try  FfiConverterTypeCompanionPropertyFrameRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_companion_property_frame(
-        FfiConverterData.lower(bytes),uniffiCallStatus
-    )
-})
-}
-/**
- * Decode an exact packed status value from `PROP_LAST_STATUS`.
- */
-public func inspectCompanionStatus(value: Data)throws  -> UInt32  {
-    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_companion_status(
-        FfiConverterData.lower(value),uniffiCallStatus
-    )
-})
-}
-/**
- * Validate and reduce the property responses from the read-only post-attach
- * inspection. Every capability-gated property must be present and well formed.
- */
-public func inspectCompanionSync(responses: [CompanionPropertyFrameRecord])throws  -> CompanionSyncRecord  {
-    return try  FfiConverterTypeCompanionSyncRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_inspect_companion_sync(
-        FfiConverterSequenceTypeCompanionPropertyFrameRecord.lower(responses),uniffiCallStatus
     )
 })
 }
@@ -6565,76 +6814,43 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_node_uri_with_identity() != 62280) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_public_identity_bytes() != 22411) {
+    if (uniffi_umsh_mobile_core_checksum_func_public_identity_bytes() != 49391) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_render_node_hint() != 12096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_factory_reset() != 27760) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_gatt_segments() != 61863) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_property_frame() != 62110) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_inspection_properties() != 59789) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_status() != 30949) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_prop_get() != 51278) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 51182) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_prop_set() != 133) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_factory_reset() != 65397) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_companion_save() != 56387) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_gatt_segments() != 568) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_companion_battery() != 19707) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_companion_property_frame() != 42277) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_get() != 58684) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_companion_status() != 31800) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_set() != 24638) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_companion_sync() != 14126) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_save() != 15143) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_abandon_raw_transmits() != 13298) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_begin() != 29892) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_claim() != 57104) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_configure() != 41476) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_consume() != 8102) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_factory_reset() != 6500) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_refresh() != 54243) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_reset() != 64513) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilecompanionsession_transmit_raw() != 47935) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 2566) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_reset() != 52167) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilecounterstore_commit_boundary() != 35727) {
@@ -6658,7 +6874,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_commit_chat_batch() != 61370) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_complete_outbound_frame() != 48665) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_complete_outbound_frame() != 46063) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_delete() != 30949) {
@@ -6670,7 +6886,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 53284) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 29846) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 52427) {
@@ -6703,19 +6919,58 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshwakelistener_on_update_pending() != 41919) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 45673) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_reset() != 47215) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 18682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_attach_mode() != 2107) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin() != 7480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_claim() != 28627) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure() != 23539) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_consume() != 10958) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 21547) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh() != 49124) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reset() != 55594) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 57973) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilecompanionsession_new() != 14313) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 10873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilecounterstore_new() != 37665) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 47949) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 56519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative() != 16912) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_new() != 48651) {
         return InitializationResult.apiChecksumMismatch
     }
 

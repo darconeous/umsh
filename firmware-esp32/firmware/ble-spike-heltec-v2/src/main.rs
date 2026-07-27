@@ -4,9 +4,9 @@
 //! esp-rtos. Proves the whole ESP32 BLE stack coexists at the pinned
 //! versions before any real firmware believes it.
 //!
-//! GATT surface mirrors `ble-spike-techo`: a CompanionService-shaped
+//! GATT surface mirrors `ble-spike-techo`: a UlcpService-shaped
 //! echo characteristic pair with encrypted permissions and a 20 s pairing
-//! window, so the same `umsh-companionctl` smoke test applies.
+//! window, so the same `umsh-ulcpctl` smoke test applies.
 
 #![no_std]
 #![no_main]
@@ -43,11 +43,11 @@ const SERVICE_UUID_LE: [u8; 16] = [
 
 #[gatt_server]
 struct Server {
-    companion: CompanionService,
+    ulcp: UlcpService,
 }
 
 #[gatt_service(uuid = "21eb6b15-0001-4ccf-92e4-a079171bec97")]
-struct CompanionService {
+struct UlcpService {
     #[characteristic(
         uuid = "21eb6b15-0002-4ccf-92e4-a079171bec97",
         write,
@@ -81,7 +81,7 @@ async fn ble_runner<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) 
 async fn pairing_window<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
     stack.set_pairing_enabled(true);
     // Generous bench-test window; production firmware gates this on a
-    // button press like the nRF NCP does.
+    // button press like the nRF firmware does.
     Timer::after_secs(120).await;
     stack.set_pairing_enabled(false);
     pending().await
@@ -99,7 +99,7 @@ async fn gatt_connection(
                 let bonded = conn.raw().is_bonded_peer();
                 let mut echo: Option<heapless::Vec<u8, 244>> = None;
                 if let GattEvent::Write(write) = &event {
-                    if write.handle() == server.companion.frame_in.handle {
+                    if write.handle() == server.ulcp.frame_in.handle {
                         write.with_data(|_, data| {
                             let mut value = heapless::Vec::new();
                             let _ = value.extend_from_slice(data);
@@ -117,7 +117,7 @@ async fn gatt_connection(
 
                 if bonded {
                     if let Some(value) = echo {
-                        let _ = server.companion.frame_out.notify(conn, &value, true).await;
+                        let _ = server.ulcp.frame_out.notify(conn, &value, true).await;
                     }
                 }
             }

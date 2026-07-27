@@ -117,7 +117,7 @@ struct RadioReceivedFrame: Equatable, Sendable {
 
 enum RadioConnectionError: Error, Equatable, Sendable {
     case bluetoothUnavailable
-    case companionNotFound
+    case radioNotFound
     case incompatibleProtocol
     case identityUnavailable
     case takeoverNotAllowed

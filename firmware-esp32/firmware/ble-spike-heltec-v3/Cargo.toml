@@ -16,14 +16,14 @@ umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
 # The chip-agnostic BLE bond journal (codec + power-cut-safe record
 # engine). heapless 0.8-based; coexists with the GATT stack's 0.9.
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
-# Minimal companion-radio protocol (path A): the real Session + GATT frame
+# Minimal ULCP (path A): the real Session + GATT frame
 # transport so the UMSH app can attach_existing. Host-tested pure crates.
-umsh-companion = { path = "../../../crates/umsh-companion", default-features = false }
-umsh-companion-ncp = { path = "../../../crates/umsh-companion-ncp", default-features = false }
-# Shared board-agnostic NCP runtime. The spike needs only the pure pairing
+umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
+umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
+# Shared board-agnostic device runtime. The spike needs only the pure pairing
 # policy (ble_security), so it takes no default features and pulls neither the
 # radio stack nor the journal store.
-umsh-companion-runtime = { path = "../../../crates/umsh-companion-runtime", default-features = false }
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", default-features = false }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 
 bt-hci = { version = "0.9", default-features = false }

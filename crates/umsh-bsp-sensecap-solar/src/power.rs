@@ -8,7 +8,7 @@
 //!   System OFF teardown + LPCOMP solar-recovery wake.
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`]) — ported from the T1000-E BSP
-//!   with this board's wiring, so the companion-NCP's `CAP_BATTERY`
+//!   with this board's wiring, so the device's `CAP_BATTERY`
 //!   snapshot path is board-agnostic.
 //!
 //! ## Voltage reading (MeshCore method, nominal — uncalibrated)

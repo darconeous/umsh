@@ -1,7 +1,7 @@
 //! Rust-owned mobile mesh session.
 //!
 //! The platform adapter moves complete raw frames between this object and a
-//! companion transport. It never constructs MAC commands, advances counters,
+//! ULCP transport. It never constructs MAC commands, advances counters,
 //! or correlates ping replies.
 
 use core::{
@@ -199,8 +199,8 @@ impl<T> NotifyingSender<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshSessionUpdateRecord {
-    /// Complete raw UMSH frames ready for the companion PHY transport. Each
-    /// frame must be completed after the companion reports the physical radio
+    /// Complete raw UMSH frames ready for the ULCP PHY transport. Each
+    /// frame must be completed after the device reports the physical radio
     /// result; queue acceptance is not transmit completion.
     pub outbound_frames: Vec<MobileMeshOutboundFrameRecord>,
     pub ping_events: Vec<MobileMeshPingEventRecord>,
@@ -218,7 +218,7 @@ pub struct MobileMeshSessionUpdateRecord {
 pub struct MobileMeshOutboundFrameRecord {
     pub id: u64,
     pub data: Vec<u8>,
-    /// `TX_FLAG_NOCCA`: the companion should transmit this frame without the
+    /// `TX_FLAG_NOCCA`: the device should transmit this frame without the
     /// pre-transmit channel-activity check. Set for immediate MAC acks, which
     /// own the channel-access window the moment the received frame ends; clear
     /// for originated and forwarded traffic, which must listen before talking.
@@ -430,7 +430,7 @@ impl Radio for BridgeRadio {
         }
         // The MAC skips CAD only for immediate acks (channel-access.md
         // § Immediate ACK Transmission); every other policy asks the
-        // companion to listen before talking.
+        // device to listen before talking.
         let nocca = matches!(options.cad, umsh_hal::CadPolicy::Skip);
         let (completion_tx, completion_rx) = oneshot::channel();
         let generation = self.completions.generation();
@@ -457,10 +457,10 @@ impl Radio for BridgeRadio {
         }
 
         // Awaiting here is deliberate: Radio::transmit completes only after
-        // the frame has actually left the companion PHY. Returning at
+        // the frame has actually left the radio PHY. Returning at
         // bridge-queue acceptance starts MAC ACK timers too early and causes
         // fragmented sends to retransmit frames that are still waiting in
-        // the companion queue. This is an async wait, not a thread block, so
+        // the device queue. This is an async wait, not a thread block, so
         // the worker keeps servicing commands and timers while the frame is
         // in flight; the MAC itself stays serialized behind its own borrow.
         match completion_rx.await {
@@ -757,7 +757,7 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
-    /// Report the actual physical companion-radio result for an outbound
+    /// Report the actual physical radio result for an outbound
     /// frame. This is intentionally distinct from accepting the frame into the
     /// BLE/CRP queue: the MAC starts ACK and retry timing only after success.
     pub fn complete_outbound_frame(
@@ -900,7 +900,7 @@ impl MobileMeshSession {
     }
 
     /// Fail every chat transmission currently owned by the mobile radio
-    /// bridge. The platform calls this when companion-link delivery failed
+    /// bridge. The platform calls this when ULCP-link delivery failed
     /// after the MAC had accepted the frames, ensuring optimistic UI rows do
     /// not remain in `Sending` indefinitely.
     pub fn fail_outbound_transmissions(&self) -> Result<(), MobileMeshError> {
@@ -1301,7 +1301,7 @@ async fn run_worker(
 
     // The worker runs as two sibling loops polled by one outer select.
     //
-    // `Radio::transmit` awaits the companion's physical TX completion while
+    // `Radio::transmit` awaits the device's physical TX completion while
     // `MacHandle` holds the coordinator borrow, so the pump must keep being
     // polled while a command arm waits on that borrow — a single select
     // whose arm bodies suspend the task would deadlock: the arm waits on
@@ -1703,7 +1703,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
     now_ms: u64,
 ) -> usize {
     pending.extend(transmissions);
-    // Keep a bounded pipeline aligned with the companion NCP's target-selected
+    // Keep a bounded pipeline aligned with the device's target-selected
     // TX queue. The durable pending queue below handles messages larger than
     // this window without imposing the mobile RAM choice on embedded MACs.
     if in_flight.len() >= MOBILE_CHAT_TRANSMIT_WINDOW {
@@ -2343,7 +2343,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn companion_link_failure_terminates_pending_chat_delivery() {
+    async fn ulcp_link_failure_terminates_pending_chat_delivery() {
         let directory = tempfile::tempdir().unwrap();
         let local_identity = identity(41);
         let peer_identity = identity(42);
@@ -2377,13 +2377,13 @@ mod tests {
             }
             assert!(
                 Instant::now() < deadline,
-                "companion failure did not terminate chat delivery"
+                "link failure did not terminate chat delivery"
             );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
 
-    /// A companion-link failure declared while one fragment awaits physical
+    /// A ULCP-link failure declared while one fragment awaits physical
     /// TX completion must also stop the fragments queued behind it in the
     /// MAC: without the poisoned window, the drain loop keeps handing them
     /// to the platform after `fail_all` bumps the generation, so a single

@@ -33,7 +33,7 @@
 
 #[cfg(feature = "chat-rooms")]
 pub use umsh_chat_room as chat_room;
-pub use umsh_companion as companion;
+pub use umsh_ulcp as ulcp_wire;
 pub use umsh_core as core;
 pub use umsh_crypto as crypto;
 pub use umsh_hal as hal;
@@ -44,7 +44,7 @@ pub use umsh_text as text;
 pub use umsh_uri as uri;
 
 #[cfg(feature = "tokio-support")]
-pub mod companion_radio;
+pub mod ulcp;
 
 #[cfg(feature = "embassy-support")]
 pub mod embassy_support;

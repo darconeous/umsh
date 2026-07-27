@@ -19,7 +19,7 @@ repository.workspace = true
 # copy of WioTrackerPlatform.
 #
 # Initial scope is intentionally minimal — only what the bringup
-# firmware needs. See docs/firmware-plan-sensecap-solar-node-p1-pro.md.
+# firmware needs.
 #
 # In scope for bringup:
 #   * USB-CDC over the nRF native USB peripheral (chip BSP)

@@ -33,10 +33,18 @@
 
 # Appendices
 
-- [Companion Radios](companion-radio.md)
-- [Minimal Companion Radio Protocol](companion-radio-minimal.md)
-- [Full Companion Radio Protocol](companion-radio-full.md)
-- [Companion Radio over BLE](companion-radio-ble.md)
+- [Local Control Protocol (ULCP)](ulcp.md)
+  - [Framing and Common Semantics](ulcp-core.md)
+  - [Radio Control](ulcp-radio.md)
+  - [Frame Transport](ulcp-transport.md)
+  - [Device Domain](ulcp-device.md)
+  - [Saved State](ulcp-saved-state.md)
+  - [Tethered Host Services](ulcp-host.md)
+  - [Minimum Requirements](ulcp-conformance.md)
+  - [Command and Property Index](ulcp-index.md)
+  - [ULCP over BLE](ulcp-ble.md)
+  - [Superseded: Minimal Protocol](ulcp-minimal.md)
+  - [Superseded: Full Protocol](ulcp-full.md)
 - [Identity Export Format](identity-export.md)
 - [Security Considerations](security-considerations.md)
 - [Amateur Radio Operation](amateur-radio.md)

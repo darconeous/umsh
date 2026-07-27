@@ -13,7 +13,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 umsh-core = { path = "../umsh-core" }
 umsh-crypto = { path = "../umsh-crypto" }
 umsh-hal = { path = "../umsh-hal" }
-umsh-companion = { path = "../umsh-companion" }
+umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-uri = { path = "../umsh-uri" }
 umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
 umsh-node = { path = "../umsh-node", features = ["std", "software-crypto"] }

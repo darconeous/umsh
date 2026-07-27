@@ -124,7 +124,7 @@ Decisions).
 ### 3. Radio
 
 Request Bluetooth permission only when the user chooses **Find a radio**. The
-scan lists devices advertising the UMSH companion service and displays their
+scan lists devices advertising the ULCP GATT service and displays their
 advertised device names without claiming ownership.
 
 Selecting a radio starts the platform pairing flow. The app explains any

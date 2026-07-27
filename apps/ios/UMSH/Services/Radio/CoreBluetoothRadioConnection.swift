@@ -5,23 +5,23 @@ import UMSHMobileCore
 
 /// Discovers and attaches the GATT transport for a companion radio.
 ///
-/// The adapter owns ATT/GATT lifecycle and write backpressure. Companion wire
+/// The adapter owns ATT/GATT lifecycle and write backpressure. ULCP wire
 /// encoding, validation, segmentation, and reassembly remain in Rust.
 final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked Sendable {
     /// Long enough for a several-hop LoRa round trip, but short enough that a
     /// silent peer does not leave the peer page waiting for half a minute.
     private static let peerPingTimeoutMilliseconds: UInt64 = 8_000
-    private static let logger = Logger(subsystem: "com.umsh.ios", category: "CompanionRadio")
+    private static let logger = Logger(subsystem: "com.umsh.ios", category: "UlcpDevice")
     private static let maximumRawTransmitBusyRetries = 20
-    // The current mobile MAC needs the companion's physical TX completion
-    // before starting its ACK clock. A larger CRP window is unsafe until the
-    // companion itself owns the inter-frame receive/ACK window.
+    // The current mobile MAC needs the device's physical TX completion
+    // before starting its ACK clock. A larger ULCP window is unsafe until the
+    // device itself owns the inter-frame receive/ACK window.
     private static let maximumRawTransmitsInFlight = 1
 
     private struct PendingRawFrame {
         var data: Data
         var meshFrameID: UInt64
-        /// TX_FLAG_NOCCA: transmit without the companion's channel-activity
+        /// TX_FLAG_NOCCA: transmit without the device's channel-activity
         /// check. Set by the Rust MAC for immediate acks.
         var nocca: Bool
         var busyRetries = 0
@@ -100,7 +100,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var automaticConnectionInProgress = false
     private var intentionalDisconnect = false
     private let reassembler = MobileGattReassembler()
-    private let companionSession = MobileCompanionSession()
+    private let ulcpSession = MobileUlcpSession()
     private var pendingWrites: [PendingGattWrite] = []
     private var writeInProgress = false
     private var currentWriteRawTransactionID: UInt8?
@@ -121,7 +121,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var autoEnableAttemptedGeneration: UInt64?
 
     /// Stable restoration identifier: iOS relaunches the app in the
-    /// background for companion events only when a central with this
+    /// background for ULCP events only when a central with this
     /// identifier is recreated promptly at launch.
     private static let restoreIdentifier = "com.umsh.radio.central"
     private static var centralOptions: [String: Any] {
@@ -399,7 +399,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         let target = discovered[id]?.peripheral
             ?? central.retrievePeripherals(withIdentifiers: [id]).first
         guard let target else {
-            completion.resume(throwing: RadioConnectionError.companionNotFound)
+            completion.resume(throwing: RadioConnectionError.radioNotFound)
             return
         }
         // Leave discovery and drive the normal attach path for this radio.
@@ -614,7 +614,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 let hadKey = selectedHostKey != nil
                 selectedHostKey = hostKey
                 // A restored or standing-pending link can attach before app
-                // bootstrap supplies the phone identity. The companion
+                // bootstrap supplies the phone identity. The ULCP
                 // session then classifies the host with no key and parks at
                 // awaitingHost ("Phone identity unavailable") with nothing
                 // to re-judge it. Restart synchronization now that the key
@@ -690,7 +690,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
         do {
             try applySessionUpdate(
-                companionSession.claim(hostKey: selectedHostKey),
+                ulcpSession.claim(hostKey: selectedHostKey),
                 from: peripheral
             )
         } catch {
@@ -703,7 +703,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
                 guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
                     return
                 }
                 guard configurationWaiter == nil, !refreshInProgress else {
@@ -712,7 +712,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 }
                 configurationWaiter = result
                 do {
-                    let record = CompanionRadioSettingsRecord(
+                    let record = UlcpRadioSettingsRecord(
                         deviceName: settings.deviceName,
                         phyEnabled: settings.phyEnabled,
                         frequencyKhz: settings.frequencyKHz,
@@ -723,7 +723,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         dutyCycleLimit: settings.dutyCycleLimit
                     )
                     try applySessionUpdate(
-                        companionSession.configure(settings: record),
+                        ulcpSession.configure(settings: record),
                         from: peripheral
                     )
                 } catch {
@@ -737,12 +737,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
                 guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
                     return
                 }
                 Self.logger.notice("action: user pressed Factory Reset")
                 do {
-                    try applySessionUpdate(companionSession.factoryReset(), from: peripheral)
+                    try applySessionUpdate(ulcpSession.factoryReset(), from: peripheral)
                 } catch {
                     result.resume(throwing: RadioConnectionError.incompatibleProtocol)
                     return
@@ -771,7 +771,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                       snapshot.linkState == .attached,
                       snapshot.hostState == .matchesCurrentIdentity
                 else {
-                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
                     return
                 }
                 do {
@@ -873,7 +873,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<RadioSnapshot, any Error>) in
             bluetoothQueue.async { [self] in
                 guard let peripheral, peripheral.state == .connected else {
-                    result.resume(throwing: RadioConnectionError.companionNotFound)
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
                     return
                 }
                 guard configurationWaiter == nil else {
@@ -884,7 +884,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 guard !refreshInProgress else { return }
                 refreshInProgress = true
                 do {
-                    try applySessionUpdate(companionSession.refresh(), from: peripheral)
+                    try applySessionUpdate(ulcpSession.refresh(), from: peripheral)
                 } catch {
                     finishRefresh(throwing: error)
                 }
@@ -943,7 +943,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         automaticConnectionInProgress = false
         central?.stopScan()
         // Durably clear auto-reconnect intent and revoke every standing/live
-        // connection for the companion service — including a request for the
+        // connection for the ULCP service — including a request for the
         // bound radio resurrected by state restoration, or one with no live
         // peripheral object. A live, connected link is spared here so its
         // `.disconnecting` UI flow runs below. connectedUUID is kept so
@@ -1147,11 +1147,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
     }
 
-    /// Tear down a companion link only when its framing or session state is
-    /// no longer trustworthy. Ordinary CRP status failures and rejected
+    /// Tear down a ULCP link only when its framing or session state is
+    /// no longer trustworthy. Ordinary ULCP status failures and rejected
     /// operations must never come through this path.
     private func terminateConnectionForFatalProtocolError(_ message: String, name: String? = nil) {
-        Self.logger.fault("Fatal companion protocol error: \(message, privacy: .public)")
+        Self.logger.fault("Fatal ULCP error: \(message, privacy: .public)")
         finishPendingOperations(throwing: RadioConnectionError.incompatibleProtocol)
         pendingWrites.removeAll()
         writeInProgress = false
@@ -1159,7 +1159,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         pendingRawFrames.removeAll()
         rawTransmitsInFlight.removeAll()
         syncAttempt = UUID()
-        _ = companionSession.reset()
+        _ = ulcpSession.reset()
         snapshot.linkState = .failed
         snapshot.name = name ?? snapshot.name
         snapshot.localIdentifier = rememberedPeripheralIdentifier ?? snapshot.localIdentifier
@@ -1172,9 +1172,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     /// Report a failed operation without disturbing the BLE transport or the
-    /// companion session. A connected radio remains connected.
+    /// ULCP session. A connected radio remains connected.
     private func reportOperationFailure(_ message: String, name: String? = nil) {
-        Self.logger.error("Companion operation failed: \(message, privacy: .public)")
+        Self.logger.error("ULCP operation failed: \(message, privacy: .public)")
         snapshot.name = name ?? snapshot.name
         snapshot.problemDescription = message
         publish(snapshot)
@@ -1205,7 +1205,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     /// Best-effort revocation of every standing/live connection this central
-    /// holds for the companion service. CoreBluetooth exposes no single
+    /// holds for the ULCP service. CoreBluetooth exposes no single
     /// "cancel all pending connects" call, so this sweeps the sources it does
     /// surface: the bound radio's peripheral, anything currently connected for
     /// our service, and anything handed back by state restoration. Pass `keep`
@@ -1329,7 +1329,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func beginSynchronization(on peripheral: CBPeripheral) {
         guard let frameIn else {
-            terminateConnectionForFatalProtocolError("The radio has no writable companion endpoint", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has no writable ULCP endpoint", name: peripheral.name)
             return
         }
         guard frameIn.properties.contains(.write) else {
@@ -1343,11 +1343,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         currentWriteRawTransactionID = nil
         do {
             try applySessionUpdate(
-                companionSession.begin(selectedHostKey: selectedHostKey),
+                ulcpSession.begin(selectedHostKey: selectedHostKey),
                 from: peripheral
             )
         } catch {
-            terminateConnectionForFatalProtocolError("The companion session could not start", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The ULCP session could not start", name: peripheral.name)
         }
     }
 
@@ -1365,13 +1365,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         on peripheral: CBPeripheral
     ) throws {
         // CoreBluetooth's with-response maximum may advertise the size of an
-        // ATT long write. CRP GATT SAR requires ordinary single-write values;
+        // ATT long write. ULCP GATT SAR requires ordinary single-write values;
         // the without-response maximum is the negotiated ATT payload bound
         // even though we deliberately send each segment with a response.
         let maximumLength = UInt16(
             min(peripheral.maximumWriteValueLength(for: .withoutResponse), Int(UInt16.max))
         )
-        let segments = try UMSHMobileCore.companionGattSegments(
+        let segments = try UMSHMobileCore.ulcpGattSegments(
             frame: frame,
             maximumValueLength: maximumLength
         )
@@ -1383,14 +1383,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private func receive(_ value: Data, from peripheral: CBPeripheral) {
         do {
             guard let frame = try reassembler.push(segment: value) else { return }
-            try applySessionUpdate(companionSession.consume(frame: frame), from: peripheral)
+            try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
         } catch {
-            terminateConnectionForFatalProtocolError("The radio sent an invalid companion frame", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio sent an invalid ULCP frame", name: peripheral.name)
         }
     }
 
     private func applySessionUpdate(
-        _ update: CompanionSessionUpdateRecord,
+        _ update: UlcpSessionUpdateRecord,
         from peripheral: CBPeripheral
     ) throws {
         syncAttempt = UUID()
@@ -1457,7 +1457,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             "\($0.operation) failed: \($0.statusName) (\($0.statusCode))"
         }
         if let operationErrorMessage {
-            Self.logger.error("Companion operation rejected: \(operationErrorMessage, privacy: .public)")
+            Self.logger.error("ULCP operation rejected: \(operationErrorMessage, privacy: .public)")
             snapshot.problemDescription = operationErrorMessage
         }
 
@@ -1486,7 +1486,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 submission.busyRetries += 1
                 if submission.busyRetries <= Self.maximumRawTransmitBusyRetries {
                     Self.logger.notice(
-                        "Companion raw transmit temporarily busy; retry \(submission.busyRetries, privacy: .public)"
+                        "Raw transmit temporarily busy; retry \(submission.busyRetries, privacy: .public)"
                     )
                     pendingRawFrames.insert(submission, at: 0)
                     rawTransmitDelay = 0.1
@@ -1494,7 +1494,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     completeMeshFrame(submission.meshFrameID, transmitted: false)
                     let message = "Radio remained busy; send was not transmitted"
                     Self.logger.error(
-                        "Companion raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                        "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
                     )
                     snapshot.problemDescription = message
                     rawTransmitDelay = 0
@@ -1502,7 +1502,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             case .rejected:
                 completeMeshFrame(submission.meshFrameID, transmitted: false)
                 Self.logger.error(
-                    "Companion raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                    "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
                 )
                 snapshot.problemDescription = "Radio rejected the transmission: \(result.statusName)"
                 rawTransmitDelay = 0
@@ -1578,7 +1578,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     try self.startRawTransmits(on: peripheral)
                 } catch {
                     self.dropPendingRawFrame(
-                        reason: "The companion session rejected an outbound frame before transmission",
+                        reason: "The ULCP session rejected an outbound frame before transmission",
                         name: peripheral.name
                     )
                 }
@@ -1741,14 +1741,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    /// Fill the companion NCP's target-sized transmit window. The NCP retains
+    /// Fill the device's target-sized transmit window. The device retains
     /// complete frames and serializes the physical LoRa radio; transaction IDs
     /// correlate completions even when a later submission is rejected early.
     private func startRawTransmits(on peripheral: CBPeripheral) throws {
         while rawTransmitsInFlight.count < Self.maximumRawTransmitsInFlight,
               let submission = pendingRawFrames.first
         {
-            let update = try companionSession.transmitRaw(data: submission.data, nocca: submission.nocca)
+            let update = try ulcpSession.transmitRaw(data: submission.data, nocca: submission.nocca)
             guard let transactionID = update.rawTransmitStartedTransactionId,
                   rawTransmitsInFlight[transactionID] == nil
             else {
@@ -1783,7 +1783,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             // recursive transport failure.
             bluetoothQueue.async { [weak self] in
                 self?.dropPendingRawFrame(
-                    reason: "The companion session rejected an outbound frame before transmission",
+                    reason: "The ULCP session rejected an outbound frame before transmission",
                     name: peripheral.name
                 )
             }
@@ -1805,11 +1805,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    /// A companion attachment is intended to provide a usable radio. Preserve
+    /// A ULCP attachment is intended to provide a usable radio. Preserve
     /// the radio's authoritative profile and enable only the PHY bit after the
     /// initial inspection discovers it disabled.
     private func enableAttachedPhy(
-        provisioning: CompanionSyncRecord,
+        provisioning: UlcpSyncRecord,
         deviceName: String?,
         on peripheral: CBPeripheral
     ) {
@@ -1817,7 +1817,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
               peripheral.state == .connected,
               snapshot.linkState == .attached
         else { return }
-        let settings = CompanionRadioSettingsRecord(
+        let settings = UlcpRadioSettingsRecord(
             deviceName: provisioning.supportsDeviceName ? deviceName : nil,
             phyEnabled: true,
             frequencyKhz: provisioning.frequencyKhz,
@@ -1829,11 +1829,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
         do {
             try applySessionUpdate(
-                companionSession.configure(settings: settings),
+                ulcpSession.configure(settings: settings),
                 from: peripheral
             )
         } catch {
-            Self.logger.error("Could not automatically enable companion PHY")
+            Self.logger.error("Could not automatically enable the radio PHY")
             snapshot.problemDescription = "The companion radio could not be enabled automatically"
             publish(snapshot)
         }
@@ -1882,13 +1882,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     private func clearPeripheral() {
-        finishPendingOperations(throwing: RadioConnectionError.companionNotFound)
+        finishPendingOperations(throwing: RadioConnectionError.radioNotFound)
         peripheral?.delegate = nil
         peripheral = nil
         frameIn = nil
         frameOut = nil
         reassembler.reset()
-        _ = companionSession.reset()
+        _ = ulcpSession.reset()
         pendingWrites.removeAll()
         writeInProgress = false
         currentWriteRawTransactionID = nil
@@ -1909,7 +1909,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, willRestoreState state: [String: Any]) {
         // iOS relaunched (or re-created) us in the background because a
-        // companion event arrived. Adopt the restored peripheral now, but
+        // ULCP event arrived. Adopt the restored peripheral now, but
         // defer all CoreBluetooth calls until the central reports poweredOn.
         let restored = state[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
         restoredPeripherals = restored
@@ -1945,7 +1945,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
 
     /// Continue a state-restored link once Bluetooth is powered on. Process
     /// memory did not survive, so an already-connected peripheral still
-    /// re-runs discovery and companion synchronization from scratch.
+    /// re-runs discovery and ULCP synchronization from scratch.
     private func resumeRestoredPeripheral() {
         restorationPendingResume = false
         guard let central, let peripheral else { return }
@@ -2105,7 +2105,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             return
         }
         guard let service = peripheral.services?.first(where: { $0.uuid == UUIDs.service }) else {
-            terminateConnectionForFatalProtocolError("The radio does not expose the companion service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio does not expose the ULCP service", name: peripheral.name)
             return
         }
         peripheral.discoverCharacteristics([UUIDs.frameIn, UUIDs.frameOut], for: service)
@@ -2123,7 +2123,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         frameIn = service.characteristics?.first(where: { $0.uuid == UUIDs.frameIn })
         frameOut = service.characteristics?.first(where: { $0.uuid == UUIDs.frameOut })
         guard frameIn != nil, let frameOut else {
-            terminateConnectionForFatalProtocolError("The radio has an incompatible companion service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has an incompatible ULCP service", name: peripheral.name)
             return
         }
         publish(
@@ -2145,7 +2145,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             return
         }
         guard characteristic.isNotifying else {
-            terminateConnectionForFatalProtocolError("The radio refused the companion attachment", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio refused the ULCP attachment", name: peripheral.name)
             return
         }
         beginSynchronization(on: peripheral)
@@ -2170,18 +2170,18 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             for transactionID in failedRawTransactionIDs {
                 rawTransmitsInFlight.removeValue(forKey: transactionID)
             }
-            _ = companionSession.abandonRawTransmits(
+            _ = ulcpSession.abandonRawTransmits(
                 transactionIds: Data(failedRawTransactionIDs.sorted())
             )
             do {
                 try meshSession?.failOutboundTransmissions()
             } catch {
                 Self.logger.error(
-                    "Could not publish companion write failure to Rust mesh session"
+                    "Could not publish ULCP write failure to Rust mesh session"
                 )
             }
             reportOperationFailure(
-                "The companion write was not accepted: \(error.localizedDescription)",
+                "The ULCP write was not accepted: \(error.localizedDescription)",
                 name: peripheral.name
             )
             return
@@ -2197,7 +2197,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         guard characteristic.uuid == UUIDs.frameOut else { return }
         if let error {
             reportOperationFailure(
-                "The companion notification could not be read: \(error.localizedDescription)",
+                "The ULCP notification could not be read: \(error.localizedDescription)",
                 name: peripheral.name
             )
             return

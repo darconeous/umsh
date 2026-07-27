@@ -23,7 +23,7 @@ embedded-hal-async.workspace = true
 heapless.workspace = true
 rand_core.workspace = true
 umsh-chat-room = { path = "../crates/umsh-chat-room", default-features = false, optional = true }
-umsh-companion = { path = "../crates/umsh-companion" }
+umsh-ulcp = { path = "../crates/umsh-ulcp" }
 umsh-core = { path = "../crates/umsh-core", default-features = false }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
@@ -44,9 +44,9 @@ socket2 = { version = "0.6", optional = true }
 umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-stdio"] }
 
 [dev-dependencies]
-# The adapter-free full-protocol integration tests drive the real NCP
-# session engine behind a FrameLink (umsh/tests/companion_full_protocol.rs).
-umsh-companion-ncp = { path = "../crates/umsh-companion-ncp" }
+# The adapter-free full-protocol integration tests drive the real device
+# session engine behind a FrameLink (umsh/tests/ulcp_full_protocol.rs).
+umsh-ulcp-device = { path = "../crates/umsh-ulcp-device" }
 # Host critical-section implementation for the session's shared duty
 # ledger; firmware images provide theirs via nrf-mpsl.
 critical-section = { version = "1", features = ["std"] }
@@ -56,15 +56,15 @@ name = "cli_udp"
 required-features = ["cli"]
 
 [[example]]
-name = "cli_companion"
+name = "cli_ulcp"
 required-features = ["cli"]
 
 [[example]]
-name = "companion_probe"
+name = "ulcp_probe"
 required-features = ["tokio-support"]
 
 [[example]]
-name = "companion_hw_validate"
+name = "ulcp_hw_validate"
 required-features = ["serial-radio"]
 
 [[example]]
@@ -77,12 +77,12 @@ path = "src/bin/umsh_capture.rs"
 required-features = ["tokio-support"]
 
 [[bin]]
-name = "umsh-companionctl"
-path = "src/bin/umsh_companionctl.rs"
+name = "umsh-ulcpctl"
+path = "src/bin/umsh_ulcpctl.rs"
 required-features = ["tokio-support"]
 
 [[example]]
-name = "companion_link_soak"
+name = "ulcp_link_soak"
 required-features = ["tokio-support"]
 
 [[example]]

@@ -1,6 +1,6 @@
 //! T-Echo BLE coexistence and security spike.
 //!
-//! The companion echo service is encrypted and additionally rejects dynamic
+//! The ULCP-shaped echo service is encrypted and additionally rejects dynamic
 //! GATT operations from peers that are not bonded. New pairing is enabled for
 //! the first 20 seconds after boot, then disabled through UMSH's Trouble fork.
 //! USB CDC echoes packets concurrently; the SX1262 and watchdog stay active.
@@ -57,7 +57,7 @@ mod firmware {
     use static_cell::StaticCell;
     use trouble_host::prelude::*;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
-    use umsh_companion::gatt;
+    use umsh_ulcp::gatt;
 
     bind_interrupts!(struct Irqs {
         RNG => rng::InterruptHandler<RNG>;
@@ -85,11 +85,11 @@ mod firmware {
 
     #[gatt_server]
     struct Server {
-        companion: CompanionService,
+        ulcp: UlcpService,
     }
 
     #[gatt_service(uuid = "21eb6b15-0001-4ccf-92e4-a079171bec97")]
-    struct CompanionService {
+    struct UlcpService {
         #[characteristic(
             uuid = "21eb6b15-0002-4ccf-92e4-a079171bec97",
             write,
@@ -172,7 +172,7 @@ mod firmware {
                     let bonded = conn.raw().is_bonded_peer();
                     let mut echo: Option<heapless::Vec<u8, 244>> = None;
                     if let GattEvent::Write(write) = &event {
-                        if write.handle() == server.companion.frame_in.handle {
+                        if write.handle() == server.ulcp.frame_in.handle {
                             write.with_data(|_, data| {
                                 let mut value = heapless::Vec::new();
                                 let _ = value.extend_from_slice(data);
@@ -190,7 +190,7 @@ mod firmware {
 
                     if bonded {
                         if let Some(value) = echo {
-                            let _ = server.companion.frame_out.notify(conn, &value, true).await;
+                            let _ = server.ulcp.frame_out.notify(conn, &value, true).await;
                         }
                     }
                 }

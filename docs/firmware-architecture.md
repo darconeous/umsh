@@ -1,8 +1,8 @@
 # UMSH Firmware Architecture
 
 How UMSH firmware is organized across multiple firmware types and hardware
-platforms. This document captures the conventions; per-firmware plans (e.g.
-[firmware-plan-t1000e.md](firmware-plan-t1000e.md)) capture specifics.
+platforms. This document captures the conventions; per-firmware plans capture
+specifics.
 
 If you are adding a new firmware type or a new board, this is the document to
 read first.
@@ -11,14 +11,57 @@ read first.
 
 UMSH firmware lives on a 2-D matrix:
 
-- **Firmware types**: companion-radio CLI, repeater, UART debug CLI, … (more
-  over time).
+- **Firmware types**: the shipping device image, plus bringup harnesses and
+  spikes.
 - **Hardware platforms**: Seeed SenseCap T1000E, Seeed SenseCap Solar P1,
   Lilygo T-Deck, … (more over time).
 
 A naive "one crate per (firmware, platform) combination" approach explodes
 combinatorially and duplicates code. We instead factor the matrix into three
 kinds of crates that compose at the leaves.
+
+### One image per board
+
+The *role* axis is gone. There is no separate repeater firmware and no
+separate companion-radio firmware: a repeater and a companion radio are the
+same image holding different property values, and the difference is
+configuration the operator applies over ULCP. What remains per-board is the
+BSP, the flash layout, and the target triple.
+
+"Companion radio" and "repeater" stay useful words — they name recognizable
+points in the configuration space, and host tooling offers them as presets —
+but they no longer name build targets.
+
+### The shipping matrix
+
+| Board | MCU | Shipping image | Transports | Flash/RAM (of budget) | Status |
+|---|---|---|---|---|---|
+| T-1000E | nRF52840 | `t1000e` | BLE, USB-CDC | 634/135 KiB (756/256) | daily driver |
+| T-Echo | nRF52840 | `techo` | BLE, USB-CDC | 647/143 KiB (756/256) | hardware-accepted |
+| SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 628/132 KiB (756/256) | hardware-accepted |
+| Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1129/462 KiB (3008/512) | hardware-accepted |
+| Wio Tracker L1 | nRF52840 | **none — parked** | USB-CDC | — | bringup Phases 0–1 only |
+| Heltec V2 | ESP32 | **none — parked** | — | — | suspected defective unit |
+
+Figures are `text+data` against the application flash window and
+`data+bss` against SRAM, from a release build. They are a snapshot, not a
+budget: the useful reading is the headroom, which is comfortable on every
+board that ships.
+
+**Wio Tracker L1 is parked, deliberately.** Bringup reached Phases 0–1
+(USB-CDC, heartbeat, safety primitives) and stopped; the board has no RF or
+BLE bringup behind it, so there is nothing to build a device image on. Its
+`wio-tracker-l1-console` binary stays in the tree as the bringup
+harness it is. Unparking it means finishing bringup first, not adding a
+build target.
+
+### `companion-cli-*` is a bringup harness, not a product
+
+The CLI binaries are retained per board and excluded from the shipping
+matrix above. They earn their place for one reason: they are the only thing
+exercising the non-BLE path end to end, and they are the natural tool for a
+new board before BLE stands up. Treat them as diagnostics — a board with a
+working CLI image and no device image is a board in bringup.
 
 ## The BSP / UX / App / Binary layering
 
@@ -55,9 +98,9 @@ firmware/
 
 Why a separate UX layer:
 
-- **Mechanism is reusable across apps on the same device class.** A
-  T1000-E repeater firmware uses the same button FSM and LED heartbeat as
-  the T1000-E companion-radio CLI; only the *mapping* of button events to
+- **Mechanism is reusable across apps on the same device class.** The
+  T1000-E device image uses the same button FSM and LED heartbeat as the
+  T1000-E CLI bringup harness; only the *mapping* of button events to
   actions differs.
 - **App code is portable across boards of the same class.** A companion-CLI
   app written against `umsh-ux-tracker` runs on T1000-E and Solar P1
@@ -65,10 +108,9 @@ Why a separate UX layer:
 - **Putting class-specific mechanism in the app crate couples them
   forever.** Discovered exactly this mistake during the first scaffolding
   pass: button / LED / buzzer mechanism initially lived in
-  `umsh-app-companion-cli`, but it's all class-mechanism that belongs in
-  a UX crate. The rule that fell out: if a future repeater firmware on
-  the same board would want this code, it belongs in the UX crate, not
-  the app crate.
+  `umsh-app-ulcp-cli`, but it's all class-mechanism that belongs in
+  a UX crate. The rule that fell out: if another app on the same board
+  would want this code, it belongs in the UX crate, not the app crate.
 
 Adding a new firmware type → one new app crate plus one new binary per board
 it targets. Adding a new board → one new board-BSP (and possibly one new
@@ -82,8 +124,8 @@ class → one new UX-class crate plus the apps that target it.
 | `crates/umsh-bsp-<chip>/` | Chip-level BSP, board-agnostic. Owns peripherals and patterns that any board using that chip needs. | `umsh-bsp-nrf52840`, `umsh-bsp-esp32s3` |
 | `crates/umsh-bsp-<board>/` | Board-level BSP. Composes a chip-BSP with board-specific pinout, sensors, radios. Implements `Platform`. | `umsh-bsp-t1000e`, `umsh-bsp-solar-p1`, `umsh-bsp-tdeck` |
 | `crates/umsh-ux-<class>/` | UX-class mechanism. Pure-logic engines shared by every app on every board of that device class. | `umsh-ux-tracker` (single button + single LED + piezo buzzer + USB-CDC), future `umsh-ux-handheld`, `umsh-ux-headless` |
-| `crates/umsh-app-<firmware>/` | App-specific policy, hardware-agnostic. Generic over a Platform and a UX class. | `umsh-app-companion-cli`, `umsh-app-repeater`, `umsh-app-uart-cli-debug` |
-| `firmware/<firmware>-<board>/` | Binary glue crate. Pinned to a target triple. | `firmware/companion-cli-t1000e`, `firmware/repeater-t1000e`, `firmware/repeater-tdeck` |
+| `crates/umsh-app-<firmware>/` | App-specific policy, hardware-agnostic. Generic over a Platform and a UX class. | `umsh-app-ulcp-cli`, `umsh-app-repeater`, `umsh-app-uart-cli-debug` |
+| `firmware/<firmware>-<board>/` | Binary glue crate. Pinned to a target triple. | `firmware/t1000e-console`, `firmware/repeater-t1000e`, `firmware/repeater-tdeck` |
 
 The chip-BSP / board-BSP split exists because we expect chips to be reused
 across boards. T1000E and Solar P1 are both nRF52840, so they share
@@ -118,8 +160,8 @@ definitions; treat those as the source of truth.
 
 ## App portability
 
-Apps differ in what board resources they need. A repeater only needs a
-radio and an LED. A companion-radio CLI also needs a USB interface, a
+Apps differ in what board resources they need. A headless forwarding app
+needs only a radio and an LED. A CLI harness also needs a USB interface, a
 button, a buzzer, and a GNSS module. We want compile-time enforcement that
 an app and a board are compatible — feature-flag matrices are an anti-pattern
 here.
@@ -127,7 +169,7 @@ here.
 The recommended pattern is **trait-bounded App entry points**:
 
 ```rust
-// In umsh-app-companion-cli:
+// In umsh-app-ulcp-cli:
 pub async fn run<B>(spawner: Spawner, board: B) -> !
 where
     B: Platform + HasButton + HasLed + HasBuzzer + HasGnss + HasUsbCdc,
@@ -292,8 +334,7 @@ heartbeat or piezo-tone melody sequencer.
 
 ## What lives in CLAUDE.md / why this doc exists
 
-This doc is the contract. Per-firmware plans (e.g.
-[firmware-plan-t1000e.md](firmware-plan-t1000e.md)) document the things
+This doc is the contract. Per-firmware plans document the things
 *specific to that firmware* — the safety contract for that particular
 device, the button UX, the phasing for that build — and inherit the
 conventions defined here. If a per-firmware plan and this doc disagree,

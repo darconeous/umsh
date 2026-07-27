@@ -198,38 +198,38 @@ Peers can also be pre-registered on the command line with `--peer <key>[:alias]`
 accepts the same key formats as `/peer add`. The `--group` and `--port` flags override the
 default multicast address and port if you need to run isolated sessions on the same machine.
 
-### Capture live LoRa and companion-protocol traffic
+### Capture live LoRa and ULCP traffic
 
-The `umsh-capture` tool connects to a T-Echo or T-1000E NCP over BLE, configures and enables its
+The `umsh-capture` tool connects to a T-Echo or T-1000E radio over BLE, configures and enables its
 LoRa radio, and prints every received frame with elapsed time, RSSI, SNR, raw bytes, and an
 attempted UMSH header decode. Traffic from another protocol is retained and labeled as not a
 valid UMSH packet rather than discarded.
 
 On the T-Echo, choose **Start Pairing** from the BLE menu before connecting a computer for the
-first time. Stop any serial companion-radio tool and disconnect other BLE-central apps such as
-nRF Connect; only one companion session can own the NCP at a time. Then run, from the repository
+first time. Stop any serial ULCP tool and disconnect other BLE-central apps such as
+nRF Connect; only one host session can own the radio at a time. Then run, from the repository
 root:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- --ble
 ```
 
-If more than one Companion Link device is nearby, select the board by its advertised name:
+If more than one ULCP device is nearby, select the board by its advertised name:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH T-1000E NCP"
+    --ble "UMSH T-1000E"
 ```
 
-The T-Echo advertises as `UMSH T-Echo NCP`.
+The T-Echo advertises as `UMSH T-Echo`.
 
 To verify advertising without connecting or provoking pairing, use the bounded passive scanner:
 
 ```sh
-cargo run -p umsh --example companion_probe --features ble-radio -- --scan-ble
+cargo run -p umsh --example ulcp_probe --features ble-radio -- --scan-ble
 ```
 
-Pairing is mediated by the operating system. Enter the NCP's configured six-digit BLE PIN
+Pairing is mediated by the operating system. Enter the device's configured six-digit BLE PIN
 if prompted. The protected subscription allows up to 90 seconds for the pairing UI and PIN
 entry, independently of the shorter timeout used by ordinary GATT operations. On Linux, enable
 a `bluetoothctl` agent and pair/trust the device before running the dumper if the automatic
@@ -240,19 +240,19 @@ word `0x1424`. Each parameter can be overridden explicitly:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH T-1000E NCP" \
+    --ble "UMSH T-1000E" \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
 
 While no frames arrive, the dumper performs a live channel-RSSI probe every 10 seconds and
 prints an `idle ... link=ok` line. This is expected during RF silence and confirms that the BLE
-connection, NCP command session, and radio runner are still responding. If one of those layers
+connection, ULCP command session, and radio runner are still responding. If one of those layers
 stalls or disconnects, the probe reports a specific error instead of leaving a packet count
 apparently frozen. On a BLE write failure, the diagnostic includes the platform backend's
 `is_connected` result and bounded disconnect-cleanup result. The dumper then rediscovers and
 reconnects after two seconds by default, preserves cumulative time/packet counters, and prints a
-new session number plus the NCP's retained boot status. This recovery is deliberately local to
-the diagnostic tool; normal stateful users of `CompanionRadio` still receive the failure.
+new session number plus the device's retained boot status. This recovery is deliberately local to
+the diagnostic tool; normal stateful users of `UlcpDevice` still receive the failure.
 
 Change the probe interval with `--idle-probe-secs=N`, change recovery delay with
 `--reconnect-delay-secs=N`, or use `--no-reconnect` to exit on the first failed session.
@@ -261,8 +261,8 @@ packet; idle/recovery diagnostics and periodic received/displayed/filtered progr
 remain visible even when the channel is busy with foreign traffic.
 
 Write a Wireshark-readable pcap with `--pcap=PATH`. The default captures
-over-the-air radio frames; `--capture=companion` instead records the complete
-Spinel-inspired host/NCP frame exchange, while `--capture=both` records both layers:
+over-the-air radio frames; `--capture=ulcp` instead records the complete
+Spinel-inspired host/device frame exchange, while `--capture=both` records both layers:
 
 ```sh
 cargo run -p umsh --bin umsh-capture --features ble-radio -- \
@@ -270,10 +270,10 @@ cargo run -p umsh --bin umsh-capture --features ble-radio -- \
 ```
 
 Portable captures use synthetic Ethernet/IPv4/UDP encapsulation. Radio packets use UDP port
-4242 and work with the existing UMSH dissector. Companion frames use directional ports
-4243/4244 and the companion dissector included in the same plugin, which exposes transaction
+4242 and work with the existing UMSH dissector. ULCP frames use directional ports
+4243/4244 and the ULCP dissector included in the same plugin, which exposes transaction
 IDs, commands, properties, stream envelopes, radio metadata, and nested UMSH packets.
-Companion captures are diagnostic artifacts and may contain sensitive property values or
+ULCP captures are diagnostic artifacts and may contain sensitive property values or
 application traffic; handle them accordingly before sharing.
 
 For an exact byte-for-byte LoRa payload capture under a private or experimental pcap link type,
@@ -291,7 +291,7 @@ have a dissector configured for the chosen private `LINKTYPE` value.
 Use `--help` for the complete option list. Press Ctrl-C to stop the dump. A timeout while
 subscribing to Frame Out usually means the computer is not bonded and the T-Echo's pairing
 window is closed; select **Start Pairing** and retry. If discovery finds no device, ensure the
-T-Echo is awake and that neither a serial companion session nor another BLE central is attached.
+T-Echo is awake and that neither a serial host session nor another BLE central is attached.
 
 ### Inspecting packets with Wireshark
 

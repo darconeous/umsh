@@ -10,7 +10,7 @@ repository.workspace = true
 # with T-Echo pinout and on-board peripherals.
 #
 # Initial scope is intentionally minimal — only what is needed for the
-# bringup firmware (see docs/firmware-plan-techo.md). Future expansion
+# bringup firmware. Future expansion
 # is welcome but not on the immediate path.
 #
 # In scope for bringup:
@@ -27,7 +27,7 @@ repository.workspace = true
 #   * Buttons (user, touch, reset)
 #   * Plus-only back-panel peripherals (DRV2605, BHI260, buzzer)
 #
-# See docs/firmware-plan-techo.md and docs/lilygo-techo-hardware.md.
+# See docs/lilygo-techo-hardware.md.
 
 [features]
 default = ["display", "platform", "power"]

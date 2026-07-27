@@ -77,9 +77,17 @@ impl NodeIdentityProfile {
         self.public_key.hint()
     }
 
-    /// Build the (unsigned) identity payload for a response, stamping `nonce`
-    /// into option 5.
-    fn to_payload(&self, nonce: Option<u32>) -> NodeIdentityPayload {
+    /// Build the (unsigned) identity payload this node advertises,
+    /// stamping `nonce` into option 5.
+    ///
+    /// The one canonical builder, deliberately shared by both framings of
+    /// a node identity: the Identity Request reply, which carries a
+    /// request nonce and is authenticated by the enclosing unicast, and
+    /// the standalone signed blob, which carries no nonce and is
+    /// authenticated by a detached signature. They are different objects
+    /// on the wire and the same statement about the node; the difference
+    /// must not be able to drift into the contents.
+    pub fn to_payload(&self, nonce: Option<u32>) -> NodeIdentityPayload {
         NodeIdentityPayload {
             role: self.role,
             capabilities: self.capabilities,

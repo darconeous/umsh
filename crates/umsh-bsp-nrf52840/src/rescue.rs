@@ -1,8 +1,7 @@
 //! USB-CDC DFU rescue paths.
 //!
 //! Two low-level mechanisms for getting the device into DFU mode
-//! independent of the CLI session, per the safety contract in
-//! `docs/firmware-plan-t1000e.md`:
+//! independent of the CLI session:
 //!
 //! - [`TouchlessResetWatcher`] — watches CDC control requests for the
 //!   1200-baud touchless reset (host opens port at 1200 baud and then

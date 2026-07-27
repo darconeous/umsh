@@ -7,9 +7,7 @@ active) and the [Heltec WiFi LoRa 32 V2](../docs/heltec-lora32-v2-hardware.md)
 Xtensa chips need the Xtensa Rust fork (`rust-toolchain.toml` here pins
 `channel = "esp"`), which cannot coexist with the root workspace's toolchain
 file — see the decision table in
-[firmware-architecture.md](../docs/firmware-architecture.md) and the plans in
-[firmware-plan-heltec-lora32-v3.md](../docs/firmware-plan-heltec-lora32-v3.md)
-/ [firmware-plan-heltec-lora32-v2.md](../docs/firmware-plan-heltec-lora32-v2.md).
+[firmware-architecture.md](../docs/firmware-architecture.md).
 
 ## Toolchain setup (once per machine)
 

@@ -53,31 +53,31 @@ struct MobileCoreSmokeTest {
         precondition(inspectionProperties == [3, 32, 35, 37])
         let frequency = withUnsafeBytes(of: UInt32(915_000).littleEndian) { Data($0) }
         let sync = try inspectCompanionSync(responses: [
-            CompanionPropertyFrameRecord(
+            UlcpPropertyFrameRecord(
                 transactionId: 1,
                 command: 6,
                 propertyId: 5,
                 value: Data([8])
             ),
-            CompanionPropertyFrameRecord(
+            UlcpPropertyFrameRecord(
                 transactionId: 2,
                 command: 6,
                 propertyId: 3,
                 value: Data([8])
             ),
-            CompanionPropertyFrameRecord(
+            UlcpPropertyFrameRecord(
                 transactionId: 3,
                 command: 6,
                 propertyId: 32,
                 value: Data([1])
             ),
-            CompanionPropertyFrameRecord(
+            UlcpPropertyFrameRecord(
                 transactionId: 4,
                 command: 6,
                 propertyId: 35,
                 value: frequency
             ),
-            CompanionPropertyFrameRecord(
+            UlcpPropertyFrameRecord(
                 transactionId: 5,
                 command: 6,
                 propertyId: 37,

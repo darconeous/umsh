@@ -316,11 +316,11 @@ where
     }
 }
 
-// ─── NCP (companion-radio) runner ────────────────────────────────────────────
+// ─── ULCP device runner ──────────────────────────────────────────────────────
 
-/// Radio settings applied at runtime by the NCP session.
+/// Radio settings applied at runtime by the ULCP session.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct NcpSettings {
+pub struct DeviceSettings {
     pub enabled: bool,
     pub freq_hz: u32,
     pub sf: SpreadingFactor,
@@ -329,16 +329,16 @@ pub struct NcpSettings {
     pub power_dbm: i32,
 }
 
-/// Control handle for [`ncp_runner`]: latest-wins settings updates and
+/// Control handle for [`device_runner`]: latest-wins settings updates and
 /// on-demand instantaneous-RSSI sampling. Place in a `static` next to the
 /// [`Channels`].
-pub struct NcpControl<M: RawMutex> {
-    settings: Signal<M, NcpSettings>,
+pub struct DeviceControl<M: RawMutex> {
+    settings: Signal<M, DeviceSettings>,
     rssi_req: Signal<M, ()>,
     rssi_resp: Signal<M, Result<i16, ()>>,
 }
 
-impl<M: RawMutex> NcpControl<M> {
+impl<M: RawMutex> DeviceControl<M> {
     pub const fn new() -> Self {
         Self {
             settings: Signal::new(),
@@ -349,7 +349,7 @@ impl<M: RawMutex> NcpControl<M> {
 
     /// Apply new settings. The runner picks them up at its next await
     /// point and rebuilds modulation/packet params.
-    pub fn apply(&self, settings: NcpSettings) {
+    pub fn apply(&self, settings: DeviceSettings) {
         self.settings.signal(settings);
     }
 
@@ -368,13 +368,13 @@ impl<M: RawMutex> NcpControl<M> {
     }
 }
 
-impl<M: RawMutex> Default for NcpControl<M> {
+impl<M: RawMutex> Default for DeviceControl<M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Convert a bandwidth in Hz (the companion-protocol representation)
+/// Convert a bandwidth in Hz (the ULCP representation)
 /// to the lora-phy enum. Returns `None` for unsupported values.
 pub fn bandwidth_from_hz(hz: u32) -> Option<Bandwidth> {
     Some(match hz {
@@ -419,22 +419,22 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
     })
 }
 
-/// NCP variant of [`runner`]: same RX/TX state machine, but the
+/// Device variant of [`runner`]: same RX/TX state machine, but the
 /// modulation parameters, frequency, and power come from an
-/// [`NcpControl`] at runtime instead of being fixed at spawn.
+/// [`DeviceControl`] at runtime instead of being fixed at spawn.
 ///
 /// The radio starts idle (in standby) until the first enabled settings
-/// arrive. While disabled, TX requests stay queued — the NCP session
+/// arrive. While disabled, TX requests stay queued — the ULCP session
 /// rejects transmits with `STATUS_INVALID_STATE` before they reach
 /// this queue, so nothing accumulates in practice.
 ///
 /// Cancellation-safety analysis is identical to [`runner`]: only
 /// `wait_for_irq` and the two channel/signal waits are cancelled by the
 /// select; IRQ processing and TX always run to completion.
-pub async fn ncp_runner<RK, DLY, M, const RX: usize, const TX: usize>(
+pub async fn device_runner<RK, DLY, M, const RX: usize, const TX: usize>(
     mut lora: LoRa<RK, DLY>,
     ch: &'static Channels<M, RX, TX>,
-    ctl: &'static NcpControl<M>,
+    ctl: &'static DeviceControl<M>,
     rx_preamble: u16,
     tx_preamble: u16,
 ) -> !
@@ -446,14 +446,14 @@ where
     use embassy_futures::select::{Either4, select4};
 
     let mut rx_buf = [0u8; MAX_PAYLOAD];
-    let mut settings: Option<NcpSettings> = None;
+    let mut settings: Option<DeviceSettings> = None;
 
     // Wait for new settings while idle, failing any RSSI request that
     // arrives meanwhile so the requester never hangs. The session gates
     // RSSI reads on `enabled`, but enable→RX is asynchronous (and the
     // params-failure path below idles while the session still believes
     // the radio is enabled), so a request can race into an idle window.
-    async fn wait_settings_while_idle<M: RawMutex>(ctl: &NcpControl<M>) -> NcpSettings {
+    async fn wait_settings_while_idle<M: RawMutex>(ctl: &DeviceControl<M>) -> DeviceSettings {
         loop {
             match select(ctl.settings.wait(), ctl.rssi_req.wait()).await {
                 Either::First(new_settings) => return new_settings,

@@ -5,7 +5,7 @@
 # The `umsh` row is what `umsh_bsp_esp32::flash_store` looks up by label at
 # boot to derive its `sequential-storage` range — it is never hardcoded in
 # firmware, so this file is the single source of truth for the region.
-# 64 KB matches the nRF52840 reservation (docs/firmware-storage-plan.md).
+# 64 KB matches the nRF52840 reservation.
 #
 # Sized for the 4 MB the bootloader assumes (the Heltec V3 physically has
 # 8 MB; claiming the rest is a separate, deliberate change). The factory

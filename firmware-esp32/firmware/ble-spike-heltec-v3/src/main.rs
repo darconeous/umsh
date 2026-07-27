@@ -1,14 +1,14 @@
 //! Phase 4 BLE spike for the Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262).
 //!
-//! Promotes the Phase 0 echo spike into the real companion pairing path:
-//! the `CompanionService` GATT shape, `ble_security.rs` lockout policy
-//! (ported verbatim from the T-Echo NCP), a **PIN shown on the OLED**
+//! Promotes the Phase 0 echo spike into the real ULCP pairing path:
+//! the `UlcpService` GATT shape, `ble_security.rs` lockout policy
+//! (ported verbatim from the T-Echo device firmware), a **PIN shown on the OLED**
 //! (`IoCapabilities::DisplayOnly` + `set_fixed_passkey`), and durable
 //! bonds through [`umsh_journal_store`] on the discovered `umsh`
 //! partition. Behind the bonded GATT edge runs the real minimal
-//! companion-radio protocol (`companion.rs`) — radio-less and
+//! ULCP protocol (`ulcp.rs`) — radio-less and
 //! non-durable, but enough for the UMSH app's `attach_existing` to
-//! complete. The full NCP (radio, persistence, device node) is Phase 5.
+//! complete. The full device firmware (radio, persistence, device node) is Phase 5.
 //!
 //! This proves, on S3 hardware, the two things Phase 4 exists to de-risk:
 //!   1. Real trouble-host pairing/bonding drives the esp-radio controller,
@@ -50,13 +50,13 @@ use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _}
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
 
 mod ble_store;
-mod companion;
+mod ulcp;
 
 use static_cell::StaticCell;
 
-use umsh_companion_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
+use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use ble_store::{BleStore, MAX_BONDS, ProtoStore, bond_identity_is_persistable, trouble_bond};
-use companion::Companion;
+use ulcp::UlcpResponder;
 
 /// The one flash driver behind every journal (bonds, snapshot, identity).
 static SHARED_FLASH: StaticCell<ble_store::SharedFlash> = StaticCell::new();
@@ -69,7 +69,7 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2;
 /// HCI command/event slot count for the external controller.
 const HCI_SLOTS: usize = 4;
-/// Max GATT value payload the companion characteristics carry.
+/// Max GATT value payload the ULCP characteristics carry.
 const BLE_VALUE_MAX: usize = 244;
 
 /// 21eb6b15-0001-4ccf-92e4-a079171bec97 in little-endian wire order.
@@ -77,7 +77,7 @@ const SERVICE_UUID_LE: [u8; 16] = [
     0x97, 0xec, 0x1b, 0x17, 0x79, 0xa0, 0xe4, 0x92, 0xcf, 0x4c, 0x01, 0x00, 0x15, 0x6b, 0xeb, 0x21,
 ];
 
-// ─── Pairing runtime state (mirrors the NCP's atomics) ──────────────────
+// ─── Pairing runtime state (mirrors the nRF firmware's atomics) ──────────────────
 
 static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
 static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
@@ -88,11 +88,11 @@ static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
 
 #[gatt_server]
 struct Server {
-    companion: CompanionService,
+    ulcp: UlcpService,
 }
 
 #[gatt_service(uuid = "21eb6b15-0001-4ccf-92e4-a079171bec97")]
-struct CompanionService {
+struct UlcpService {
     #[characteristic(
         uuid = "21eb6b15-0002-4ccf-92e4-a079171bec97",
         write,
@@ -128,8 +128,6 @@ fn apply_pairing_gate<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) {
         PAIRING_MODE.load(Ordering::Acquire),
         pin_configured,
         PAIRING_LOCKED_OUT.load(Ordering::Acquire),
-        bonds,
-        MAX_BONDS,
     );
     stack.set_pairing_enabled(enabled);
     println!(
@@ -241,11 +239,11 @@ async fn persist_bond_timed(store: &mut BleStore, bond: &BondInformation) -> Res
     Ok(count)
 }
 
-/// Fragment one companion response frame into SAR segments and notify
-/// them out, sized to the live ATT MTU (same shape as the nRF NCP's
+/// Fragment one ULCP response frame into SAR segments and notify
+/// them out, sized to the live ATT MTU (same shape as the nRF firmware's
 /// `send_ble_frame`, minus the generation tagging — the spike has one
 /// session and one transport).
-async fn send_companion_frame(
+async fn send_ulcp_frame(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     frame: &[u8],
@@ -253,7 +251,7 @@ async fn send_companion_frame(
     let segment_payload = usize::from(conn.raw().att_mtu())
         .saturating_sub(4)
         .clamp(1, BLE_VALUE_MAX - 1);
-    for segment in companion::segments(frame, segment_payload) {
+    for segment in ulcp::segments(frame, segment_payload) {
         let mut value: heapless::Vec<u8, BLE_VALUE_MAX> = heapless::Vec::new();
         value
             .push(segment.header())
@@ -261,7 +259,7 @@ async fn send_companion_frame(
         value
             .extend_from_slice(segment.payload())
             .map_err(|_| trouble_host::Error::InsufficientSpace)?;
-        server.companion.frame_out.notify(conn, &value, false).await?;
+        server.ulcp.frame_out.notify(conn, &value, false).await?;
     }
     Ok(())
 }
@@ -271,14 +269,14 @@ async fn gatt_connection<C: Controller>(
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
     store: &mut BleStore,
-    session: &mut Companion,
+    session: &mut UlcpResponder,
     display: &mut Display,
 ) -> Result<(), trouble_host::Error> {
     conn.raw().set_bondable(true)?;
     render_status(display, true).await;
     let mut attached = false;
-    let mut reassembler: companion::Reassembler<{ companion::MAX_FRAME }> =
-        companion::Reassembler::new();
+    let mut reassembler: ulcp::Reassembler<{ ulcp::MAX_FRAME }> =
+        ulcp::Reassembler::new();
     let result = gatt_connection_loop(
         server,
         conn,
@@ -291,7 +289,7 @@ async fn gatt_connection<C: Controller>(
     )
     .await;
     if attached {
-        println!("companion: detach (connection ended)");
+        println!("ulcp: detach (connection ended)");
         session.detach();
     }
     result
@@ -303,10 +301,10 @@ async fn gatt_connection_loop<C: Controller>(
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
     store: &mut BleStore,
-    session: &mut Companion,
+    session: &mut UlcpResponder,
     display: &mut Display,
     attached: &mut bool,
-    reassembler: &mut companion::Reassembler<{ companion::MAX_FRAME }>,
+    reassembler: &mut ulcp::Reassembler<{ ulcp::MAX_FRAME }>,
 ) -> Result<(), trouble_host::Error> {
     loop {
         match conn.next().await {
@@ -379,8 +377,8 @@ async fn gatt_connection_loop<C: Controller>(
                 // is bonded but PairingComplete never carried the bond, find
                 // the live-table entry and make it durable. add_bond is
                 // idempotent, so subsequent frames do not re-write flash.
-                let frame_in_write = matches!(&event, GattEvent::Write(w) if w.handle() == server.companion.frame_in.handle);
-                let cccd_write = matches!(&event, GattEvent::Write(w) if Some(w.handle()) == server.companion.frame_out.cccd_handle);
+                let frame_in_write = matches!(&event, GattEvent::Write(w) if w.handle() == server.ulcp.frame_in.handle);
+                let cccd_write = matches!(&event, GattEvent::Write(w) if Some(w.handle()) == server.ulcp.frame_out.cccd_handle);
                 if bonded && (frame_in_write || cccd_write) {
                     let peer = conn.raw().peer_identity();
                     let durable = stack.with_bond_information(|bonds| {
@@ -426,15 +424,15 @@ async fn gatt_connection_loop<C: Controller>(
                 // subscribe is the host attaching, an unsubscribe (or
                 // disconnect) detaches.
                 if cccd_write {
-                    let subscribed = server.companion.frame_out.should_notify(conn);
+                    let subscribed = server.ulcp.frame_out.should_notify(conn);
                     match (*attached, subscribed) {
                         (false, true) => {
-                            println!("companion: attach (cccd subscribed)");
+                            println!("ulcp: attach (cccd subscribed)");
                             *attached = true;
                             session.attach();
                         }
                         (true, false) => {
-                            println!("companion: detach (cccd unsubscribed)");
+                            println!("ulcp: detach (cccd unsubscribed)");
                             *attached = false;
                             reassembler.reset();
                             session.detach();
@@ -444,25 +442,25 @@ async fn gatt_connection_loop<C: Controller>(
                 }
 
                 // Reassemble the inbound SAR stream; each complete frame
-                // goes through the real companion session, and every
+                // goes through the real ULCP session, and every
                 // response frame is fragmented back out.
                 if let Some(segment) = inbound {
                     match reassembler.push(&segment) {
                         Some(Ok(frame)) => {
                             let now_ms = Instant::now().as_millis();
-                            let mut staged: companion::OutFrame = heapless::Vec::new();
+                            let mut staged: ulcp::OutFrame = heapless::Vec::new();
                             let (responses, pin_request) = match staged.extend_from_slice(frame) {
                                 Ok(()) => session.handle_frame(&staged, now_ms).await,
                                 Err(_) => {
                                     println!(
-                                        "companion: frame staging=FAILED len={}",
+                                        "ulcp: frame staging=FAILED len={}",
                                         frame.len()
                                     );
                                     continue;
                                 }
                             };
                             for response in &responses {
-                                send_companion_frame(server, conn, response).await?;
+                                send_ulcp_frame(server, conn, response).await?;
                             }
                             if let Some(request) = pin_request {
                                 // Persist first, then the live passkey; the
@@ -479,17 +477,17 @@ async fn gatt_connection_loop<C: Controller>(
                                     apply_pairing_gate(stack);
                                 }
                                 println!(
-                                    "companion: pin applied={applied} present={}",
+                                    "ulcp: pin applied={applied} present={}",
                                     request.pin.is_some(),
                                 );
                                 for response in &session.respond_pin(request.tid, applied) {
-                                    send_companion_frame(server, conn, response).await?;
+                                    send_ulcp_frame(server, conn, response).await?;
                                 }
                                 render_status(display, true).await;
                             }
                         }
                         Some(Err(error)) => {
-                            println!("companion: frame decode=FAILED error={error:?}");
+                            println!("ulcp: frame decode=FAILED error={error:?}");
                         }
                         None => {}
                     }
@@ -535,7 +533,7 @@ async fn advertise<'values, 'server, C: Controller>(
 async fn ble_app<C: Controller>(
     controller: C,
     mut store: BleStore,
-    mut session: Companion,
+    mut session: UlcpResponder,
     mut display: Display,
     identity: Address,
 ) -> ! {
@@ -552,13 +550,7 @@ async fn ble_app<C: Controller>(
     } else {
         IoCapabilities::NoInputNoOutput
     };
-    let initial_pairing_enabled = pairing_enabled(
-        pairing_mode,
-        pin.is_some(),
-        false,
-        bonds_at_boot.len(),
-        MAX_BONDS,
-    );
+    let initial_pairing_enabled = pairing_enabled(pairing_mode, pin.is_some(), false);
     println!(
         "ble configure identity={identity} io={io_capabilities:?} pairing-enabled={} pin={} bonds={}",
         initial_pairing_enabled,
@@ -701,9 +693,9 @@ async fn main(spawner: embassy_executor::Spawner) {
         boot_snapshot.is_some(),
         boot_identity.is_some(),
     );
-    // The companion session outlives connections: host-domain state
-    // survives a drop/reconnect exactly as on the nRF NCPs.
-    let session = Companion::new(proto_store, identity_store, boot_snapshot, boot_identity);
+    // The ULCP session outlives connections: host-domain state
+    // survives a drop/reconnect exactly as on the nRF devices.
+    let session = UlcpResponder::new(proto_store, identity_store, boot_snapshot, boot_identity);
 
     // Stable random-static identity (top two bits of the MSB set) so a
     // bonded peer reconnects to the same address across reboots.

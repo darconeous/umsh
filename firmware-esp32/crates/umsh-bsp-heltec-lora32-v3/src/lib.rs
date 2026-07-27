@@ -2,8 +2,7 @@
 //! SSD1306 OLED).
 //!
 //! See `docs/heltec-lora32-v3-hardware.md` for the authoritative hardware
-//! reference and `docs/firmware-plan-heltec-lora32-v3.md` for the bring-up
-//! plan. Pin numbers here are GPIO numbers.
+//! reference. Pin numbers here are GPIO numbers.
 //!
 //! Shared-resource constraints encoded in types (hardware doc §16):
 //! - `Vext` (GPIO36, **ACTIVE LOW** — the opposite of the Heltec V2)

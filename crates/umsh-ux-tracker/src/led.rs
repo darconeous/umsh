@@ -2,7 +2,7 @@
 //!
 //! Owns the heartbeat (always-on; never suppressed) and arbitrates
 //! one-shot sequences layered on top: power-on, power-off, location
-//! advert. See `docs/firmware-plan-t1000e.md` for the UX rules.
+//! advert.
 //!
 //! Pure logic over a monotonic-millisecond clock. The engine reports the
 //! LED state to apply *right now* and the absolute time at which the
@@ -47,7 +47,7 @@ impl LedSequence {
     }
 }
 
-/// Tunable heartbeat timings. Defaults per `docs/firmware-plan-t1000e.md`.
+/// Tunable heartbeat timings.
 #[derive(Debug, Clone, Copy)]
 pub struct LedTimings {
     pub heartbeat_interval: Duration,

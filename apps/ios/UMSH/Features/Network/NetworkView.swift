@@ -68,19 +68,19 @@ struct NetworkView: View {
             }
         } else {
             List {
-                let radios = peers.filter(\.isCompanionRadio)
+                let radios = peers.filter(\.isUlcpDevice)
                 if !radios.isEmpty {
                     Section("Saved radio") {
                         ForEach(radios) { peer in peerLink(peer) }
                     }
                 }
-                let contacts = peers.filter { !$0.isCompanionRadio && $0.isContact }
+                let contacts = peers.filter { !$0.isUlcpDevice && $0.isContact }
                 if !contacts.isEmpty {
                     Section("Contacts") {
                         ForEach(contacts) { peer in peerLink(peer) }
                     }
                 }
-                let recent = peers.filter { !$0.isCompanionRadio && !$0.isContact }
+                let recent = peers.filter { !$0.isUlcpDevice && !$0.isContact }
                 if !recent.isEmpty {
                     Section("Known nodes") {
                         ForEach(recent) { peer in peerLink(peer) }
@@ -115,7 +115,7 @@ struct NetworkView: View {
                 PeerAvatar(hint: peer.identity.hint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(peer.displayName)
-                    Text(peer.isCompanionRadio
+                    Text(peer.isUlcpDevice
                          ? "Companion radio identity · \(peer.identity.hint.text)"
                          : peer.identity.hint.text)
                         .font(.caption)
@@ -184,11 +184,11 @@ struct PeerDetailView: View {
                     PeerAvatar(hint: peer.identity.hint, diameter: 64)
                     VStack(alignment: .leading) {
                         Text(displayedName).font(.title2.bold())
-                        Text(peer.isCompanionRadio ? "Companion radio identity" : "UMSH peer")
+                        Text(peer.isUlcpDevice ? "Companion radio identity" : "UMSH peer")
                             .foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Type", value: peer.isCompanionRadio ? "Companion radio identity" : peer.kind.label)
+                LabeledContent("Type", value: peer.isUlcpDevice ? "Companion radio identity" : peer.kind.label)
                 LabeledContent("Node hint", value: peer.identity.hint.text)
                 if let lastHeard = peer.lastHeard {
                     LabeledContent("Last heard") {
@@ -292,7 +292,7 @@ struct PeerDetailView: View {
                 }
             }
 
-            if peer.isCompanionRadio {
+            if peer.isUlcpDevice {
                 Section {
                     Text("This peer is managed by the saved radio and cannot be removed separately.")
                         .foregroundStyle(.secondary)
@@ -339,7 +339,7 @@ struct PeerDetailView: View {
     private var displayedName: String {
         currentAlias
             ?? peer.advertisedName
-            ?? (peer.isCompanionRadio ? "Companion radio" : peer.identity.hint.text)
+            ?? (peer.isUlcpDevice ? "Companion radio" : peer.identity.hint.text)
     }
 
     private func saveAlias() async {

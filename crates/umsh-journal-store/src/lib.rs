@@ -1,7 +1,7 @@
 //! Power-loss-safe two-page record journals shared by every UMSH
-//! companion board.
+//! device board.
 //!
-//! Extracted from the nRF companion NCP firmware so the ESP32-S3 port
+//! Extracted from the nRF device firmware so the ESP32-S3 port
 //! reuses the same tested machinery. Three journal record formats ride
 //! one shared engine:
 //!

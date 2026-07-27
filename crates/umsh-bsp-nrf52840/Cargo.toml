@@ -12,8 +12,7 @@ repository.workspace = true
 # storage backends. Board-level BSPs (e.g. umsh-bsp-t1000e) compose this
 # crate with their own pinout and on-board peripherals.
 #
-# See docs/firmware-architecture.md for the BSP / App / Binary triad and
-# docs/firmware-plan-t1000e.md for the first concrete board using it.
+# See docs/firmware-architecture.md for the BSP / App / Binary triad.
 
 [features]
 default = []

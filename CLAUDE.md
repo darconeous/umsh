@@ -22,15 +22,15 @@ assistance and is explicitly experimental — expect code smells and WIP APIs.
   - `umsh-text` / `umsh-chat-room` — application protocols
   - `umsh-uri` — URI/address parsing & formatting (fixed-44 base58 + star-truncated hints)
   - `umsh-sync` — single-threaded async primitives (`AsyncRefCell`, `AsyncCondition`)
-  - `umsh-companion` / `-companion-ncp` / `-companion-runtime` — companion-radio (NCP) protocol wire/session/runtime
+  - `umsh-ulcp` / `-ulcp-device` / `-ulcp-runtime` — ULCP (local control protocol) wire/session/runtime
   - `umsh-mobile-core` — stable value-oriented facade for mobile apps (UniFFI)
   - `umsh-flash-store` / `umsh-journal-store` — sequential-storage NV storage + power-safe journals
   - `umsh-radio-loraphy` — `umsh-hal::Radio` over any `lora-phy` RadioKind
   - `umsh-bsp-*` — board support: `nrf52840` (shared base), `t1000e`, `techo`, `wio-tracker-l1`, `sensecap-solar`
   - `umsh-ux-tracker` — single-button/LED/buzzer UX for tracker boards
-  - `umsh-cli` / `umsh-app-companion-cli` — host CLI + companion-CLI firmware logic
-- `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binaries: `umsh-capture`, `umsh-companionctl`.
-- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU): `companion-cli-*` and `companion-ncp-*` for t1000e / techo / wio-tracker-l1 / sensecap-solar; `ble-spike-techo`.
+  - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
+- `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binaries: `umsh-capture`, `umsh-ulcpctl`.
+- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar) — there is no separate repeater build; role is configuration. The `*-console` builds are per-board bringup harnesses, not products; `ble-spike-techo` likewise. **Wio Tracker L1 is parked** at bringup Phases 0–1 and has a CLI harness only.
 - `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 parked, V3 active). Own `rust-toolchain.toml` pinning `channel = "esp"`.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
@@ -46,13 +46,13 @@ assistance and is explicitly experimental — expect code smells and WIP APIs.
 ## Flashing (use the Makefile — don't invoke objcopy/uf2conv/espflash by hand)
 
 nRF52840 (UF2/DFU via `scripts/flash.py`; device must be in DFU mode: 1200-baud touch, double-tap reset, or hold-boot-while-plugging):
-- `make flash-companion-cli-techo`, `make flash-companion-ncp-techo`
-- `make flash-companion-cli-wio-tracker-l1`
-- `make flash-companion-cli-t1000e` (UF2 drive) or `make flash-companion-cli-t1000e-serial` (T1000-E button-bootloader exposes only serial; override `DFU_SERIAL_PORT=/dev/tty.usbmodemN`)
-- `make flash-companion-{cli,ncp}-sensecap-solar`
+- `make flash-techo-console`, `make flash-techo`
+- `make flash-wio-tracker-l1-console`
+- `make flash-t1000e-console` (UF2 drive) or `make flash-t1000e-console-serial` (T1000-E button-bootloader exposes only serial; override `DFU_SERIAL_PORT=/dev/tty.usbmodemN`)
+- `make flash-sensecap-solar` (shipping image) or `make flash-sensecap-solar-console`
 
 ESP32 (build from `firmware-esp32/`; needs espup toolchain: `cargo install espup espflash && espup install`). Flash via ROM serial bootloader — cannot be bricked, stays attached as monitor:
-- `make flash-hello-heltec-v3`, `make flash-companion-{cli,ncp}-heltec-v3` (override `ESPFLASH_PORT=...`)
+- `make flash-hello-heltec-v3`, `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)
 - ESP32 flashes rewrite the partition table (`partitions-umsh.csv`, carries the 64 KB `umsh` data partition) — reflashing loses data past the old factory partition.
 
 Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debugger` (wasm).

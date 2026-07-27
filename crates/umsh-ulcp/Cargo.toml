@@ -1,0 +1,9 @@
+[package]
+name = "umsh-ulcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wire format for the UMSH Local Control Protocol (ULCP)"
+
+[dependencies]

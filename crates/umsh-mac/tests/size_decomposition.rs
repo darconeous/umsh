@@ -32,21 +32,21 @@ fn component_sizes() {
     );
 }
 
-/// The companion-radio NCP device node's channel table
-/// (`firmware/companion-ncp-techo/src/device_node.rs`,
-/// `NcpNodeMac = Mac<_, 1, 8, 8, 4, 4, 255, 32, 4, 2>`). Measured
+/// The ULCP device node's channel table
+/// (`firmware/techo/src/device_node.rs`,
+/// `DeviceNodeMac = Mac<_, 1, 8, 8, 4, 4, 255, 32, 4, 2>`). Measured
 /// 2026-07-17: ChannelState<4,2> = 2,120; the 8-channel table 16,968 of
 /// a 26,320-byte Mac static. The ceiling keeps the whole node Mac
 /// comfortably inside its RAM budget; raise it consciously, not by
 /// drift.
 #[test]
-fn ncp_node_channel_table_within_budget() {
+fn device_node_channel_table_within_budget() {
     let channel_state = core::mem::size_of::<ChannelState<4, 2>>();
     let channel_table = core::mem::size_of::<ChannelTable<8, 4, 2>>();
     println!("ChannelState<4,2>     = {channel_state}");
     println!("ChannelTable<8,4,2>   = {channel_table}");
     assert!(
         channel_table <= 20 * 1024,
-        "NCP node channel table grew past 20 KiB: {channel_table}"
+        "device node channel table grew past 20 KiB: {channel_table}"
     );
 }

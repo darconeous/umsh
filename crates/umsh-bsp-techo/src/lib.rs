@@ -5,7 +5,7 @@
 //! Composes [`umsh-bsp-nrf52840`](../umsh_bsp_nrf52840/index.html) with
 //! the T-Echo's pinout and on-board peripherals.
 //!
-//! Initial scope is *bringup only* (see `docs/firmware-plan-techo.md`):
+//! Initial scope is *bringup only*:
 //!
 //! - peripheral power switch (P0.12, active-high)
 //! - USB-CDC handles (over the nRF native USB peripheral)
@@ -35,7 +35,7 @@ pub use platform::{TechoMac, TechoPlatform};
 #[cfg(all(target_os = "none", feature = "power"))]
 pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
 
-// TODO: implement (see docs/firmware-plan-techo.md):
+// TODO: implement:
 //   pub mod pins;          // typed pin handles per lilygo-techo-hardware.md.
 //   pub mod board;          // `Board::init()` and the composed Platform impl.
 //   pub mod power;          // P0.12 peripheral-rail switch.

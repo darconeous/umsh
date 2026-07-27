@@ -2,8 +2,7 @@
 //!
 //! Defines the [`PowerIntent`] enum that multiple sources (button task,
 //! CLI command dispatcher, low-battery monitor, USB-CDC 1200-baud touch
-//! handler) submit via an embassy channel to the single `power_task` —
-//! see `docs/firmware-plan-t1000e.md` for the safety contract.
+//! handler) submit via an embassy channel to the single `power_task`.
 //!
 //! This module deliberately stays free of embassy / hardware details so
 //! the intent vocabulary and the low-battery shutdown logic can be

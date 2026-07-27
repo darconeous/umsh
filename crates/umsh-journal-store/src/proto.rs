@@ -40,7 +40,7 @@ pub fn decode_identity(payload: &[u8]) -> Option<([u8; 32], [u8; 32])> {
 }
 
 /// Two records per page; the snapshot payload is bounded by
-/// `umsh_companion_ncp::SNAPSHOT_MAX` (1024) with headroom.
+/// `umsh_ulcp_device::SNAPSHOT_MAX` (1792) with headroom.
 pub const SLOT_SIZE: usize = 2048;
 pub const COMMIT_OFFSET: usize = SLOT_SIZE - 4;
 const CRC_OFFSET: usize = COMMIT_OFFSET - 4;
@@ -155,6 +155,39 @@ pub fn consider_record(
     let Some(candidate) = Stored::decode(bytes) else {
         return current;
     };
+    if current.as_ref().is_none_or(|(_, stored)| {
+        record::generation_is_newer(candidate.generation, stored.generation)
+    }) {
+        Some((address, candidate))
+    } else {
+        current
+    }
+}
+
+/// Consider one journal slot while looking for the newest committed
+/// record strictly older than `newer_than`.
+///
+/// This is how a boot walks back after the layer above rejects a
+/// record's *payload*. [`consider_record`] recovers from a corrupt or
+/// uncommitted record, but a record whose CRC is fine and whose contents
+/// the session refuses would otherwise take the device to a bare boot
+/// while a readable older generation sits in the journal.
+///
+/// Re-scanning rather than retaining a runner-up during the first mount
+/// keeps that path's "never buffers a second copy" discipline intact;
+/// the cost is paid only on a boot that is already going wrong.
+pub fn consider_older_record(
+    current: Option<(u32, Stored)>,
+    address: u32,
+    bytes: &[u8; SLOT_SIZE],
+    newer_than: u32,
+) -> Option<(u32, Stored)> {
+    let Some(candidate) = Stored::decode(bytes) else {
+        return current;
+    };
+    if !record::generation_is_newer(newer_than, candidate.generation) {
+        return current;
+    }
     if current.as_ref().is_none_or(|(_, stored)| {
         record::generation_is_newer(candidate.generation, stored.generation)
     }) {
@@ -427,6 +460,41 @@ mod tests {
         block_on(write_record(&mut flash, PAGE0, &record(1, 0xAA, 40))).unwrap();
         block_on(write_record(&mut flash, PAGE1, &record(2, 0xBB, 40))).unwrap();
         flash
+    }
+
+    /// A payload the layer above refuses does not have to mean a bare
+    /// boot: the walk-back finds the newest committed record older than
+    /// the rejected one, skipping tombstones' generation entirely and
+    /// stopping when nothing older remains.
+    #[test]
+    fn walk_back_finds_successively_older_committed_records() {
+        let mut flash = MockFlash::new();
+        block_on(write_record(&mut flash, PAGE0, &record(1, 0xAA, 40))).unwrap();
+        block_on(write_record(
+            &mut flash,
+            PAGE0 + SLOT_SIZE as u32,
+            &record(2, 0xBB, 40),
+        ))
+        .unwrap();
+        block_on(write_record(&mut flash, PAGE1, &record(3, 0xCC, 40))).unwrap();
+
+        let older = |newer_than: u32| {
+            let mut latest = None;
+            for page in [PAGE0, PAGE1] {
+                let mut address = page;
+                while address < page + PAGE_SIZE {
+                    latest =
+                        consider_older_record(latest, address, &flash.slot(address), newer_than);
+                    address += SLOT_SIZE as u32;
+                }
+            }
+            latest.map(|(_, stored)| stored)
+        };
+
+        assert_eq!(flash.mount().unwrap().1, record(3, 0xCC, 40));
+        assert_eq!(older(3), Some(record(2, 0xBB, 40)));
+        assert_eq!(older(2), Some(record(1, 0xAA, 40)));
+        assert_eq!(older(1), None);
     }
 
     #[test]

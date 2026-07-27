@@ -399,7 +399,7 @@ actor SQLiteApplicationStore {
         return (Self.stringColumn(statement, at: 0), Self.stringColumn(statement, at: 1))
     }
 
-    func upsertCompanionRadioPeer(
+    func upsertUlcpDevicePeer(
         ownerIdentityID: String,
         publicAddress: String,
         advertisedName: String?,

@@ -28,7 +28,7 @@ Defined values:
 - `0` — Unspecified
 - `1` — Repeater
 - `2` — Chat
-- `3` — Tracker/Companion-Radio
+- `3` — Tracker
 - `4` — Sensor
 - `5` — Bridge
 - `6` — Chat Room

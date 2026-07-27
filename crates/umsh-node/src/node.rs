@@ -564,6 +564,22 @@ impl<M: MacBackend> LocalNode<M> {
         }
     }
 
+    /// Read the enabled responder's identity profile, returning `None`
+    /// if the responder is not enabled.
+    ///
+    /// The point of reading it rather than reconstructing it is that
+    /// there is one statement of what this node is, and every framing of
+    /// it — the Identity Request reply, a standalone signed
+    /// advertisement, a local-control read — has to be that same
+    /// statement.
+    pub fn with_identity_profile<R>(&self, f: impl FnOnce(&NodeIdentityProfile) -> R) -> Option<R> {
+        self.state
+            .borrow()
+            .identity_responder
+            .as_ref()
+            .map(|responder| f(&responder.profile))
+    }
+
     /// Evaluate an incoming Identity Request against the enabled responder,
     /// producing a reply plan the async pump can execute. Returns `None` when
     /// no responder is enabled, the request does not select this node, or the

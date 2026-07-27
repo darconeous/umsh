@@ -13,7 +13,7 @@ repository.workspace = true
 #   * piezo buzzer
 #   * battery powered, no display, no speaker, no keyboard
 #
-# Consumed by any app targeting this device class (companion-radio CLI,
+# Consumed by any app targeting this device class (CLI console,
 # repeater, debug CLI, ...). Boards in this class (T1000-E, SenseCap
 # Solar P1, ...) provide the GPIO / PWM / ADC handles via their
 # board-BSP; this crate provides the pure-logic engines that interpret
@@ -26,8 +26,7 @@ repository.workspace = true
 # FSM) do not generalize meaningfully across classes.
 #
 # See docs/firmware-architecture.md for the BSP / UX / App / Binary
-# layering, and docs/firmware-plan-t1000e.md for the first concrete
-# tracker-class deployment.
+# layering.
 
 [features]
 default = []

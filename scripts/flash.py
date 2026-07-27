@@ -48,7 +48,7 @@ Examples
   # Flash via serial DFU (useful on T1000-E where the user-button bootloader
   # path only exposes /dev/tty.usbmodem* and not the UF2 mass-storage drive):
   scripts/flash.py --board t1000e --serial-dfu /dev/tty.usbmodem1101 \\
-      target/thumbv7em-none-eabihf/release/firmware-companion-cli-t1000e
+      target/thumbv7em-none-eabihf/release/firmware-t1000e-console
 """
 
 from __future__ import annotations

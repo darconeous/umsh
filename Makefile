@@ -1,18 +1,23 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
-	build-companion-cli-techo flash-companion-cli-techo \
-	build-companion-cli-wio-tracker-l1 flash-companion-cli-wio-tracker-l1 \
-	build-companion-cli-t1000e flash-companion-cli-t1000e \
-	flash-companion-cli-t1000e-serial \
-	build-companion-cli-sensecap-solar flash-companion-cli-sensecap-solar \
-	build-companion-ncp-sensecap-solar flash-companion-ncp-sensecap-solar \
-	build-companion-ncp-t1000e flash-companion-ncp-t1000e-serial \
-	build-companion-ncp-techo flash-companion-ncp-techo \
+	build-techo-console flash-techo-console \
+	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
+	build-t1000e-console flash-t1000e-console \
+	flash-t1000e-console-serial \
+	build-sensecap-solar-console flash-sensecap-solar-console \
+	build-sensecap-solar flash-sensecap-solar \
+	build-t1000e flash-t1000e-serial \
+	build-techo flash-techo \
 	build-hello-heltec-v2 flash-hello-heltec-v2 \
 	build-ble-spike-heltec-v2 flash-ble-spike-heltec-v2 \
 	build-hello-heltec-v3 flash-hello-heltec-v3 \
 	build-ble-spike-heltec-v3 flash-ble-spike-heltec-v3 \
-	build-companion-cli-heltec-v3 flash-companion-cli-heltec-v3 \
-	build-companion-ncp-heltec-v3 flash-companion-ncp-heltec-v3
+	build-heltec-v3-console flash-heltec-v3-console \
+	build-heltec-v3 flash-heltec-v3 \
+	flash-companion-ncp-techo flash-companion-ncp-t1000e-serial \
+	flash-companion-ncp-sensecap-solar flash-companion-ncp-heltec-v3 \
+	flash-companion-cli-techo flash-companion-cli-t1000e \
+	flash-companion-cli-t1000e-serial flash-companion-cli-sensecap-solar \
+	flash-companion-cli-wio-tracker-l1 flash-companion-cli-heltec-v3
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -26,70 +31,78 @@
 # copy it to the default bootloader mount path. The device must be in
 # DFU mode first (1200-baud touch, double-tap reset, or hold the boot
 # button while plugging in).
+#
+# `flash-<board>` flashes the **shipping image** for that board: a
+# repeater and a companion radio are the same image holding different
+# property values (docs/firmware-architecture.md). `<board>-console`
+# is the per-board bringup harness — the only thing exercising the
+# non-BLE path end to end, and the right tool before BLE stands up on a
+# new board. Wio Tracker L1 has a harness and no shipping image: its
+# bringup is parked at Phases 0–1.
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
-build-companion-cli-techo:
-	cd firmware/companion-cli-techo && cargo build --release
+build-techo-console:
+	cd firmware/techo-console && cargo build --release
 
-flash-companion-cli-techo: build-companion-cli-techo
+flash-techo-console: build-techo-console
 	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-companion-cli-techo
+		$(TARGET_DIR)/firmware-techo-console
 
-build-companion-ncp-techo:
-	cd firmware/companion-ncp-techo && cargo build --release
+build-techo:
+	cd firmware/techo && cargo build --release
 
-flash-companion-ncp-techo: build-companion-ncp-techo
+flash-techo: build-techo
 	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-companion-ncp-techo
+		$(TARGET_DIR)/firmware-techo
 
-build-companion-cli-wio-tracker-l1:
-	cd firmware/companion-cli-wio-tracker-l1 && cargo build --release
+build-wio-tracker-l1-console:
+	cd firmware/wio-tracker-l1-console && cargo build --release
 
-flash-companion-cli-wio-tracker-l1: build-companion-cli-wio-tracker-l1
+flash-wio-tracker-l1-console: build-wio-tracker-l1-console
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
-		$(TARGET_DIR)/firmware-companion-cli-wio-tracker-l1
+		$(TARGET_DIR)/firmware-wio-tracker-l1-console
 
-build-companion-cli-t1000e:
-	cd firmware/companion-cli-t1000e && cargo build --release
+build-t1000e-console:
+	cd firmware/t1000e-console && cargo build --release
 
-flash-companion-cli-t1000e: build-companion-cli-t1000e
+flash-t1000e-console: build-t1000e-console
 	scripts/flash.py --board t1000e --copy-default \
-		$(TARGET_DIR)/firmware-companion-cli-t1000e
+		$(TARGET_DIR)/firmware-t1000e-console
 
 # Serial-DFU path: required on T1000-E when the user-button bootloader entry
 # exposes only /dev/tty.usbmodem* and not the UF2 mass-storage drive.
 # Override the port with: make ... DFU_SERIAL_PORT=/dev/tty.usbmodem<N>
 DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
 
-flash-companion-cli-t1000e-serial: build-companion-cli-t1000e
+flash-t1000e-console-serial: build-t1000e-console
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
-		$(TARGET_DIR)/firmware-companion-cli-t1000e
+		$(TARGET_DIR)/firmware-t1000e-console
 
 # SenseCAP Solar Node P1-Pro. Same UF2/DFU posture as the Wio Tracker
 # (Seeed XIAO nRF52840 bootloader, UF2 mass-storage drive). The board
 # preset in scripts/flash.py is EXPECTED pending Phase 0 confirmation of
-# the family ID and volume name; see docs/firmware-plan-sensecap-solar-node-p1-pro.md.
-build-companion-cli-sensecap-solar:
-	cd firmware/companion-cli-sensecap-solar && cargo build --release
+# the family ID and volume name.
+build-sensecap-solar-console:
+	cd firmware/sensecap-solar-console && cargo build --release
 
-flash-companion-cli-sensecap-solar: build-companion-cli-sensecap-solar
+flash-sensecap-solar-console: build-sensecap-solar-console
 	scripts/flash.py --board sensecap-solar --copy-default \
-		$(TARGET_DIR)/firmware-companion-cli-sensecap-solar
+		$(TARGET_DIR)/firmware-sensecap-solar-console
 
-build-companion-ncp-sensecap-solar:
-	cd firmware/companion-ncp-sensecap-solar && cargo build --release
+build-sensecap-solar:
+	cd firmware/sensecap-solar && cargo build --release
 
-flash-companion-ncp-sensecap-solar: build-companion-ncp-sensecap-solar
+flash-sensecap-solar: build-sensecap-solar
 	scripts/flash.py --board sensecap-solar --copy-default \
-		$(TARGET_DIR)/firmware-companion-ncp-sensecap-solar
+		$(TARGET_DIR)/firmware-sensecap-solar
 
-build-companion-ncp-t1000e:
-	cd firmware/companion-ncp-t1000e && cargo build --release
+build-t1000e:
+	cd firmware/t1000e && cargo build --release
 
-flash-companion-ncp-t1000e-serial: build-companion-ncp-t1000e
+flash-t1000e-serial: build-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
-		$(TARGET_DIR)/firmware-companion-ncp-t1000e
+		$(TARGET_DIR)/firmware-t1000e
 
 # ─── ESP32 firmware (firmware-esp32/ sibling workspace) ──────────────────────
 #
@@ -135,12 +148,12 @@ flash-hello-heltec-v3: build-hello-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-hello-heltec-v3
 
-build-companion-cli-heltec-v3:
-	cd firmware-esp32/firmware/companion-cli-heltec-v3 && cargo build --release
+build-heltec-v3-console:
+	cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
 
-flash-companion-cli-heltec-v3: build-companion-cli-heltec-v3
+flash-heltec-v3-console: build-heltec-v3-console
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-companion-cli-heltec-v3
+		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
 
 build-ble-spike-heltec-v3:
 	cd firmware-esp32/firmware/ble-spike-heltec-v3 && cargo build --release
@@ -149,18 +162,18 @@ flash-ble-spike-heltec-v3: build-ble-spike-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-ble-spike-heltec-v3
 
-build-companion-ncp-heltec-v3:
-	cd firmware-esp32/firmware/companion-ncp-heltec-v3 && cargo build --release
+build-heltec-v3:
+	cd firmware-esp32/firmware/heltec-v3 && cargo build --release
 
-flash-companion-ncp-heltec-v3: build-companion-ncp-heltec-v3
+flash-heltec-v3: build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-companion-ncp-heltec-v3
+		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
 web-debugger:
-	wasm-pack build tools/companion-web-debugger/engine --target web \
-		--out-dir ../www/pkg --out-name umsh_companion_web_engine
+	wasm-pack build tools/ulcp-web-debugger/engine --target web \
+		--out-dir ../www/pkg --out-name umsh_ulcp_web_engine
 
 
 RUSTDOC_CRATES := \
@@ -186,6 +199,24 @@ rust-docs:
 rust-docs-nightly:
 	rm -rf target/doc
 	cargo +nightly doc --workspace --all-features --no-deps -Zrustdoc-map
+
+# ─── Deprecated target aliases ───────────────────────────────────────────────
+#
+# The role axis collapsed: `companion-ncp-<board>` is now just `<board>`
+# (the board's shipping image) and `companion-cli-<board>` is
+# `<board>-console` (its bringup harness). These aliases keep the old
+# names working; they will go away once the muscle memory has.
+
+flash-companion-ncp-techo: flash-techo
+flash-companion-ncp-t1000e-serial: flash-t1000e-serial
+flash-companion-ncp-sensecap-solar: flash-sensecap-solar
+flash-companion-ncp-heltec-v3: flash-heltec-v3
+flash-companion-cli-techo: flash-techo-console
+flash-companion-cli-t1000e: flash-t1000e-console
+flash-companion-cli-t1000e-serial: flash-t1000e-console-serial
+flash-companion-cli-sensecap-solar: flash-sensecap-solar-console
+flash-companion-cli-wio-tracker-l1: flash-wio-tracker-l1-console
+flash-companion-cli-heltec-v3: flash-heltec-v3-console
 
 docs-serve:
 	mdbook serve docs/protocol/

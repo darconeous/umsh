@@ -129,7 +129,7 @@ actor FakeRadioConnection: RadioConnection {
                 codingRateDenominator: settings.codingRateDenominator,
                 dutyCycleNow: provisioning.dutyCycleNow,
                 dutyCycleLimit: settings.dutyCycleLimit,
-                saved: true,
+                saved: .current,
                 queuedFrames: provisioning.queuedFrames,
                 droppedFrames: provisioning.droppedFrames,
                 filterCount: provisioning.filterCount,

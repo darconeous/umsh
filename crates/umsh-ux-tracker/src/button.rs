@@ -63,8 +63,7 @@ pub enum ButtonEvent {
     VeryLong,
 }
 
-/// Tunable timings. Defaults match the values in
-/// `docs/firmware-plan-t1000e.md`; tune on real hardware.
+/// Tunable timings; tune on real hardware.
 #[derive(Debug, Clone, Copy)]
 pub struct ButtonTimings {
     /// Longest hold that still counts as a click (rather than a discard

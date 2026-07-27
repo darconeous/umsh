@@ -15,19 +15,19 @@ use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 use umsh_uri::UmshUri;
 use zeroize::Zeroize;
 
-mod companion;
+mod ulcp;
 mod counter_store;
 mod mobile_chat;
 mod mobile_mesh;
 
-pub use companion::{
-    CompanionBatteryRecord, CompanionHostOwnership, CompanionOperationErrorRecord,
-    CompanionPropertyFrameRecord, CompanionRadioSettingsRecord, CompanionReceivedFrameRecord,
-    CompanionSessionPhase, CompanionSessionSnapshotRecord, CompanionSessionUpdateRecord,
-    CompanionSyncRecord, GattSegmentRecord, MobileCompanionSession, MobileGattReassembler,
-    companion_gatt_segments, companion_inspection_properties, companion_prop_get,
-    companion_prop_set, companion_save, inspect_companion_battery,
-    inspect_companion_property_frame, inspect_companion_status, inspect_companion_sync,
+pub use ulcp::{
+    UlcpBatteryRecord, UlcpHostOwnership, UlcpOperationErrorRecord,
+    UlcpPropertyFrameRecord, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
+    UlcpSessionPhase, UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord,
+    UlcpSyncRecord, GattSegmentRecord, MobileUlcpSession, MobileGattReassembler,
+    ulcp_gatt_segments, ulcp_inspection_properties, ulcp_prop_get,
+    ulcp_prop_set, ulcp_save, inspect_ulcp_battery,
+    inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use mobile_chat::{
@@ -61,8 +61,10 @@ pub enum MobileError {
     InvalidPublicKeyLength,
     InvalidUri,
     InvalidIdentityData,
-    InvalidCompanionFrame,
+    InvalidUlcpFrame,
     InvalidGattSegment,
+    /// A tethering operation was attempted on an administrative session.
+    AdministrativeSession,
 }
 
 impl MobileError {
@@ -77,8 +79,9 @@ impl MobileError {
             Self::InvalidPublicKeyLength => "mobile.error.public_key.invalid_length",
             Self::InvalidUri => "mobile.error.uri.invalid",
             Self::InvalidIdentityData => "mobile.error.identity_data.invalid",
-            Self::InvalidCompanionFrame => "mobile.error.companion.invalid_frame",
-            Self::InvalidGattSegment => "mobile.error.companion.invalid_gatt_segment",
+            Self::InvalidUlcpFrame => "mobile.error.ulcp.invalid_frame",
+            Self::InvalidGattSegment => "mobile.error.ulcp.invalid_gatt_segment",
+            Self::AdministrativeSession => "mobile.error.ulcp.administrative_session",
         }
     }
 
@@ -93,8 +96,9 @@ impl MobileError {
             Self::InvalidPublicKeyLength => "PUBLIC_KEY_INVALID_LENGTH",
             Self::InvalidUri => "URI_INVALID",
             Self::InvalidIdentityData => "IDENTITY_DATA_INVALID",
-            Self::InvalidCompanionFrame => "COMPANION_INVALID_FRAME",
-            Self::InvalidGattSegment => "COMPANION_INVALID_GATT_SEGMENT",
+            Self::InvalidUlcpFrame => "ULCP_INVALID_FRAME",
+            Self::InvalidGattSegment => "ULCP_INVALID_GATT_SEGMENT",
+            Self::AdministrativeSession => "ULCP_ADMINISTRATIVE_SESSION",
         }
     }
 }
@@ -409,7 +413,7 @@ pub fn inspect_public_identity(address: String) -> Result<PublicIdentityRecord, 
     Ok(public_identity_record(&key))
 }
 
-/// Decode a canonical address to the raw public-key bytes carried by companion
+/// Decode a canonical address to the raw public-key bytes carried by ULCP
 /// `PROP_HOST_KEY`.
 #[uniffi::export]
 pub fn public_identity_bytes(address: String) -> Result<Vec<u8>, MobileError> {

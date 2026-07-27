@@ -1,0 +1,143 @@
+[package]
+name = "firmware-techo"
+description = "LilyGO T-Echo ULCP device firmware over USB-CDC and BLE GATT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# ─── Board identity (irreducibly per-board: concrete pins, BSP module,
+#     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-t1000e = ["t1000e", "cap-battery-saadc"]
+board-sensecap-solar = ["cap-battery-saadc", "power-button"]
+
+# ─── Capability features (shared code shape, board-portable) ───
+# The historical `t1000e` flag still bundles the T-1000E-only capabilities
+# that no other board shares (LR1110 radio, PWM LED engine, buzzer, sleep
+# / UX-preference state machine, action button, T-1000E System OFF). It is
+# implied by `board-t1000e`. Capabilities a NEW board can share are broken
+# out below so they can be mixed independently.
+t1000e = []
+# SAADC battery monitor (T-1000E and SenseCAP Solar). Gates the shared
+# battery snapshot / load-hint code; the concrete SAADC pins + BSP module
+# are still board-selected.
+cap-battery-saadc = []
+# SSD1681 e-paper UI subsystem (T-Echo only).
+has-display = []
+# Side/nav button feeding the UI menu (T-Echo only).
+button-techo = []
+# T-Echo peripheral-rail drop + tri-state/WakePin System OFF path.
+system-off-techo = []
+# Heartbeat LED is active-low (T-Echo). Absent → active-high (SenseCAP).
+led-active-low = []
+# LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
+lfclk-rc = []
+# Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
+# (SenseCAP Solar PWR button on P1.07). A board with a button reserved for
+# power, distinct from the single-button gesture FSM.
+power-button = []
+
+# Default build = T-Echo.
+default = ["board-techo"]
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device) while
+# keeping the BLE clock configuration, to isolate the post-DFU
+# first-boot watchdog freeze. Not a production configuration.
+no-ble = []
+# Hardware-diagnostic mode: keep BLE active while CDC is open and mirror
+# security/GATT lifecycle events as ASCII on the USB serial endpoint.
+# Also routes foreign-crate `log` records (notably trouble-host's
+# resolving-list / SMP diagnostics) onto the same serial channel.
+ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
+# Diagnostic image for exercising runtime persistence failures on hardware.
+# Boot-critical initialization is allowed to complete; every later journal
+# write/erase returns an injected error before touching NVMC. Never enable in
+# a production image.
+ble-store-fault-inject = ["ble-debug"]
+# Recovery-only image used during hardware validation. On every boot of this
+# deliberately temporary image, clear persisted BLE bonds and the configured
+# pairing PIN before the host stack starts. Do not enable for production.
+ble-wipe-on-boot = ["ble-debug"]
+
+# ULCP device firmware for the LilyGO T-Echo: exposes the
+# SX1262 as a host-controlled PHY speaking the minimal ULCP
+# profile over HDLC-Lite/USB-CDC and encrypted, bonded GATT/SAR BLE.
+# The host owns its own MAC via `umsh::ulcp`; the on-board
+# device node runs a separate MAC/node stack for the device identity.
+#
+# Like the other firmware crates, this is in `workspace.members` but
+# NOT in `default-members`, so root-level `cargo check` does not try
+# to cross-compile it on the developer's host.
+
+[[bin]]
+name = "firmware-techo"
+path = "src/main.rs"
+
+[dependencies]
+umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
+umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display"] }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ulcp = { path = "../../crates/umsh-ulcp" }
+umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
+# Board-agnostic device leaf modules (Phase 5 extraction, increment A):
+# transport arbitration, counter map, BLE pairing policy, radio mux.
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime" }
+umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
+umsh-journal-store = { path = "../../crates/umsh-journal-store" }
+umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+heapless = { version = "0.8", default-features = false }
+# trouble-host's GATT value implementations use heapless 0.9.
+heapless09 = { package = "heapless", version = "0.9", default-features = false }
+# Ungated (host-buildable) so the crate parses on the developer's host;
+# the target firmware module uses them. Versions match embassy-nrf 0.11.
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+# Optional (ble-debug only) logging facade so foreign crates' `log`
+# records can be captured and forwarded to the USB-serial debug channel.
+log = { version = "0.4", default-features = false, optional = true }
+
+# Embedded-only deps. Gated on `target_os = "none"` so this crate still
+# parses and trivially compiles on host as an empty `fn main()`. The
+# real firmware build uses the embedded target via the .cargo/config.toml
+# in this directory.
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { version = "0.7" }
+cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread", "embassy-time-driver"] }
+embassy-time = { version = "0.5", default-features = false, features = ["tick-hz-32_768"] }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt", "unstable-pac"] }
+embassy-usb = { version = "0.6", default-features = false }
+static_cell = "2"
+lora-phy = { workspace = true }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-graphics = { version = "0.8", default-features = false }
+# lora-phy 3.0.x unconditionally depends on defmt 0.3. We provide a
+# no-op global logger so the firmware links without a debug transport.
+defmt = "0.3"
+nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
+# The pinned wrapper currently requires its central symbols while implementing
+# the controller traits, even though this firmware only uses the peripheral role.
+nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+# Device-identity generation: ChaCha20 CSPRNG seeded from the hardware
+# TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
+rand_core = { workspace = true }
+rand_chacha = { version = "0.3", default-features = false }
+# The device node: a full on-board MAC/node stack for the device
+# identity (device_node.rs), sharing the radio through the mux.
+# embedded-alloc provides the global heap umsh-sync/umsh-node need.
+umsh-core = { path = "../../crates/umsh-core", default-features = false }
+umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
+rand = { workspace = true }
+embedded-alloc = { version = "0.5", default-features = false }
+
+[dev-dependencies]
+# RadioError values for the radio_mux completion-attribution tests.
+lora-phy = { workspace = true }
+# Host implementation of critical-section for embassy-sync in tests; the
+# target build gets its implementation from nrf-mpsl.
+critical-section = { version = "1", features = ["std"] }

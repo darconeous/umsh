@@ -6,7 +6,20 @@ rename the control protocol to reflect what it actually is: the **UMSH Local
 Control Protocol (ULCP)** — the local, out-of-band link used to commission and
 manage a UMSH device, as distinct from in-band node management over the mesh.
 
-Status: **proposed, not started.**
+Status: **increments 1–7 landed; increment 8 (the rename) partially landed.**
+
+Everything below is retained as written — it is the reasoning, not a
+checklist — with a status note per increment recording what was decided
+where the plan asked for a decision. See "Implementation status" at the
+end for what remains.
+
+Decisions the plan deferred to implementation, all recorded in their
+increments below: `CMD_RST` regenerates a cleared device identity
+(increment 3); a snapshot records the identity it was taken under and a
+restore withholds the PHY enable when it does not match (increment 3);
+Wio Tracker L1 is parked with a bringup harness and no shipping image
+(increment 7); `companion-cli-*` survives per board as that harness
+(increment 7).
 
 ## Why
 
@@ -14,12 +27,12 @@ The code is already most of the way here and the naming is now actively
 misleading.
 
 - Role is already a runtime flag. `advertised_identity()` in
-  `firmware/companion-ncp-techo/src/device_node.rs:178` flips between
+  `firmware/techo/src/device_node.rs:178` flips between
   `NodeRole::Repeater` and `NodeRole::Tracker` from an atomic reconciled out of
   the device-domain snapshot. There is no compile-time repeater/companion fork
   anywhere in the tree.
 - `PROP_MAC_REPEATER_ENABLED` is persisted **device-domain** state, deliberately
-  independent of any attached host (`crates/umsh-companion-ncp/src/session.rs:302`).
+  independent of any attached host (`crates/umsh-ulcp-device/src/session.rs:302`).
 - The spec already describes the device identity as existing for "repeater or
   bridge behavior" and already frames `CMD_SAVE` as the thing that "arms an
   unattended repeater across power cycles"
@@ -60,7 +73,7 @@ and bond-store unification; snapshot format replacement; the ULCP rename.
   revisit, recorded so it need not be re-derived:
 
   Two command identifiers — the command octet is fully allocated at 0–15
-  (`crates/umsh-companion/src/frame.rs:65`) and 16–255 are free, so
+  (`crates/umsh-ulcp/src/frame.rs:65`) and 16–255 are free, so
   `CMD_HOST_BEGIN` and `CMD_HOST_COMMIT` cost nothing but their numbers. Between
   them, ordinary `CMD_PROP_SET`/`CMD_PROP_INSERT` frames addressed to
   host-domain properties apply to a **candidate** domain that starts empty
@@ -144,7 +157,7 @@ and bond-store unification; snapshot format replacement; the ULCP rename.
    Comparison cannot work here: key tables read back in lossy form only —
    `PROP_HOST_CHANNEL_KEYS` returns channel identifiers and
    `PROP_HOST_PEER_KEYS` returns peer public keys, with key material never read
-   back (`crates/umsh-companion-ncp/src/session.rs:3039`). An administrator can
+   back (`crates/umsh-ulcp-device/src/session.rs:3039`). An administrator can
    replace a peer's `K_enc`/`K_mic` without changing anything observable, so no
    digest over the readable surface can detect it. Adding a digest *over* the
    secret state would mean deriving a readable value from key material, which is
@@ -319,7 +332,7 @@ and bond-store unification; snapshot format replacement; the ULCP rename.
 
     This is load-bearing rather than stylistic, because a `PeerSlot` carries
     the peer's `ReplayWindow` alongside its key material
-    (`crates/umsh-companion-ncp/src/session.rs:663`) and today's handler does
+    (`crates/umsh-ulcp-device/src/session.rs:663`) and today's handler does
     swap the table (`self.host.peer_keys = table`, `session.rs:2587`). Under
     decision 6 that would reset every peer's replay baseline on every attach,
     many times a day, where the documented resync path assumes reboot frequency
@@ -359,7 +372,7 @@ underneath it, and an authorization model that has never been written down. They
 belong in one increment because the store defects only become reachable once the
 predicate is corrected.
 
-The predicate today (`crates/umsh-companion-runtime/src/ble_security.rs:13`):
+The predicate today (`crates/umsh-ulcp-runtime/src/ble_security.rs:13`):
 
 ```rust
 bond_count < bond_capacity && (pairing_mode || (pin_configured && !locked_out))
@@ -397,8 +410,8 @@ least-recently-used entry. Update the test at :138–:140, which currently pins
 the refuse-when-full behavior, to assert eviction-when-full instead.
 
 Both platforms call the shared policy — nRF at
-`firmware/companion-ncp-techo/src/main.rs:1254`, Heltec V3 at
-`firmware-esp32/firmware/companion-ncp-heltec-v3/src/main.rs:521` — so both
+`firmware/techo/src/main.rs:1254`, Heltec V3 at
+`firmware-esp32/firmware/heltec-v3/src/main.rs:521` — so both
 corrections land once, in one function, with the tests updated alongside.
 
 **Unify the bond stores.** With eviction reachable again, the divergence becomes
@@ -407,7 +420,7 @@ load-bearing rather than cosmetic:
 - **Overflow.** The nRF NCP routes through the shared helpers (`upsert_bond` at
   `main.rs:635`). The Heltec V3 NCP hand-rolls `add_bond` with
   `bonds.push(...).map_err(|_| ())?`
-  (`firmware-esp32/firmware/companion-ncp-heltec-v3/src/ble_store.rs:255`),
+  (`firmware-esp32/firmware/heltec-v3/src/ble_store.rs:255`),
   copied from `ble-spike-heltec-v3`.
 - **Ordering.** Heltec has no `touch_bond` at all, so its list is
   insertion-ordered. Adopting `upsert_bond` alone would give it eviction that
@@ -432,7 +445,7 @@ administrative attach no longer claims `PROP_HOST_KEY`, the effective rule is
   attaches every transport with `session.attach(true)` — "the wired transport by
   physical possession, BLE because the companion GATT service refuses any access
   outside an encrypted LESC-bonded link"
-  (`crates/umsh-companion-runtime/src/driver.rs:446`) — so a wired host already
+  (`crates/umsh-ulcp-runtime/src/driver.rs:446`) — so a wired host already
   satisfies `require_secure_link()` (`session.rs:2811`) and can write device
   keys. The rule currently lives only in that comment.
 - that nRF and Heltec now share identical rules
@@ -484,7 +497,7 @@ direction that matters (decision 13):
 **Apply order comes from an explicit schema table, not from the identifier.**
 Ascending-number application would fail: `PHY_ENABLED = 32` precedes
 `PHY_FREQ = 35`, `TX_POWER = 37` and `LORA_BW`/`SF`/`CR`/`SW` at 39–43
-(`crates/umsh-companion/src/ids.rs:24`), so it would enable the PHY *before*
+(`crates/umsh-ulcp/src/ids.rs:24`), so it would enable the PHY *before*
 configuring it. Define a static table mapping each saved property to an
 `apply_phase` rank: keys and PHY configuration precede the things that depend on
 them, and `PHY_ENABLED` applies last. This is local metadata, which is
@@ -622,8 +635,8 @@ The largest behavioral change, and a net simplification. Depends on increment 2.
   host key differs from the live one" special case
   (`companion-radio-full.md:471`).
 - Host side implements unconditional whole-table re-provisioning per design
-  decision 6, in `CompanionRadio` (`umsh/src/companion_radio.rs:856`),
-  `umsh-companionctl`, and the iOS path. This replaces the current
+  decision 6, in `UlcpDevice` (`umsh/src/companion_radio.rs:856`),
+  `umsh-ulcpctl`, and the iOS path. This replaces the current
   compare-then-patch logic in `provision()` (`companion_radio.rs:1486`), which
   exists to avoid re-sending secrets the NCP already holds — a concern that
   disappears once the device side reconciles.
@@ -644,12 +657,12 @@ repaired.
 
 It is a hard constraint on that reading, and the binding number is not the one
 it looks like. The ceiling is `driver::FRAME_IN_MAX = 300`
-(`crates/umsh-companion-runtime/src/driver.rs:45`), not the 512-octet GATT
+(`crates/umsh-ulcp-runtime/src/driver.rs:45`), not the 512-octet GATT
 reassembly bound: both transports funnel through
 `FrameBuf = heapless::Vec<u8, 300>`, the BLE path staging its reassembled frame
-into one (`firmware/companion-ncp-techo/src/main.rs:2079`) and the serial path
+into one (`firmware/techo/src/main.rs:2079`) and the serial path
 decoding straight into `hdlc::Decoder<FRAME_IN_MAX>` (`main.rs:2464`). A
-`PeerKeyEntry` is 64 octets (`crates/umsh-companion/src/items.rs:57`), so with a
+`PeerKeyEntry` is 64 octets (`crates/umsh-ulcp/src/items.rs:57`), so with a
 header octet, a command octet and the PUI-encoded property number, a whole-table
 `SET` stops fitting at the **fifth** peer (323 against 300); the full eight-entry
 table is 515. There is no transport-dependent divergence — the cliff is the same
@@ -659,12 +672,12 @@ log and no status frame, so the host times out rather than seeing `NOMEM`.
 Whatever else changes, that drop should become a visible status.
 
 Raising the ceiling is the alternative, and it does not survive the roadmap.
-`MAX_PEER_KEYS` is 8 today (`crates/umsh-companion-ncp/src/session.rs:607`) and
+`MAX_PEER_KEYS` is 8 today (`crates/umsh-ulcp-device/src/session.rs:607`) and
 the target is 100+; a hundred-entry table is 6400 octets, which no frame size
 carries. **Per-item provisioning is therefore the permanent shape, not a
 workaround for a small buffer.** For the record, the mechanical cost of a raise
 is smaller than it first appears — the SAR header is two bits of state with no
-length field (`crates/umsh-companion/src/gatt.rs:16`), so there is no wire
+length field (`crates/umsh-ulcp/src/gatt.rs:16`), so there is no wire
 encoding to re-verify — but it is a normative spec change
 (`docs/protocol/src/companion-radio-ble.md:146` fixes 512 octets) and roughly 19
 frame-sized buffers per NCP image make it real RAM. Neither is worth spending on
@@ -722,7 +735,7 @@ succession. The "one active tether at a time" invariant still lives on the host.
   administrative attach touches only the device domain.
 - Host workflow: an attach mode that never writes `PROP_HOST_KEY` and never
   provisions host keys or filters. `attach_existing` already never writes PHY
-  configuration (`umsh/src/bin/umsh_companionctl.rs:656`); this extends the same
+  configuration (`umsh/src/bin/umsh_ulcpctl.rs:656`); this extends the same
   discipline to the host domain.
 - `umsh-mobile-core`: distinct API surfaces, so the iOS app models "my radio"
   (exactly one, tethered) and "radios I administer" (N, device-domain only) as
@@ -769,7 +782,7 @@ Per-board disposition, to be completed before any CLI image is retired:
 | Heltec V3 | ESP32-S3 | yes | yes | BLE, UART | TBD | NCP ships; CLI retired |
 | Wio Tracker L1 | nRF52840 | **none** | yes | USB-CDC | TBD | **undecided — see below** |
 
-**Wio Tracker L1 is the open hole.** There is no `companion-ncp-wio-tracker-l1`,
+**Wio Tracker L1 is the open hole.** There is no `wio-tracker-l1`,
 and bringup reached Phases 0–1 only (USB-CDC, heartbeat, safety primitives).
 Retiring its CLI image as written would leave the board with no image at all.
 Decide: build the NCP image, or park the board and say so explicitly.
@@ -852,7 +865,7 @@ Mappings:
 - **Host-side types:** `CompanionRadio` (`umsh/src/companion_radio.rs`) →
   `UlcpDevice`, since today it is the general handle to any device and is used
   for administration as much as for tethering. **If increment 5 splits it**, the
-  tethered half may take `CompanionRadio` back — at that point the name would be
+  tethered half may take `UlcpDevice` back — at that point the name would be
   accurate rather than vestigial.
 - **BLE:** "Companion Link Service" → "ULCP GATT Service". The existing
   `SERVICE_UUID` / `FRAME_IN_UUID` / `FRAME_OUT_UUID` symbol names are already
@@ -860,7 +873,7 @@ Mappings:
 - **`PROP_NCP_VERSION` → `PROP_DEV_VERSION`**, not `PROP_ULCP_VERSION`. It
   carries the *device firmware* version string, and the protocol version is a
   separate property already (`PROTOCOL_VERSION`, id 1
-  (`crates/umsh-companion/src/ids.rs:17`)), so a ULCP-flavored name would assert
+  (`crates/umsh-ulcp/src/ids.rs:17`)), so a ULCP-flavored name would assert
   the wrong thing. `DEV_VERSION` also matches the `DEV_KEY`/`DEV_NAME`/`DEV_PEERS`
   neighbours it sits with. Numeric identifier stays 2.
 - **Firmware directories** depend on increment 7 and should land with it: once
@@ -903,3 +916,209 @@ That is telemetry from the periodic identity broadcast plus in-band queries, and
 it has far weaker authorization requirements than reconfiguration. Repeater
 *observability* can therefore ship well before repeater *administration* over the
 air — and observability is what makes a commissioned fleet feel real.
+
+## Implementation status
+
+### Landed
+
+**Increment 1 — BLE pairing policy, bond store, authorization.**
+`pairing_enabled` is now `pairing_mode && (!pin_configured || !locked_out)`
+with the capacity term removed entirely; the Heltec V3 bond store routes
+through `upsert_bond`/`touch_bond` and drops LRU-evicted bonds from the
+live trouble table like the nRF side. `ulcp-ble.md` gained
+normative bond-overflow rules and an Administrative Authorization
+section; `companion-ble-plan.md`'s predicate was corrected.
+
+**Increment 2 — snapshot payload is an option list.** Format byte 4 plus
+a `umsh-core::options` block keyed by ULCP property identifier, driven by
+`SAVED_SCHEMA` with an `ApplyPhase` per row so apply order is data rather
+than identifier order. Absent options take documented defaults; unknown
+numbers are skipped; repeated single-valued properties are rejected.
+Values pass the same validators the live setters use, factored out for
+the purpose. Boot walks back up to `SNAPSHOT_FALLBACK_LIMIT` older
+generations through `DeviceEnv::older_snapshot`, and `PROP_SAVED` became a
+UINT8 distinguishing none / current / fallback / unreadable end to end
+(device, `umsh`, `umsh-mobile-core`, iOS).
+
+**Increment 3 — device identity always exists.** Generated from the
+hardware TRNG at first boot and persisted before anything observes its
+absence; nRF bias correction enabled for all key material. `CMD_CLEAR` +
+`CMD_RST` regenerates rather than leaving the device identityless — the
+`CMD_CLEAR` "live state unaffected" contract is preserved. The device
+node's transmit gate became key equality rather than presence, which also
+closes the pre-existing hole where installing a new `PROP_DEV_PRIVATE_KEY`
+left the node signing as the old identity. A snapshot records
+`PROP_DEV_KEY` as provenance and a restore under a different identity
+withholds the PHY enable, making the replacement-hardware ordering safe
+rather than merely documented.
+
+**Increment 4 — volatile host domain.** Property numbers 96–100 are
+retired from the snapshot schema; `Effect::WipeHostDomain`,
+`respond_host_wipe` and `encode_wiped_snapshot` are gone and a
+`PROP_HOST_KEY` change is one assignment. `PROP_HOST_PEER_KEYS`
+whole-table `SET` reconciles (`PeerKeyTable::reconcile`), preserving
+replay windows. `provision()` writes everything unconditionally, removing
+only what the readable digest lists say is unwanted.
+
+**Increment 5 — administrative vs tethered attach.** `AttachMode` on the
+host handle, `UlcpDevice::attach_administrative`, and a guard that refuses
+host-domain writes; `umsh-ulcpctl` attaches administratively for every
+command but `provision`. `MobileUlcpSession::administrative()` refuses
+`claim`. Spec: "Two Kinds of Attach" in `ulcp.md`.
+
+**Increment 6 — identity properties.** `PROP_IDENT` (71) served through
+`Effect::SignIdentity` / `respond_identity_blob`, `PROP_IDENT_ROLE` (72,
+empty = derive), `PROP_IDENT_MOBILE` (73), `CAP_IDENT` (41). Role and
+forwarding are separated: the `REP` capability bit tracks live forwarding,
+the role is configuration. `NodeIdentityProfile::to_payload` is now the
+one canonical builder, used by the Identity Request responder, the
+solicited advertisement, and the `PROP_IDENT` read.
+
+**Increment 7 — image consolidation.** Sizes measured and recorded in
+`docs/firmware-architecture.md`; Wio Tracker L1 parked explicitly;
+`companion-cli-*` retained as per-board bringup harnesses and excluded
+from the shipping matrix.
+
+**Increment 8 — rename, partial.** Landed: crate renames
+(`umsh-ulcp`, `umsh-ulcp-device`, `umsh-ulcp-runtime`,
+`umsh-app-ulcp-cli`, `umsh-ulcp-web-engine`); `umsh::ulcp::UlcpDevice`;
+`umsh-ulcpctl`; `PROP_NCP_VERSION` → `PROP_DEV_VERSION`; every `Ncp*`
+identifier retired in favor of `Device*`; firmware directories
+(`firmware/<board>` and `firmware/<board>-console`) with deprecated
+Makefile aliases for the old flash targets; `umsh-mobile-core`'s module
+and UniFFI symbols.
+
+**Spec chapters (2026-07-26).** `ulcp.md` (title "Local Control Protocol
+(ULCP)"), `ulcp-minimal.md`, `ulcp-full.md`, `ulcp-ble.md`; `SUMMARY.md`
+retitled alongside. The prose sweep is complete: every normative "the NCP
+**MUST**" is now "the device **MUST**", the protocol is named ULCP
+throughout, "Companion Link Service" became "ULCP GATT Service" (anchor
+`#ulcp-gatt-service`), and "companion radio" survives only in deployment
+discussion, as intended. Repo-wide references to the old chapter
+filenames were rewritten (this plan's pre-rename `file:line` citations
+excepted, deliberately). Numeric identifiers and BLE UUIDs untouched.
+mdBook builds clean.
+
+**Dissector and planning docs (2026-07-26).** `ulcp.lua` swept
+(proto/filter names `umsh.companion.*` → `umsh.ulcp.*`, protocol column
+`UMSH-ULCP`, directions Host → Device / Device → Host; wire decoding
+untouched) and the silently broken `require("companion")` in `umsh.lua`
+fixed to `require("ulcp")`; `dissectors/README.md` updated. Planning
+docs renamed (`docs/companion-*` → `docs/ulcp-*`), and completed plans
+moved to `docs/archive/` (the four ULCP plans, `firmware-storage-plan`,
+and the five finished/parked board bringup plans — Wio Tracker L1's
+stays active as the forward roadmap); references to archived plans were
+removed from code comments, Cargo/Makefile/memory.x comments, and living
+docs rather than repointed. UX book swept (only four hits were protocol
+terminology; "companion app/phone/radio" as UX/deployment language
+stays). Host workspace `cargo check` clean.
+
+**Firmware straggler symbols (2026-07-26).** The live identifiers the
+increment-8 rename missed are gone: `CompanionServer`/`CompanionService`
+→ `UlcpServer`/`UlcpService` (with the `companion:` GATT field now
+`ulcp:`) across the techo/heltec-v3 mains and all three BLE spikes;
+`ble-spike-heltec-v3/src/companion.rs` → `ulcp.rs` with its `Companion`
+responder renamed `UlcpResponder` (this fixed a real breakage — the
+spike's `mod ulcp;` was already renamed but the file and use sites were
+not, so the crate did not compile); `NCP_VERSION` →
+`DEV_VERSION` and `COMPANION_TX_QUEUE_CAPACITY` → `ULCP_TX_QUEUE_CAPACITY`.
+Device-visible strings updated too: BLE names drop the suffix
+(`"UMSH T-Echo NCP"` → `"UMSH T-Echo"`, likewise T-1000E/Solar), USB
+product strings say `UMSH Radio`, and `dev_version` values drop the
+`-ncp-` segment (`umsh-ncp-techo` → `umsh-techo`). NCP prose in those
+mains swept. Compile-checked from each firmware directory: techo,
+t1000e, sensecap-solar, ble-spike-techo (nRF) and heltec-v3,
+ble-spike-heltec-v3, ble-spike-heltec-v2 (ESP32) — all clean.
+
+**Rust prose and host stragglers (2026-07-26).** The ~560 residual
+companion/NCP mentions are gone from the Rust tree, manifests, web
+debugger, README, CLAUDE.md, and Makefile comments. The sweep also
+caught live identifiers the earlier audit had miscounted as prose:
+the umbrella re-export `umsh::companion` → `umsh::ulcp_wire` (the plain
+`ulcp` name is taken by the host-client module), `HostToNcp` →
+`HostToDevice` in the host trace, capture, and debugger-engine
+direction enums (the engine's serde tag feeds the debugger UI, so
+`shell.js`/`style.css` moved with it — fixing the already-stale
+`.ncp_to_host` CSS rule), the debugger's `sim-ncp` feature →
+`sim-device` and `SimulatedNcp` → `SimulatedDevice` (wasm-bindgen JS
+name included), and `umsh-capture`'s capture layer `companion` → `ulcp`
+(`--capture=companion` still accepted as an undocumented alias). Test
+fixtures renamed (`Test UMSH NCP` → `Test UMSH Device`, `sim-ncp/0.1` →
+`sim-dev/0.1`, etc.). README's stale advertised-name instructions
+corrected to the new `UMSH T-Echo`/`UMSH T-1000E`. What deliberately
+remains: "companion radio" as the deployment name for the tethered
+device, `flash-companion-*` Makefile targets (already just aliases for
+the canonical `flash-<board>` targets), and `umsh-mobile-core`'s
+UniFFI-exposed `Companion*`/`companion_*` symbols, which must move
+together with the Swift rename and binding regeneration. Fixed in
+passing: four pre-existing compile errors in `ulcp_hw_validate.rs` and
+`ulcp_full_protocol.rs` from earlier-increment API drift (`sync.saved`
+became `Option<SavedSnapshot>`, `ProvisionReport::changed()` was
+removed, `Effect::SignIdentity` was unhandled) — nothing had run
+`cargo check --all-targets` with the tokio features since. Verified:
+workspace check `--all-targets` clean, `umsh` + `umsh-ulcp` +
+`umsh-ulcp-device` + `umsh-mobile-core` + web-engine test suites green,
+techo/heltec-v3/ble-spike-heltec-v3 firmware re-checked from their own
+directories. (Known pre-existing, unrelated: `--all-features` cannot
+*link* host examples because `embassy-support` + `tokio-support`
+collide on the embassy timer-queue symbol; `cargo check` doesn't
+surface it.)
+
+**Swift and UniFFI surface (2026-07-26).** `umsh-mobile-core`'s last
+UniFFI-exposed companion symbols renamed (`CompanionRawTransmit*` →
+`UlcpRawTransmit*`, `companion_factory_reset` → `ulcp_factory_reset`,
+plus the private `ulcp_refresh_properties`/`ulcp_operation_error`
+helpers) and the bindings regenerated via
+`scripts/ios/build-mobile-core.sh` — the committed
+`UMSHMobileCore.swift` had been stale since before the
+`MobileCompanionSession` → `MobileUlcpSession` rename. iOS app swept:
+`CompanionToolbarItem` → `RadioToolbarItem` (file, struct, pbxproj),
+`companionSession` → `ulcpSession`,
+`RadioConnectionError.companionNotFound` → `.radioNotFound`,
+`companionGattSegments` → `ulcpGattSegments`, and all protocol-level
+companion/CRP/NCP prose and log/problem strings moved to ULCP/device
+terms; "companion radio" stays wherever it is the user-facing
+deployment name (UI copy, and the persisted `companion_radio`
+system-role value is wire/DB data, untouched per decision 16). The
+Settings "Protocol tier" value `Full companion` is now `Full ULCP`.
+Fixed in passing: `RadioSnapshot.swift` referenced the FFI
+`SavedSnapshotRecord` without importing `UMSHMobileCore` — same
+earlier-increment drift class as the host examples; nothing had built
+the app since. Verified: bindings regenerated clean (one deployment-name
+doc comment remains), xcframework rebuilt, `umsh-mobile-core` tests
+green, and the app builds for the iOS simulator.
+
+**Spec restructure (2026-07-26).** The minimal and full chapters are
+merged into one spec under `ulcp.md`: `ulcp-core.md` (framing, command
+grammar, property model, state classes, attach/sync, provisioning
+security, and the status/reset/capability registries) plus one subchapter
+per subsystem — `ulcp-radio.md`, `ulcp-transport.md`, `ulcp-device.md`,
+`ulcp-saved-state.md`, `ulcp-host.md` — each carrying its own
+capabilities, commands, and properties. `ulcp-conformance.md` replaces the
+minimal/full split with a conformance statement (what every device
+implements, what is capability-gated, and what is required of hosts), and
+`ulcp-index.md` lists every command, property, stream, status code, reset
+code, capability, and enumerated value with a link to its definition.
+`ulcp.md`'s four capability groups became the five subsystems, matching
+the chapters.
+
+The 81 bare `(#anchor)` cross-references, which rendered as literal text
+and would have been silently wrong across files, are now real markdown
+links; a link checker over `docs/protocol/src` reports zero broken
+intra-book links in the ULCP chapters. Two substantive corrections fell
+out of the merge: the property-allocation table gave host domain 96–127,
+which collides with `STR_PHY_RAW` at 113 — it is now 96–111 host domain,
+112–127 streams, with the extended ranges (4608–4863, 4864–5119)
+documented — and the reset-code list now names `STATUS_RESET_RESTORED`
+among the codes emitted in normal operation. `PROP_IFACE_TYPE` in the old
+property table is `PROP_INTERFACE_TYPE` everywhere, matching the code.
+
+`ulcp-minimal.md` and `ulcp-full.md` remain in the book, each opening
+with a note pointing at the chapters that replaced it.
+
+### Remaining
+
+- **Hardware validation.** Nothing here has been on a bench. The
+  BLE pairing correction (increment 1) needs both an nRF board and a
+  Heltec V3; the snapshot format, first-boot identity generation, and the
+  volatile host domain all need a power-cycle test on real hardware.

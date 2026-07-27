@@ -12,7 +12,7 @@ shortens or skips phases where the chip-level work is already done.
 
 See [seeed-wio-tracker-l1-pro-hardware.md](seeed-wio-tracker-l1-pro-hardware.md)
 for the hardware reference. See
-[firmware-plan-techo.md](firmware-plan-techo.md) for the precedent
+[firmware-plan-techo.md](archive/firmware-plan-techo.md) for the precedent
 this plan rides on. See
 [firmware-architecture.md](firmware-architecture.md) for the BSP /
 UX / App / Binary layering.
@@ -69,7 +69,7 @@ Wio Tracker L1 / L1 Pro:
   e-ink panel is a separate board we don't have.
 - BLE — never in this binary.
 
-## Why this is not on `umsh-app-companion-cli` / `umsh-ux-tracker`
+## Why this is not on `umsh-app-ulcp-cli` / `umsh-ux-tracker`
 
 A bringup binary's job is to expose exactly the peripherals on the
 path and nothing else. The intent is to **validate the hardware
@@ -78,7 +78,7 @@ recoverable board, not to ship a real application.
 
 Once this bringup is at parity with what the T-Echo has today
 (USB-CDC + safety primitives + display + radio + MAC), the actual
-next step for this board is wiring up **`umsh-app-companion-cli`**
+next step for this board is wiring up **`umsh-app-ulcp-cli`**
 on top, not "design a new UX class." The Wio Tracker L1 Pro is the
 first device we have where landing the companion-CLI app on real
 hardware is the obvious follow-up.
@@ -467,7 +467,7 @@ advance. End-to-end UMSH frame exchange proven on real radios.
 
 ### Phase 6+ (future, not part of this bringup)
 
-The real follow-up after Phase 5 is **`umsh-app-companion-cli`**
+The real follow-up after Phase 5 is **`umsh-app-ulcp-cli`**
 on this hardware — the first time the companion CLI runs on a real
 radio rather than over loopback / desktop transports. That work
 needs several pieces that are deliberately stubbed in this bringup:

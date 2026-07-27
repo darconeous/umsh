@@ -14,15 +14,14 @@
 //! The same crate is intended to cover both the P1 and the P1-Pro, which
 //! are believed to differ only in GNSS module and battery pack.
 //!
-//! Initial scope is *bringup only* (see
-//! `docs/firmware-plan-sensecap-solar-node-p1-pro.md`):
+//! Initial scope is *bringup only*:
 //!
 //! - USB-CDC handles (over the nRF native USB peripheral, chip BSP)
 //! - two user LEDs and two buttons for identification (Phase 1)
 //! - calibrated battery measurement (Phase 2)
 //! - SX1262 LoRa radio + external RXEN pin (Phase 3)
 //!
-//! Future expansion (companion-NCP device-node behavior, low-battery
+//! Future expansion (device-node behavior, low-battery
 //! System OFF + LPCOMP solar recovery, GNSS) is welcome but is not yet
 //! implemented.
 //!
@@ -74,7 +73,7 @@ pub use platform::{SensecapSolarMac, SensecapSolarPlatform};
 #[cfg(target_os = "none")]
 pub use power::PowerSignaler;
 
-// TODO (see docs/firmware-plan-sensecap-solar-node-p1-pro.md):
+// TODO:
 //   Phase 2: pub mod power  — port the T1000-E battery monitor
 //            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
 //            slope/offset constants.

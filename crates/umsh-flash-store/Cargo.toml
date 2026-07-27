@@ -14,8 +14,7 @@ repository.workspace = true
 # nRF52840 uses `BlockingAsync<Nvmc>` + `ThreadModeRawMutex`; the ESP32
 # uses `BlockingAsync<esp_storage::FlashStorage>` + `CriticalSectionRawMutex`.
 #
-# See docs/firmware-storage-plan.md for the storage-region rationale and
-# docs/firmware-architecture.md for the BSP / App / Binary triad.
+# See docs/firmware-architecture.md for the BSP / App / Binary triad.
 
 [dependencies]
 umsh-hal = { path = "../umsh-hal", default-features = false, features = ["embassy"] }
