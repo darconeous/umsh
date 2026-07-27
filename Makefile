@@ -12,12 +12,7 @@
 	build-hello-heltec-v3 flash-hello-heltec-v3 \
 	build-ble-spike-heltec-v3 flash-ble-spike-heltec-v3 \
 	build-heltec-v3-console flash-heltec-v3-console \
-	build-heltec-v3 flash-heltec-v3 \
-	flash-companion-ncp-techo flash-companion-ncp-t1000e-serial \
-	flash-companion-ncp-sensecap-solar flash-companion-ncp-heltec-v3 \
-	flash-companion-cli-techo flash-companion-cli-t1000e \
-	flash-companion-cli-t1000e-serial flash-companion-cli-sensecap-solar \
-	flash-companion-cli-wio-tracker-l1 flash-companion-cli-heltec-v3
+	build-heltec-v3 flash-heltec-v3
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -199,24 +194,6 @@ rust-docs:
 rust-docs-nightly:
 	rm -rf target/doc
 	cargo +nightly doc --workspace --all-features --no-deps -Zrustdoc-map
-
-# ─── Deprecated target aliases ───────────────────────────────────────────────
-#
-# The role axis collapsed: `companion-ncp-<board>` is now just `<board>`
-# (the board's shipping image) and `companion-cli-<board>` is
-# `<board>-console` (its bringup harness). These aliases keep the old
-# names working; they will go away once the muscle memory has.
-
-flash-companion-ncp-techo: flash-techo
-flash-companion-ncp-t1000e-serial: flash-t1000e-serial
-flash-companion-ncp-sensecap-solar: flash-sensecap-solar
-flash-companion-ncp-heltec-v3: flash-heltec-v3
-flash-companion-cli-techo: flash-techo-console
-flash-companion-cli-t1000e: flash-t1000e-console
-flash-companion-cli-t1000e-serial: flash-t1000e-console-serial
-flash-companion-cli-sensecap-solar: flash-sensecap-solar-console
-flash-companion-cli-wio-tracker-l1: flash-wio-tracker-l1-console
-flash-companion-cli-heltec-v3: flash-heltec-v3-console
 
 docs-serve:
 	mdbook serve docs/protocol/
