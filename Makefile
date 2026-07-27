@@ -61,9 +61,6 @@ flash-t1000e-console: build-t1000e-console
 	scripts/flash.py --board t1000e --copy-default \
 		$(TARGET_DIR)/firmware-t1000e-console
 
-# Serial-DFU path: required on T1000-E when the user-button bootloader entry
-# exposes only /dev/tty.usbmodem* and not the UF2 mass-storage drive.
-# Override the port with: make ... DFU_SERIAL_PORT=/dev/tty.usbmodem<N>
 DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
 
 flash-t1000e-console-serial: build-t1000e-console
