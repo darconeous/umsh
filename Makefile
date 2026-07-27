@@ -7,10 +7,6 @@
 	build-sensecap-solar flash-sensecap-solar \
 	build-t1000e flash-t1000e-serial \
 	build-techo flash-techo \
-	build-hello-heltec-v2 flash-hello-heltec-v2 \
-	build-ble-spike-heltec-v2 flash-ble-spike-heltec-v2 \
-	build-hello-heltec-v3 flash-hello-heltec-v3 \
-	build-ble-spike-heltec-v3 flash-ble-spike-heltec-v3 \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3
 
@@ -122,40 +118,12 @@ ESPFLASH_PORT_ARG = $(if $(ESPFLASH_PORT),--port $(ESPFLASH_PORT),)
 # loses whatever lived past the old factory partition.
 ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 
-build-hello-heltec-v2:
-	cd firmware-esp32/firmware/hello-heltec-v2 && cargo build --release
-
-flash-hello-heltec-v2: build-hello-heltec-v2
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
-		$(ESP32_TARGET_DIR)/firmware-hello-heltec-v2
-
-build-ble-spike-heltec-v2:
-	cd firmware-esp32/firmware/ble-spike-heltec-v2 && cargo build --release
-
-flash-ble-spike-heltec-v2: build-ble-spike-heltec-v2
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) \
-		$(ESP32_TARGET_DIR)/firmware-ble-spike-heltec-v2
-
-build-hello-heltec-v3:
-	cd firmware-esp32/firmware/hello-heltec-v3 && cargo build --release
-
-flash-hello-heltec-v3: build-hello-heltec-v3
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-hello-heltec-v3
-
 build-heltec-v3-console:
 	cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
 
 flash-heltec-v3-console: build-heltec-v3-console
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
-
-build-ble-spike-heltec-v3:
-	cd firmware-esp32/firmware/ble-spike-heltec-v3 && cargo build --release
-
-flash-ble-spike-heltec-v3: build-ble-spike-heltec-v3
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-ble-spike-heltec-v3
 
 build-heltec-v3:
 	cd firmware-esp32/firmware/heltec-v3 && cargo build --release
