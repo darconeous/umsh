@@ -1789,7 +1789,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             for event in update.advertisementEvents {
                 let advertisement = RadioAdvertisementEvent(
                     peerAddress: event.peerAddress,
-                    payload: event.payload
+                    payload: event.payload,
+                    sourceAuthenticated: event.sourceAuthenticated
                 )
                 for continuation in advertisementContinuations.values {
                     continuation.yield(advertisement)

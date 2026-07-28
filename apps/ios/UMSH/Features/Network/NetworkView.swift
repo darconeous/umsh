@@ -97,6 +97,7 @@ struct NetworkView: View {
         NavigationLink {
             PeerDetailView(
                 peer: peer,
+                livePeers: peers,
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: peerActions,
@@ -121,7 +122,19 @@ struct NetworkView: View {
 }
 
 struct PeerDetailView: View {
-    let peer: PeerSummary
+    /// The entry as it stood when this view was pushed. Anchors identity, and
+    /// stands in if the peer is removed while the view is open.
+    private let pushedPeer: PeerSummary
+    /// The live peer list. A peer's details change while this view is open —
+    /// an identity response lands, or a reply teaches a route — and a value
+    /// captured at push time would show none of it.
+    private let livePeers: [PeerSummary]
+
+    /// This peer as it stands now.
+    private var peer: PeerSummary {
+        livePeers.first { $0.id == pushedPeer.id } ?? pushedPeer
+    }
+
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     /// What this sheet can do with the node. One bundle so the sheet is the
@@ -147,6 +160,7 @@ struct PeerDetailView: View {
     @State private var feedbackTitle = ""
     @State private var feedbackMessage = ""
     @State private var showsFeedback = false
+    @State private var identityRequest: IdentityRequestState?
     // The pushed view keeps its own copy so a saved alias is visible
     // immediately even though the parent's peer list refreshes later.
     @State private var currentAlias: String?
@@ -161,6 +175,7 @@ struct PeerDetailView: View {
 
     init(
         peer: PeerSummary,
+        livePeers: [PeerSummary] = [],
         radioSnapshot: Binding<RadioSnapshot>,
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         actions: PeerActions = .unavailable,
@@ -170,7 +185,8 @@ struct PeerDetailView: View {
         savePeer: (() async -> Bool)? = nil,
         isPeerSaved: Bool = false
     ) {
-        self.peer = peer
+        self.pushedPeer = peer
+        self.livePeers = livePeers
         _radioSnapshot = radioSnapshot
         _conversations = conversations
         self.actions = actions
@@ -275,6 +291,10 @@ struct PeerDetailView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(isFetchingIdentity)
+
+                        if let identityRequest {
+                            identityRequestStatus(identityRequest)
+                        }
                     }
 
                     if let pingStatus {
@@ -335,7 +355,12 @@ struct PeerDetailView: View {
             }
         }
         .navigationTitle(displayedName)
-        .task(id: peer.identity.canonicalAddress) { await loadRoute() }
+        // Anything inbound from this peer is what teaches the MAC a route, so
+        // the cached route on screen is stale exactly when we hear from them.
+        // `lastHeard` moves on every such event, which makes it the trigger.
+        .task(id: RouteRefreshKey(address: peer.identity.canonicalAddress, lastHeard: peer.lastHeard)) {
+            await loadRoute()
+        }
         .alert("Alias", isPresented: $isEditingAlias) {
             TextField("Alias", text: $aliasDraft)
                 .textInputAutocapitalization(.words)
@@ -451,17 +476,55 @@ struct PeerDetailView: View {
         }
     }
 
+    /// Ask the peer for its identity.
+    ///
+    /// The reply arrives asynchronously and lands in the Advertised identity
+    /// section on its own, so this reports inline rather than raising a modal
+    /// the reader has to dismiss before they can see the answer arrive.
     private func fetchPeerIdentity() async {
         guard let fetchIdentity = actions.fetchIdentity else { return }
         guard !isFetchingIdentity else { return }
         isFetchingIdentity = true
         defer { isFetchingIdentity = false }
-        let sent = await fetchIdentity(peer)
-        feedbackTitle = sent ? "Identity requested" : "Request unavailable"
-        feedbackMessage = sent
-            ? "Asked this peer for its current identity. Its details will update here when it responds."
-            : "Connect a companion radio configured for this phone before requesting a peer's identity."
-        showsFeedback = true
+        // Remembered so a reply that changes nothing is still recognisable as
+        // a reply.
+        let asked = peer.advertisedIdentity
+        identityRequest = await fetchIdentity(peer) ? .awaiting(asked) : .unavailable
+    }
+
+    /// Where an Identity Request stands.
+    enum IdentityRequestState: Equatable {
+        /// Handed to the transport. Carries the identity held at that moment,
+        /// so a reply is recognisable even when it restates what we knew.
+        case awaiting(MeshNodeIdentity?)
+        /// No mesh session to ask through.
+        case unavailable
+    }
+
+    /// Inline progress for an Identity Request. The reply lands in the
+    /// Advertised identity section above, so this only has to say whether one
+    /// is still outstanding.
+    @ViewBuilder
+    private func identityRequestStatus(_ state: IdentityRequestState) -> some View {
+        switch state {
+        case let .awaiting(asked):
+            if peer.advertisedIdentity != asked {
+                Label("Identity updated.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("Asked. Details update above when the peer replies.", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .unavailable:
+            Label(
+                "Connect a companion radio set up for this phone before asking a peer for its identity.",
+                systemImage: "exclamationmark.triangle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
     }
 
     /// What this phone will do with the next frame addressed to this peer,
@@ -725,6 +788,14 @@ private struct IconedValue: View {
                 .multilineTextAlignment(.trailing)
         }
     }
+}
+
+/// What the peer detail view watches to decide the cached route needs
+/// re-reading: the peer it is showing, and the last time anything was heard
+/// from them.
+private struct RouteRefreshKey: Hashable {
+    let address: String
+    let lastHeard: Date?
 }
 
 /// A signature notice for an advertised identity, shown only when the

@@ -163,9 +163,12 @@ impl From<Option<umsh_mac::CachedRoute>> for MobileMeshRouteRecord {
     }
 }
 
-/// A node-identity advertisement received over the mesh. Only frames whose
-/// source address carried the full public key are surfaced; the platform
-/// verifies the embedded signature before trusting or persisting any claim.
+/// A node-identity bundle received over the mesh, either as a broadcast
+/// advertisement or as the reply to an Identity Request.
+///
+/// Only frames whose sender the MAC could name are surfaced. How the claims
+/// may be trusted depends on how they arrived, which is what
+/// `source_authenticated` reports.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshAdvertisementRecord {
     /// Canonical Base58 address of the claimed sender.
@@ -173,6 +176,15 @@ pub struct MobileMeshAdvertisementRecord {
     /// Raw node-identity payload bytes (without the payload-type byte),
     /// decodable with `decode_node_identity`.
     pub payload: Vec<u8>,
+    /// Whether the MAC authenticated the sender of the frame that carried
+    /// this bundle.
+    ///
+    /// A unicast Identity Request reply is authenticated by its MIC, so it
+    /// carries no detached signature and decodes as `Unsigned` — it is
+    /// nonetheless trustworthy, and the platform must accept it. A broadcast
+    /// advertisement has no MIC, so it is `false` and the platform must
+    /// require a `Valid` embedded signature before trusting any claim.
+    pub source_authenticated: bool,
 }
 
 /// Platform-side listener invoked when `poll_update` has new data waiting.
@@ -1349,6 +1361,7 @@ async fn run_worker(
         let _ = advertisement_events.send(MobileMeshAdvertisementRecord {
             peer_address,
             payload: packet.payload().to_vec(),
+            source_authenticated: packet.source_authenticated(),
         });
         true
     });
@@ -1452,7 +1465,8 @@ async fn run_worker(
                                         6,
                                         &SendOptions::default()
                                             .with_flood_hops(5)
-                                            .with_trace_route(),
+                                            .with_trace_route()
+                                            .with_mic_size(umsh_node::PING_MIC_SIZE),
                                         timeout_ms,
                                     )
                                     .await
@@ -2202,6 +2216,10 @@ mod tests {
             let bob_update = bob.poll_update();
             if let Some(event) = bob_update.advertisement_events.into_iter().next() {
                 assert_eq!(event.peer_address, address(&alice_identity));
+                // A broadcast has no MIC, so the platform is told the sender
+                // was not authenticated and must fall back to the bundle's
+                // own signature — which is why one is attached.
+                assert!(!event.source_authenticated);
                 let received =
                     crate::decode_node_identity(event.peer_address, event.payload).unwrap();
                 assert_eq!(received.signature, crate::IdentitySignatureState::Valid);

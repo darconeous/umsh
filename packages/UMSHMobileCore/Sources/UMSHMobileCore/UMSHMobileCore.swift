@@ -2994,9 +2994,12 @@ public func FfiConverterTypeMobileChatOriginalRef_lower(_ value: MobileChatOrigi
 
 
 /**
- * A node-identity advertisement received over the mesh. Only frames whose
- * source address carried the full public key are surfaced; the platform
- * verifies the embedded signature before trusting or persisting any claim.
+ * A node-identity bundle received over the mesh, either as a broadcast
+ * advertisement or as the reply to an Identity Request.
+ *
+ * Only frames whose sender the MAC could name are surfaced. How the claims
+ * may be trusted depends on how they arrived, which is what
+ * `source_authenticated` reports.
  */
 public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
     /**
@@ -3008,6 +3011,17 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
      * decodable with `decode_node_identity`.
      */
     public var payload: Data
+    /**
+     * Whether the MAC authenticated the sender of the frame that carried
+     * this bundle.
+     *
+     * A unicast Identity Request reply is authenticated by its MIC, so it
+     * carries no detached signature and decodes as `Unsigned` — it is
+     * nonetheless trustworthy, and the platform must accept it. A broadcast
+     * advertisement has no MIC, so it is `false` and the platform must
+     * require a `Valid` embedded signature before trusting any claim.
+     */
+    public var sourceAuthenticated: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3018,9 +3032,20 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
         /**
          * Raw node-identity payload bytes (without the payload-type byte),
          * decodable with `decode_node_identity`.
-         */payload: Data) {
+         */payload: Data,
+        /**
+         * Whether the MAC authenticated the sender of the frame that carried
+         * this bundle.
+         *
+         * A unicast Identity Request reply is authenticated by its MIC, so it
+         * carries no detached signature and decodes as `Unsigned` — it is
+         * nonetheless trustworthy, and the platform must accept it. A broadcast
+         * advertisement has no MIC, so it is `false` and the platform must
+         * require a `Valid` embedded signature before trusting any claim.
+         */sourceAuthenticated: Bool) {
         self.peerAddress = peerAddress
         self.payload = payload
+        self.sourceAuthenticated = sourceAuthenticated
     }
 
 
@@ -3040,13 +3065,15 @@ public struct FfiConverterTypeMobileMeshAdvertisementRecord: FfiConverterRustBuf
         return
             try MobileMeshAdvertisementRecord(
                 peerAddress: FfiConverterString.read(from: &buf),
-                payload: FfiConverterData.read(from: &buf)
+                payload: FfiConverterData.read(from: &buf),
+                sourceAuthenticated: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMeshAdvertisementRecord, into buf: inout [UInt8]) {
         FfiConverterString.write(value.peerAddress, into: &buf)
         FfiConverterData.write(value.payload, into: &buf)
+        FfiConverterBool.write(value.sourceAuthenticated, into: &buf)
     }
 }
 

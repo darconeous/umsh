@@ -240,17 +240,21 @@ struct AppRootView: View {
         openedConversation = conversation
     }
 
-    /// Persist an over-the-air advertisement. A broadcast frame is
-    /// unauthenticated at the MAC layer, so only bundles whose embedded
-    /// signature verifies against the claimed sender key are stored;
-    /// anything else could be spoofed by any nearby transmitter.
+    /// Persist a node-identity bundle heard over the air, whether it arrived
+    /// as a broadcast advertisement or as the reply to an Identity Request.
+    ///
+    /// A broadcast frame is unauthenticated at the MAC layer, so it is stored
+    /// only when its embedded signature verifies against the claimed sender
+    /// key — anything else could be spoofed by any nearby transmitter. An
+    /// Identity Request reply is a unicast the MAC already authenticated and
+    /// carries no signature of its own, so it is stored on that basis.
     @MainActor
     private func applyReceivedAdvertisement(_ advertisement: RadioAdvertisementEvent) async {
         guard let applicationStore, let localIdentity else { return }
         guard let identity = try? await meshEngine.decodeNodeIdentity(
             address: advertisement.peerAddress,
             payload: advertisement.payload
-        ), identity.signature == .valid else { return }
+        ), advertisement.isTrustworthy(given: identity.signature) else { return }
         do {
             try await applicationStore.upsertPeer(
                 ownerIdentityID: localIdentity.id,

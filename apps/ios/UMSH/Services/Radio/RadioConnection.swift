@@ -87,6 +87,33 @@ protocol RadioConnection: AnyObject, Sendable {
 struct RadioAdvertisementEvent: Equatable, Sendable {
     let peerAddress: String
     let payload: Data
+    /// Whether the MAC authenticated the sender of the frame that carried
+    /// this bundle.
+    ///
+    /// An Identity Request reply arrives as a unicast authenticated by its
+    /// MIC, so it carries no detached signature; a broadcast advertisement
+    /// has no MIC and must carry one. See `isTrustworthy(given:)`.
+    let sourceAuthenticated: Bool
+
+    /// Whether these claims may be attributed to the peer.
+    ///
+    /// A bundle is trustworthy when *something* authenticated it: either its
+    /// embedded signature verifies against the claimed key, or the MAC
+    /// authenticated the frame that delivered it. A broadcast advertisement
+    /// has no MIC, so it must be signed — anything else could be spoofed by
+    /// any nearby transmitter. An Identity Request reply is a unicast
+    /// authenticated by its MIC and deliberately carries no signature, so it
+    /// is trusted without one.
+    ///
+    /// A signature that is present and fails to verify is never trusted,
+    /// however the bundle arrived.
+    func isTrustworthy(given signature: MeshIdentitySignatureState) -> Bool {
+        switch signature {
+        case .valid: true
+        case .unsigned: sourceAuthenticated
+        case .invalid: false
+        }
+    }
 }
 
 struct RadioChatUpdate: Sendable {

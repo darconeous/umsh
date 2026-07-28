@@ -1,7 +1,20 @@
 use alloc::boxed::Box;
 
-use umsh_core::PublicKey;
+use umsh_core::{MicSize, PublicKey};
 use umsh_mac::SendOptions;
+
+/// MIC size callers should normally ask for on a ping.
+///
+/// A ping frame is otherwise nearly half MIC: with a 2-byte nonce the whole
+/// frame is 34 bytes, 16 of them the authenticator. Dropping to 8 takes a
+/// quarter off the airtime while leaving forgery resistance at 2^-64 — far
+/// out of reach at LoRa packet rates, and the echo payload is a random nonce
+/// and filler that is worth nothing to forge.
+///
+/// Not applied inside [`PeerConnection::ping`], which honours whatever it is
+/// given: a caller measuring how 16-byte-MIC traffic fares should ping with a
+/// 16-byte MIC.
+pub const PING_MIC_SIZE: MicSize = MicSize::Mic8;
 
 use crate::node::{LocalNode, NodeError, Subscription, SubscriptionHandle};
 use crate::receive::ReceivedPacketRef;
@@ -212,6 +225,20 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         })
     }
 
+    /// Send an echo request and record it as pending until the matching echo
+    /// response arrives or `timeout_ms` elapses.
+    ///
+    /// `options` is honoured as given, so a ping travels the same way the
+    /// traffic it is measuring would: same MIC size, same encryption, same
+    /// routing and region options. Only `ack_requested` is overridden — the
+    /// echo response *is* the acknowledgement, so asking for a MAC ack as
+    /// well would put a second frame on the air for nothing.
+    ///
+    /// `extra_bytes` pads the payload beyond the 2-byte nonce. Padding
+    /// matters for the same reason the MIC size does: packet error rate rises
+    /// with frame length, so a minimal ping reports a link as usable when a
+    /// full-size message would not get through. See [`PING_MIC_SIZE`] for the
+    /// MIC size callers should normally ask for.
     pub async fn ping(
         &self,
         extra_bytes: usize,
@@ -244,16 +271,11 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         self.transport
             .record_ping(nonce, self.peer, sent_at_ms, sent_at_ms + timeout_ms);
 
-        // Send without MAC ack — the EchoResponse IS the ack.
-        let mut opts = SendOptions::default().with_ack_requested(false);
-        if let Some(hops) = options.flood_hops {
-            opts = opts.with_flood_hops(hops);
-        } else {
-            opts = opts.no_flood();
-        }
-        if options.trace_route {
-            opts = opts.with_trace_route();
-        }
+        // The caller's options carry through unchanged: a ping that is
+        // secured, sized or routed differently from real traffic measures a
+        // link the real traffic will not use. Only the ack request is
+        // dropped, because the EchoResponse already serves as one.
+        let opts = options.clone().with_ack_requested(false);
         self.send(&buf[..n], &opts).await
     }
 

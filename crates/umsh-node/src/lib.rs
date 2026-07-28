@@ -175,7 +175,7 @@ pub use node::BoundChannel;
 #[cfg(feature = "software-crypto")]
 pub use node::PfsStatus;
 pub use node::{LocalNode, NodeError, PfsFailure, PongMetadata, Subscription};
-pub use peer::PeerConnection;
+pub use peer::{PING_MIC_SIZE, PeerConnection};
 pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};
 pub use transport::Transport;
@@ -380,6 +380,56 @@ mod tests {
         assert_eq!(commands.borrow().as_slice(), &[(peer, command)]);
         assert_eq!(peer_acks.borrow().as_slice(), &[token]);
         assert_eq!(peer_timeouts.borrow().as_slice(), &[timeout_token]);
+    }
+
+    /// A ping must travel the way the traffic it is measuring would, so the
+    /// caller's options carry through untouched. The one exception is the ack
+    /// request: the echo response already acknowledges the ping, so asking
+    /// for a MAC ack too would put a second frame on the air for nothing.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn ping_honours_caller_options_but_never_requests_a_mac_ack() {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+        use umsh_core::MicSize;
+
+        let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
+        let node = LocalNode::new(
+            LocalIdentityId(1),
+            mac.clone(),
+            Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new())),
+            Rc::new(RefCell::new(NodeMembership::new())),
+            Rc::new(RefCell::new(LocalNodeState::new())),
+        );
+        let peer_connection = block_on_ready(node.peer(PublicKey([0x55; 32]))).unwrap();
+
+        let options = SendOptions::default()
+            .with_mic_size(MicSize::Mic4)
+            .with_ack_requested(true)
+            .with_trace_route()
+            .with_flood_hops(3)
+            .with_region_code([0x78, 0x53]);
+        block_on_ready(peer_connection.ping(6, &options, 1_000)).unwrap();
+
+        let sent = mac.take_unicasts().pop().expect("ping send");
+        assert_eq!(sent.options.mic_size, MicSize::Mic4);
+        assert!(sent.options.trace_route);
+        assert_eq!(sent.options.flood_hops, Some(3));
+        assert_eq!(sent.options.region_code, Some([0x78, 0x53]));
+        assert!(!sent.options.ack_requested, "the echo response is the ack");
+
+        // `no_flood` is a distinct state from an unset budget and must also
+        // survive, rather than collapsing back to the wide default.
+        block_on_ready(peer_connection.ping(0, &SendOptions::default().no_flood(), 1_000)).unwrap();
+        let sent = mac.take_unicasts().pop().expect("ping send");
+        assert_eq!(sent.options.flood_hops, None);
+    }
+
+    /// The MIC size pings are normally sent with. A ping frame is otherwise
+    /// nearly half authenticator.
+    #[test]
+    fn ping_mic_size_is_eight_bytes() {
+        assert_eq!(crate::PING_MIC_SIZE, umsh_core::MicSize::Mic8);
+        assert_eq!(crate::PING_MIC_SIZE.byte_len(), 8);
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
