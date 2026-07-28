@@ -24,7 +24,12 @@ struct AppRootView: View {
 
     private let meshEngine: RustMeshEngine
     private let identityVault: KeychainIdentityVault
-    private let applicationStore = try? SQLiteApplicationStore.applicationStore()
+    private let applicationStore: SQLiteApplicationStore?
+    /// Why ``applicationStore`` is nil, when it is. Every store call site
+    /// degrades to a silent no-op without one, which renders as an account
+    /// with no contacts and no way to add any — indistinguishable from real
+    /// data loss. Keeping the reason lets the UI say what actually happened.
+    private let applicationStoreError: (any Error)?
     private let radioConnection: any RadioConnection
     private let notificationService = ChatNotificationService()
 
@@ -33,6 +38,16 @@ struct AppRootView: View {
         self.meshEngine = meshEngine
         identityVault = KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
+        do {
+            applicationStore = try SQLiteApplicationStore.applicationStore()
+            applicationStoreError = nil
+        } catch {
+            applicationStore = nil
+            applicationStoreError = error
+            Self.logger.error(
+                "Could not open the application store: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     /// The one set of peer operations every peer sheet gets, wherever it is
@@ -51,6 +66,19 @@ struct AppRootView: View {
     }
 
     var body: some View {
+        if let applicationStoreError {
+            // Deliberately replaces the whole interface rather than banner-ing
+            // over it. Without a store the conversation and peer lists render
+            // empty and every save silently fails, so anything that still looks
+            // like the normal app is actively telling the user their data is
+            // gone. It is not; it is unread.
+            StorageUnavailableView(error: applicationStoreError)
+        } else {
+            mainInterface
+        }
+    }
+
+    private var mainInterface: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
                 ConversationsView(

@@ -7,6 +7,38 @@ enum ApplicationStoreError: Error, Equatable, Sendable {
     case openFailed(Int32)
     case sqliteFailure(Int32)
     case unsupportedSchema(Int32)
+    /// Migrations ran but left the database at a version other than
+    /// ``SQLiteApplicationStore/currentSchemaVersion`` — a migration block
+    /// stamped a `user_version` the constant was never raised to match. Fails
+    /// on the first run of the offending build rather than on the second,
+    /// where the store would open once and then be rejected forever after.
+    case schemaVersionMismatch(applied: Int32, expected: Int32)
+}
+
+extension ApplicationStoreError {
+    /// Enough detail to act on in a bug report, without leaking record content.
+    var diagnosticDescription: String {
+        switch self {
+        case .applicationSupportUnavailable:
+            "The Application Support directory is unavailable."
+        case .openFailed(let code):
+            "sqlite3_open_v2 failed with code \(code)."
+        case .sqliteFailure(let code):
+            "SQLite returned code \(code)."
+        case .unsupportedSchema(let version):
+            """
+            The database is at schema version \(version); this build supports \
+            up to \(SQLiteApplicationStore.currentSchemaVersion). It was \
+            written by a newer build.
+            """
+        case .schemaVersionMismatch(let applied, let expected):
+            """
+            Migrations left the database at schema version \(applied) but this \
+            build declares \(expected). A migration was added without raising \
+            currentSchemaVersion.
+            """
+        }
+    }
 }
 
 struct StoredNode: Equatable, Sendable {
@@ -85,7 +117,13 @@ private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
 actor SQLiteApplicationStore {
-    static let currentSchemaVersion: Int32 = 11
+    /// Must equal the highest `PRAGMA user_version` any migration block in
+    /// ``migrate(_:)`` stamps. Raise it in the same commit that adds one:
+    /// migrations run when the stored version is *below* their target, but the
+    /// store refuses to open any database above this constant, so a stale value
+    /// lets the new schema apply once and then locks the user out of their own
+    /// data on the next launch. ``migrate(_:)`` checks the two agree.
+    static let currentSchemaVersion: Int32 = 12
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1616,6 +1654,19 @@ actor SQLiteApplicationStore {
                 try? execute(database, sql: "ROLLBACK")
                 throw error
             }
+        }
+
+        // Every migration above has run, so the database must now sit exactly
+        // at the version this build claims to support. A mismatch means a
+        // migration stamped a `user_version` the constant was not raised to
+        // match, which is invisible on the run that applies it and fatal on
+        // every run after. Fail here, while the mistake is still one commit old.
+        let applied = try readSchemaVersion(database)
+        guard applied == currentSchemaVersion else {
+            throw ApplicationStoreError.schemaVersionMismatch(
+                applied: applied,
+                expected: currentSchemaVersion
+            )
         }
     }
 
