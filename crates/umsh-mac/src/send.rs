@@ -52,8 +52,13 @@ pub struct SendReceipt(pub u32);
 /// - **`mic_size`** — trading MIC length against frame overhead. 16-byte MIC is strongly
 ///   preferred for unicast; 4-byte may be acceptable for low-bandwidth broadcast beacons.
 /// - **`flood_hops`** — `None` disables flood forwarding (point-to-point or source-routed
-///   only). `Some(n)` sets the initial `FHOPS_REM` budget; repeaters decrement it and drop
-///   at zero.
+///   only). `Some(n)` caps the initial `FHOPS_REM` budget; repeaters decrement it and drop
+///   at zero. For unicast and blind unicast this is a ceiling rather than a fixed value:
+///   a route already learned for the peer narrows the budget to what that route costs plus
+///   [`ESTABLISHED_ROUTE_EXTRA_HOPS`](crate::ESTABLISHED_ROUTE_EXTRA_HOPS), so an
+///   established path does not re-flood the whole mesh. Clear the peer's cached route
+///   ([`MacHandle::clear_peer_route`](crate::MacHandle::clear_peer_route)) to get the full
+///   budget back.
 /// - **`full_source`** — include the full 32-byte public key instead of the 3-byte hint,
 ///   allowing the receiver to authenticate without a prior key exchange. Useful for first
 ///   contact or identity announcements; costs 29 extra bytes per frame.
@@ -225,6 +230,10 @@ pub struct ResendRecord<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub frame: Vec<u8, FRAME>,
     /// Optional source route retained for retransmission.
     pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+    /// Flood budget the application originally asked for, before any narrowing
+    /// against a cached route. A route-retry rebuild floods with this rather
+    /// than the tight budget the failed attempt carried.
+    pub requested_flood_hops: Option<u8>,
 }
 
 impl<const FRAME: usize> ResendRecord<FRAME> {
@@ -252,7 +261,18 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
         Ok(Self {
             frame: stored_frame,
             source_route: stored_route,
+            requested_flood_hops: None,
         })
+    }
+
+    /// Attach the flood budget the send was authorized to use.
+    ///
+    /// The frame itself may have gone out with a smaller `FHOPS_REM` because a
+    /// cached route made a wide flood unnecessary; recovery from a failed route
+    /// needs the original allowance back.
+    pub fn with_requested_flood_hops(mut self, flood_hops: Option<u8>) -> Self {
+        self.requested_flood_hops = flood_hops;
+        self
     }
 }
 

@@ -6,6 +6,9 @@ actor FakeRadioConnection: RadioConnection {
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<RadioReceivedFrame>.Continuation] = [:]
     private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
+    /// Lets a preview exercise reset: the canned route is reported once and
+    /// then reads as forgotten, as a real one would.
+    private var routeCleared = false
 
     init(snapshot: RadioSnapshot = .previewReady) {
         self.snapshot = snapshot
@@ -152,6 +155,24 @@ actor FakeRadioConnection: RadioConnection {
                 linkQuality: 180
             )
         )
+    }
+
+    /// Mirrors the fake ping: one router on the way to the peer, so the route
+    /// section has something to render in previews.
+    func peerRoute(peerAddress: String) async throws -> RadioPeerRoute {
+        routeCleared
+            ? .unknown
+            : RadioPeerRoute(
+                kind: .source,
+                hints: [Data([0x12, 0x34])],
+                floodHops: nil,
+                floodRegions: []
+            )
+    }
+
+    func clearPeerRoute(peerAddress: String) async throws -> Bool {
+        defer { routeCleared = true }
+        return !routeCleared
     }
 
     func prepareChat(

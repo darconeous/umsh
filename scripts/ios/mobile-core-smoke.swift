@@ -3,11 +3,15 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 27)
+        precondition(mobileApiVersion() == 28)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
         precondition(hint.text == "BtC5")
+
+        let routerHint = try renderRouterHint(bytes: Data([0xA1, 0xB2]))
+        precondition(routerHint.bytes == Data([0xA1, 0xB2]))
+        precondition(routerHint.text == "BtC")
 
         let identity = try MobileIdentity.unlock(
             secretKey: Data(repeating: 7, count: 32)

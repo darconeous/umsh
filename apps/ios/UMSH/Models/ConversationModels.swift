@@ -20,6 +20,16 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     }
 
     var isUlcpDevice: Bool { systemRole == "companion_radio" }
+
+    /// Whether this node plausibly forwards other nodes' traffic: filed as a
+    /// repeater on this phone, or advertising the repeater role or
+    /// capability. An advertisement is the node's own claim, not proof.
+    var isLikelyRepeater: Bool {
+        if kind == .repeater { return true }
+        guard let advertisedIdentity else { return false }
+        return NodeRoleChoice.kind(for: advertisedIdentity.roleCode) == .repeater
+            || advertisedIdentity.capabilities.contains(MeshNodeIdentity.repeaterCapabilityLabel)
+    }
 }
 
 enum PeerKind: String, CaseIterable, Hashable, Sendable, Identifiable {
@@ -107,10 +117,70 @@ struct ChatMessageActions: Sendable {
 struct PeerPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
     let hopCount: UInt8?
-    let routeHints: [Data]
+    /// Intermediate routers in source-to-destination order, already rendered
+    /// by the Rust core. The two endpoints are not included.
+    let routeHints: [MeshRouterHint]
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
     let linkQuality: UInt8?
+}
+
+/// What this phone's MAC has learned about how to reach a peer. It is the
+/// path the next frame will take, not a record of the last one.
+struct PeerRoute: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        /// There is no mesh session to ask — no radio attached, or one that
+        /// is not set up for this phone. Distinct from `unknown`, which is a
+        /// real answer from a live MAC.
+        case unavailable
+        /// Nothing is cached, so the next send floods.
+        case unknown
+        case direct
+        case source
+        case flood
+    }
+
+    let kind: Kind
+    /// Routers named by a source route, in send order.
+    let hints: [MeshRouterHint]
+    let floodHops: UInt8?
+    /// Two-octet region codes learned alongside a flood route.
+    let floodRegions: [Data]
+
+    static let unknown = PeerRoute(kind: .unknown, hints: [], floodHops: nil, floodRegions: [])
+    static let unavailable = PeerRoute(kind: .unavailable, hints: [], floodHops: nil, floodRegions: [])
+
+    /// A source route naming no routers *is* a direct path: the MAC caches the
+    /// empty trace a direct reply carried rather than a separate marker.
+    var isDirect: Bool {
+        kind == .direct || (kind == .source && hints.isEmpty)
+    }
+}
+
+/// Everything the peer sheet can do with the node it is showing.
+///
+/// Bundled because `PeerDetailView` is presented from four places — the
+/// Network list, a conversation's title bar, Settings' radio identity, and
+/// device setup — and passing these one parameter at a time made the same
+/// sheet offer different things depending on where it was opened. One value
+/// threaded through means one sheet with one set of capabilities.
+/// Deliberately not `Sendable`: these are main-actor operations owned by the
+/// app root, handed to views that also live on the main actor.
+struct PeerActions {
+    /// Nodes recorded on this phone, used to put names to router hints.
+    var knownPeers: [PeerSummary] = []
+    var startConversation: ((PeerSummary) async -> DirectConversationSummary?)? = nil
+    var ping: ((PeerSummary) async -> PeerPingResult)? = nil
+    var fetchIdentity: ((PeerSummary) async -> Bool)? = nil
+    var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+    /// Read the route this phone would use for the next frame to the node.
+    var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
+    /// Discard that route, reporting whether one was held.
+    var resetRoute: ((PeerSummary) async -> Bool)? = nil
+
+    /// No app services wired up — used by previews and by any sheet built
+    /// before the mesh session exists.
+    @MainActor static let unavailable = PeerActions()
 }
 
 enum PeerPingResult: Equatable, Sendable {

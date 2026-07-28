@@ -809,7 +809,7 @@ where
             "set" => &[
                 "/set — show current CLI-local settings.",
                 "/set <var> <val> — change one setting (resets on exit).",
-                "  flood_hops     u8 in 0..=15 (default 5) — FHOPS_REM on outbound sends",
+                "  flood_hops     u8 in 0..=15 (default 5) — max FHOPS_REM; a known route narrows it",
                 "  ack_requested  bool (default true)     — request MAC acks on unicast",
                 "  show_hex       bool (default false)    — also print inbound bytes as hex",
                 "  show_raw       bool (default false)    — log every TX/RX packet as hex",

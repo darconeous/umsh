@@ -15,6 +15,17 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint {
+        do {
+            let record = try UMSHMobileCore.renderRouterHint(bytes: bytes)
+            return MeshRouterHint(bytes: record.bytes, text: record.text)
+        } catch MobileError.InvalidRouterHintLength {
+            throw MeshEngineError.invalidRouterHint
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity {
         do {
             let record = try UMSHMobileCore.inspectPublicIdentity(address: address)

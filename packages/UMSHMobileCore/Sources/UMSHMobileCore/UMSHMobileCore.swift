@@ -1147,6 +1147,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
+    /**
+     * Forget the route cached for `peer`, returning whether one was held.
+     *
+     * The peer, its keys, and its counters are untouched; only the learned
+     * path is discarded, so the next send starts over from flood delivery.
+     */
+    func clearPeerRoute(peerAddress: String) async throws  -> Bool
+
     func clearWakeListener()
 
     func commitChatBatch(batchId: UInt64) async throws
@@ -1181,6 +1189,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * not remain in `Sending` indefinitely.
      */
     func failOutboundTransmissions() throws
+
+    /**
+     * Report the route the MAC will use for the next frame sent to `peer`.
+     *
+     * Read-only: an unregistered peer reads as `Unknown` rather than being
+     * registered as a side effect of being inspected.
+     */
+    func peerRoute(peerAddress: String) async throws  -> MobileMeshRouteRecord
 
     func ping(peerAddress: String, timeoutMs: UInt64) throws  -> UInt64
 
@@ -1335,6 +1351,28 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
 }
 }
 
+    /**
+     * Forget the route cached for `peer`, returning whether one was held.
+     *
+     * The peer, its keys, and its counters are untouched; only the learned
+     * path is discarded, so the next send starts over from flood delivery.
+     */
+open func clearPeerRoute(peerAddress: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_clear_peer_route(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_i8,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_i8,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
 open func clearWakeListener()  {try! rustCall() {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilemeshsession_clear_wake_listener(
@@ -1444,6 +1482,28 @@ open func failOutboundTransmissions()throws   {try rustCallWithError(FfiConverte
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Report the route the MAC will use for the next frame sent to `peer`.
+     *
+     * Read-only: an unregistered peer reads as `Unknown` rather than being
+     * registered as a side effect of being inspected.
+     */
+open func peerRoute(peerAddress: String)async throws  -> MobileMeshRouteRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_peer_route(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileMeshRouteRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
 open func ping(peerAddress: String, timeoutMs: UInt64)throws  -> UInt64  {
@@ -3176,6 +3236,91 @@ public func FfiConverterTypeMobileMeshPingEventRecord_lower(_ value: MobileMeshP
 }
 
 
+/**
+ * The route the MAC currently has cached for one peer.
+ */
+public struct MobileMeshRouteRecord: Equatable, Hashable {
+    public var kind: MobileMeshRouteKind
+    /**
+     * Router hints in source-to-destination order. Populated for `Source`
+     * routes only; the two endpoints are not included.
+     */
+    public var hints: [Data]
+    /**
+     * Hop budget carried by a `Flood` route.
+     */
+    public var floodHops: UInt8?
+    /**
+     * Two-octet region codes learned with a `Flood` route.
+     */
+    public var floodRegions: [Data]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: MobileMeshRouteKind,
+        /**
+         * Router hints in source-to-destination order. Populated for `Source`
+         * routes only; the two endpoints are not included.
+         */hints: [Data],
+        /**
+         * Hop budget carried by a `Flood` route.
+         */floodHops: UInt8?,
+        /**
+         * Two-octet region codes learned with a `Flood` route.
+         */floodRegions: [Data]) {
+        self.kind = kind
+        self.hints = hints
+        self.floodHops = floodHops
+        self.floodRegions = floodRegions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshRouteRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshRouteRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshRouteRecord {
+        return
+            try MobileMeshRouteRecord(
+                kind: FfiConverterTypeMobileMeshRouteKind.read(from: &buf),
+                hints: FfiConverterSequenceData.read(from: &buf),
+                floodHops: FfiConverterOptionUInt8.read(from: &buf),
+                floodRegions: FfiConverterSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshRouteRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMeshRouteKind.write(value.kind, into: &buf)
+        FfiConverterSequenceData.write(value.hints, into: &buf)
+        FfiConverterOptionUInt8.write(value.floodHops, into: &buf)
+        FfiConverterSequenceData.write(value.floodRegions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRouteRecord_lift(_ buf: RustBuffer) throws -> MobileMeshRouteRecord {
+    return try FfiConverterTypeMobileMeshRouteRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRouteRecord_lower(_ value: MobileMeshRouteRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshRouteRecord.lower(value)
+}
+
+
 public struct MobileMeshRxRecord: Equatable, Hashable {
     public var data: Data
     public var rssiDbm: Int16?
@@ -3667,6 +3812,77 @@ public func FfiConverterTypePublicIdentityRecord_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypePublicIdentityRecord_lower(_ value: PublicIdentityRecord) -> RustBuffer {
     return FfiConverterTypePublicIdentityRecord.lower(value)
+}
+
+
+/**
+ * Canonical rendering information for a two-byte router hint.
+ */
+public struct RouterHintRecord: Equatable, Hashable {
+    /**
+     * Raw hint bytes, matchable against the first two bytes of a known
+     * node's public key.
+     */
+    public var bytes: Data
+    /**
+     * Canonical, possibly star-truncated text rendered by the Rust core.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Raw hint bytes, matchable against the first two bytes of a known
+         * node's public key.
+         */bytes: Data,
+        /**
+         * Canonical, possibly star-truncated text rendered by the Rust core.
+         */text: String) {
+        self.bytes = bytes
+        self.text = text
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RouterHintRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRouterHintRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouterHintRecord {
+        return
+            try RouterHintRecord(
+                bytes: FfiConverterData.read(from: &buf),
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RouterHintRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.bytes, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRouterHintRecord_lift(_ buf: RustBuffer) throws -> RouterHintRecord {
+    return try FfiConverterTypeRouterHintRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRouterHintRecord_lower(_ value: RouterHintRecord) -> RustBuffer {
+    return FfiConverterTypeRouterHintRecord.lower(value)
 }
 
 
@@ -5247,6 +5463,7 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidAddressCharacter
     case AddressOverflow
     case InvalidNodeHintLength
+    case InvalidRouterHintLength
     case InvalidSecretKeyLength
     case InvalidPublicKeyLength
     case InvalidUri
@@ -5295,14 +5512,15 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 2: return .InvalidAddressCharacter
         case 3: return .AddressOverflow
         case 4: return .InvalidNodeHintLength
-        case 5: return .InvalidSecretKeyLength
-        case 6: return .InvalidPublicKeyLength
-        case 7: return .InvalidUri
-        case 8: return .InvalidIdentityData
-        case 9: return .InvalidUlcpFrame
-        case 10: return .InvalidGattSegment
-        case 11: return .AdministrativeSession
-        case 12: return .InvalidRegionCode
+        case 5: return .InvalidRouterHintLength
+        case 6: return .InvalidSecretKeyLength
+        case 7: return .InvalidPublicKeyLength
+        case 8: return .InvalidUri
+        case 9: return .InvalidIdentityData
+        case 10: return .InvalidUlcpFrame
+        case 11: return .InvalidGattSegment
+        case 12: return .AdministrativeSession
+        case 13: return .InvalidRegionCode
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -5331,36 +5549,40 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .InvalidSecretKeyLength:
+        case .InvalidRouterHintLength:
             writeInt(&buf, Int32(5))
 
 
-        case .InvalidPublicKeyLength:
+        case .InvalidSecretKeyLength:
             writeInt(&buf, Int32(6))
 
 
-        case .InvalidUri:
+        case .InvalidPublicKeyLength:
             writeInt(&buf, Int32(7))
 
 
-        case .InvalidIdentityData:
+        case .InvalidUri:
             writeInt(&buf, Int32(8))
 
 
-        case .InvalidUlcpFrame:
+        case .InvalidIdentityData:
             writeInt(&buf, Int32(9))
 
 
-        case .InvalidGattSegment:
+        case .InvalidUlcpFrame:
             writeInt(&buf, Int32(10))
 
 
-        case .AdministrativeSession:
+        case .InvalidGattSegment:
             writeInt(&buf, Int32(11))
 
 
-        case .InvalidRegionCode:
+        case .AdministrativeSession:
             writeInt(&buf, Int32(12))
+
+
+        case .InvalidRegionCode:
+            writeInt(&buf, Int32(13))
 
         }
     }
@@ -5558,6 +5780,103 @@ public func FfiConverterTypeMobileMeshPingOutcome_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileMeshPingOutcome_lower(_ value: MobileMeshPingOutcome) -> RustBuffer {
     return FfiConverterTypeMobileMeshPingOutcome.lower(value)
+}
+
+
+
+/**
+ * How the MAC will address the next frame sent to a peer.
+ */
+
+public enum MobileMeshRouteKind: Equatable, Hashable {
+
+    /**
+     * Nothing has been learned for this peer, so the next send falls back to
+     * the default delivery mode. Also reported for a peer the MAC does not
+     * have registered at all.
+     */
+    case unknown
+    /**
+     * The peer answered without any intermediate router.
+     */
+    case direct
+    /**
+     * An explicit source route, learned by reversing an inbound trace route.
+     */
+    case source
+    /**
+     * Flood delivery with a learned hop budget.
+     */
+    case flood
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshRouteKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshRouteKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshRouteKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshRouteKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .direct
+
+        case 3: return .source
+
+        case 4: return .flood
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshRouteKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .direct:
+            writeInt(&buf, Int32(2))
+
+
+        case .source:
+            writeInt(&buf, Int32(3))
+
+
+        case .flood:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRouteKind_lift(_ buf: RustBuffer) throws -> MobileMeshRouteKind {
+    return try FfiConverterTypeMobileMeshRouteKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshRouteKind_lower(_ value: MobileMeshRouteKind) -> RustBuffer {
+    return FfiConverterTypeMobileMeshRouteKind.lower(value)
 }
 
 
@@ -7022,6 +7341,17 @@ public func renderNodeHint(bytes: Data)throws  -> NodeHintRecord  {
 })
 }
 /**
+ * Render a router hint using the protocol's canonical ambiguity rules.
+ */
+public func renderRouterHint(bytes: Data)throws  -> RouterHintRecord  {
+    return try  FfiConverterTypeRouterHintRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_render_router_hint(
+        FfiConverterData.lower(bytes),uniffiCallStatus
+    )
+})
+}
+/**
  * Validate and reduce a `PROP_BATTERY` value to fields used by mobile UI.
  */
 public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
@@ -7215,6 +7545,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_render_node_hint() != 12096) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_render_router_hint() != 41050) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7269,6 +7602,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_peer_route() != 59203) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_wake_listener() != 53225) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7288,6 +7624,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 52427) {

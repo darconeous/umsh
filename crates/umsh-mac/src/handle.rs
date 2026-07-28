@@ -471,6 +471,23 @@ impl<
         }
     }
 
+    /// Return the route currently cached for `peer`, if the peer is registered
+    /// and a route has been learned for it.
+    pub async fn peer_route(&self, peer: &umsh_core::PublicKey) -> Option<crate::CachedRoute> {
+        let mac = self.mac.borrow().await;
+        let (peer_id, _) = mac.peer_registry().lookup_by_key(peer)?;
+        mac.peer_registry().get(peer_id)?.route.clone()
+    }
+
+    /// Forget the route cached for `peer`, returning whether one was held.
+    pub async fn clear_peer_route(&self, peer: &umsh_core::PublicKey) -> bool {
+        let mut mac = self.mac.borrow_mut().await;
+        let Some((peer_id, _)) = mac.peer_registry().lookup_by_key(peer) else {
+            return false;
+        };
+        mac.peer_registry_mut().clear_route(peer_id)
+    }
+
     /// Invoke `f` for each peer with an established crypto state for `id`,
     /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
     pub async fn for_each_peer_counter(

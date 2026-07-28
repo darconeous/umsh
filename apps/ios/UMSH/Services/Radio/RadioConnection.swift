@@ -36,6 +36,12 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.
     func requestIdentity(peerAddress: String) async throws
+    /// The route the phone's MAC will use for the next frame to this peer.
+    /// Read-only: inspecting a peer never registers it.
+    func peerRoute(peerAddress: String) async throws -> RadioPeerRoute
+    /// Discard this peer's learned route, returning whether one was held.
+    /// Keys and counters are untouched.
+    func clearPeerRoute(peerAddress: String) async throws -> Bool
     func prepareChat(
         peerAddresses: [String],
         checkpoints: [MobileChatCheckpointRecord]
@@ -103,6 +109,34 @@ struct RadioPingReply: Equatable, Sendable {
 enum RadioPingResult: Equatable, Sendable {
     case reply(RadioPingReply)
     case timedOut
+}
+
+/// The route the phone's MAC currently holds for one peer, as raw wire values.
+struct RadioPeerRoute: Equatable, Sendable {
+    let kind: MobileMeshRouteKind
+    /// Routers named by a source route, in send order.
+    let hints: [Data]
+    let floodHops: UInt8?
+    /// Two-octet region codes learned with a flood route.
+    let floodRegions: [Data]
+
+    static let unknown = RadioPeerRoute(kind: .unknown, hints: [], floodHops: nil, floodRegions: [])
+
+    init(kind: MobileMeshRouteKind, hints: [Data], floodHops: UInt8?, floodRegions: [Data]) {
+        self.kind = kind
+        self.hints = hints
+        self.floodHops = floodHops
+        self.floodRegions = floodRegions
+    }
+
+    init(_ record: MobileMeshRouteRecord) {
+        self.init(
+            kind: record.kind,
+            hints: record.hints,
+            floodHops: record.floodHops,
+            floodRegions: record.floodRegions
+        )
+    }
 }
 
 struct RadioReceivedFrame: Equatable, Sendable {

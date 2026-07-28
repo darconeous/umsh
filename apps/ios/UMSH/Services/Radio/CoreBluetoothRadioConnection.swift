@@ -273,6 +273,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await session.requestIdentity(peerAddress: peerAddress)
     }
 
+    func peerRoute(peerAddress: String) async throws -> RadioPeerRoute {
+        let session = try await currentMeshSession()
+        return RadioPeerRoute(try await session.peerRoute(peerAddress: peerAddress))
+    }
+
+    func clearPeerRoute(peerAddress: String) async throws -> Bool {
+        let session = try await currentMeshSession()
+        return try await session.clearPeerRoute(peerAddress: peerAddress)
+    }
+
     func signIdentityBundle(name: String?) async throws -> Data {
         let session = try await currentMeshSession()
         return try await session.signIdentityBundle(

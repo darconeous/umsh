@@ -10,7 +10,7 @@ use std::{
 };
 
 use lwuri::UriRef;
-use umsh_core::{AddressParseError, NodeHint, PublicKey};
+use umsh_core::{AddressParseError, NodeHint, PublicKey, RouterHint};
 use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 use umsh_uri::UmshUri;
 use zeroize::Zeroize;
@@ -40,8 +40,8 @@ pub use mobile_chat::{
 };
 pub use mobile_mesh::{
     MobileMeshAdvertisementRecord, MobileMeshError, MobileMeshOutboundFrameRecord,
-    MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRxRecord, MobileMeshSession,
-    MobileMeshSessionUpdateRecord,
+    MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRouteKind, MobileMeshRouteRecord,
+    MobileMeshRxRecord, MobileMeshSession, MobileMeshSessionUpdateRecord,
 };
 
 uniffi::setup_scaffolding!();
@@ -50,7 +50,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 27;
+pub const MOBILE_API_VERSION: u16 = 28;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -59,6 +59,7 @@ pub enum MobileError {
     InvalidAddressCharacter,
     AddressOverflow,
     InvalidNodeHintLength,
+    InvalidRouterHintLength,
     InvalidSecretKeyLength,
     InvalidPublicKeyLength,
     InvalidUri,
@@ -80,6 +81,7 @@ impl MobileError {
             Self::InvalidAddressCharacter => "mobile.error.address.invalid_character",
             Self::AddressOverflow => "mobile.error.address.overflow",
             Self::InvalidNodeHintLength => "mobile.error.node_hint.invalid_length",
+            Self::InvalidRouterHintLength => "mobile.error.router_hint.invalid_length",
             Self::InvalidSecretKeyLength => "mobile.error.secret_key.invalid_length",
             Self::InvalidPublicKeyLength => "mobile.error.public_key.invalid_length",
             Self::InvalidUri => "mobile.error.uri.invalid",
@@ -98,6 +100,7 @@ impl MobileError {
             Self::InvalidAddressCharacter => "ADDRESS_INVALID_CHARACTER",
             Self::AddressOverflow => "ADDRESS_OVERFLOW",
             Self::InvalidNodeHintLength => "NODE_HINT_INVALID_LENGTH",
+            Self::InvalidRouterHintLength => "ROUTER_HINT_INVALID_LENGTH",
             Self::InvalidSecretKeyLength => "SECRET_KEY_INVALID_LENGTH",
             Self::InvalidPublicKeyLength => "PUBLIC_KEY_INVALID_LENGTH",
             Self::InvalidUri => "URI_INVALID",
@@ -132,6 +135,16 @@ impl From<AddressParseError> for MobileError {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct NodeHintRecord {
     /// Raw hint bytes. Mobile UI uses these bytes as the avatar RGB fill.
+    pub bytes: Vec<u8>,
+    /// Canonical, possibly star-truncated text rendered by the Rust core.
+    pub text: String,
+}
+
+/// Canonical rendering information for a two-byte router hint.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RouterHintRecord {
+    /// Raw hint bytes, matchable against the first two bytes of a known
+    /// node's public key.
     pub bytes: Vec<u8>,
     /// Canonical, possibly star-truncated text rendered by the Rust core.
     pub text: String,
@@ -403,6 +416,18 @@ pub fn render_node_hint(bytes: Vec<u8>) -> Result<NodeHintRecord, MobileError> {
     Ok(render_node_hint_bytes(bytes))
 }
 
+/// Render a router hint using the protocol's canonical ambiguity rules.
+#[uniffi::export]
+pub fn render_router_hint(bytes: Vec<u8>) -> Result<RouterHintRecord, MobileError> {
+    let bytes: [u8; 2] = bytes
+        .try_into()
+        .map_err(|_| MobileError::InvalidRouterHintLength)?;
+    Ok(RouterHintRecord {
+        bytes: bytes.to_vec(),
+        text: RouterHint(bytes).to_string(),
+    })
+}
+
 fn render_node_hint_bytes(bytes: [u8; 3]) -> NodeHintRecord {
     NodeHintRecord {
         bytes: bytes.to_vec(),
@@ -515,6 +540,29 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn reference_router_hints_match_protocol_vectors() {
+        for (bytes, expected) in [
+            ([0x00, 0x00], "111"),
+            ([0xA1, 0xB2], "BtC"),
+            ([0x5E, 0xA1], "7N*"),
+            ([0x00, 0x41], "1*"),
+        ] {
+            assert_eq!(
+                render_router_hint(bytes.to_vec()).unwrap(),
+                RouterHintRecord {
+                    bytes: bytes.to_vec(),
+                    text: expected.to_owned(),
+                }
+            );
+        }
+
+        assert_eq!(
+            render_router_hint(vec![0x00, 0x01, 0x02]),
+            Err(MobileError::InvalidRouterHintLength)
+        );
     }
 
     #[test]

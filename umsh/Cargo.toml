@@ -20,6 +20,7 @@ cli = ["tokio-support", "dep:umsh-cli"]
 
 [dependencies]
 embedded-hal-async.workspace = true
+hamaddr.workspace = true
 heapless.workspace = true
 rand_core.workspace = true
 umsh-chat-room = { path = "../crates/umsh-chat-room", default-features = false, optional = true }

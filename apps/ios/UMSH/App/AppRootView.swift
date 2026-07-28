@@ -35,6 +35,21 @@ struct AppRootView: View {
         self.radioConnection = radioConnection
     }
 
+    /// The one set of peer operations every peer sheet gets, wherever it is
+    /// opened from. Built here because this is the only place that holds the
+    /// store, the radio, and the mesh engine together.
+    private var peerActions: PeerActions {
+        PeerActions(
+            knownPeers: peers,
+            startConversation: startConversation,
+            ping: pingPeer,
+            fetchIdentity: fetchIdentity,
+            updateAlias: updateAlias,
+            loadRoute: peerRoute,
+            resetRoute: clearPeerRoute
+        )
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
@@ -47,7 +62,7 @@ struct AppRootView: View {
                     sendMessage: sendMessage,
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
                     deleteConversation: deleteConversation,
-                    updateAlias: updateAlias,
+                    peerActions: peerActions,
                     openedConversation: $openedConversation
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -68,13 +83,10 @@ struct AppRootView: View {
                     savePeer: { preview, details in
                         _ = await savePeer(preview, details: details, startConversation: false)
                     },
-                    startConversation: startConversation,
+                    peerActions: peerActions,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
-                    pingPeer: pingPeer,
-                    fetchIdentity: fetchIdentity,
-                    updateAlias: updateAlias
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -110,7 +122,8 @@ struct AppRootView: View {
                     saveDevicePeer: saveAdministeredDevice,
                     isPeerSaved: { address in
                         peers.contains { $0.identity.canonicalAddress == address }
-                    }
+                    },
+                    peerActions: peerActions
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -159,7 +172,8 @@ struct AppRootView: View {
                     factoryReset: factoryResetRadio,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
-                    stopDiscovery: stopRadioDiscovery
+                    stopDiscovery: stopRadioDiscovery,
+                    peerActions: peerActions
                 )
             }
         }
@@ -661,7 +675,7 @@ struct AppRootView: View {
                     PeerPingReply(
                         roundTripMilliseconds: reply.roundTripMilliseconds,
                         hopCount: reply.hopCount,
-                        routeHints: reply.routeHints,
+                        routeHints: await renderRouterHints(reply.routeHints),
                         rssiDBm: reply.rssiDBm,
                         signalToNoiseCentibels: reply.signalToNoiseCentibels,
                         linkQuality: reply.linkQuality
@@ -673,6 +687,51 @@ struct AppRootView: View {
         } catch {
             return .unavailable(reason: "The Rust mesh session could not send this ping.")
         }
+    }
+
+    /// Report the route this phone will use for the next frame to `peer`.
+    /// A radio that cannot answer reads as nothing learned, which is what an
+    /// unreachable MAC effectively means for the next send.
+    private func peerRoute(_ peer: PeerSummary) async -> PeerRoute {
+        guard let route = try? await radioConnection.peerRoute(
+            peerAddress: peer.identity.canonicalAddress
+        ) else { return .unavailable }
+        let kind: PeerRoute.Kind = switch route.kind {
+        case .unknown: .unknown
+        case .direct: .direct
+        case .source: .source
+        case .flood: .flood
+        }
+        return PeerRoute(
+            kind: kind,
+            hints: await renderRouterHints(route.hints),
+            floodHops: route.floodHops,
+            floodRegions: route.floodRegions
+        )
+    }
+
+    /// Discard a peer's learned route. Returns whether one was held, so the
+    /// UI can distinguish a reset from a no-op.
+    private func clearPeerRoute(_ peer: PeerSummary) async -> Bool {
+        (try? await radioConnection.clearPeerRoute(
+            peerAddress: peer.identity.canonicalAddress
+        )) ?? false
+    }
+
+    /// Render wire router hints for display. A hint the core rejects — a
+    /// wrong-width option, say — is dropped rather than shown as raw bytes:
+    /// the route reads as incomplete, which it is.
+    private func renderRouterHints(_ hints: [Data]) async -> [MeshRouterHint] {
+        var rendered: [MeshRouterHint] = []
+        rendered.reserveCapacity(hints.count)
+        for hint in hints {
+            guard let routerHint = try? await meshEngine.renderRouterHint(hint) else {
+                Self.logger.error("Dropping a \(hint.count)-byte router hint from a ping route")
+                continue
+            }
+            rendered.append(routerHint)
+        }
+        return rendered
     }
 
     /// Solicit a peer's current identity over the mesh. The response is not

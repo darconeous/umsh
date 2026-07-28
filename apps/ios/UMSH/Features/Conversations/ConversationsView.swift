@@ -10,7 +10,7 @@ struct ConversationsView: View {
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
     var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }
-    var updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+    var peerActions: PeerActions = .unavailable
     // Owned by the app root so URL-scheme imports can open a transcript
     // directly from outside this view.
     @Binding var openedConversation: DirectConversationSummary?
@@ -53,7 +53,7 @@ struct ConversationsView: View {
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
                     messageActions: messageActions,
-                    updateAlias: updateAlias
+                    peerActions: peerActions
                 )
             }
         }
@@ -65,7 +65,7 @@ struct ConversationsView: View {
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
                     messageActions: messageActions,
-                    updateAlias: updateAlias
+                    peerActions: peerActions
                 )
             }
         }
@@ -350,7 +350,7 @@ struct DirectConversationView: View {
     let updateDraft: (Int64, String) async -> Void
     let sendMessage: (DirectConversationSummary, String) async -> MessageSendResult
     let messageActions: ChatMessageActions
-    let updateAlias: ((PeerSummary, String?) async -> Bool)?
+    let peerActions: PeerActions
 
     @State private var draft: String
     @State private var showsPeerProfile = false
@@ -372,14 +372,14 @@ struct DirectConversationView: View {
         updateDraft: @escaping (Int64, String) async -> Void,
         sendMessage: @escaping (DirectConversationSummary, String) async -> MessageSendResult,
         messageActions: ChatMessageActions = .unavailable,
-        updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+        peerActions: PeerActions = .unavailable
     ) {
         _conversation = conversation
         self.radioSnapshot = radioSnapshot
         self.updateDraft = updateDraft
         self.sendMessage = sendMessage
         self.messageActions = messageActions
-        self.updateAlias = updateAlias
+        self.peerActions = peerActions
         _draft = State(initialValue: conversation.wrappedValue.draftText)
     }
 
@@ -568,7 +568,7 @@ struct DirectConversationView: View {
                 PeerDetailView(
                     peer: conversation.peer,
                     radioSnapshot: .constant(radioSnapshot),
-                    updateAlias: updateAlias
+                    actions: peerActions
                 )
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

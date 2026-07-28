@@ -5,6 +5,21 @@ struct MeshNodeHint: Hashable, Sendable {
     let text: String
 }
 
+/// Two-byte router hint carried in a learned route, rendered by the Rust core
+/// with the protocol's canonical ambiguity rules.
+struct MeshRouterHint: Hashable, Sendable {
+    let bytes: Data
+    let text: String
+
+    /// Whether this hint could have come from `identity`. A router hint is the
+    /// first two bytes of the node's key, so a match narrows the field but
+    /// never proves which node forwarded the frame.
+    func matches(_ identity: MeshPublicIdentity) -> Bool {
+        identity.hint.bytes.count >= bytes.count
+            && identity.hint.bytes.prefix(bytes.count).elementsEqual(bytes)
+    }
+}
+
 struct MeshPublicIdentity: Hashable, Sendable {
     let canonicalAddress: String
     let hint: MeshNodeHint
@@ -39,6 +54,9 @@ struct MeshNodeIdentity: Hashable, Sendable {
     let altitudeMeters: Int32?
     let timestamp: UInt32?
     let signature: MeshIdentitySignatureState
+
+    /// Canonical label the Rust core renders for the repeater capability bit.
+    static let repeaterCapabilityLabel = "Repeater"
 }
 
 struct MeshNodeURIPreview: Equatable, Sendable {
@@ -53,12 +71,14 @@ struct MeshNodeURIPreview: Equatable, Sendable {
 enum MeshEngineError: Error, Equatable, Sendable {
     case invalidAddress
     case invalidNodeHint
+    case invalidRouterHint
     case invalidIdentityData
     case coreFailure
 }
 
 protocol MeshEngine: Actor {
     func renderNodeHint(_ bytes: Data) throws -> MeshNodeHint
+    func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity
     func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview

@@ -287,6 +287,16 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         self.send(&buf[..n], options).await
     }
 
+    /// The route the MAC has cached for this peer, if any.
+    pub async fn route(&self) -> Option<umsh_mac::CachedRoute> {
+        self.transport.peer_route(&self.peer).await
+    }
+
+    /// Forget this peer's cached route, returning whether one was held.
+    pub async fn clear_route(&self) -> bool {
+        self.transport.clear_peer_route(&self.peer).await
+    }
+
     #[cfg(feature = "software-crypto")]
     pub async fn request_pfs(
         &self,

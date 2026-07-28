@@ -83,17 +83,21 @@ struct RepeaterSettingsSection: View {
             }
 
             Section {
-                Picker("Tag untagged traffic", selection: defaultRegionSelection) {
+                Picker("Tag untagged traffic", selection: $defaultRegion) {
                     Text("None — don't tag").tag(Data?.none)
-                    ForEach(regions, id: \.self) { region in
-                        Text(RegionCodeText.label(region)).tag(Data?.some(region))
+                    ForEach(defaultRegionChoices, id: \.self) { region in
+                        Text(defaultRegionLabel(region)).tag(Data?.some(region))
                     }
                 }
-                .disabled(regions.isEmpty)
+                .disabled(defaultRegionChoices.isEmpty)
             } footer: {
-                Text(regions.isEmpty
-                     ? "Add a routing region to be able to tag traffic that arrives without one."
-                     : "Floods that arrive with no region are relayed carrying this one, which scopes how much further they travel. Traffic that already carries a region keeps it.")
+                if let defaultRegion, !regions.contains(defaultRegion) {
+                    Text("This device tags untagged traffic with a region it does not relay. Add \(RegionCodeText.label(defaultRegion)) to the list above, or choose a different tag.")
+                } else if regions.isEmpty {
+                    Text("Add a routing region to be able to tag traffic that arrives without one.")
+                } else {
+                    Text("Floods that arrive with no region are relayed carrying this one, which scopes how much further they travel. Traffic that already carries a region keeps it.")
+                }
             }
 
             Section {
@@ -117,17 +121,22 @@ struct RepeaterSettingsSection: View {
         }
     }
 
-    private var defaultRegionSelection: Binding<Data?> {
-        Binding(
-            get: {
-                // A default outside the list would be written verbatim and
-                // is a configuration the device does not cross-check, so
-                // the picker refuses to show a selection it cannot offer.
-                guard let defaultRegion, regions.contains(defaultRegion) else { return nil }
-                return defaultRegion
-            },
-            set: { defaultRegion = $0 }
-        )
+    /// The regions offered as a tag.
+    ///
+    /// A default the device already holds that is not in its forwarding list
+    /// stays on this list rather than being hidden. The device does not
+    /// cross-check the two, so that state is reachable — and hiding it would
+    /// show **None** over a value still on the device, leave no way to clear
+    /// it, and write it back unchanged on the next apply.
+    private var defaultRegionChoices: [Data] {
+        guard let defaultRegion, !regions.contains(defaultRegion) else { return regions }
+        return regions + [defaultRegion]
+    }
+
+    private func defaultRegionLabel(_ region: Data) -> String {
+        regions.contains(region)
+            ? RegionCodeText.label(region)
+            : "\(RegionCodeText.label(region)) — not relayed"
     }
 
     private var rssiChoices: [Int16] {

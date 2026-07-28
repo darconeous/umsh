@@ -101,6 +101,68 @@ pub struct MobileMeshPingEventRecord {
     pub lqi: Option<u8>,
 }
 
+/// How the MAC will address the next frame sent to a peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileMeshRouteKind {
+    /// Nothing has been learned for this peer, so the next send falls back to
+    /// the default delivery mode. Also reported for a peer the MAC does not
+    /// have registered at all.
+    Unknown,
+    /// The peer answered without any intermediate router.
+    Direct,
+    /// An explicit source route, learned by reversing an inbound trace route.
+    Source,
+    /// Flood delivery with a learned hop budget.
+    Flood,
+}
+
+/// The route the MAC currently has cached for one peer.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshRouteRecord {
+    pub kind: MobileMeshRouteKind,
+    /// Router hints in source-to-destination order. Populated for `Source`
+    /// routes only; the two endpoints are not included.
+    pub hints: Vec<Vec<u8>>,
+    /// Hop budget carried by a `Flood` route.
+    pub flood_hops: Option<u8>,
+    /// Two-octet region codes learned with a `Flood` route.
+    pub flood_regions: Vec<Vec<u8>>,
+}
+
+impl MobileMeshRouteRecord {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileMeshRouteKind::Unknown,
+            hints: Vec::new(),
+            flood_hops: None,
+            flood_regions: Vec::new(),
+        }
+    }
+}
+
+impl From<Option<umsh_mac::CachedRoute>> for MobileMeshRouteRecord {
+    fn from(route: Option<umsh_mac::CachedRoute>) -> Self {
+        match route {
+            None => Self::unknown(),
+            Some(umsh_mac::CachedRoute::Direct) => Self {
+                kind: MobileMeshRouteKind::Direct,
+                ..Self::unknown()
+            },
+            Some(umsh_mac::CachedRoute::Source(hops)) => Self {
+                kind: MobileMeshRouteKind::Source,
+                hints: hops.iter().map(|hop| hop.0.to_vec()).collect(),
+                ..Self::unknown()
+            },
+            Some(umsh_mac::CachedRoute::Flood { hops, regions }) => Self {
+                kind: MobileMeshRouteKind::Flood,
+                flood_hops: Some(hops),
+                flood_regions: regions.iter().map(|region| region.to_vec()).collect(),
+                ..Self::unknown()
+            },
+        }
+    }
+}
+
 /// A node-identity advertisement received over the mesh. Only frames whose
 /// source address carried the full public key are surfaced; the platform
 /// verifies the embedded signature before trusting or persisting any claim.
@@ -280,6 +342,14 @@ enum WorkerCommand {
     RequestIdentity {
         peer: PublicKey,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    PeerRoute {
+        peer: PublicKey,
+        response: oneshot::Sender<MobileMeshRouteRecord>,
+    },
+    ClearPeerRoute {
+        peer: PublicKey,
+        response: oneshot::Sender<bool>,
     },
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
@@ -712,6 +782,39 @@ impl MobileMeshSession {
         result
             .await
             .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Report the route the MAC will use for the next frame sent to `peer`.
+    ///
+    /// Read-only: an unregistered peer reads as `Unknown` rather than being
+    /// registered as a side effect of being inspected.
+    pub async fn peer_route(
+        &self,
+        peer_address: String,
+    ) -> Result<MobileMeshRouteRecord, MobileMeshError> {
+        let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::PeerRoute { peer, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
+    /// Forget the route cached for `peer`, returning whether one was held.
+    ///
+    /// The peer, its keys, and its counters are untouched; only the learned
+    /// path is discarded, so the next send starts over from flood delivery.
+    pub async fn clear_peer_route(&self, peer_address: String) -> Result<bool, MobileMeshError> {
+        let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::ClearPeerRoute { peer, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
     /// Build and sign this phone's node-identity bundle without transmitting
@@ -1434,6 +1537,12 @@ async fn run_worker(
                             }
                             let _ = response.send(result);
                         }
+                        Some(WorkerCommand::PeerRoute { peer, response }) => {
+                            let _ = response.send(node.peer_route(&peer).await.into());
+                        }
+                        Some(WorkerCommand::ClearPeerRoute { peer, response }) => {
+                            let _ = response.send(node.clear_peer_route(&peer).await);
+                        }
                         Some(WorkerCommand::RestoreChat { checkpoints, response }) => {
                             chat.restore(&checkpoints, handle.now_ms().await);
                             let _ = response.send(());
@@ -1922,6 +2031,128 @@ mod tests {
             assert!(Instant::now() < deadline, "ping did not complete");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[tokio::test]
+    async fn peer_route_is_visible_and_resettable() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(11);
+        let bob_identity = identity(13);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+
+        // A peer nobody has heard from has no route, and inspecting it must
+        // not register the peer or invent one.
+        assert_eq!(
+            alice.peer_route(address(&bob_identity)).await.unwrap(),
+            MobileMeshRouteRecord::unknown()
+        );
+        assert!(!alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+
+        let operation = alice.ping(address(&bob_identity), 2_000).unwrap();
+        let _ = bob.ping(address(&alice_identity), 2_000).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-40),
+                    lqi: None,
+                    snr_cb: Some(100),
+                })
+                .unwrap();
+            }
+            if let Some(event) = alice_update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::Reply);
+                break;
+            }
+
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-42),
+                        lqi: None,
+                        snr_cb: Some(90),
+                    })
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline, "ping did not complete");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // The pong carried a trace route that accumulated no hints, because
+        // there is no repeater between the two. That is a direct peer — not a
+        // source route naming no routers, which would put an empty (and
+        // meaningless) SourceRoute option on every packet alice sends back.
+        let route = alice.peer_route(address(&bob_identity)).await.unwrap();
+        assert_eq!(route.kind, MobileMeshRouteKind::Direct);
+        assert!(route.hints.is_empty());
+        assert_eq!(route.flood_hops, None);
+
+        // Resetting reports that a route was held, and leaves the peer with
+        // nothing cached. A second reset has nothing left to discard.
+        assert!(alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+        assert_eq!(
+            alice.peer_route(address(&bob_identity)).await.unwrap(),
+            MobileMeshRouteRecord::unknown()
+        );
+        assert!(!alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+
+        // Clearing a route must not disturb the peer's crypto state: the next
+        // ping still completes, and teaches the route again.
+        let operation = alice.ping(address(&bob_identity), 2_000).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-40),
+                    lqi: None,
+                    snr_cb: Some(100),
+                })
+                .unwrap();
+            }
+            if let Some(event) = alice_update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::Reply);
+                break;
+            }
+
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-42),
+                        lqi: None,
+                        snr_cb: Some(90),
+                    })
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline, "ping after reset did not complete");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            alice.peer_route(address(&bob_identity)).await.unwrap().kind,
+            MobileMeshRouteKind::Direct
+        );
     }
 
     #[tokio::test]

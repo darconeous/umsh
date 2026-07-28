@@ -211,6 +211,25 @@ pub const DEFAULT_CHANNEL_REPLAY: usize = 8;
 /// Default per-channel hint-only replay-window capacity.
 pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
 
+/// Largest value the `FHOPS_REM` nibble can carry.
+///
+/// A larger budget cannot be encoded, so requests above it are clamped rather
+/// than truncated — [`PacketBuilder::flood_hops`](umsh_core::PacketBuilder)
+/// drops the whole field for an out-of-range value, which would turn "flood
+/// further" into "do not flood at all".
+pub const MAX_FLOOD_HOPS: u8 = 15;
+
+/// Flood-hop slack granted on top of what an established route to a peer
+/// already needs.
+///
+/// A route learned from inbound traffic tells the sender how far away the peer
+/// was, so a unicast that follows it does not need the wide flood budget of a
+/// first-contact packet. Sending with exactly the route's own cost would make
+/// every stale route fail outright, so sends keep this much extra budget: a
+/// path that has grown one hop longer — a repeater moved, a link that now needs
+/// one more relay — still gets through and re-teaches the correct route.
+pub const ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = 1;
+
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapacityError;

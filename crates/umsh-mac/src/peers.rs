@@ -198,6 +198,16 @@ impl<const N: usize> PeerRegistry<N> {
         }
     }
 
+    /// Forget the cached route for `id`, returning whether one was held.
+    ///
+    /// The peer itself stays registered; subsequent sends fall back to the
+    /// default delivery mode until a fresh inbound packet teaches a route.
+    pub fn clear_route(&mut self, id: PeerId) -> bool {
+        self.get_mut(id)
+            .map(|peer| peer.route.take().is_some())
+            .unwrap_or(false)
+    }
+
     /// Refresh the last-seen timestamp for `id`.
     pub fn touch(&mut self, id: PeerId, now_ms: u64) {
         if let Some(peer) = self.get_mut(id) {

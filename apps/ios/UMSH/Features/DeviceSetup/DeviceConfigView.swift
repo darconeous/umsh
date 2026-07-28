@@ -14,6 +14,8 @@ import UMSHMobileCore
 struct DeviceConfigView: View {
     let controller: AdminFlowController
     let sync: UlcpSyncRecord
+    let isPeerSaved: (String) -> Bool
+    let peerActions: PeerActions
     let finish: () -> Void
 
     @State private var deviceName: String
@@ -39,10 +41,14 @@ struct DeviceConfigView: View {
     init(
         controller: AdminFlowController,
         sync: UlcpSyncRecord,
+        isPeerSaved: @escaping (String) -> Bool = { _ in false },
+        peerActions: PeerActions = .unavailable,
         finish: @escaping () -> Void
     ) {
         self.controller = controller
         self.sync = sync
+        self.isPeerSaved = isPeerSaved
+        self.peerActions = peerActions
         self.finish = finish
 
         let goal = controller.goal
@@ -163,7 +169,32 @@ struct DeviceConfigView: View {
         Section {
             LabeledContent("Set up for", value: controller.snapshot.hostState.label)
             if let identity = controller.snapshot.deviceIdentity {
-                LabeledContent("Identity", value: identity.hint.text)
+                // The device's own node identity, shown through the same
+                // screen every other node uses — the operator commissioning
+                // a repeater needs its address, not a four-character hint.
+                NavigationLink {
+                    PeerDetailView(
+                        peer: administeredPeer(identity),
+                        radioSnapshot: .constant(.idle),
+                        actions: peerActions,
+                        savePeer: controller.canSavePeer
+                            ? { await controller.savePeer(kind: advertisedKind) }
+                            : nil,
+                        isPeerSaved: isPeerSaved(identity.canonicalAddress)
+                    )
+                } label: {
+                    HStack(spacing: 12) {
+                        PeerAvatar(hint: identity.hint, diameter: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Device identity")
+                            Text(identity.hint.text)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                LabeledContent("Device identity", value: "Not exposed")
             }
         } footer: {
             switch controller.snapshot.hostState {
@@ -284,6 +315,31 @@ struct DeviceConfigView: View {
             return repeaterEnabled && sync.supportsRepeater ? "Repeater" : "Tracker"
         }
         return NodeRoleChoice.label(for: identRole)
+    }
+
+    /// The device presented as an ordinary node, so it can be shown through
+    /// the shared peer screen. There is no stored row behind it — that is
+    /// precisely what the save action on that screen is for.
+    private func administeredPeer(_ identity: MeshPublicIdentity) -> PeerSummary {
+        PeerSummary(
+            id: 0,
+            identity: identity,
+            alias: nil,
+            advertisedName: controller.snapshot.name,
+            isContact: false,
+            systemRole: nil,
+            kind: advertisedKind
+        )
+    }
+
+    /// What the device advertises *today*, from its reported settings rather
+    /// than the unsaved form — a peer record must not be filed under a role
+    /// the device has not been given yet.
+    private var advertisedKind: PeerKind {
+        guard let role = sync.identRole else {
+            return sync.repeater?.enabled == true ? .repeater : .unknown
+        }
+        return NodeRoleChoice.kind(for: role)
     }
 
     private var configuration: UlcpDeviceConfigRecord? {
@@ -425,18 +481,27 @@ struct DeviceConfigView: View {
 struct NodeRoleChoice: Identifiable {
     let byte: UInt8
     let label: String
+    /// How a node in this role is filed when it is recorded locally. The
+    /// local peer model is coarser than the wire role, so more than one
+    /// role lands on **Unspecified** rather than being given a category the
+    /// app cannot act on.
+    let peerKind: PeerKind
 
     var id: UInt8 { byte }
 
-    static let repeaterNode = NodeRoleChoice(byte: 1, label: "Repeater")
-    static let chat = NodeRoleChoice(byte: 2, label: "Chat")
-    static let tracker = NodeRoleChoice(byte: 3, label: "Tracker")
-    static let sensor = NodeRoleChoice(byte: 4, label: "Sensor")
-    static let bridge = NodeRoleChoice(byte: 5, label: "Bridge")
+    static let repeaterNode = NodeRoleChoice(byte: 1, label: "Repeater", peerKind: .repeater)
+    static let chat = NodeRoleChoice(byte: 2, label: "Chat", peerKind: .person)
+    static let tracker = NodeRoleChoice(byte: 3, label: "Tracker", peerKind: .unknown)
+    static let sensor = NodeRoleChoice(byte: 4, label: "Sensor", peerKind: .sensor)
+    static let bridge = NodeRoleChoice(byte: 5, label: "Bridge", peerKind: .bridge)
 
     static let selectable = [repeaterNode, chat, tracker, sensor, bridge]
 
     static func label(for byte: UInt8) -> String {
         selectable.first { $0.byte == byte }?.label ?? "Role \(byte)"
+    }
+
+    static func kind(for byte: UInt8) -> PeerKind {
+        selectable.first { $0.byte == byte }?.peerKind ?? .unknown
     }
 }

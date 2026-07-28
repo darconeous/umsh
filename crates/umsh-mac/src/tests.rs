@@ -3251,6 +3251,89 @@ fn receive_one_learns_trace_route_as_return_source_route_for_unicast_sender() {
 }
 
 #[test]
+fn empty_trace_route_learns_a_direct_peer_and_originates_no_source_route_option() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    // A trace-route option that accumulated no hints: the packet arrived
+    // without traversing a repeater.
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        false,
+        7,
+        None,
+        Some(&[]),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    // That is a direct neighbour, not a zero-hop source route.
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Direct),
+    );
+
+    // So the reply must not carry a SourceRoute option at all. Only a
+    // repeater consuming the final hint may leave an empty one behind.
+    let options = SendOptions::default();
+    let _ = block_on(mac.send_unicast(local_id, &peer_key, b"reply", &options)).unwrap();
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    for entry in iter_options(queued.frame.as_slice(), header.options_range.clone()) {
+        let (number, value) = entry.unwrap();
+        assert_ne!(
+            OptionNumber::from(number),
+            OptionNumber::SourceRoute,
+            "originated an empty source route: {value:02x?}",
+        );
+    }
+}
+
+#[test]
+fn explicitly_empty_source_route_is_not_put_on_the_wire() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+
+    let mut options = SendOptions::default();
+    options.source_route = Some(heapless::Vec::new());
+    let _ = block_on(mac.send_unicast(local_id, &peer_key, b"hi", &options)).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    for entry in iter_options(queued.frame.as_slice(), header.options_range.clone()) {
+        let (number, _) = entry.unwrap();
+        assert_ne!(OptionNumber::from(number), OptionNumber::SourceRoute);
+    }
+}
+
+#[test]
 fn send_unicast_uses_cached_source_route_when_present() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -3301,6 +3384,152 @@ fn send_unicast_uses_cached_source_route_when_present() {
     }
 
     assert_eq!(source_route.as_slice(), &[[0x01, 0x02], [0x03, 0x04]]);
+    let flood_hops = header.flood_hops.expect("flood hops present");
+    // Only the last hop of a source route spends flood budget, so the wide
+    // first-contact default collapses to one hop plus the self-healing slack.
+    assert_eq!(flood_hops.remaining(), 1 + ESTABLISHED_ROUTE_EXTRA_HOPS);
+}
+
+/// Build a MAC with one local identity and one keyed peer, returning the
+/// pieces the flood-budget tests need.
+fn mac_with_keyed_peer() -> (TestMac, LocalIdentityId, PublicKey, PeerId) {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+    (mac, local_id, peer_key, peer_id)
+}
+
+/// Send one unicast with `options` and report the `FHOPS_REM` it went out with.
+fn queued_unicast_flood_hops(
+    mac: &mut TestMac,
+    local_id: LocalIdentityId,
+    peer_key: &PublicKey,
+    options: &SendOptions,
+) -> Option<u8> {
+    block_on(mac.send_unicast(local_id, peer_key, b"payload", options)).unwrap();
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    header.flood_hops.map(|hops| hops.remaining())
+}
+
+#[test]
+fn send_unicast_floods_at_full_budget_without_a_cached_route() {
+    let (mut mac, local_id, peer_key, _) = mac_with_keyed_peer();
+
+    let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
+
+    assert_eq!(hops, Some(5));
+}
+
+#[test]
+fn send_unicast_clamps_an_unencodable_flood_request_to_the_nibble_maximum() {
+    let (mut mac, local_id, peer_key, _) = mac_with_keyed_peer();
+
+    let hops = queued_unicast_flood_hops(
+        &mut mac,
+        local_id,
+        &peer_key,
+        &SendOptions::default().with_flood_hops(30),
+    );
+
+    // Without the clamp the builder drops the field outright, turning a
+    // request to flood further into no flooding at all.
+    assert_eq!(hops, Some(MAX_FLOOD_HOPS));
+}
+
+#[test]
+fn send_unicast_narrows_flood_hops_to_the_slack_for_a_direct_peer() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::Direct);
+
+    let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
+
+    assert_eq!(hops, Some(ESTABLISHED_ROUTE_EXTRA_HOPS));
+}
+
+#[test]
+fn send_unicast_narrows_flood_hops_to_the_learned_flood_distance() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
+
+    assert_eq!(hops, Some(2 + ESTABLISHED_ROUTE_EXTRA_HOPS));
+}
+
+#[test]
+fn send_unicast_treats_a_peer_heard_at_zero_hops_as_direct() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 0,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
+
+    assert_eq!(hops, Some(ESTABLISHED_ROUTE_EXTRA_HOPS));
+}
+
+#[test]
+fn send_unicast_never_raises_flood_hops_above_the_requested_budget() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 9,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let hops = queued_unicast_flood_hops(
+        &mut mac,
+        local_id,
+        &peer_key,
+        &SendOptions::default().with_flood_hops(3),
+    );
+
+    assert_eq!(hops, Some(3));
+}
+
+#[test]
+fn send_unicast_keeps_flooding_disabled_for_a_routed_peer() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let hops = queued_unicast_flood_hops(
+        &mut mac,
+        local_id,
+        &peer_key,
+        &SendOptions::default().no_flood(),
+    );
+
+    assert_eq!(hops, None);
 }
 
 #[test]
@@ -6150,6 +6379,53 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
 }
 
 #[test]
+fn route_retry_restores_the_full_budget_after_a_narrowed_source_routed_send() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(
+            heapless::Vec::from_slice(&[RouterHint([1, 2]), RouterHint([3, 4])]).unwrap(),
+        ),
+    );
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true),
+        )
+        .unwrap()
+        .unwrap();
+
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+    let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
+    assert_eq!(
+        original_header.flood_hops.unwrap().remaining(),
+        1 + ESTABLISHED_ROUTE_EXTRA_HOPS,
+        "the cached route should narrow the attempt's budget"
+    );
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+
+    // The route just failed, so rediscovery must flood as widely as the
+    // application originally allowed rather than inherit the narrowed budget.
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    let retry_header = PacketHeader::parse(retry.frame.as_slice()).unwrap();
+    let retry_options =
+        ParsedOptions::extract(retry.frame.as_slice(), retry_header.options_range.clone()).unwrap();
+    assert!(retry_options.route_retry);
+    assert_eq!(retry_header.flood_hops.unwrap().remaining(), 5);
+}
+
+#[test]
 fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -6288,7 +6564,9 @@ fn duplicate_key_for_secure_frame(frame: &[u8]) -> DupCacheKey {
     }
 }
 
-fn make_mac() -> Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64> {
+type TestMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>;
+
+fn make_mac() -> TestMac {
     Mac::new(
         DummyRadio::default(),
         CryptoEngine::new(DummyAes, DummySha),

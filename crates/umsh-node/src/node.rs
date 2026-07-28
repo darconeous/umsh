@@ -5,7 +5,7 @@ use core::cell::RefCell;
 use core::num::NonZeroU32;
 
 use umsh_core::{NodeHint, PublicKey, RouterHint};
-use umsh_mac::{LocalIdentityId, SendOptions};
+use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
 #[cfg(feature = "software-crypto")]
 use crate::channel::Channel;
@@ -447,6 +447,22 @@ impl<M: MacBackend> LocalNode<M> {
     /// peer's public key, last-accepted RX counter, and persisted RX boundary.
     pub async fn for_each_peer_counter(&self, f: &mut dyn FnMut(PublicKey, u32, u32)) {
         self.mac.for_each_peer_counter(self.identity_id, f).await
+    }
+
+    /// Return the route the MAC has cached for `peer`, if any.
+    ///
+    /// A cached route is what the next send to this peer will use, so this is
+    /// the state to inspect when traffic takes an unexpected path.
+    pub async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
+        self.mac.peer_route(peer).await
+    }
+
+    /// Forget the route cached for `peer`, returning whether one was held.
+    ///
+    /// Sends fall back to the default delivery mode until an inbound packet
+    /// teaches a route again; the peer and its crypto state are untouched.
+    pub async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
+        self.mac.clear_peer_route(peer).await
     }
 
     fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle

@@ -8,6 +8,13 @@ actor FakeMeshEngine: MeshEngine {
         return MeshNodeHint(bytes: bytes, text: "BtC5")
     }
 
+    func renderRouterHint(_ bytes: Data) throws -> MeshRouterHint {
+        guard bytes.count == 2 else {
+            throw MeshEngineError.invalidRouterHint
+        }
+        return MeshRouterHint(bytes: bytes, text: "BtC")
+    }
+
     func inspectPublicIdentity(_ address: String) throws -> MeshPublicIdentity {
         guard address.count == 44 else {
             throw MeshEngineError.invalidAddress

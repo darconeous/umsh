@@ -3270,6 +3270,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "futures-util",
+ "hamaddr",
  "heapless 0.8.0",
  "rand 0.10.1",
  "rand_core 0.6.4",

@@ -96,6 +96,7 @@ final class AdminFlowController {
 
     private let hostIdentity: MeshPublicIdentity?
     private let promoteRadio: (UUID) async throws -> Void
+    private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)?
     private let session = AdministrativeDeviceSession()
     private var snapshotTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
@@ -104,13 +105,25 @@ final class AdminFlowController {
         hostIdentity: MeshPublicIdentity?,
         companionIdentifier: UUID?,
         companionName: String?,
-        promoteRadio: @escaping (UUID) async throws -> Void
+        promoteRadio: @escaping (UUID) async throws -> Void,
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil
     ) {
         self.hostIdentity = hostIdentity
         self.companionIdentifier = companionIdentifier
         self.companionName = companionName
         self.promoteRadio = promoteRadio
+        self.saveDevicePeer = saveDevicePeer
     }
+
+    /// Record the device being configured as a peer, so the operator can
+    /// find it in Network after the sheet closes. Nothing about the setup
+    /// session itself is persisted.
+    func savePeer(kind: PeerKind) async -> Bool {
+        guard let saveDevicePeer, let identity = snapshot.deviceIdentity else { return false }
+        return await saveDevicePeer(identity, snapshot.name, kind)
+    }
+
+    var canSavePeer: Bool { saveDevicePeer != nil }
 
     var isBusy: Bool { busyDevice != nil }
 
@@ -190,11 +203,24 @@ final class AdminFlowController {
             try await session.connect(device.id)
             path = [.scan, .configure]
         } catch {
-            problem = """
-                Could not set up that device. It may have moved out of range, \
-                or it may not be a UMSH device.
-                """
+            // The published snapshot carries the same explanation, but which
+            // of the two lands first is not ordered, so this path states the
+            // reason itself rather than leaving a generic message to win.
+            problem = (error as? RadioConnectionError) == .pairingRequired
+                ? BluetoothErrorText.notPaired
+                : """
+                    Could not set up that device. It may have moved out of range, \
+                    or it may not be a UMSH device.
+                    """
+            // Connecting stops the scan, so the list the user is still
+            // looking at would otherwise stay empty forever.
+            await resumeDiscovery()
         }
+    }
+
+    private func resumeDiscovery() async {
+        await stopDiscovery()
+        startDiscovery()
     }
 
     /// Begin adopting `identifier`, asking first when doing so would
@@ -236,12 +262,15 @@ final class AdminFlowController {
 
     /// Write the configuration, then read the device back. Returns the
     /// device's own post-save state, or nil if the write did not land.
+    ///
+    /// The readback is what `refresh` answers with, not what has reached
+    /// `snapshot` — the snapshot stream is drained by another task and could
+    /// still be carrying the pre-write state when this returns.
     func configure(_ configuration: UlcpDeviceConfigRecord) async -> UlcpSyncRecord? {
         problem = nil
         do {
             try await session.configureDevice(configuration)
-            try await session.refresh()
-            return snapshot.sync
+            return try await session.refresh()
         } catch {
             problem = """
                 The device rejected these settings. Its previous configuration \
@@ -260,19 +289,29 @@ final class AdminFlowController {
 struct DeviceSetupFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var controller: AdminFlowController
+    /// Held on the view rather than the controller so it is re-read as the
+    /// Network list changes, instead of frozen when the sheet opened.
+    private let isPeerSaved: (String) -> Bool
+    private let peerActions: PeerActions
 
     init(
         hostIdentity: MeshPublicIdentity?,
         companionIdentifier: UUID?,
         companionName: String?,
-        promoteRadio: @escaping (UUID) async throws -> Void
+        promoteRadio: @escaping (UUID) async throws -> Void,
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil,
+        isPeerSaved: @escaping (String) -> Bool = { _ in false },
+        peerActions: PeerActions = .unavailable
     ) {
+        self.isPeerSaved = isPeerSaved
+        self.peerActions = peerActions
         _controller = State(
             initialValue: AdminFlowController(
                 hostIdentity: hostIdentity,
                 companionIdentifier: companionIdentifier,
                 companionName: companionName,
-                promoteRadio: promoteRadio
+                promoteRadio: promoteRadio,
+                saveDevicePeer: saveDevicePeer
             )
         )
     }
@@ -289,6 +328,8 @@ struct DeviceSetupFlowView: View {
                             DeviceConfigView(
                                 controller: controller,
                                 sync: sync,
+                                isPeerSaved: isPeerSaved,
+                                peerActions: peerActions,
                                 finish: { dismiss() }
                             )
                         } else {

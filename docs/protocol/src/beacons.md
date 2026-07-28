@@ -47,6 +47,8 @@ When a node successfully processes an incoming packet, it SHOULD update its rout
 - **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
+A packet that arrives carrying a source-route option — including one whose hints are all consumed — spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
+
 This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
 
 In practice, "proven unreachable" usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:
@@ -57,6 +59,16 @@ In practice, "proven unreachable" usually means that an ack-requested packet sen
 - set the [Route Retry option](packet-options.md#route-retry-option-6) so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet's MIC and frame counter are unchanged
 
 Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.
+
+## Scoping Flood Hops to a Known Route
+
+A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope `FHOPS_REM` to what the known path actually costs, plus a small margin:
+
+- **Source route**: the route constrains every hop until it empties, and only the final repeater spends flood budget, so one hop covers the route itself.
+- **Flood distance**: the cached `FHOPS_ACC` is the radius at which the destination was last heard.
+- **Direct link**: no forwarding hop is needed at all.
+
+The margin — one hop is a reasonable default — keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender's full budget rather than the narrowed one.
 
 ## Potential Improvement: Proactive Route Refresh
 

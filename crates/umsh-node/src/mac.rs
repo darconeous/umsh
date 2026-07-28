@@ -1,7 +1,7 @@
 use umsh_core::{ChannelId, ChannelKey, PublicKey};
 use umsh_mac::{
-    AddPeerError, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle, PeerId,
-    Platform, SendError, SendOptions, SendReceipt,
+    AddPeerError, CachedRoute, CapacityError, LocalIdentityId, MacError, MacEventRef, MacHandle,
+    PeerId, Platform, SendError, SendOptions, SendReceipt,
 };
 
 /// Pluggable backend that the node layer delegates to for MAC operations.
@@ -119,6 +119,18 @@ pub trait MacBackend: Clone {
         f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
     ) {
         let _ = (from, f);
+    }
+
+    /// Return the route the MAC currently has cached for `peer`.
+    async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
+        let _ = peer;
+        None
+    }
+
+    /// Forget the route cached for `peer`, returning whether one was held.
+    async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
+        let _ = peer;
+        false
     }
 }
 
@@ -281,5 +293,13 @@ impl<
         f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
     ) {
         self.for_each_peer_counter(from, f).await
+    }
+
+    async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
+        self.peer_route(peer).await
+    }
+
+    async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
+        self.clear_peer_route(peer).await
     }
 }

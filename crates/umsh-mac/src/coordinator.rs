@@ -16,9 +16,9 @@ use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
-    DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX, MAX_CAD_ATTEMPTS,
-    MAX_FORWARD_RETRIES, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS, Platform, ReplayVerdict,
-    ReplayWindow,
+    DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
+    ESTABLISHED_ROUTE_EXTRA_HOPS, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
+    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS, Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
@@ -1319,7 +1319,13 @@ impl<
         if options.trace_route {
             builder = builder.trace_route();
         }
-        if let Some(route) = options.source_route.as_ref() {
+        // A route that constrains no hop is not attached: only a repeater
+        // consuming the final hint may leave an empty SourceRoute option.
+        if let Some(route) = options
+            .source_route
+            .as_ref()
+            .filter(|route| !route.is_empty())
+        {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(region_code) = options.region_code {
@@ -1401,7 +1407,13 @@ impl<
         if options.trace_route {
             builder = builder.trace_route();
         }
-        if let Some(route) = options.source_route.as_ref() {
+        // A route that constrains no hop is not attached: only a repeater
+        // consuming the final hint may leave an empty SourceRoute option.
+        if let Some(route) = options
+            .source_route
+            .as_ref()
+            .filter(|route| !route.is_empty())
+        {
             builder = builder.source_route(route.as_slice());
         }
         if let Some(region_code) = options.region_code {
@@ -1437,16 +1449,19 @@ impl<
         let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
         if let Some(peer) = self.peer_registry.get(peer_id) {
             match peer.route.as_ref() {
-                Some(CachedRoute::Direct) | None => {}
-                Some(CachedRoute::Source(route)) => {
+                Some(CachedRoute::Source(route)) if !route.is_empty() => {
                     builder = builder.source_route(route.as_slice());
                 }
                 Some(CachedRoute::Flood { hops, regions }) => {
-                    builder = builder.flood_hops((*hops).clamp(1, 15));
+                    builder = builder.flood_hops((*hops).clamp(1, MAX_FLOOD_HOPS));
                     for region in regions {
                         builder = builder.region_code(*region);
                     }
                 }
+                // Direct, unknown, or a route that constrains no hop: there
+                // is nothing to attach, and an empty option must not be
+                // originated.
+                _ => {}
             }
         }
         let frame = builder.build()?;
@@ -1494,6 +1509,8 @@ impl<
             .pairwise_keys
             .clone();
         let effective_source_route = self.effective_source_route(peer_id, options);
+        let effective_flood_hops =
+            self.effective_flood_hops(peer_id, options, effective_source_route.as_ref());
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
@@ -1515,7 +1532,7 @@ impl<
         if let Some(salt) = salt {
             builder = builder.salt(salt);
         }
-        if let Some(hops) = options.flood_hops {
+        if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
         if options.trace_route {
@@ -1547,6 +1564,7 @@ impl<
                 effective_source_route
                     .as_ref()
                     .map(|route| route.as_slice()),
+                options.flood_hops,
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -1607,6 +1625,8 @@ impl<
             .clone();
         let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
         let effective_source_route = self.effective_source_route(peer_id, options);
+        let effective_flood_hops =
+            self.effective_flood_hops(peer_id, options, effective_source_route.as_ref());
 
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
@@ -1628,7 +1648,7 @@ impl<
         if let Some(salt) = salt {
             builder = builder.salt(salt);
         }
-        if let Some(hops) = options.flood_hops {
+        if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
         if options.trace_route {
@@ -1662,6 +1682,7 @@ impl<
                 effective_source_route
                     .as_ref()
                     .map(|route| route.as_slice()),
+                options.flood_hops,
             )?;
         }
         if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
@@ -3068,9 +3089,11 @@ impl<
         receipt: SendReceipt,
         frame: &[u8],
         source_route: Option<&[RouterHint]>,
+        requested_flood_hops: Option<u8>,
     ) -> Result<(), SendError> {
-        let resend =
-            ResendRecord::try_new(frame, source_route).map_err(|_| SendError::QueueFull)?;
+        let resend = ResendRecord::try_new(frame, source_route)
+            .map_err(|_| SendError::QueueFull)?
+            .with_requested_flood_hops(requested_flood_hops);
         let pending = self
             .identity_mut(from)
             .ok_or(SendError::IdentityMissing)?
@@ -3104,7 +3127,8 @@ impl<
             packet.as_bytes(),
             options.source_route.as_ref().map(|route| route.as_slice()),
         )
-        .map_err(|_| SendError::QueueFull)?;
+        .map_err(|_| SendError::QueueFull)?
+        .with_requested_flood_hops(options.flood_hops);
 
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let receipt = slot.next_receipt();
@@ -3146,8 +3170,10 @@ impl<
         peer_id: PeerId,
         options: &SendOptions,
     ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>> {
+        // An explicitly supplied route that constrains no hop is the same as
+        // no route at all, and must not reach the wire as an empty option.
         if let Some(route) = options.source_route.as_ref() {
-            return Some(route.clone());
+            return (!route.is_empty()).then(|| route.clone());
         }
 
         let Some(peer) = self.peer_registry.get(peer_id) else {
@@ -3157,6 +3183,56 @@ impl<
             Some(CachedRoute::Source(route)) => Some(route.clone()),
             _ => None,
         }
+    }
+
+    /// Flood budget for a unicast send, narrowed by whatever is already known
+    /// about how to reach the peer.
+    ///
+    /// `options.flood_hops` is a ceiling, not a target: a learned route only
+    /// lowers it, and `no_flood()` still emits no flood-hop field at all. Each
+    /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_HOPS`] of slack beyond its
+    /// own cost so a slightly stale route still self-heals.
+    ///
+    /// The result is clamped to [`MAX_FLOOD_HOPS`], the largest value the
+    /// `FHOPS_REM` nibble can hold.
+    fn effective_flood_hops(
+        &self,
+        peer_id: PeerId,
+        options: &SendOptions,
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+    ) -> Option<u8> {
+        let requested = options.flood_hops?;
+        let cached = self
+            .peer_registry
+            .get(peer_id)
+            .and_then(|peer| peer.route.as_ref());
+        // An empty source route is carried for provenance only; it constrains
+        // no hop, so it costs nothing.
+        let source_route = source_route.filter(|route| !route.is_empty());
+
+        let ceiling = match (source_route, cached) {
+            // A source-routed packet spends flood budget only at its last hop,
+            // where the route empties and the packet reverts to flooding
+            // (repeater-operation.md § Forwarding Rules step 6). One hop is
+            // therefore the whole cost of the route.
+            (Some(_), _) => 1u8.saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS),
+            // Heard directly: our own transmission is the delivery, and the
+            // slack only buys a repeater backstop.
+            (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_HOPS,
+            // Flooding has to cover the distance the peer was last heard from.
+            (None, Some(CachedRoute::Flood { hops, .. })) => {
+                hops.saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS)
+            }
+            // A cached source route not attached to this send (the caller
+            // suppressed it) has to be flooded end to end instead.
+            (None, Some(CachedRoute::Source(route))) => u8::try_from(route.len())
+                .unwrap_or(u8::MAX)
+                .saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS),
+            // Nothing known about the peer: first contact floods as asked.
+            (None, None) => MAX_FLOOD_HOPS,
+        };
+
+        Some(requested.min(ceiling))
     }
 
     fn cache_peer_crypto(
@@ -3753,10 +3829,32 @@ impl<
         if let Some(trace_range) = options.trace_route {
             if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[]))
             {
-                self.peer_registry
-                    .update_route(peer_id, crate::CachedRoute::Source(route));
+                // A trace route that accumulated no hints means the packet
+                // reached us without passing through a repeater. That is a
+                // direct neighbour, not a zero-hop source route — caching it
+                // as a route would attach an empty SourceRoute option to
+                // everything we send back. Only a repeater consuming the
+                // final hint may leave an empty option behind, for
+                // provenance; an originator must never add one.
+                let learned = if route.is_empty() {
+                    crate::CachedRoute::Direct
+                } else {
+                    crate::CachedRoute::Source(route)
+                };
+                self.peer_registry.update_route(peer_id, learned);
                 return;
             }
+        }
+
+        // A source-routed packet — including one whose hints are all consumed,
+        // since the emptied option is preserved for provenance — spends flood
+        // budget only after the route runs out. Its `FHOPS_ACC` therefore
+        // counts the tail of the path, not its length, and would understate
+        // how far away the peer is. Leave whatever route is already cached
+        // (that route is what carried this packet here) rather than replacing
+        // it with a distance estimate that is known to be short.
+        if options.source_route.is_some() {
+            return;
         }
 
         if let Some(flood_hops) = header.flood_hops {
@@ -4263,7 +4361,8 @@ impl<
             return None;
         }
 
-        let flood_hops = self.route_retry_flood_hops(peer, &header, source_route)?;
+        let flood_hops =
+            self.route_retry_flood_hops(peer, &header, source_route, resend.requested_flood_hops)?;
         let has_flood_hops = flood_hops > 0;
         let mut rewritten = [0u8; FRAME];
 
@@ -4319,7 +4418,9 @@ impl<
         let end = cursor + tail.len();
         rewritten.get_mut(cursor..end)?.copy_from_slice(tail);
 
-        ResendRecord::try_new(&rewritten[..end], None).ok()
+        ResendRecord::try_new(&rewritten[..end], None)
+            .ok()
+            .map(|record| record.with_requested_flood_hops(resend.requested_flood_hops))
     }
 
     fn encode_route_retry_options(
@@ -4381,7 +4482,14 @@ impl<
         peer: &PublicKey,
         header: &PacketHeader,
         source_route: &heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>,
+        requested: Option<u8>,
     ) -> Option<u8> {
+        // The failed attempt rode a route, so its own `FHOPS_REM` was narrowed
+        // to what that route cost. Rediscovery has to reach past the break, so
+        // prefer the budget the application was willing to spend.
+        let requested = requested
+            .filter(|hops| *hops > 0)
+            .map(|hops| hops.clamp(1, MAX_FLOOD_HOPS));
         let existing = header
             .flood_hops
             .map(|hops| hops.remaining())
@@ -4390,14 +4498,16 @@ impl<
             .peer_registry
             .lookup_by_key(peer)
             .and_then(|(_, info)| match info.route.as_ref() {
-                Some(crate::CachedRoute::Flood { hops, .. }) => Some((*hops).clamp(1, 15)),
+                Some(crate::CachedRoute::Flood { hops, .. }) => {
+                    Some((*hops).clamp(1, MAX_FLOOD_HOPS))
+                }
                 _ => None,
             });
         let route_len = u8::try_from(source_route.len())
             .ok()
-            .map(|hops| hops.clamp(1, 15));
+            .map(|hops| hops.clamp(1, MAX_FLOOD_HOPS));
 
-        existing.or(cached).or(route_len).or(Some(5))
+        requested.or(existing).or(cached).or(route_len).or(Some(5))
     }
 
     fn repeater_router_hint(&self) -> Option<RouterHint> {

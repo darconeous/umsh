@@ -311,6 +311,17 @@ impl<'a, K, S> Builder<'a, K, S> {
         }
     }
 
+    /// Whether the staged payload actually carries bytes.
+    ///
+    /// An empty payload is no payload: the `0xFF` end-of-options marker is
+    /// only required when data follows the options block, so staging `&[]`
+    /// must not put a marker on the wire. Packet types whose addresses
+    /// follow the options block need the marker regardless and do not
+    /// consult this.
+    fn has_body_bytes(&self) -> bool {
+        self.payload.as_ref().is_some_and(|range| !range.is_empty())
+    }
+
     fn copy_staged_payload(&mut self, cursor: &mut usize) -> Result<Range<usize>, BuildError> {
         let payload = self.payload.clone().ok_or(BuildError::MissingPayload)?;
         let len = payload.end - payload.start;
@@ -583,7 +594,7 @@ impl<'a> BroadcastBuilder<'a, state::Configuring> {
     ///
     /// Layout: `FCF [FHOPS] SRC OPTIONS [0xFF PAYLOAD]`
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
-        let has_payload = self.payload.is_some();
+        let has_payload = self.has_body_bytes();
         let mut cursor = self.write_common_prefix()?;
         self.write_source(&mut cursor)?;
         self.emit_options(&mut cursor, has_payload)?;
@@ -629,7 +640,7 @@ impl<'a> UnicastBuilder<'a, state::Complete> {
 impl<'a> UnicastBuilder<'a, state::Configuring> {
     /// Layout: `FCF [FHOPS] DST SRC SECINFO OPTIONS [0xFF PAYLOAD] MIC`
     pub fn build(mut self) -> Result<UnsealedPacket<'a>, BuildError> {
-        let has_payload = self.payload.is_some();
+        let has_payload = self.has_body_bytes();
         let mut cursor = self.write_common_prefix()?;
         let dst = self.dst.ok_or(BuildError::MissingDestination)?;
         self.buf

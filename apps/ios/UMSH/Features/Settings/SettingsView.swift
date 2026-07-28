@@ -26,6 +26,9 @@ struct SettingsView: View {
     var saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil
     /// Whether a node address is already in this phone's Network list.
     var isPeerSaved: (String) -> Bool = { _ in false }
+    /// Handed to every peer sheet reachable from Settings so those sheets
+    /// match the ones opened from Network.
+    var peerActions: PeerActions = .unavailable
 
     @State private var showsDeviceSetup = false
 
@@ -86,7 +89,8 @@ struct SettingsView: View {
                         factoryReset: factoryResetRadio,
                         discoverRadios: discoverRadios,
                         selectRadio: selectRadio,
-                        stopDiscovery: stopDiscovery
+                        stopDiscovery: stopDiscovery,
+                        peerActions: peerActions
                     )
                 }
             }
@@ -117,7 +121,8 @@ struct SettingsView: View {
                 companionName: radioSnapshot.name,
                 promoteRadio: selectRadio,
                 saveDevicePeer: saveDevicePeer,
-                isPeerSaved: isPeerSaved
+                isPeerSaved: isPeerSaved,
+                peerActions: peerActions
             )
         }
     }
@@ -249,6 +254,9 @@ struct RadioDetailView: View {
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
+    /// So the radio's own node identity opens the same peer sheet as any
+    /// other node.
+    var peerActions: PeerActions = .unavailable
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
@@ -415,7 +423,8 @@ struct RadioDetailView: View {
                                 systemRole: "companion_radio",
                                 kind: .unknown
                             ),
-                            radioSnapshot: $snapshot
+                            radioSnapshot: $snapshot,
+                            actions: peerActions
                         )
                     } label: {
                         LabeledContent("Peer", value: deviceIdentity.hint.text)

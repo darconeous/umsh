@@ -111,7 +111,13 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// a re-read. Both complete on the same condition (the session is back
     /// at `attached` with nothing outstanding), so one waiter serves both
     /// and also enforces that only one runs at a time.
-    private var operationWaiter: CheckedContinuation<Void, any Error>?
+    ///
+    /// It resumes *with* the device state observed at completion rather than
+    /// leaving the caller to read `snapshots()`: that stream is drained by a
+    /// separate task with no ordering against this continuation, so a caller
+    /// comparing what it wrote against a snapshot could be comparing against
+    /// the previous one.
+    private var operationWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
 
     /// A flow abandoned without calling `disconnect()` — the sheet is
     /// dismissed, the controller goes away — must not leave the device
@@ -328,6 +334,9 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     result.resume(throwing: RadioConnectionError.operationInProgress)
                     return
                 }
+                // The advertised name is live; `CBPeripheral.name` is a cache
+                // iOS does not refresh when a device is renamed.
+                let advertisedName = discovered[id]?.name
                 let target = discovered[id]?.peripheral
                     ?? central.retrievePeripherals(withIdentifiers: [id]).first
                 guard let target else {
@@ -347,7 +356,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                 AdminSessionRegistry.shared.register(target.identifier)
                 attachWaiter = result
                 attachGeneration = UUID()
-                publish(state: .connecting, name: target.name, identifier: target.identifier)
+                publish(state: .connecting, name: advertisedName ?? target.name, identifier: target.identifier)
                 central.connect(target)
                 scheduleAttachTimeout(generation: attachGeneration)
             }
@@ -407,24 +416,26 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Write a complete device configuration and wait for the radio to
     /// persist it. Rust owns the write ordering and the trailing save.
     func configureDevice(_ configuration: UlcpDeviceConfigRecord) async throws {
-        try await perform { session in try session.configureDevice(configuration: configuration) }
+        _ = try await perform { session in try session.configureDevice(configuration: configuration) }
     }
 
-    /// Re-read the device's authoritative configuration.
+    /// Re-read the device's authoritative configuration and return it.
     ///
     /// A write is already echo-verified property by property, so this is not
     /// how a bad write is caught — it is how the *saved* device is read back
     /// after the trailing `CMD_SAVE`, which is a different question.
-    func refresh() async throws {
+    @discardableResult
+    func refresh() async throws -> UlcpSyncRecord? {
         try await perform { session in try session.refresh() }
     }
 
-    /// Run one post-attach exchange to completion.
+    /// Run one post-attach exchange to completion, answering with the device
+    /// state as of that completion.
     private func perform(
         _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
-    ) async throws {
+    ) async throws -> UlcpSyncRecord? {
         try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<Void, any Error>) in
+            (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
             queue.async { [self] in
                 guard let peripheral, peripheral.state == .connected else {
                     result.resume(throwing: RadioConnectionError.radioNotFound)
@@ -600,7 +611,11 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private func finishOperation(throwing error: (any Error)?) {
         guard let waiter = operationWaiter else { return }
         operationWaiter = nil
-        if let error { waiter.resume(throwing: error) } else { waiter.resume() }
+        if let error {
+            waiter.resume(throwing: error)
+        } else {
+            waiter.resume(returning: snapshot.sync)
+        }
     }
 
     private func finishPendingOperations(throwing error: any Error) {
@@ -608,10 +623,22 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         finishOperation(throwing: error)
     }
 
+    /// Why a CoreBluetooth failure happened, in the terms callers act on.
+    /// A missing pairing is a setup step, not a protocol incompatibility,
+    /// and the two lead the user somewhere different.
+    private static func failureReason(_ error: any Error) -> RadioConnectionError {
+        BluetoothErrorText.isPairingFailure(error) ? .pairingRequired : .incompatibleProtocol
+    }
+
     /// Terminal failure for this session. There is no reconnect ladder: the
     /// user is standing in front of the device and retrying is one tap.
-    private func fail(_ message: String, error: any Error) {
-        Self.logger.error("administrative session failed: \(message, privacy: .public)")
+    private func fail(_ message: String, error: any Error, underlying: (any Error)? = nil) {
+        Self.logger.error(
+            """
+            administrative session failed: \(message, privacy: .public) \
+            cause=\(underlying.map(BluetoothErrorText.diagnostic) ?? "none", privacy: .public)
+            """
+        )
         let name = snapshot.name ?? peripheral?.name
         if let peripheral, let central, peripheral.state != .disconnected {
             central.cancelPeripheralConnection(peripheral)
@@ -657,7 +684,7 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
         Self.logger.notice(
             "event: administrative didConnect \(peripheral.identifier, privacy: .public)"
         )
-        publish(state: .attaching, name: peripheral.name, identifier: peripheral.identifier)
+        publish(state: .attaching, name: snapshot.name ?? peripheral.name, identifier: peripheral.identifier)
         peripheral.discoverServices([RadioGatt.service])
     }
 
@@ -670,8 +697,9 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
         // No re-arm: an administrative connect is a foreground action that
         // either worked or did not.
         fail(
-            error?.localizedDescription ?? "The device connection failed",
-            error: RadioConnectionError.radioNotFound
+            error.map(BluetoothErrorText.describe) ?? "The device connection failed",
+            error: error.map(Self.failureReason) ?? RadioConnectionError.radioNotFound,
+            underlying: error
         )
     }
 
@@ -694,10 +722,34 @@ extension AdministrativeDeviceSession: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension AdministrativeDeviceSession: CBPeripheralDelegate {
+    /// The device told us its attribute database changed.
+    ///
+    /// iOS has already invalidated the affected `CBService` and every
+    /// characteristic under it, so the references held here address handles
+    /// that have moved. Discovering again is the only correct response; it
+    /// re-enters the attach path, which restarts the ULCP session.
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didModifyServices invalidatedServices: [CBService]
+    ) {
+        guard self.peripheral === peripheral,
+              invalidatedServices.contains(where: { $0.uuid == RadioGatt.service })
+        else { return }
+        Self.logger.notice(
+            "event: administrative didModifyServices \(peripheral.identifier, privacy: .public)"
+        )
+        frameIn = nil
+        frameOut = nil
+        pendingWrites.removeAll()
+        writeInProgress = false
+        publish(state: .attaching, name: snapshot.name, identifier: peripheral.identifier)
+        peripheral.discoverServices([RadioGatt.service])
+    }
+
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         guard self.peripheral === peripheral else { return }
         if let error {
-            fail(error.localizedDescription, error: RadioConnectionError.incompatibleProtocol)
+            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
             return
         }
         guard let service = peripheral.services?
@@ -718,7 +770,7 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
     ) {
         guard self.peripheral === peripheral else { return }
         if let error {
-            fail(error.localizedDescription, error: RadioConnectionError.incompatibleProtocol)
+            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
             return
         }
         frameIn = service.characteristics?.first { $0.uuid == RadioGatt.frameIn }
@@ -732,7 +784,7 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         }
         // Enabling notifications is what triggers the system pairing prompt
         // on an unbonded device, so the link state says so.
-        publish(state: .pairing, name: peripheral.name, identifier: peripheral.identifier)
+        publish(state: .pairing, name: snapshot.name ?? peripheral.name, identifier: peripheral.identifier)
         peripheral.setNotifyValue(true, for: frameOut)
     }
 
@@ -744,7 +796,7 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         guard self.peripheral === peripheral,
               characteristic.uuid == RadioGatt.frameOut else { return }
         if let error {
-            fail(error.localizedDescription, error: RadioConnectionError.incompatibleProtocol)
+            fail(BluetoothErrorText.describe(error), error: Self.failureReason(error), underlying: error)
             return
         }
         guard characteristic.isNotifying else {
@@ -768,8 +820,9 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
         if let error {
             pendingWrites.removeAll()
             fail(
-                "The ULCP write was not accepted: \(error.localizedDescription)",
-                error: RadioConnectionError.operationRejected(error.localizedDescription)
+                "\(BluetoothErrorText.describe(error))",
+                error: Self.failureReason(error),
+                underlying: error
             )
             return
         }
@@ -785,8 +838,9 @@ extension AdministrativeDeviceSession: CBPeripheralDelegate {
               characteristic.uuid == RadioGatt.frameOut else { return }
         if let error {
             fail(
-                "The ULCP notification could not be read: \(error.localizedDescription)",
-                error: RadioConnectionError.operationRejected(error.localizedDescription)
+                "\(BluetoothErrorText.describe(error))",
+                error: Self.failureReason(error),
+                underlying: error
             )
             return
         }

@@ -106,6 +106,59 @@ mod tests {
     }
 
     #[test]
+    fn empty_payload_emits_no_end_of_options_marker() {
+        // A beacon is a broadcast with an empty payload. Nothing follows the
+        // options block, so the `0xFF` marker must not be emitted — it would
+        // be a wasted byte on every beacon.
+        let mut buf = [0u8; 64];
+        let beacon = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(NodeHint([0x8B, 0x60, 0xF5]))
+            .flood_hops(5)
+            .payload(&[])
+            .build()
+            .unwrap();
+        assert_eq!(beacon, &[0xC1, 0x50, 0x8B, 0x60, 0xF5]);
+        let header = PacketHeader::parse(beacon).unwrap();
+        assert!(header.is_beacon());
+
+        // The marker returns as soon as there is a payload to delimit.
+        let mut buf = [0u8; 64];
+        let with_payload = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_hint(NodeHint([0x8B, 0x60, 0xF5]))
+            .payload(b"hi")
+            .build()
+            .unwrap();
+        assert_eq!(with_payload, &[0xC0, 0x8B, 0x60, 0xF5, 0xFF, b'h', b'i']);
+
+        // The same holds for a secured type whose body is empty.
+        let mut buf = [0u8; 128];
+        let unicast = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC3, 0xD4, 0x25]))
+            .source_hint(NodeHint([0xA1, 0xB2, 0x03]))
+            .frame_counter(7)
+            .encrypted()
+            .mic_size(MicSize::Mic8)
+            .payload(&[])
+            .build()
+            .unwrap();
+        // FCF | DST(3) | SRC(3) | SECINFO(5) | no options, no marker | MIC(8)
+        let bytes = unicast.as_bytes();
+        assert_eq!(
+            bytes,
+            &[
+                0xD0, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03, 0xA0, 0x00, 0x00, 0x00, 0x07, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ],
+        );
+        let header = PacketHeader::parse(bytes).unwrap();
+        assert!(header.options_range.is_empty());
+        assert!(header.body_range.is_empty());
+        assert_eq!(header.mic_range.len(), 8);
+    }
+
+    #[test]
     fn builder_and_parser_for_unicast_match() {
         let mut buf = [0u8; 128];
         let src = PublicKey([0xA1; 32]);
