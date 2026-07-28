@@ -69,6 +69,28 @@ default-members = [
 ]
 resolver = "2"
 
+# Sized for the nRF52840 firmware, the only artifact in this workspace with a
+# hard ceiling: 756 KB of application flash on the T-1000E and SenseCAP Solar,
+# 760 KB on the T-Echo. At stock release settings the shipping images sat at
+# ~87% of that budget; these settings put them near 61%.
+#
+# `opt-level = "z"` does most of the work — measured on `firmware-t1000e` it is
+# worth ~119 KB on its own, and `lto = "fat"` adds a further ~78 KB on top of
+# it. The ordering matters: fat LTO at `opt-level = 3` inlines hard enough to
+# make the image ~61 KB *larger* than no LTO at all, which is the trap this
+# comment exists to keep the next person out of.
+#
+# Nothing here is CPU-bound enough to miss `opt-level = 3`. The largest single
+# beneficiary is `sha2`, whose fully unrolled `compress512` drops from 27,746
+# bytes to 10,544; it is reached only through Ed25519 sign/verify, where the
+# rolled loop costs microseconds. Everything else runs at LoRa packet rates or
+# slower. A per-package `opt-level` override is available if that ever stops
+# being true, but note it does not propagate to that package's dependencies.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
