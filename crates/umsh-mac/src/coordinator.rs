@@ -3190,8 +3190,10 @@ impl<
     ///
     /// `options.flood_hops` is a ceiling, not a target: a learned route only
     /// lowers it, and `no_flood()` still emits no flood-hop field at all. Each
-    /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_HOPS`] of slack beyond its
-    /// own cost so a slightly stale route still self-heals.
+    /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_HOPS`] of slack beyond the
+    /// flood distance it already covers, so a slightly stale route still
+    /// self-heals. A source route covers that distance without spending flood
+    /// budget, so its slack is the entire budget.
     ///
     /// The result is clamped to [`MAX_FLOOD_HOPS`], the largest value the
     /// `FHOPS_REM` nibble can hold.
@@ -3211,14 +3213,11 @@ impl<
         let source_route = source_route.filter(|route| !route.is_empty());
 
         let ceiling = match (source_route, cached) {
-            // A source-routed packet spends flood budget only at its last hop,
-            // where the route empties and the packet reverts to flooding
-            // (repeater-operation.md § Forwarding Rules step 6). One hop is
-            // therefore the whole cost of the route.
-            (Some(_), _) => 1u8.saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS),
-            // Heard directly: our own transmission is the delivery, and the
-            // slack only buys a repeater backstop.
-            (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_HOPS,
+            // A source route costs no flood budget at all — routed hops do not
+            // touch `FHOPS` — so the whole budget is slack past the route's
+            // end. Heard directly is the same shape: our own transmission is
+            // the delivery, and the slack only buys a repeater backstop.
+            (Some(_), _) | (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_HOPS,
             // Flooding has to cover the distance the peer was last heard from.
             (None, Some(CachedRoute::Flood { hops, .. })) => {
                 hops.saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS)
@@ -3663,6 +3662,29 @@ impl<
             .map(|(index, _)| LocalIdentityId(index as u8))
     }
 
+    /// True when this frame names one of our own identities as its source.
+    ///
+    /// A repeater is not a relay for itself. Re-flooding a packet we sent
+    /// wastes airtime, and because the forwarding rewrite prepends our router
+    /// hint to the trace route it also fabricates a hop that never happened —
+    /// the destination then learns a return path that starts by routing back
+    /// through the originator.
+    fn is_locally_originated(&self, frame: &[u8], header: &PacketHeader) -> bool {
+        let mut locals = self.identities.iter().filter_map(|slot| slot.as_ref());
+        match header.source {
+            SourceAddrRef::Hint(hint) => {
+                locals.any(|slot| slot.identity().public_key().hint() == hint)
+            }
+            SourceAddrRef::FullKeyAt { offset } => match Self::full_key_at(frame, offset) {
+                Some(key) => locals.any(|slot| *slot.identity().public_key() == key),
+                None => false,
+            },
+            // An encrypted blind-unicast source is unreadable, and a packet
+            // with no source field names nobody.
+            SourceAddrRef::Encrypted { .. } | SourceAddrRef::None => false,
+        }
+    }
+
     fn resolve_source_peer_candidates(
         &mut self,
         frame: &[u8],
@@ -3963,9 +3985,21 @@ impl<
         if !header.packet_type().is_routable() {
             return false;
         }
+        if self.is_locally_originated(frame, header) {
+            return false;
+        }
+        // A packet that names one of our identities as its destination has
+        // arrived. Whether we could actually process it — we may lack the key,
+        // or it may be a replay — is a separate question from whether it still
+        // needs carrying, and it does not.
+        if self.find_local_identity_for_dst(header.dst).is_some() {
+            return false;
+        }
         // Once a point-to-point packet is handled by its actual destination, it
-        // should not also be repeated by that same node. Other packet classes,
-        // including broadcast and MAC ACK, remain routable.
+        // should not also be repeated by that same node. This still matters for
+        // encrypted blind unicast, whose destination hint is not on the wire.
+        // Other packet classes, including broadcast and MAC ACK, remain
+        // routable.
         if locally_handled_unicast
             && matches!(
                 header.packet_type(),
@@ -4052,13 +4086,18 @@ impl<
         let mut delay_ms = 0u64;
 
         if !source_route_bytes.is_empty() {
+            // A source-routed hop costs no flood budget, even the one that
+            // consumes the last hint: `FHOPS` counts flood hops only
+            // (packet-structure.md § Flood Hop Count). Emptying the route
+            // makes the packet floodable, but the transition is observed by
+            // the *next* repeater, which sees an empty route and pays for the
+            // first real flood hop. Everything gated below — hop accounting,
+            // signal thresholds, region policy, contention delay — is flood
+            // behaviour and does not apply to a hop that was named explicitly.
             if source_route_bytes[..2] != router_hint.0 {
                 return None;
             }
             consume_source_route = true;
-            if source_route_bytes.len() == 2 {
-                decrement_flood_hops = header.flood_hops.is_some();
-            }
         } else {
             decrement_flood_hops = true;
         }
@@ -4109,11 +4148,11 @@ impl<
                 insert_region_code = self.repeater.default_region;
             }
             delay_ms = self.sample_flood_contention_delay_ms(rx, options);
-            // An ack-requested packet received with no remaining source-route
-            // hops elicits an immediate, CAD-skipping ACK from its destination
-            // (channel-access.md § Immediate ACK Transmission); hold the
-            // forward back long enough for that ACK to clear the channel.
-            if !consume_source_route && header.ack_requested() {
+            // An ack-requested packet flood-forwarded with no remaining
+            // source-route hops elicits an immediate, CAD-skipping ACK from its
+            // destination (channel-access.md § Immediate ACK Transmission);
+            // hold the forward back long enough for that ACK to clear.
+            if header.ack_requested() {
                 delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
             }
         }

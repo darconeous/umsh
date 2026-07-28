@@ -9,6 +9,13 @@ The routing model is governed by a few simple rules:
 - Every currently defined on-mesh packet type is routable.
   - In the current protocol this includes broadcast, MAC ack, unicast, multicast, and blind unicast packets.
   - Reserved or opaque packet types are not routable until the protocol defines their forwarding semantics (there is only one at the moment, type 5).
+- A repeater forwards other nodes' traffic, never its own and never traffic that has arrived.
+  - A repeater MUST NOT forward a packet whose source address identifies one of its own identities, by hint or in full-key form. Re-flooding its own transmission wastes airtime, and prepending its hint to the trace route would fabricate a hop that never happened.
+  - A repeater MUST NOT forward a packet whose destination address identifies one of its own identities. Such a packet has reached its destination; whether the repeater could actually process it is a separate question.
+- A packet is forwarded as either a source-routed hop or a flood hop, never both.
+  - A hop named in the source route is a source-routed hop, including the hop that consumes the final hint.
+  - Every other forwarded hop is a flood hop.
+  - Rules written for flood forwarding — [flood hop accounting](packet-structure.md#flood-hop-count), signal-quality thresholds, [region policy](#forwarding-procedure), and forwarding contention — apply to flood hops only.
 - Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace route](packet-options.md#trace-route-option-2), [hop count](packet-structure.md#flood-hop-count), etc)
   - Typical examples are flood hop counts, trace routes, source routes.
   - A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.
@@ -64,44 +71,49 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 1. **Duplicate suppression**
    - If this packet was forwarded recently, do not forward.
 
-2. **Locally-Handled Unicast**
-   - If this packet was a unicast (bind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward.
+2. **Local origin and local destination**
+   - If the packet's source address identifies one of this repeater's own identities, do not forward.
+   - If the packet's destination address identifies one of this repeater's own identities, do not forward.
 
-3. **Unknown critical options**
+3. **Locally-handled unicast**
+   - If this packet was a unicast (blind or direct) packet that was fully handled and processed according to [Packet Processing](packet-processing.md), do not forward. This covers the blind-unicast case, where the destination address is encrypted and step 2 cannot see it.
+
+4. **Unknown critical options**
    - If the packet contains any critical option the repeater does not understand, do not forward.
 
-4. **Policy checks**
+5. **Policy checks**
    - If the packet does not satisfy local repeater policy, do not forward.
 
-5. **Source-route match**
+6. **Source-route match**
    - If the packet contains a non-empty source-route option:
      - If this repeater does not match the next source-route hint, do not forward.
      - Otherwise, remove the repeater's own hint from the source-route option.
    - If the repeater mutates a source-route option, it MUST preserve the option on the forwarded packet even when no hints remain.
      - In that case, the forwarded packet carries a source-route option with zero remaining hops.
      - This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.
-   - If the source-route option is still non-empty after removing this repeater's hint, skip directly to step 9 (trace route processing). The remaining steps apply only to flood forwarding.
+   - If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace route processing), **including when the hint just removed was the last one**. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.
 
-6. **Transition from source-routing to flooding**
-   - If the source-route option is now empty:
-     - If the repeater has a non-empty configured region list and the packet carries one or more region code options, none of which appear in that list, do not forward. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
-     - If the packet has no region code option, the repeater MAY insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
-     - If one or more region codes are already present, the repeater MUST preserve them unchanged.
-     - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
-     - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
-     - Otherwise, do not forward.
+7. **Region policy** (flood forwarding only)
+   - If the repeater has a non-empty configured region list and the packet carries one or more region code options, none of which appear in that list, do not forward. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
+   - If the packet has no region code option, the repeater MAY insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
+   - If one or more region codes are already present, the repeater MUST preserve them unchanged.
+   - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
 
-7. **RSSI threshold check**
+8. **Flood hop accounting** (flood forwarding only)
+   - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
+   - Otherwise, do not forward.
+
+9. **Signal-quality thresholds** (flood forwarding only)
    - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
-
-8. **SNR threshold check**
    - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
 
-9. **Trace route processing**
+10. **Trace route processing**
    - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
-10. **Retransmit**
+11. **Retransmit**
    - Forward the modified packet.
+
+A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding — the transition is observed by the repeater *after* the one that emptied the route, not performed by it.
 
 Bridges follow the same packet-rewrite rules as repeaters. A bridge that tunnels traffic to a physically different location generally should not forward flood packets that lack a region code.
 
@@ -170,4 +182,6 @@ This behavior is still provisional and should be validated empirically. The inte
 
 This forwarding model allows hybrid routing behavior.
 
-For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. Once the source-route hints are consumed, the packet transitions to flood-based forwarding bounded by `FHOPS_REM`. This permits "delivery-to-region, then flood" behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh.
+For example, a packet can be source-routed to a specific repeater and also carry a flood hop count. The routed hops cost nothing against `FHOPS_REM`, so the whole budget is available to the flood that begins where the route ends. This permits "delivery-to-region, then flood" behavior, which is useful when searching for a node in a known geographic area without flooding the entire mesh, and it is why the flood radius limit of 15 bounds the flood rather than the total path length.
+
+A sender sizing `FHOPS_REM` for a source-routed packet is therefore budgeting the flood *beyond* the route's last hop, not the route itself.

@@ -18,7 +18,7 @@ This chapter describes how a receiving node processes an incoming packet. This p
    - If the packet carries a channel hint matching a configured channel, continue.
    - Otherwise, stop.
 
-   A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. The packet may also be forwarded according to the normal [forwarding procedure](repeater-operation.md#forwarding-procedure) if the node is acting as a repeater.
+   A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. A node acting as a repeater does not also forward such a packet: it is the destination, and the packet has arrived (see [Routing Invariants](repeater-operation.md#routing-invariants)).
 
 4. **Channel processing** (multicast and blind unicast)
 

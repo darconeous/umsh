@@ -65,6 +65,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
   - That repeater removes its own hint before retransmission.
   - If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
     - This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.
+    - Removing the last hint does not change what kind of hop this is. The repeater was named, so it forwards as a source-routed hop and leaves [`FHOPS`](packet-structure.md#flood-hop-count), region policy, and signal-quality thresholds alone. The next repeater sees the empty option and is the first to flood.
   - Repeaters that do not match the first hint must not forward the packet.
 - Value layout: see [Source Route Option Value](#source-route-option-value).
 
@@ -131,12 +132,12 @@ When this option is present, each repeater that will repeat the packet must firs
 - Type: 2-byte region identifier
 - Semantics: restricts flood-routing to repeaters configured for the specified region.
 - A repeater configured for one or more regions MUST NOT flood-forward a packet whose region is none of them. A repeater configured for no regions makes no regional claim and applies no such restriction.
-- This option MUST NOT be enforced until the source route list is exhausted.
+- This option MUST NOT be enforced on a [source-routed hop](repeater-operation.md#routing-invariants), which includes the hop that removes the last remaining hint. A repeater named in the route forwards regardless of region.
 - Multiple region-code options may appear on the same packet. In that case, a repeater MAY flood-forward the packet if any one of the listed regions matches local policy.
 - Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.
 - A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.
 - Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.
-- Region insertion applies only during flood forwarding. A source-routed packet without a region does not gain one until its source route is exhausted and it transitions to flooding.
+- Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it — the one that receives it with an already-empty source route — not by the repeater that emptied the route.
 
 #### Region Code Encoding
 

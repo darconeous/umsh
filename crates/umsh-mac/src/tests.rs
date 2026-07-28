@@ -3405,9 +3405,9 @@ fn send_unicast_uses_cached_source_route_when_present() {
 
     assert_eq!(source_route.as_slice(), &[[0x01, 0x02], [0x03, 0x04]]);
     let flood_hops = header.flood_hops.expect("flood hops present");
-    // Only the last hop of a source route spends flood budget, so the wide
-    // first-contact default collapses to one hop plus the self-healing slack.
-    assert_eq!(flood_hops.remaining(), 1 + ESTABLISHED_ROUTE_EXTRA_HOPS);
+    // The route spends no flood budget at all, so the wide first-contact
+    // default collapses to the self-healing slack past the route's end.
+    assert_eq!(flood_hops.remaining(), ESTABLISHED_ROUTE_EXTRA_HOPS);
 }
 
 /// Build a MAC with one local identity and one keyed peer, returning the
@@ -3803,7 +3803,19 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
     let options =
         ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
     assert!(options.trace_route.is_none());
-    assert_eq!(options.region_code, Some([0x78, 0x53]));
+    assert_eq!(
+        options.region_code, None,
+        "a named hop forwards under the route, not under flood policy; the \
+         first repeater to flood it tags the region"
+    );
+    assert_eq!(
+        header
+            .flood_hops
+            .map(|hops| (hops.remaining(), hops.accumulated())),
+        Some((5, 0)),
+        "consuming the last source-route hint is still a source-routed hop \
+         and must not spend flood budget"
+    );
     assert!(
         options.source_route.is_some(),
         "final forwarded frame should preserve an empty source-route option: {:?}",
@@ -3890,8 +3902,11 @@ fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
     assert_eq!(forwarded.priority, TxPriority::Forward);
 }
 
+/// Being the last hint in the route is still being named. The hop that empties
+/// the route is a source-routed hop like any other, so signal thresholds — a
+/// flood-forwarding policy — do not gate it.
 #[test]
-fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flooding() {
+fn receive_one_repeater_ignores_signal_thresholds_on_the_final_source_routed_hop() {
     let mut repeater = make_mac();
     repeater.repeater_config_mut().enabled = true;
     repeater.repeater_config_mut().min_rssi = Some(10);
@@ -3913,6 +3928,49 @@ fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flood
     };
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     let source_route = [repeater_hint];
+
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        7,
+        Some((1, 0)),
+        None,
+        Some(&source_route),
+        Some(20),
+        Some(20),
+    );
+
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+
+    assert!(handled);
+    let forwarded = repeater.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(forwarded.priority, TxPriority::Forward);
+}
+
+/// Once the route is empty the packet is a flood packet, and the first repeater
+/// to carry it that way is subject to the full flood policy.
+#[test]
+fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flooding() {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().min_rssi = Some(10);
+    repeater.repeater_config_mut().min_snr = Some(10);
+    repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
+    // An empty-but-present source route: the provenance an upstream repeater
+    // leaves behind after consuming the final hint.
+    let source_route: [RouterHint; 0] = [];
 
     repeater.radio_mut().queue_received_unicast_with_thresholds(
         &remote,
@@ -4117,6 +4175,98 @@ fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out()
     assert!(
         mac.tx_queue_mut().pop_next().is_some(),
         "the node is heard again once its entry has aged out"
+    );
+}
+
+/// Hearing our own broadcast — off a repeater, off a reflection, off our own
+/// receiver during a post-TX listen — must not put it back on the air. The
+/// forwarding rewrite would prepend our router hint to the trace route,
+/// teaching the destination a return path that begins by routing back through
+/// the sender.
+#[test]
+fn repeater_does_not_forward_a_broadcast_it_originated() {
+    let local = DummyIdentity::new([0x10; 32]);
+    let local_key = *local.public_key();
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.add_identity(local).unwrap();
+
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(&local_key)
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a repeater must not relay its own transmission"
+    );
+}
+
+/// The 3-byte hint form hides nothing useful here: it is derived from the
+/// public key, so our own hint identifies us just as well as our own key.
+#[test]
+fn repeater_does_not_forward_its_own_broadcast_sent_by_hint() {
+    let local = DummyIdentity::new([0x10; 32]);
+    let local_hint = local.public_key().hint();
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.add_identity(local).unwrap();
+
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_hint(local_hint)
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a repeater must not relay its own transmission"
+    );
+}
+
+/// A packet addressed to us has arrived. Failing to decrypt it does not turn it
+/// back into transit traffic.
+#[test]
+fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
+    let local = DummyIdentity::new([0x10; 32]);
+    let local_hint = local.public_key().hint();
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.add_identity(local).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    // No pairwise keys installed, so the MAC cannot open it.
+    let frame = build_received_unicast_frame(
+        &remote,
+        &keys,
+        &local_hint,
+        b"hello",
+        false,
+        Some((3, 0)),
+        None,
+        None,
+    );
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a packet naming us as its destination has already arrived"
     );
 }
 
@@ -6466,7 +6616,7 @@ fn route_retry_restores_the_full_budget_after_a_narrowed_source_routed_send() {
     let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
     assert_eq!(
         original_header.flood_hops.unwrap().remaining(),
-        1 + ESTABLISHED_ROUTE_EXTRA_HOPS,
+        ESTABLISHED_ROUTE_EXTRA_HOPS,
         "the cached route should narrow the attempt's budget"
     );
 

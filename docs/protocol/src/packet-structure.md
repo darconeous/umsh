@@ -71,12 +71,16 @@ If present, `FHOPS` is a single byte containing two 4-bit fields:
 
 Where:
 
-- `FHOPS_REM` (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each forwarding repeater. When zero, no further flood forwarding is allowed.
-- `FHOPS_ACC` (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each forwarding repeater.
+- `FHOPS_REM` (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each flood-forwarding repeater. When zero, no further flood forwarding is allowed.
+- `FHOPS_ACC` (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each flood-forwarding repeater.
 
-> [!NOTE]
-> `FHOPS_ACC` accumulates **flood** hops only.
-> Source routed hops do not increment this number.
+> [!IMPORTANT]
+> `FHOPS` counts **flood** hops only. A repeater that forwards a packet because
+> it matched a [source-route](packet-options.md#source-route-option-3) hint
+> MUST leave the byte untouched — including the repeater that removes the last
+> remaining hint. Emptying the route makes the packet floodable, but the first
+> flood hop is performed by the *next* repeater, which sees an empty route and
+> pays for it there.
 
 The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is [bridging](routing-overview.md#bridging), which can decrease `FHOPS_REM` unilaterally. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
 

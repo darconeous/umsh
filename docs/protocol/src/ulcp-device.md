@@ -434,7 +434,7 @@ identity option. The value length is therefore always even; a device
 **MUST** reject an odd-length write with `STATUS_INVALID_ARGUMENT`, and
 **MAY** reject a write that exceeds the number of entries it can hold.
 
-The list is the filter applied at step 6 of the [forwarding
+The list is the filter applied at the region-policy step of the [forwarding
 procedure](repeater-operation.md#forwarding-procedure): a flood packet
 carrying region codes is forwarded only if at least one of them appears
 here. An **empty** list — the factory default — imposes no regional
@@ -457,7 +457,7 @@ decision, governed by `PROP_MAC_REPEATER_DEFAULT_REGION`.
 * Post-Reset Value: Empty, or restored from saved state
 
 The region code the device inserts into a flood packet that carries none,
-as permitted at step 6 of the [forwarding
+as permitted at the region-policy step of the [forwarding
 procedure](repeater-operation.md#forwarding-procedure). An **empty**
 value — the factory default — means the device never tags: untagged
 packets are forwarded untagged. Any other value **MUST** be exactly two

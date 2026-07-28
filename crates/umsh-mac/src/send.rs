@@ -65,8 +65,9 @@ pub struct SendReceipt(pub u32);
 /// - **`salt`** — append a random 2-byte salt to SECINFO, adding nonce diversity and
 ///   preventing correlation of frames sharing the same counter value across sessions.
 /// - **`source_route`** — provide an explicit list of [`RouterHint`] values to route the
-///   frame along a known path rather than relying on flood forwarding. Setting a source route
-///   also constrains the flood-hop budget to the route length when `flood_hops` is unset.
+///   frame along a known path rather than relying on flood forwarding. Routed hops cost no
+///   flood budget, so an attached source route narrows `flood_hops` to the slack that
+///   backstops the route's far end rather than to the route's length.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SendOptions {
     /// Requested MIC size.
