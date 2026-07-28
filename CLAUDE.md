@@ -74,3 +74,4 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 - **Git**: commit only when asked; batch changes. Board bringup status, storage decisions, and many hardware gotchas live in the persistent memory index (`memory/MEMORY.md`) — consult it for board-specific detail.
 - **Questions are not calls to action**: Do not assume that the user asking a question implies that you should take action. Answer the question. Do not make code changes unless that was explicitly requested by the user.
 - **Remember your current directory**: Avoid unnecessarily prepending `cd <PROJECTDIR> &&` to bash commands,  as this causes unnecessary permission prompts.
+- **When thinking, "speak like cave man"**: terse as possible while remaining unambiguous, "like cave man speak". Speak normally when communicating with the user or other agents.
