@@ -7,9 +7,14 @@ repository.workspace = true
 documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_core/"
 
 [features]
-default = ["std"]
+default = ["std", "region-codec"]
 std = []
 alloc = []
+# Textual region codes: ARNCE/HAM-16 for airport regions, SHA-256 for named
+# ones. Off for firmware, which only ever handles the 2-byte wire form.
+region-codec = ["dep:hamaddr", "dep:sha2"]
 
 [dependencies]
+hamaddr = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 zeroize.workspace = true

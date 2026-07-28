@@ -184,6 +184,36 @@ while BLE may retain multiple bonds. Decide how the app explains:
 The takeover sheet in the current design is required regardless of the eventual
 sharing policy.
 
+Two questions are settled and no longer part of this decision. Configuring a
+device and being tethered to it are separate: a phone can configure any device
+it can pair with, without claiming it, while exactly one device at a time
+occupies the companion slot. And a device the phone has merely configured is
+per-phone and unsynchronized. Setup keeps no device list of its own; saving a
+device's identity records an ordinary Network peer, which already has settled
+sharing and removal behavior, so there is no second inventory to decide about.
+
+What remains open is unchanged: how a radio is shared *as a companion* between
+people or between one person's devices.
+
+## Bulk device commissioning
+
+Configuring several devices identically — a set of repeaters for one
+deployment — is not supported and is deliberately left for later. The
+underlying model keeps it reachable: a device's configuration is a set of
+whole-value settings, so a saved template is a stored set of those values
+replayed against another device rather than a new mechanism.
+
+Before a template experience ships, decide:
+
+- whether a template is a named saved artifact or simply the last device's
+  settings offered again;
+- which settings a template must never carry (anything device-specific, and
+  anything identity-bearing);
+- how a template applies to a device that does not support every setting in
+  it; and
+- whether commissioned devices are recorded locally at that point, which is
+  the only reason the current design would need a durable device list.
+
 ## Names and terminology to validate
 
 Test these labels with users:

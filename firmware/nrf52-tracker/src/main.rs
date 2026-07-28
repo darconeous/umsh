@@ -88,7 +88,7 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 // `super::<module>` paths inside `mod firmware` resolve unchanged. Gated to the
 // firmware target because the host build compiles `mod firmware` out entirely.
 #[cfg(target_os = "none")]
-use umsh_ulcp_runtime::{ble_security, counter_map, duty_gate, radio_mux, transport_policy};
+use umsh_ulcp_runtime::{ble_security, radio_mux, transport_policy};
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
 #[cfg(target_os = "none")]
@@ -172,6 +172,7 @@ mod firmware {
     use nrf_sdc::{self as sdc};
     use static_cell::StaticCell;
     use trouble_host::prelude::*;
+    use trouble_host::gap;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     #[cfg(any(feature = "system-off-techo", feature = "t1000e"))]
@@ -186,14 +187,14 @@ mod firmware {
     use umsh_bsp_techo::display;
     // Board-selected battery BSP module, used only by the shared
     // `cap-battery-saadc` snapshot/load-hint code below.
-    #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
-    use umsh_bsp_t1000e::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-sensecap-solar"))]
     use umsh_bsp_sensecap_solar::power as board_power;
-    use umsh_ulcp::{Status, gatt, hdlc};
-    use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
+    #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
+    use umsh_bsp_t1000e::power as board_power;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    use umsh_ulcp::{Status, gatt, hdlc};
+    use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
 
     /// The ULCP session instantiated with this firmware's crypto
     /// providers (software AES/SHA; Ed25519 comes in only through the
@@ -203,17 +204,16 @@ mod firmware {
     // LoRa completion round trip between fragments without imposing the RAM
     // cost on smaller/default Session users.
     const ULCP_TX_QUEUE_CAPACITY: usize = 8;
-    type Session =
-        umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256, ULCP_TX_QUEUE_CAPACITY>;
+    type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256, ULCP_TX_QUEUE_CAPACITY>;
 
     /// Deterministic CSPRNG for device-identity generation, seeded from
     /// the hardware TRNG at boot: the RNG peripheral itself is owned by
     /// the SoftDevice Controller for the lifetime of the BLE stack.
     type IdentityRng = rand_chacha::ChaCha20Rng;
+    use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
     use umsh_ulcp_runtime::driver::{
-        self, InEvent, InputChannel, DeviceEnv, DeviceRuntime, OutFrame, TransportChannels,
+        self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
     };
-    use umsh_radio_loraphy::{MAX_PAYLOAD, DeviceControl};
     #[cfg(any(feature = "button-techo", feature = "t1000e"))]
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
     #[cfg(feature = "t1000e")]
@@ -253,7 +253,13 @@ mod firmware {
     const BLE_L2CAP_RXQ: u8 = 3;
     /// Nordic's SDC buffer configuration accepts 27..=251 octets.
     const SDC_PACKET_SIZE: u16 = 251;
-    const BLE_VALUE_MAX: usize = 244;
+    /// Largest value the ULCP characteristics accept.
+    ///
+    /// A client may write up to ATT_MTU-3 octets in one request, and the
+    /// packet pool is configured for a 255-octet MTU, so anything smaller
+    /// than 252 here is a size the peer is entitled to send and this device
+    /// would refuse with an invalid-length error.
+    const BLE_VALUE_MAX: usize = 252;
     #[cfg(feature = "board-techo")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-Echo";
     #[cfg(feature = "t1000e")]
@@ -381,13 +387,13 @@ mod firmware {
     type BleStoreMutex = Mutex<ThreadModeRawMutex, BleStore>;
     /// The one MPSL-coordinated flash driver, shared between the BLE
     /// bond/PIN journal and the protocol snapshot journal.
-    type SharedFlash = Mutex<ThreadModeRawMutex, JournalFlash>;
+    pub type SharedFlash = Mutex<ThreadModeRawMutex, JournalFlash>;
 
     /// Local wrapper carrying the `umsh-journal-store` trait impls for
     /// the MPSL-coordinated flash (both trait and driver are foreign
     /// since the journal extraction, so the impls need a local type).
     /// Derefs to the driver for the blocking read paths.
-    struct JournalFlash(nrf_mpsl::Flash<'static>);
+    pub struct JournalFlash(nrf_mpsl::Flash<'static>);
 
     impl core::ops::Deref for JournalFlash {
         type Target = nrf_mpsl::Flash<'static>;
@@ -440,81 +446,11 @@ mod firmware {
         }
     }
 
-    /// Scan a two-page journal's slot range for a fully erased slot.
-    fn erased_journal_slot(
-        flash: &mut JournalFlash,
-        start: u32,
-        end: u32,
-        slot_size: usize,
-    ) -> Option<u32> {
-        let mut address = start;
-        while address < end {
-            let mut erased = true;
-            let mut offset = 0usize;
-            while offset < slot_size {
-                let mut chunk = [0u8; 256];
-                let take = (slot_size - offset).min(chunk.len());
-                match flash.read(address + offset as u32, &mut chunk[..take]) {
-                    Ok(()) if chunk[..take].iter().all(|byte| *byte == 0xff) => {}
-                    Ok(()) => {
-                        erased = false;
-                        break;
-                    }
-                    Err(_) => {
-                        debug_log(format_args!(
-                            "store erased-slot read=FAILED address=0x{address:06x}"
-                        ));
-                        erased = false;
-                        break;
-                    }
-                }
-                offset += take;
-            }
-            if erased {
-                return Some(address);
-            }
-            address += slot_size as u32;
-        }
-        None
-    }
+    impl ble_store::RecordReader for JournalFlash {
+        type Error = ();
 
-    /// Pick the write target for a two-page rotating journal starting at
-    /// `page0`: the next erased slot after the current record, or the
-    /// opposite page after erasing it.
-    async fn journal_write_target(
-        flash: &mut JournalFlash,
-        current: Option<u32>,
-        page0: u32,
-        slot_size: usize,
-    ) -> Result<u32, ()> {
-        let page1 = page0 + ble_store::PAGE_SIZE;
-        let target = if let Some(current) = current {
-            let page = if current < page1 { page0 } else { page1 };
-            erased_journal_slot(
-                flash,
-                current + slot_size as u32,
-                page + ble_store::PAGE_SIZE,
-                slot_size,
-            )
-        } else {
-            erased_journal_slot(flash, page0, page0 + ble_store::PAGE_SIZE, slot_size)
-        };
-        match target {
-            Some(target) => Ok(target),
-            None => {
-                let page = if current.is_some_and(|slot| slot < page1) {
-                    page1
-                } else {
-                    page0
-                };
-                debug_log(format_args!("store erase begin page=0x{page:06x}"));
-                if ble_store::erase_journal_page(flash, page).await.is_err() {
-                    debug_log(format_args!("store erase=FAILED page=0x{page:06x}"));
-                    return Err(());
-                }
-                debug_log(format_args!("store erase=ok page=0x{page:06x}"));
-                Ok(page)
-            }
+        fn read_record(&mut self, address: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            self.read(address, bytes).map_err(|_| ())
         }
     }
 
@@ -567,8 +503,8 @@ mod firmware {
         async fn persist(&mut self, mut snapshot: Snapshot) -> Result<(), ()> {
             snapshot.generation = self.snapshot.generation.wrapping_add(1);
             let mut flash = self.flash.lock().await;
-            let target = journal_write_target(
-                &mut flash,
+            let target = umsh_ulcp_runtime::journal::journal_write_target(
+                &mut *flash,
                 self.slot,
                 ble_store::PAGE0,
                 ble_store::SLOT_SIZE,
@@ -663,157 +599,11 @@ mod firmware {
     }
 
     /// The stored protocol snapshot payload as read at boot.
-    type BootSnapshot = heapless::Vec<u8, { proto_store::MAX_PAYLOAD }>;
+    type BootSnapshot = umsh_ulcp_runtime::journal::BootPayload;
 
-    /// Runtime handle for one full-protocol record journal
-    /// (`proto_store`): the snapshot journal or the device-identity
-    /// journal, selected by its first page. Executes the session's
-    /// durable effects; the session's RAM mirrors are only updated
-    /// through the respond_* completions after these return.
-    struct ProtoStore {
-        flash: &'static SharedFlash,
-        /// First page of this journal's two-page rotation.
-        page0: u32,
-        generation: u32,
-        slot: Option<u32>,
-        /// Oldest generation already handed to the boot restore. Only
-        /// the snapshot-journal handle uses it, and only while the boot
-        /// path is walking back past a rejected payload.
-        walked_back_to: Option<u32>,
-    }
-
-    impl ProtoStore {
-        async fn mount(shared: &'static SharedFlash, page0: u32) -> (Self, Option<BootSnapshot>) {
-            let mut flash = shared.lock().await;
-            let mut latest: Option<(u32, proto_store::Stored)> = None;
-            for page in [page0, page0 + proto_store::PAGE_SIZE] {
-                let mut address = page;
-                while address < page + proto_store::PAGE_SIZE {
-                    let mut bytes = [0u8; proto_store::SLOT_SIZE];
-                    if flash.read(address, &mut bytes).is_ok() {
-                        latest = proto_store::consider_record(latest, address, &bytes);
-                    }
-                    address += proto_store::SLOT_SIZE as u32;
-                }
-            }
-            drop(flash);
-            // A tombstone is authoritative "nothing saved": older
-            // snapshot records still physically present are void.
-            let (slot, generation, payload) = match latest {
-                Some((slot, stored)) => {
-                    let payload = match stored.record {
-                        proto_store::Record::Snapshot(payload) => Some(payload),
-                        proto_store::Record::Cleared => None,
-                    };
-                    (Some(slot), stored.generation, payload)
-                }
-                None => (None, 0, None),
-            };
-            debug_log(format_args!(
-                "proto-store mount page0=0x{page0:06x} slot={:?} generation={} payload={}",
-                slot,
-                generation,
-                payload.as_ref().map_or(0, |payload| payload.len()),
-            ));
-            (
-                Self {
-                    flash: shared,
-                    page0,
-                    generation,
-                    slot,
-                    walked_back_to: Some(generation),
-                },
-                payload,
-            )
-        }
-
-        /// Copy the newest committed snapshot record strictly older than
-        /// the last one handed out into `out`, for the boot path's
-        /// walk-back past a payload the session rejected.
-        ///
-        /// Re-scans rather than retaining a runner-up at mount, so the
-        /// mount path never buffers a second copy; the scan is only ever
-        /// paid on a boot that already failed to restore. A tombstone
-        /// ends the walk: it asserts "nothing saved", and older records
-        /// physically behind it are void.
-        async fn older_snapshot(&mut self, out: &mut [u8]) -> Option<usize> {
-            let newer_than = self.walked_back_to?;
-            let mut flash = self.flash.lock().await;
-            let mut latest: Option<(u32, proto_store::Stored)> = None;
-            for page in [self.page0, self.page0 + proto_store::PAGE_SIZE] {
-                let mut address = page;
-                while address < page + proto_store::PAGE_SIZE {
-                    let mut bytes = [0u8; proto_store::SLOT_SIZE];
-                    if flash.read(address, &mut bytes).is_ok() {
-                        latest =
-                            proto_store::consider_older_record(latest, address, &bytes, newer_than);
-                    }
-                    address += proto_store::SLOT_SIZE as u32;
-                }
-            }
-            drop(flash);
-            let (_, stored) = latest?;
-            self.walked_back_to = Some(stored.generation);
-            let proto_store::Record::Snapshot(payload) = stored.record else {
-                debug_log(format_args!("proto-store walk-back hit=tombstone"));
-                self.walked_back_to = None;
-                return None;
-            };
-            debug_log(format_args!(
-                "proto-store walk-back generation={} payload={}",
-                stored.generation,
-                payload.len(),
-            ));
-            let len = payload.len().min(out.len());
-            out[..len].copy_from_slice(&payload[..len]);
-            (len == payload.len()).then_some(len)
-        }
-
-        async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-            if payload.len() > proto_store::MAX_PAYLOAD {
-                return Err(());
-            }
-            self.write(proto_store::RecordRef::Snapshot(payload)).await
-        }
-
-        /// The clear transaction is one committed tombstone record: if
-        /// its write fails or is interrupted, the previous snapshot
-        /// remains authoritative and CMD_CLEAR reports failure. Pages
-        /// are never erased as part of a clear — stale records are
-        /// reclaimed by the ordinary rotation.
-        async fn clear(&mut self) -> Result<(), ()> {
-            self.write(proto_store::RecordRef::Cleared).await
-        }
-
-        // The record travels by reference down to the single slot-image
-        // encode: this future is held across awaits in several task
-        // pools, and every avoided MAX_PAYLOAD copy is RAM off each of
-        // them.
-        async fn write(&mut self, record: proto_store::RecordRef<'_>) -> Result<(), ()> {
-            let generation = self.generation.wrapping_add(1);
-            let mut flash = self.flash.lock().await;
-            let target =
-                journal_write_target(&mut flash, self.slot, self.page0, proto_store::SLOT_SIZE)
-                    .await?;
-            match proto_store::write_record(&mut *flash, target, generation, record).await {
-                Ok(()) => {
-                    debug_log(format_args!(
-                        "proto-store commit generation={generation} slot=0x{target:06x} cleared={}",
-                        matches!(record, proto_store::RecordRef::Cleared),
-                    ));
-                    self.generation = generation;
-                    self.slot = Some(target);
-                    Ok(())
-                }
-                Err(_) => {
-                    debug_log(format_args!(
-                        "proto-store write=FAILED target=0x{target:06x}"
-                    ));
-                    Err(())
-                }
-            }
-        }
-    }
+    /// This board's journal handle: the shared two-page rotating store
+    /// bound to the MPSL-coordinated flash.
+    type ProtoStore = umsh_ulcp_runtime::journal::ProtoStore<ThreadModeRawMutex, JournalFlash>;
 
     #[cfg(feature = "t1000e")]
     fn mapped_ux_preferences() -> Option<umsh_ux_tracker::state::UserPreferences> {
@@ -868,23 +658,24 @@ mod firmware {
 
     // ─── Device-node counter persistence (plan increment 4) ─────────────────
 
-    /// RAM image + journal handle behind the device node's counter
-    /// store. `store` upserts the map; a dirty `flush` writes the whole
-    /// map as one record in the counter journal (`COUNTER_PAGE0`).
-    ///
-    /// Lives in a `StaticCell` (not a plain static) because the journal
-    /// handle carries the MPSL flash reference, which is deliberately
-    /// only ever shared through the cell pattern.
-    pub struct NodeCounters {
-        map: super::counter_map::CounterMap,
-        dirty: bool,
-        /// Mounted counter journal; `None` only between
-        /// [`init_node_counters`] and the boot-time
-        /// [`mount_node_counters`], where flushes stay RAM-only.
-        journal: Option<ProtoStore>,
-    }
+    // ─── Device-node counter persistence ────────────────────────────────
 
-    pub type NodeCountersMutex = Mutex<ThreadModeRawMutex, NodeCounters>;
+    /// The device node's persisted frame counters, bound to this board's
+    /// flash. The map, the journal handle, and the `CounterStore` impl
+    /// are shared (`umsh_ulcp_runtime::node_counters`); only the flash
+    /// type and the journal's page are this board's.
+    pub type NodeCounters =
+        umsh_ulcp_runtime::node_counters::NodeCounters<ThreadModeRawMutex, JournalFlash>;
+    pub type NodeCountersMutex = umsh_ulcp_runtime::node_counters::NodeCountersMutex<
+        ThreadModeRawMutex,
+        ThreadModeRawMutex,
+        JournalFlash,
+    >;
+    pub type NodeCounterStore = umsh_ulcp_runtime::node_counters::NodeCounterStore<
+        ThreadModeRawMutex,
+        ThreadModeRawMutex,
+        JournalFlash,
+    >;
 
     static NODE_COUNTERS_CELL: StaticCell<NodeCountersMutex> = StaticCell::new();
 
@@ -892,11 +683,7 @@ mod firmware {
     /// once, early in boot; the BLE image attaches the journal with
     /// [`mount_node_counters`] before the device node comes up.
     fn init_node_counters() -> &'static NodeCountersMutex {
-        NODE_COUNTERS_CELL.init(Mutex::new(NodeCounters {
-            map: super::counter_map::CounterMap::new(),
-            dirty: false,
-            journal: None,
-        }))
+        NODE_COUNTERS_CELL.init(Mutex::new(NodeCounters::new()))
     }
 
     /// Mount the counter journal and load the persisted map.
@@ -904,86 +691,15 @@ mod firmware {
         counters: &'static NodeCountersMutex,
         flash: &'static SharedFlash,
     ) {
-        let (journal, payload) = ProtoStore::mount(flash, proto_store::COUNTER_PAGE0).await;
-        let map = payload
-            .as_deref()
-            .and_then(super::counter_map::CounterMap::decode)
-            .unwrap_or_default();
-        debug_log(format_args!("counter journal: {} entries", map.len()));
-        let mut counters = counters.lock().await;
-        counters.map = map;
-        counters.journal = Some(journal);
+        umsh_ulcp_runtime::node_counters::mount(counters, flash, proto_store::COUNTER_PAGE0).await
     }
 
-    /// Drop a previous identity's persisted TX boundary (its context is
-    /// the raw 32-byte public key; per-peer RX boundaries are keyed by
-    /// the *peer* key and stay meaningful across identity replacement).
-    /// The next dirty flush persists the pruned map.
     async fn prune_stale_tx_counters(counters: &'static NodeCountersMutex, public_key: &[u8; 32]) {
-        let mut counters = counters.lock().await;
-        if counters.map.prune_tx_except(public_key) {
-            counters.dirty = true;
-        }
+        umsh_ulcp_runtime::node_counters::prune_stale_tx(counters, public_key).await
     }
 
-    /// Drop all persisted device-node counters (factory clear). The
-    /// RAM map clears unconditionally; a failed tombstone write
-    /// self-heals because the map is left dirty and the next flush
-    /// rewrites the (now empty) state.
     async fn clear_node_counters(counters: &'static NodeCountersMutex) {
-        let mut counters = counters.lock().await;
-        counters.map.clear();
-        counters.dirty = match counters.journal.as_mut() {
-            Some(journal) => journal.clear().await.is_err(),
-            None => false,
-        };
-    }
-
-    /// The device node's `umsh_hal::CounterStore`. The MAC batches its
-    /// calls (one flush per `COUNTER_PERSIST_BLOCK_SIZE` secured
-    /// frames), so each flush costs one journal record write.
-    pub struct NodeCounterStore {
-        counters: &'static NodeCountersMutex,
-    }
-
-    impl NodeCounterStore {
-        pub fn new(counters: &'static NodeCountersMutex) -> Self {
-            Self { counters }
-        }
-    }
-
-    impl umsh_hal::CounterStore for NodeCounterStore {
-        type Error = ();
-
-        async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-            // Missing entries read as 0, the MAC's "no boundary
-            // persisted yet" sentinel.
-            Ok(self.counters.lock().await.map.get(context).unwrap_or(0))
-        }
-
-        async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-            let mut counters = self.counters.lock().await;
-            let changed = counters.map.set(context, value).map_err(|_| ())?;
-            counters.dirty |= changed;
-            Ok(())
-        }
-
-        async fn flush(&self) -> Result<(), Self::Error> {
-            let mut counters = self.counters.lock().await;
-            if !counters.dirty {
-                return Ok(());
-            }
-            let mut payload = [0u8; super::counter_map::ENCODED_MAX];
-            let len = counters.map.encode(&mut payload).ok_or(())?;
-            match counters.journal.as_mut() {
-                Some(journal) => journal.persist(&payload[..len]).await?,
-                // no-ble: RAM only. Report success so the MAC marks
-                // the boundary instead of re-flushing every cycle.
-                None => {}
-            }
-            counters.dirty = false;
-            Ok(())
-        }
+        umsh_ulcp_runtime::node_counters::clear(counters).await
     }
 
     fn stored_bond(bond: &BondInformation) -> StoredBond {
@@ -1081,6 +797,29 @@ mod firmware {
     }
     static DEVICE_NAME_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
+    /// The GAP Device Name value that clients may hold a stale copy of.
+    ///
+    /// Set when the device is renamed and cleared once a Service Changed
+    /// indication has gone out. A rename that happens with no one connected
+    /// is therefore announced to the next client instead of being lost.
+    /// Known gap: a second bonded peer that is absent for the rename *and*
+    /// for the connection that consumes this flag keeps its cached name
+    /// until it reads the characteristic again. Closing that needs the
+    /// pending-indication state to live per bond, in the bond store.
+    static GATT_NAME_STALE: AtomicBool = AtomicBool::new(false);
+
+    /// Whether a device name has been published since boot.
+    ///
+    /// The first publication is the saved name being restored as the radio
+    /// configuration is applied, not a rename. Treating it as one would mark
+    /// the database stale on every power cycle and make every bonded peer
+    /// re-discover on its next connection.
+    static DEVICE_NAME_PUBLISHED: AtomicBool = AtomicBool::new(false);
+
+    /// GAP's own bound on the Device Name value, which is shorter than the
+    /// ULCP device-name limit.
+    type GapDeviceName = heapless09::Vec<u8, { gap::DEVICE_NAME_MAX_LENGTH }>;
+
     /// The platform battery source behind `Effect::SampleBattery`: one
     /// async sample operation per board profile, returning the fields
     /// that board's `SessionConfig::battery` advertises.
@@ -1094,12 +833,10 @@ mod firmware {
     async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
         use umsh_ux_tracker::battery::BatteryState;
-        let sample = embassy_time::with_timeout(
-            Duration::from_secs(2),
-            board_power::sample_battery(),
-        )
-        .await
-        .map_err(|_| ())?;
+        let sample =
+            embassy_time::with_timeout(Duration::from_secs(2), board_power::sample_battery())
+                .await
+                .map_err(|_| ())?;
         // Low and critical are UX presentation policy, not charge
         // states; all three unpowered classifications are Discharging.
         let charge_state = match sample.state {
@@ -1354,9 +1091,7 @@ mod firmware {
         };
         match stack.remove_bond_information(evicted_info.identity) {
             Ok(()) => debug_log(format_args!("lru bond evict remove=ok")),
-            Err(error) => {
-                debug_log(format_args!("lru bond evict remove=FAILED error={error:?}"))
-            }
+            Err(error) => debug_log(format_args!("lru bond evict remove=FAILED error={error:?}")),
         }
     }
 
@@ -1474,7 +1209,7 @@ mod firmware {
             const NV_REGION_END: u32 = 0x000F_4000;
             debug_log(format_args!("FACTORY RESET: erasing NV region + reboot"));
             {
-                let mut flash = self.proto_store.flash.lock().await;
+                let mut flash = self.proto_store.flash().lock().await;
                 let mut page = NV_REGION_START;
                 while page < NV_REGION_END {
                     // Best-effort: a page that fails to erase is superseded
@@ -1507,8 +1242,11 @@ mod firmware {
             }
             current.clear();
             if current.extend_from_slice(bytes).is_ok() {
+                if DEVICE_NAME_PUBLISHED.swap(true, Ordering::AcqRel) {
+                    GATT_NAME_STALE.store(true, Ordering::Release);
+                }
                 DEVICE_NAME_CHANGED.signal(());
-                super::device_node::NODE_NAME_CHANGED.signal(());
+                super::device_node::set_device_name(bytes);
             }
         }
 
@@ -1714,6 +1452,9 @@ mod firmware {
         server: &'server UlcpServer<'values>,
     ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
         const SERVICE_UUID_LE: [u8; 16] = gatt::SERVICE_UUID.to_le_bytes();
+        // The advertisement and the GAP characteristic must agree, and this
+        // is the one place both are known to be about to matter.
+        sync_gap_device_name(server).await;
         let name = {
             let configured = DEVICE_NAME.lock().await;
             if configured.is_empty() {
@@ -1799,11 +1540,7 @@ mod firmware {
             value
                 .extend_from_slice(segment.payload())
                 .map_err(|_| trouble_host::Error::InsufficientSpace)?;
-            server
-                .ulcp
-                .frame_out
-                .notify(conn, &value, false)
-                .await?;
+            server.ulcp.frame_out.notify(conn, &value, false).await?;
         }
         if segments.stale() {
             debug_log(format_args!(
@@ -1811,6 +1548,66 @@ mod firmware {
             ));
         }
         Ok(())
+    }
+
+    /// A link-level signal the connection loop reacts to, other than a GATT
+    /// event or an outbound frame.
+    enum LinkSignal {
+        AdvertisingPolicy,
+        DeviceName,
+    }
+
+    /// The GAP Device Name value for `name`, truncated on a UTF-8 boundary.
+    ///
+    /// The characteristic is inline-stored and therefore shorter than the
+    /// ULCP name limit; GAP gets a prefix rather than the full name, exactly
+    /// as the advertisement does.
+    fn gap_device_name(name: &[u8]) -> GapDeviceName {
+        let len = utf8_prefix_len(name, gap::DEVICE_NAME_MAX_LENGTH);
+        GapDeviceName::from_slice(&name[..len]).unwrap_or_default()
+    }
+
+    /// Publish the configured name on the GAP Device Name characteristic.
+    ///
+    /// Called before advertising and after a rename, so the value a client
+    /// reads is the current name rather than whatever the device booted
+    /// with.
+    async fn sync_gap_device_name(server: &UlcpServer<'_>) {
+        let Some(gap) = server.gap.as_ref() else { return };
+        let name = device_name_snapshot().await;
+        if server.set(&gap.device_name, &gap_device_name(name.as_slice())).is_err() {
+            debug_log(format_args!("gap device-name update FAILED"));
+        }
+    }
+
+    /// Tell a connected client that its cached attributes are stale.
+    ///
+    /// A bonded iOS client caches the GAP device name against the bond and
+    /// will keep showing the old one — in Settings › Bluetooth and to every
+    /// app on the phone — until a Service Changed indication makes it
+    /// re-read. The indicated range covers the whole table, because the
+    /// point is to invalidate a cache rather than to describe a structural
+    /// change. Clients that never subscribed are skipped inside trouble.
+    async fn announce_gatt_change(
+        server: &UlcpServer<'_>,
+        conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    ) {
+        let Some(gap) = server.gap.as_ref() else { return };
+        // A client that has not subscribed cannot be told anything, and
+        // `indicate` reports that case as success. Checking first keeps the
+        // stale marker set so the next connection tries again.
+        if !gap.service_changed.should_indicate(conn) {
+            debug_log(format_args!("service-changed not subscribed; deferring"));
+            return;
+        }
+        const WHOLE_TABLE: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
+        match gap.service_changed.indicate(conn, &WHOLE_TABLE, false).await {
+            Ok(()) => {
+                GATT_NAME_STALE.store(false, Ordering::Release);
+                debug_log(format_args!("service-changed indicated"));
+            }
+            Err(error) => debug_log(format_args!("service-changed indicate error={error:?}")),
+        }
     }
 
     async fn gatt_connection<C: Controller, P: PacketPool>(
@@ -1866,8 +1663,16 @@ mod firmware {
                         deadline.as_mut().await
                     }
                 };
+                // The two link-level signals share one arm so the GATT event
+                // match below keeps its shape.
+                let link_signal = async {
+                    match select(ADV_POLICY_CHANGED.wait(), DEVICE_NAME_CHANGED.wait()).await {
+                        Either::First(()) => LinkSignal::AdvertisingPolicy,
+                        Either::Second(()) => LinkSignal::DeviceName,
+                    }
+                };
                 match select(
-                    select3(conn.next(), OUT_CH.ble.receive(), ADV_POLICY_CHANGED.wait()),
+                    select3(conn.next(), OUT_CH.ble.receive(), link_signal),
                     grace_guard,
                 )
                 .await
@@ -1988,6 +1793,13 @@ mod firmware {
                         publish_pairing_runtime(pairing_runtime().bonded_reconnect());
                         BLE_LED_MODE.store(0, Ordering::Release);
                         apply_pairing_gate(stack);
+                    }
+                    // A bonded client caches attributes across connections,
+                    // so a rename it missed has to be announced now. Only a
+                    // client that has subscribed to Service Changed — which
+                    // it does after encrypting — can be told.
+                    if GATT_NAME_STALE.load(Ordering::Acquire) {
+                        announce_gatt_change(server, conn).await;
                     }
                 }
                 Either3::First(GattConnectionEvent::PairingFailed(error)) => {
@@ -2261,7 +2073,7 @@ mod firmware {
                         ));
                     }
                 }
-                Either3::Third(()) => {
+                Either3::Third(LinkSignal::AdvertisingPolicy) => {
                     if !ADV_ALLOWED.load(Ordering::Acquire) {
                         debug_log(format_args!(
                             "disconnect initiated by transport arbitration"
@@ -2269,6 +2081,10 @@ mod firmware {
                         conn.raw().disconnect();
                         break;
                     }
+                }
+                Either3::Third(LinkSignal::DeviceName) => {
+                    sync_gap_device_name(server).await;
+                    announce_gatt_change(server, conn).await;
                 }
             }
         }
@@ -2406,11 +2222,10 @@ mod firmware {
         let store = BleStoreMutex::new(store);
         let runner = stack.runner();
         let mut peripheral = stack.peripheral();
-        let server_result =
-            UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-                name: default_device_name(),
-                appearance: &appearance::computer::GENERIC_COMPUTER,
-            }));
+        let server_result = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+            name: default_device_name(),
+            appearance: &appearance::computer::GENERIC_COMPUTER,
+        }));
         let server = match server_result {
             Ok(server) => {
                 debug_log(format_args!("gatt server construction=ok"));
@@ -2994,9 +2809,10 @@ mod firmware {
         const HOLD_OFF: Duration = Duration::from_millis(1500);
         const DEBOUNCE: Duration = Duration::from_millis(20);
 
-        // If PWR is still held from the System OFF wake-press that just
-        // booted us, ignore it through release so the wake isn't misread as
-        // an immediate power-off hold.
+        // If PWR is still held when we boot, ignore it through release so the
+        // press that started us is not misread as an immediate power-off hold.
+        // (The force-pairing ceremony is on USR/P1.07, not this button, so it
+        // never reaches here.)
         if button.is_low() {
             button.wait_for_high().await;
             Timer::after(DEBOUNCE).await;
@@ -3100,6 +2916,11 @@ mod firmware {
         //  5 MPSL ready             12 advertising loop reached
         //  6 bond store ready       13 usb.run() first polled
         //  7 SDC built
+        // Point the shared runtime's log seam at this board's debug
+        // channel, before anything shared runs. `debug_log` itself
+        // buffers until a transport is up, so installing it this early
+        // costs nothing and means the journal mount lines are not lost.
+        umsh_ulcp_runtime::log::set_debug_log(debug_log);
         let (previous_crumb, previous_beats) = super::panic::breadcrumb_take();
         PREV_BOOT_CRUMB.store(previous_crumb, Ordering::Release);
         PREV_BOOT_BEATS.store(previous_beats, Ordering::Release);
@@ -3305,6 +3126,56 @@ mod firmware {
         };
         #[cfg(feature = "t1000e")]
         FORCE_PAIRING_AT_BOOT.store(force_pairing_at_boot, Ordering::Release);
+
+        // SenseCAP Solar: the same physical-presence ceremony, carried by the
+        // secondary user button — enclosure "USR", P1.07, active-low.
+        //
+        // It cannot live on the power button (enclosure "PWR", P1.01): any
+        // press of PWR while the node is in System OFF enters the stock
+        // bootloader's DFU mode unconditionally — duration is irrelevant, a
+        // bare tap does it — so that press never reaches this code. Escaping
+        // that needs a different bootloader. The same fact makes USR the only
+        // button that actually powers the node back on, which is what makes it
+        // the natural carrier for a hold-through-power-on gesture.
+        //
+        // A wake press is how a powered-off node is started, so the level at
+        // t=0 cannot distinguish the ceremony from an ordinary power-on — only
+        // a press still held after one second is deliberate. The button is
+        // claimed here rather than later because FORCE_PAIRING_AT_BOOT must be
+        // set before the BLE store seeds PAIRING_MODE.
+        #[cfg(feature = "power-button")]
+        let mut usr_button = Input::new(p.P1_07, Pull::Up);
+        #[cfg(feature = "power-button")]
+        let mut pwr_led = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+        #[cfg(feature = "power-button")]
+        cortex_m::asm::delay(640_000);
+        #[cfg(feature = "power-button")]
+        {
+            let force_pairing_at_boot = if usr_button.is_low() {
+                match select(usr_button.wait_for_high(), Timer::after_secs(1)).await {
+                    Either::First(()) => false,
+                    Either::Second(()) => usr_button.is_low(),
+                }
+            } else {
+                false
+            };
+            FORCE_PAIRING_AT_BOOT.store(force_pairing_at_boot, Ordering::Release);
+            // Acknowledge the accepted ceremony on LED_A (white, active-high)
+            // the instant the threshold is crossed, while the user is still
+            // holding. Without this the only feedback is the LED_B pairing
+            // blink, which is indistinguishable from an unbonded node's — so a
+            // gesture that silently missed looked identical to one that
+            // worked. Two blinks, deliberately distinct from the three that
+            // acknowledge hold-to-power-off. Runs before the WDT is armed.
+            if force_pairing_at_boot {
+                for _ in 0..2 {
+                    pwr_led.set_high();
+                    Timer::after_millis(120).await;
+                    pwr_led.set_low();
+                    Timer::after_millis(120).await;
+                }
+            }
+        }
 
         // WDT: 8 s timeout, petted by the heartbeat task every ~2 s.
         let mut wdt_config = WdtConfig::default();
@@ -3611,7 +3482,9 @@ mod firmware {
         };
         super::panic::breadcrumb_mark(5);
         static SHARED_FLASH: StaticCell<SharedFlash> = StaticCell::new();
-        let flash = SHARED_FLASH.init(Mutex::new(JournalFlash(nrf_mpsl::Flash::take(mpsl, p.NVMC))));
+        let flash = SHARED_FLASH.init(Mutex::new(JournalFlash(nrf_mpsl::Flash::take(
+            mpsl, p.NVMC,
+        ))));
         // Mount the protocol journals before the ULCP session starts: a
         // stored snapshot must be restored (and the PHY re-applied) and
         // the persisted device identity installed before the first host
@@ -3923,14 +3796,15 @@ mod firmware {
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
         }
 
-        // Dedicated power button (P1.01) + System OFF teardown. LED_A
-        // (P0.15, white) is the power-off acknowledgement blinker; the
-        // heartbeat keeps LED_B (P0.19). P1.01 is the physical power button
-        // (MeshCore's PIN_USER_BTN); P1.07 is the secondary user button.
+        // Dedicated power button (enclosure "PWR", P1.01) + System OFF
+        // teardown. LED_A (P0.15, white) is the power-off acknowledgement
+        // blinker, claimed early because the force-pairing ceremony also
+        // blinks it; the heartbeat keeps LED_B (P0.19). P1.01 is the physical
+        // power button (MeshCore's PIN_USER_BTN); P1.07 (enclosure "USR") is
+        // the secondary user button and carries the force-pairing gesture.
         #[cfg(feature = "power-button")]
         {
             let pwr_button = Input::new(p.P1_01, Pull::Up);
-            let pwr_led = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
             spawner.spawn(sensecap_pwr_button_task(pwr_button, pwr_led).unwrap());
             spawner.spawn(sensecap_shutdown_task().unwrap());
         }

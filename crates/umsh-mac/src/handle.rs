@@ -187,6 +187,38 @@ impl<
         self.mac.borrow_mut().await.repeater_config_mut().enabled = enabled;
     }
 
+    /// Replace the forwarding policy applied to flood-forwarded frames.
+    ///
+    /// All four values are set together, since they are configured together
+    /// by whoever administers the repeater; passing an empty `regions` slice
+    /// or `None` clears that gate rather than leaving the previous value in
+    /// place. The master `enabled` switch, the flood-contention tuning, and
+    /// the amateur-radio fields are deliberately untouched — those are
+    /// separate concerns with their own accessors.
+    ///
+    /// Region codes beyond the configured capacity are ignored; callers that
+    /// need to know should check the returned count of codes actually stored.
+    pub async fn set_repeater_policy(
+        &self,
+        regions: &[[u8; 2]],
+        default_region: Option<[u8; 2]>,
+        min_rssi: Option<i16>,
+        min_snr: Option<i8>,
+    ) -> usize {
+        let mut mac = self.mac.borrow_mut().await;
+        let config = mac.repeater_config_mut();
+        config.regions.clear();
+        for region in regions {
+            if config.regions.push(*region).is_err() {
+                break;
+            }
+        }
+        config.default_region = default_region;
+        config.min_rssi = min_rssi;
+        config.min_snr = min_snr;
+        config.regions.len()
+    }
+
     /// Installs pairwise transport keys for one local identity and remote peer.
     ///
     /// This is a crate-internal method. External callers should use the

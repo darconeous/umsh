@@ -45,12 +45,16 @@ mod builder;
 mod error;
 pub mod options;
 mod packet;
+#[cfg(feature = "region-codec")]
+mod region;
 
 pub use builder::{
     BlindUnicastBuilder, BroadcastBuilder, MacAckBuilder, MulticastBuilder, PacketBuilder,
     UnicastBuilder, state,
 };
 pub use error::{AddressParseError, BuildError, EncodeError, ParseError};
+#[cfg(feature = "region-codec")]
+pub use region::{RegionCode, RegionCodeError};
 pub use packet::{
     ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
     PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,

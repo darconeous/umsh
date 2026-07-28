@@ -118,7 +118,8 @@ private struct RadioPickerRow: View {
     }
 }
 
-private struct SignalStrengthIcon: View {
+/// Three-bar signal strength, shared by every list of nearby devices.
+struct SignalStrengthIcon: View {
     let bars: Int
     let hasSignal: Bool
 

@@ -48,7 +48,7 @@ use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, select, select3};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
@@ -75,6 +75,7 @@ use esp_println::println;
 use esp_radio::ble::controller::BleConnector;
 use lora_phy::LoRa;
 use static_cell::StaticCell;
+use trouble_host::gap;
 use trouble_host::prelude::*;
 
 use umsh_bsp_esp32::flash_store;
@@ -83,16 +84,16 @@ use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::radio as board_radio;
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
+use umsh_crypto::CryptoEngine;
+use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
 use umsh_ulcp::{Status, gatt, hdlc};
 use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
 use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use umsh_ulcp_runtime::driver::{
-    self, InEvent, InputChannel, DeviceEnv, DeviceRuntime, OutFrame, TransportChannels,
+    self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
 };
-use umsh_ulcp_runtime::{counter_map, radio_mux, transport_policy};
-use umsh_crypto::CryptoEngine;
-use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-use umsh_radio_loraphy::{MAX_PAYLOAD, DeviceControl};
+use umsh_ulcp_runtime::{radio_mux, transport_policy};
 use umsh_ux_tracker::battery::soc_from_ocv;
 
 use transport_policy::{Transport, generation_checked};
@@ -117,7 +118,13 @@ const BLE_L2CAP_CHANNELS_MAX: usize = 2;
 /// HCI command/event slot count for the external controller.
 const HCI_SLOTS: usize = 4;
 /// Max GATT value payload the ULCP characteristics carry.
-const BLE_VALUE_MAX: usize = 244;
+/// Largest value the ULCP characteristics accept.
+///
+/// A client may write up to ATT_MTU-3 octets in one request, and the
+/// packet pool is configured for a 255-octet MTU, so anything smaller
+/// than 252 here is a size the peer is entitled to send and this device
+/// would refuse with an invalid-length error.
+const BLE_VALUE_MAX: usize = 252;
 
 const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V3";
 
@@ -274,6 +281,80 @@ type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
 static DEVICE_NAME: Mutex<CriticalSectionRawMutex, DeviceName> = Mutex::new(DeviceName::new());
 static DEVICE_NAME_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// The GAP Device Name value that clients may hold a stale copy of.
+///
+/// Set when the device is renamed and cleared once a Service Changed
+/// indication has gone out, so a rename made with no one connected is
+/// announced to the next client instead of being lost. Known gap: a second
+/// bonded peer absent for both the rename and the connection that consumes
+/// this flag keeps its cached name until it reads the characteristic again.
+static GATT_NAME_STALE: AtomicBool = AtomicBool::new(false);
+
+/// Whether a device name has been published since boot.
+///
+/// The first publication is the saved name being restored as the radio
+/// configuration is applied, not a rename. Treating it as one would mark the
+/// database stale on every power cycle and make every bonded peer
+/// re-discover on its next connection.
+static DEVICE_NAME_PUBLISHED: AtomicBool = AtomicBool::new(false);
+
+/// GAP's own bound on the Device Name value, shorter than the ULCP limit.
+type GapDeviceName = heapless09::Vec<u8, { gap::DEVICE_NAME_MAX_LENGTH }>;
+
+/// A link-level signal the connection loop reacts to, other than a GATT
+/// event or an outbound frame.
+enum LinkSignal {
+    AdvertisingPolicy,
+    DeviceName,
+}
+
+/// The GAP Device Name value for `name`, truncated on a UTF-8 boundary.
+fn gap_device_name(name: &[u8]) -> GapDeviceName {
+    let len = utf8_prefix_len(name, gap::DEVICE_NAME_MAX_LENGTH);
+    GapDeviceName::from_slice(&name[..len]).unwrap_or_default()
+}
+
+/// Publish the configured name on the GAP Device Name characteristic, so a
+/// client reads the current name rather than the one the device booted with.
+async fn sync_gap_device_name(server: &UlcpServer<'_>) {
+    let Some(gap) = server.gap.as_ref() else { return };
+    let name = device_name_snapshot().await;
+    if server
+        .set(&gap.device_name, &gap_device_name(name.as_slice()))
+        .is_err()
+    {
+        debug_log(format_args!("gap device-name update FAILED"));
+    }
+}
+
+/// Tell a connected client that its cached attributes are stale.
+///
+/// A bonded iOS client caches the GAP device name against the bond and keeps
+/// showing the old one until a Service Changed indication makes it re-read.
+/// The indicated range covers the whole table because the point is to
+/// invalidate a cache, not to describe a structural change.
+async fn announce_gatt_change(
+    server: &UlcpServer<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+) {
+    let Some(gap) = server.gap.as_ref() else { return };
+    // A client that has not subscribed cannot be told anything, and
+    // `indicate` reports that case as success. Checking first keeps the
+    // stale marker set so the next connection tries again.
+    if !gap.service_changed.should_indicate(conn) {
+        debug_log(format_args!("service-changed not subscribed; deferring"));
+        return;
+    }
+    const WHOLE_TABLE: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
+    match gap.service_changed.indicate(conn, &WHOLE_TABLE, false).await {
+        Ok(()) => {
+            GATT_NAME_STALE.store(false, Ordering::Release);
+            debug_log(format_args!("service-changed indicated"));
+        }
+        Err(error) => debug_log(format_args!("service-changed indicate error={error:?}")),
+    }
+}
+
 /// Snapshot the live device name for the device node's advertisements.
 /// Falls back to the (eFuse-suffixed) default until the session
 /// publishes a name at boot.
@@ -352,19 +433,22 @@ const WIRE_MAX: usize = hdlc::max_encoded_len(driver::FRAME_OUT_MAX);
 
 // ─── Device-node counter persistence ─────────────────────────────────────
 
-/// RAM image + journal handle behind the device node's counter store.
-/// `store` upserts the map; a dirty `flush` writes the whole map as one
-/// record in the counter journal.
-pub struct NodeCounters {
-    map: counter_map::CounterMap,
-    dirty: bool,
-    /// Mounted counter journal; `None` only between
-    /// [`init_node_counters`] and the boot-time
-    /// [`mount_node_counters`], where flushes stay RAM-only.
-    journal: Option<ProtoStore>,
-}
-
-pub type NodeCountersMutex = Mutex<CriticalSectionRawMutex, NodeCounters>;
+/// The device node's persisted frame counters, bound to this board's
+/// flash. The map, the journal handle, and the `CounterStore` impl are
+/// shared (`umsh_ulcp_runtime::node_counters`); only the mutex kinds,
+/// the flash type, and the journal's page are this board's.
+pub type NodeCounters =
+    umsh_ulcp_runtime::node_counters::NodeCounters<NoopRawMutex, ble_store::JournalFlash>;
+pub type NodeCountersMutex = umsh_ulcp_runtime::node_counters::NodeCountersMutex<
+    CriticalSectionRawMutex,
+    NoopRawMutex,
+    ble_store::JournalFlash,
+>;
+pub type NodeCounterStore = umsh_ulcp_runtime::node_counters::NodeCounterStore<
+    CriticalSectionRawMutex,
+    NoopRawMutex,
+    ble_store::JournalFlash,
+>;
 
 static NODE_COUNTERS_CELL: StaticCell<NodeCountersMutex> = StaticCell::new();
 
@@ -372,11 +456,7 @@ static NODE_COUNTERS_CELL: StaticCell<NodeCountersMutex> = StaticCell::new();
 /// once, early in boot; the journal attaches with
 /// [`mount_node_counters`] before the device node comes up.
 fn init_node_counters() -> &'static NodeCountersMutex {
-    NODE_COUNTERS_CELL.init(Mutex::new(NodeCounters {
-        map: counter_map::CounterMap::new(),
-        dirty: false,
-        journal: None,
-    }))
+    NODE_COUNTERS_CELL.init(Mutex::new(NodeCounters::new()))
 }
 
 /// Mount the counter journal and load the persisted map.
@@ -385,84 +465,15 @@ async fn mount_node_counters(
     flash: &'static ble_store::SharedFlash,
     page0: u32,
 ) {
-    let (journal, payload) = ProtoStore::mount(flash, page0).await;
-    let map = payload
-        .as_deref()
-        .and_then(counter_map::CounterMap::decode)
-        .unwrap_or_default();
-    debug_log(format_args!("counter journal: {} entries", map.len()));
-    let mut counters = counters.lock().await;
-    counters.map = map;
-    counters.journal = Some(journal);
+    umsh_ulcp_runtime::node_counters::mount(counters, flash, page0).await
 }
 
-/// Drop a previous identity's persisted TX boundary (its context is
-/// the raw 32-byte public key; per-peer RX boundaries are keyed by the
-/// *peer* key and stay meaningful across identity replacement). The
-/// next dirty flush persists the pruned map.
 async fn prune_stale_tx_counters(counters: &'static NodeCountersMutex, public_key: &[u8; 32]) {
-    let mut counters = counters.lock().await;
-    if counters.map.prune_tx_except(public_key) {
-        counters.dirty = true;
-    }
+    umsh_ulcp_runtime::node_counters::prune_stale_tx(counters, public_key).await
 }
 
-/// Drop all persisted device-node counters (factory clear). The RAM
-/// map clears unconditionally; a failed tombstone write self-heals
-/// because the map is left dirty and the next flush rewrites the (now
-/// empty) state.
 async fn clear_node_counters(counters: &'static NodeCountersMutex) {
-    let mut counters = counters.lock().await;
-    counters.map.clear();
-    counters.dirty = match counters.journal.as_mut() {
-        Some(journal) => journal.clear().await.is_err(),
-        None => false,
-    };
-}
-
-/// The device node's `umsh_hal::CounterStore`. The MAC batches its
-/// calls (one flush per `COUNTER_PERSIST_BLOCK_SIZE` secured frames),
-/// so each flush costs one journal record write.
-pub struct NodeCounterStore {
-    counters: &'static NodeCountersMutex,
-}
-
-impl NodeCounterStore {
-    pub fn new(counters: &'static NodeCountersMutex) -> Self {
-        Self { counters }
-    }
-}
-
-impl umsh_hal::CounterStore for NodeCounterStore {
-    type Error = ();
-
-    async fn load(&self, context: &[u8]) -> Result<u32, Self::Error> {
-        // Missing entries read as 0, the MAC's "no boundary persisted
-        // yet" sentinel.
-        Ok(self.counters.lock().await.map.get(context).unwrap_or(0))
-    }
-
-    async fn store(&self, context: &[u8], value: u32) -> Result<(), Self::Error> {
-        let mut counters = self.counters.lock().await;
-        let changed = counters.map.set(context, value).map_err(|_| ())?;
-        counters.dirty |= changed;
-        Ok(())
-    }
-
-    async fn flush(&self) -> Result<(), Self::Error> {
-        let mut counters = self.counters.lock().await;
-        if !counters.dirty {
-            return Ok(());
-        }
-        let mut payload = [0u8; counter_map::ENCODED_MAX];
-        let len = counters.map.encode(&mut payload).ok_or(())?;
-        match counters.journal.as_mut() {
-            Some(journal) => journal.persist(&payload[..len]).await?,
-            None => {}
-        }
-        counters.dirty = false;
-        Ok(())
-    }
+    umsh_ulcp_runtime::node_counters::clear(counters).await
 }
 
 // ─── Battery sampling ────────────────────────────────────────────────────
@@ -684,8 +695,11 @@ impl DeviceEnv for BoardDeviceEnv {
         }
         current.clear();
         if current.extend_from_slice(bytes).is_ok() {
+            if DEVICE_NAME_PUBLISHED.swap(true, Ordering::AcqRel) {
+                GATT_NAME_STALE.store(true, Ordering::Release);
+            }
             DEVICE_NAME_CHANGED.signal(());
-            device_node::NODE_NAME_CHANGED.signal(());
+            device_node::set_device_name(bytes);
             UI_REFRESH.signal(());
         }
     }
@@ -898,11 +912,7 @@ async fn send_ble_frame(
         value
             .extend_from_slice(segment.payload())
             .map_err(|_| trouble_host::Error::InsufficientSpace)?;
-        server
-            .ulcp
-            .frame_out
-            .notify(conn, &value, false)
-            .await?;
+        server.ulcp.frame_out.notify(conn, &value, false).await?;
     }
     if segments.stale() {
         debug_log(format_args!(
@@ -935,7 +945,15 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
     let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
     loop {
-        match select3(conn.next(), OUT_CH.ble.receive(), ADV_POLICY_CHANGED.wait()).await {
+        // The two link-level signals share one arm so the GATT event match
+        // below keeps its shape.
+        let link_signal = async {
+            match select(ADV_POLICY_CHANGED.wait(), DEVICE_NAME_CHANGED.wait()).await {
+                Either::First(()) => LinkSignal::AdvertisingPolicy,
+                Either::Second(()) => LinkSignal::DeviceName,
+            }
+        };
+        match select3(conn.next(), OUT_CH.ble.receive(), link_signal).await {
             Either3::First(GattConnectionEvent::Disconnected { reason }) => {
                 debug_log(format_args!("disconnected reason={reason:?}"));
                 break;
@@ -995,6 +1013,11 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                     publish_pairing_runtime(pairing_runtime().bonded_reconnect());
                     BLE_LED_MODE.store(0, Ordering::Release);
                     apply_pairing_gate(stack);
+                }
+                // A bonded client caches attributes across connections, so a
+                // rename it missed has to be announced now.
+                if GATT_NAME_STALE.load(Ordering::Acquire) {
+                    announce_gatt_change(server, conn).await;
                 }
             }
             Either3::First(GattConnectionEvent::PairingFailed(error)) => {
@@ -1165,12 +1188,18 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                     ));
                 }
             }
-            Either3::Third(()) => {
+            Either3::Third(LinkSignal::AdvertisingPolicy) => {
                 if !ADV_ALLOWED.load(Ordering::Acquire) {
-                    debug_log(format_args!("disconnect initiated by transport arbitration"));
+                    debug_log(format_args!(
+                        "disconnect initiated by transport arbitration"
+                    ));
                     conn.raw().disconnect();
                     break;
                 }
+            }
+            Either3::Third(LinkSignal::DeviceName) => {
+                sync_gap_device_name(server).await;
+                announce_gatt_change(server, conn).await;
             }
         }
     }
@@ -1197,6 +1226,9 @@ async fn ble_peripheral<'values, C: Controller>(
         // the connection wait may be cancelled, by dropping the
         // Advertiser — the runner then disables advertising cleanly and
         // the next loop iteration reconfigures with fresh name/policy.
+        // The advertisement and the GAP characteristic must agree, and this
+        // is the one place both are about to matter.
+        sync_gap_device_name(server).await;
         let advertiser = match advertise(peripheral).await {
             Ok(advertiser) => advertiser,
             Err(error) => {
@@ -1638,6 +1670,10 @@ fn boot_reason(panicked: bool) -> Status {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
+    // Point the shared runtime's log seam at this board's debug channel
+    // before anything shared runs, so the journal mount lines are not
+    // lost.
+    umsh_ulcp_runtime::log::set_debug_log(debug_log);
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
     // umsh-node and umsh-sync use `alloc`.
@@ -1659,19 +1695,20 @@ async fn main(spawner: Spawner) {
     );
 
     let mut panic_buf = [0u8; umsh_bsp_esp32::panic_capture::MSG_CAPACITY];
-    let panic_report = umsh_bsp_esp32::panic_capture::take_panic_message(&mut panic_buf).map(|msg| {
-        println!("previous boot panicked: {msg}");
-        // Copied out char-by-char: the capture buffer is borrowed from
-        // the stack and the message may be longer than the report slot,
-        // so truncation has to stay on a char boundary.
-        let mut owned: heapless::String<128> = heapless::String::new();
-        for c in msg.chars() {
-            if owned.push(c).is_err() {
-                break;
+    let panic_report =
+        umsh_bsp_esp32::panic_capture::take_panic_message(&mut panic_buf).map(|msg| {
+            println!("previous boot panicked: {msg}");
+            // Copied out char-by-char: the capture buffer is borrowed from
+            // the stack and the message may be longer than the report slot,
+            // so truncation has to stay on a char boundary.
+            let mut owned: heapless::String<128> = heapless::String::new();
+            for c in msg.chars() {
+                if owned.push(c).is_err() {
+                    break;
+                }
             }
-        }
-        owned
-    });
+            owned
+        });
     let boot_reason = boot_reason(panic_report.is_some());
 
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
@@ -1848,7 +1885,14 @@ async fn main(spawner: Spawner) {
             lora_phy::mod_params::Bandwidth::_62KHz,
             umsh_radio_loraphy::MAX_PAYLOAD,
         );
-        device_node::bring_up(spawner, identity_secret, node_seed, t_frame_ms, node_counters).await;
+        device_node::bring_up(
+            spawner,
+            identity_secret,
+            node_seed,
+            t_frame_ms,
+            node_counters,
+        )
+        .await;
     }
 
     // ── Battery, button ──────────────────────────────────────────────────

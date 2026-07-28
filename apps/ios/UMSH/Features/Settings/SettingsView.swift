@@ -21,6 +21,13 @@ struct SettingsView: View {
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
+    /// Records a device met during setup as an ordinary peer. Absent when
+    /// there is no identity or store to record it against.
+    var saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil
+    /// Whether a node address is already in this phone's Network list.
+    var isPeerSaved: (String) -> Bool = { _ in false }
+
+    @State private var showsDeviceSetup = false
 
     var body: some View {
         List {
@@ -84,6 +91,18 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                Button {
+                    showsDeviceSetup = true
+                } label: {
+                    Label("Set up a device…", systemImage: "badge.plus.radiowaves.right")
+                }
+            } header: {
+                Text("Devices")
+            } footer: {
+                Text("Configure any nearby UMSH device — a repeater, a tracker, or a radio for another phone — without disturbing this phone's own connection.")
+            }
+
             Section("Application") {
                 NavigationLink("Notifications") { Text("Notification settings") }
                 NavigationLink("Privacy and storage") { Text("Privacy and storage settings") }
@@ -91,6 +110,16 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .sheet(isPresented: $showsDeviceSetup) {
+            DeviceSetupFlowView(
+                hostIdentity: identity?.publicIdentity,
+                companionIdentifier: radioSnapshot.localIdentifier,
+                companionName: radioSnapshot.name,
+                promoteRadio: selectRadio,
+                saveDevicePeer: saveDevicePeer,
+                isPeerSaved: isPeerSaved
+            )
+        }
     }
 }
 
@@ -854,7 +883,12 @@ private struct RadioSettingsEditor: View {
     }
 }
 
-private struct RadioPreset: Identifiable {
+/// A vetted PHY configuration a whole mesh can agree on.
+///
+/// Shared with device setup: a repeater the operator commissions has to end
+/// up on the same profile as the phone's own radio, and two lists would
+/// eventually disagree.
+struct RadioPreset: Identifiable {
     let id: String
     let name: String
     let frequencyKHz: UInt32

@@ -30,7 +30,7 @@ use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
 use umsh_ulcp::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
 use umsh_ulcp::pui;
-use umsh_core::ChannelKey;
+use umsh_core::{ChannelKey, RegionCode};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
@@ -333,6 +333,29 @@ impl DeviceSync {
     pub fn has_capability(&self, capability: u32) -> bool {
         self.capabilities.contains(&capability)
     }
+}
+
+/// The repeater forwarding policy of a `CAP_REPEATER` device.
+///
+/// The four gates are independent and are written separately, so this is
+/// a report rather than a transaction: reading it back after a partial
+/// write shows exactly what the device holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepeaterPolicy {
+    /// `PROP_MAC_REPEATER_ENABLED`: whether the on-board node forwards at
+    /// all. The remaining fields are inert while this is false.
+    pub enabled: bool,
+    /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward.
+    /// Empty imposes no regional restriction.
+    pub regions: Vec<RegionCode>,
+    /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
+    /// untagged flood before forwarding it. `None` forwards untagged.
+    pub default_region: Option<RegionCode>,
+    /// `PROP_MAC_REPEATER_MIN_RSSI` in dBm: floor below which a frame is
+    /// not worth relaying. `None` accepts any.
+    pub min_rssi: Option<i16>,
+    /// `PROP_MAC_REPEATER_MIN_SNR` in dB. `None` accepts any.
+    pub min_snr: Option<i8>,
 }
 
 /// The host-domain state [`UlcpDevice::provision`] establishes on
@@ -1148,6 +1171,108 @@ where
     /// Reset cause reported by the device immediately after transport attach.
     pub fn boot_status(&self) -> Status {
         self.boot_status
+    }
+
+    /// Read the device's full repeater forwarding policy.
+    ///
+    /// `Ok(None)` means the device does not advertise `CAP_REPEATER`.
+    pub async fn repeater_policy(&mut self) -> Result<Option<RepeaterPolicy>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::REPEATER) {
+            return Ok(None);
+        }
+        let enabled = self.get_prop(prop::MAC_REPEATER_ENABLED).await?;
+        let enabled = match enabled.first() {
+            Some(&byte) => byte != 0,
+            None => return Err(UlcpError::Protocol("malformed PROP_MAC_REPEATER_ENABLED")),
+        };
+        let regions = decode_region_list(&self.get_prop(prop::MAC_REPEATER_REGIONS).await?)?;
+        let default_region =
+            decode_region_code(&self.get_prop(prop::MAC_REPEATER_DEFAULT_REGION).await?)?;
+        let min_rssi = decode_opt_i16(&self.get_prop(prop::MAC_REPEATER_MIN_RSSI).await?)
+            .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_RSSI"))?;
+        let min_snr = decode_opt_i8(&self.get_prop(prop::MAC_REPEATER_MIN_SNR).await?)
+            .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_SNR"))?;
+        Ok(Some(RepeaterPolicy {
+            enabled,
+            regions,
+            default_region,
+            min_rssi,
+            min_snr,
+        }))
+    }
+
+    /// Set which region-tagged floods the device forwards
+    /// (`PROP_MAC_REPEATER_REGIONS`). An empty list clears the filter,
+    /// which imposes no regional restriction rather than blocking every
+    /// flood.
+    ///
+    /// Returns the list the device actually stored. A device with less
+    /// capacity than the caller offered keeps a prefix, so a shorter
+    /// return is a truncation, not an error.
+    pub async fn set_repeater_regions(
+        &mut self,
+        regions: &[RegionCode],
+    ) -> Result<Vec<RegionCode>, UlcpError> {
+        let mut value = Vec::with_capacity(regions.len() * 2);
+        for region in regions {
+            value.extend_from_slice(&region.to_bytes());
+        }
+        let authoritative = self.set_prop(prop::MAC_REPEATER_REGIONS, &value).await?;
+        decode_region_list(&authoritative)
+    }
+
+    /// Set the region code inserted into untagged floods before
+    /// forwarding (`PROP_MAC_REPEATER_DEFAULT_REGION`). `None` forwards
+    /// untagged.
+    ///
+    /// Deliberately not cross-checked against
+    /// [`set_repeater_regions`](Self::set_repeater_regions): the two are
+    /// written in either order.
+    pub async fn set_repeater_default_region(
+        &mut self,
+        region: Option<RegionCode>,
+    ) -> Result<Option<RegionCode>, UlcpError> {
+        let value = region.map(|code| code.to_bytes()).unwrap_or_default();
+        let value: &[u8] = match region {
+            Some(_) => &value,
+            None => &[],
+        };
+        let authoritative = self
+            .set_prop(prop::MAC_REPEATER_DEFAULT_REGION, value)
+            .await?;
+        decode_region_code(&authoritative)
+    }
+
+    /// Set the RSSI floor for forwarding in dBm
+    /// (`PROP_MAC_REPEATER_MIN_RSSI`). `None` accepts any.
+    pub async fn set_repeater_min_rssi(
+        &mut self,
+        min_rssi: Option<i16>,
+    ) -> Result<Option<i16>, UlcpError> {
+        let encoded = min_rssi.map(i16::to_le_bytes).unwrap_or_default();
+        let value: &[u8] = match min_rssi {
+            Some(_) => &encoded,
+            None => &[],
+        };
+        let authoritative = self.set_prop(prop::MAC_REPEATER_MIN_RSSI, value).await?;
+        decode_opt_i16(&authoritative)
+            .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_RSSI"))
+    }
+
+    /// Set the SNR floor for forwarding in dB
+    /// (`PROP_MAC_REPEATER_MIN_SNR`). `None` accepts any.
+    pub async fn set_repeater_min_snr(
+        &mut self,
+        min_snr: Option<i8>,
+    ) -> Result<Option<i8>, UlcpError> {
+        let encoded = [min_snr.unwrap_or_default() as u8];
+        let value: &[u8] = match min_snr {
+            Some(_) => &encoded,
+            None => &[],
+        };
+        let authoritative = self.set_prop(prop::MAC_REPEATER_MIN_SNR, value).await?;
+        decode_opt_i8(&authoritative)
+            .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_SNR"))
     }
 
     async fn initialize(&mut self) -> Result<(), UlcpError> {
@@ -2198,6 +2323,47 @@ fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
         );
     }
     Ok(filters)
+}
+
+/// Decode `PROP_MAC_REPEATER_REGIONS`: 2-byte region codes back to back,
+/// with no separator and no length prefix.
+fn decode_region_list(value: &[u8]) -> Result<Vec<RegionCode>, UlcpError> {
+    if value.len() % 2 != 0 {
+        return Err(UlcpError::Protocol("malformed PROP_MAC_REPEATER_REGIONS"));
+    }
+    Ok(value
+        .chunks_exact(2)
+        .map(|code| RegionCode::from_bytes([code[0], code[1]]))
+        .collect())
+}
+
+/// Decode a single optional region code. Empty means unset.
+fn decode_region_code(value: &[u8]) -> Result<Option<RegionCode>, UlcpError> {
+    match value {
+        [] => Ok(None),
+        [high, low] => Ok(Some(RegionCode::from_bytes([*high, *low]))),
+        _ => Err(UlcpError::Protocol(
+            "malformed PROP_MAC_REPEATER_DEFAULT_REGION",
+        )),
+    }
+}
+
+/// Decode an optional INT16 gate. Empty means unset; `None` is malformed.
+fn decode_opt_i16(value: &[u8]) -> Option<Option<i16>> {
+    match value {
+        [] => Some(None),
+        [low, high] => Some(Some(i16::from_le_bytes([*low, *high]))),
+        _ => None,
+    }
+}
+
+/// Decode an optional INT8 gate. Empty means unset; `None` is malformed.
+fn decode_opt_i8(value: &[u8]) -> Option<Option<i8>> {
+    match value {
+        [] => Some(None),
+        [byte] => Some(Some(*byte as i8)),
+        _ => None,
+    }
 }
 
 /// Decode a digest table of fixed-size items.

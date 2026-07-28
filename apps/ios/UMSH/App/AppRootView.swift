@@ -17,6 +17,10 @@ struct AppRootView: View {
     @State private var openedConversation: DirectConversationSummary?
     @State private var incomingPeerImport: IncomingPeerImport?
     @State private var advertisedName = ""
+    /// Bookkeeping that must survive body re-evaluation without itself being
+    /// a source of invalidation. A reference held in `@State` is never
+    /// reassigned, so mutating it costs nothing in the view graph.
+    @State private var coordinator = AppStateCoordinator()
 
     private let meshEngine: RustMeshEngine
     private let identityVault: KeychainIdentityVault
@@ -102,7 +106,11 @@ struct AppRootView: View {
                     factoryResetRadio: factoryResetRadio,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
-                    stopDiscovery: stopRadioDiscovery
+                    stopDiscovery: stopRadioDiscovery,
+                    saveDevicePeer: saveAdministeredDevice,
+                    isPeerSaved: { address in
+                        peers.contains { $0.identity.canonicalAddress == address }
+                    }
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -160,7 +168,14 @@ struct AppRootView: View {
         }
         .task {
             for await snapshot in await radioConnection.snapshots() {
-                radioSnapshot = snapshot
+                // A snapshot is published for every ULCP frame the radio
+                // sends, so the same state arrives many times a second while
+                // the link is busy. Writing `@State` unconditionally would
+                // re-evaluate the whole tab tree — transcript included — on
+                // each one, which is felt as stutter while typing.
+                if radioSnapshot != snapshot {
+                    radioSnapshot = snapshot
+                }
                 if snapshot.linkState == .attached {
                     // The first successful attach is the first moment a
                     // message notification has concrete meaning.
@@ -418,6 +433,33 @@ struct AppRootView: View {
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
+        }
+    }
+
+    /// Record a device the phone has been configuring as an ordinary peer.
+    ///
+    /// Deliberately not a contact and not a chat peer: a repeater is
+    /// infrastructure the operator wants to find again, not someone to talk
+    /// to. Promoting it to either remains an ordinary Network action.
+    private func saveAdministeredDevice(
+        _ identity: MeshPublicIdentity,
+        name: String?,
+        kind: PeerKind
+    ) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.upsertPeer(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: identity.canonicalAddress,
+                alias: nil,
+                advertisedName: name,
+                isContact: false,
+                nodeKind: kind.rawValue
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -830,14 +872,32 @@ struct AppRootView: View {
               let identifier = snapshot.localIdentifier,
               let applicationStore,
               let localIdentity
-        else { return }
+        else {
+            // Re-persist on the next attach: a reconnect can bring a
+            // different radio, or the same one under a new name.
+            coordinator.synchronizedRadioPeer = nil
+            return
+        }
+        // Only the four facts below reach storage. Every other part of a
+        // snapshot — duty cycle, queue depth, battery — changes constantly
+        // while the radio works, and re-running an fsync-backed write plus a
+        // full application-state reload behind each of those is what made the
+        // UI feel like it was waiting on the radio.
+        let record = SynchronizedRadioPeer(
+            ownerIdentityID: localIdentity.id,
+            publicAddress: radioIdentity.canonicalAddress,
+            advertisedName: snapshot.name,
+            radioIdentifier: identifier.uuidString
+        )
+        guard coordinator.synchronizedRadioPeer != record else { return }
         do {
             try await applicationStore.upsertUlcpDevicePeer(
-                ownerIdentityID: localIdentity.id,
-                publicAddress: radioIdentity.canonicalAddress,
-                advertisedName: snapshot.name,
-                radioIdentifier: identifier.uuidString
+                ownerIdentityID: record.ownerIdentityID,
+                publicAddress: record.publicAddress,
+                advertisedName: record.advertisedName,
+                radioIdentifier: record.radioIdentifier
             )
+            coordinator.synchronizedRadioPeer = record
             await reloadApplicationState()
         } catch {
             // The live radio remains usable; persistence failure must not
@@ -845,7 +905,32 @@ struct AppRootView: View {
         }
     }
 
+    /// Reload every peer and transcript from storage.
+    ///
+    /// A reload reads the full message history of every conversation and
+    /// decodes an identity bundle per peer, so overlapping callers (a chat
+    /// batch landing while a send is committing) used to multiply that work.
+    /// Callers arriving before a queued reload has begun join it instead of
+    /// adding another; a caller arriving mid-reload gets a fresh one chained
+    /// behind it. Either way `await` still returns only once state observed
+    /// after the call has been published, which senders rely on.
     private func reloadApplicationState() async {
+        if let pending = coordinator.pendingReload {
+            await pending.value
+            return
+        }
+        let running = coordinator.runningReload
+        let task = Task { @MainActor in
+            await running?.value
+            coordinator.pendingReload = nil
+            await performApplicationStateReload()
+        }
+        coordinator.pendingReload = task
+        coordinator.runningReload = task
+        await task.value
+    }
+
+    private func performApplicationStateReload() async {
         guard let applicationStore, let localIdentity else { return }
         do {
             let storedPeers = try await applicationStore.listNodes(ownerIdentityID: localIdentity.id)
@@ -876,7 +961,14 @@ struct AppRootView: View {
             let storedConversations = try await applicationStore.listDirectConversations(
                 ownerIdentityID: localIdentity.id
             )
-            peers = storedPeers.compactMap { mappedPeers[$0.id] }
+            // Assign only on a real change: most reloads are triggered by
+            // radio or chat activity that leaves the displayed state
+            // identical, and an equal-value `@State` write still invalidates
+            // every view below the root.
+            let mappedPeerList = storedPeers.compactMap { mappedPeers[$0.id] }
+            if peers != mappedPeerList {
+                peers = mappedPeerList
+            }
             var mappedConversations: [DirectConversationSummary] = []
             for stored in storedConversations {
                 guard let peer = mappedPeers[stored.node.id] else { continue }
@@ -911,12 +1003,35 @@ struct AppRootView: View {
                     )
                 )
             }
-            conversations = mappedConversations
+            if conversations != mappedConversations {
+                conversations = mappedConversations
+            }
         } catch {
-            peers = []
-            conversations = []
+            if !peers.isEmpty { peers = [] }
+            if !conversations.isEmpty { conversations = [] }
         }
     }
+}
+
+/// Mutable, non-visual bookkeeping for `AppRootView`. Held by reference so
+/// updating it never invalidates the view graph.
+@MainActor
+private final class AppStateCoordinator {
+    var synchronizedRadioPeer: SynchronizedRadioPeer?
+    /// A reload that has been queued but has not begun reading storage yet;
+    /// later callers can safely join it.
+    var pendingReload: Task<Void, Never>?
+    /// The most recently queued reload, joined or not. New reloads chain
+    /// behind it so two never read and publish state concurrently.
+    var runningReload: Task<Void, Never>?
+}
+
+/// The subset of a radio snapshot that reaches persistent storage.
+private struct SynchronizedRadioPeer: Equatable {
+    let ownerIdentityID: String
+    let publicAddress: String
+    let advertisedName: String?
+    let radioIdentifier: String
 }
 
 private enum AppTab: Hashable {

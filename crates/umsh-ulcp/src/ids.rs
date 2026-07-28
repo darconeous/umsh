@@ -59,11 +59,12 @@ pub mod prop {
     pub const BATTERY: u32 = 69;
     /// Autonomous MAC-layer repeater/forwarding enable (`PROP_MAC_REPEATER_ENABLED`).
     ///
-    /// First of the device-behavior settings range (70–95). A persisted,
-    /// device-domain boolean: when set, the device identity's on-board MAC
-    /// forwards overheard routable frames and advertises the `REP`
-    /// capability bit. The advertised *role* is a separate matter — see
-    /// `IDENT_ROLE`.
+    /// First of the device-behavior settings range (70–95), which is
+    /// subdivided as 70–79 repeater and identity, 80–87 advertisement
+    /// policy, 88–95 positioning. A persisted, device-domain boolean: when
+    /// set, the device identity's on-board MAC forwards overheard routable
+    /// frames and advertises the `REP` capability bit. The advertised
+    /// *role* is a separate matter — see `IDENT_ROLE`.
     pub const MAC_REPEATER_ENABLED: u32 = 70;
     /// The device identity's complete signed node-identity blob
     /// (`PROP_IDENT`), served through a deferred signing effect.
@@ -75,6 +76,20 @@ pub mod prop {
     /// (`PROP_IDENT_MOBILE`) — mobile versus fixed, which is orthogonal
     /// to tethered versus standalone.
     pub const IDENT_MOBILE: u32 = 73;
+    /// Region codes the device identity flood-forwards for
+    /// (`PROP_MAC_REPEATER_REGIONS`) — concatenated 2-octet codes, empty
+    /// for "forward regardless of region code".
+    pub const MAC_REPEATER_REGIONS: u32 = 74;
+    /// Region code inserted into untagged flood packets
+    /// (`PROP_MAC_REPEATER_DEFAULT_REGION`) — one 2-octet code, or empty
+    /// to never tag.
+    pub const MAC_REPEATER_DEFAULT_REGION: u32 = 75;
+    /// Minimum received RSSI in dBm for flood forwarding
+    /// (`PROP_MAC_REPEATER_MIN_RSSI`) — INT16, or empty for no threshold.
+    pub const MAC_REPEATER_MIN_RSSI: u32 = 76;
+    /// Minimum received SNR in whole dB for flood forwarding
+    /// (`PROP_MAC_REPEATER_MIN_SNR`) — INT8, or empty for no threshold.
+    pub const MAC_REPEATER_MIN_SNR: u32 = 77;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).

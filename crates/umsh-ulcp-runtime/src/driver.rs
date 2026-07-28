@@ -26,17 +26,16 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::Instant;
 
-use umsh_ulcp_device::{
-    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, SNAPSHOT_MAX, Session, TxOutcome,
-    TxPower,
-};
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
 use umsh_journal_store::proto;
 use umsh_radio_loraphy::{
-    CadPolicy, Channels, MAX_PAYLOAD, DeviceControl, DeviceSettings, RxFrame, TxRequest,
-    bandwidth_from_hz,
-    coding_rate_from_denom, spreading_factor_from_u8,
+    CadPolicy, Channels, DeviceControl, DeviceSettings, MAX_PAYLOAD, RxFrame, TxRequest,
+    bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
+};
+use umsh_ulcp_device::{
+    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS, SNAPSHOT_MAX,
+    Session, TxOutcome, TxPower,
 };
 
 use crate::transport_policy::{SessionArbitration, Transport};
@@ -52,9 +51,7 @@ use crate::transport_policy::{SessionArbitration, Transport};
 /// entropy behind it. On the nRF boards that is the hardware TRNG with
 /// bias correction enabled; on Espressif it is `EspCryptoRng`, which
 /// refuses to exist unless the RF noise source is live.
-pub fn device_identity_record(
-    secret: &[u8; 32],
-) -> ([u8; 32], [u8; proto::IDENTITY_PAYLOAD_LEN]) {
+pub fn device_identity_record(secret: &[u8; 32]) -> ([u8; 32], [u8; proto::IDENTITY_PAYLOAD_LEN]) {
     let public_key = SoftwareIdentity::from_secret_bytes(secret).public_key().0;
     (public_key, proto::encode_identity(secret, &public_key))
 }
@@ -145,6 +142,22 @@ pub struct DevDomainSnapshot {
     /// capability bit — a fact about what the node does, not a choice
     /// about what it calls itself.
     pub repeater_enabled: bool,
+    /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter,
+    /// as concatenated 2-octet codes. Empty imposes no restriction.
+    ///
+    /// Carried in wire order so the device node can both configure the
+    /// MAC's region filter and hand the same bytes to the Supported
+    /// Regions identity option without reshaping either.
+    pub repeater_regions: heapless::Vec<u8, { MAX_REPEATER_REGIONS * 2 }>,
+    /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the code the node inserts
+    /// into an untagged flood packet, or `None` to never tag.
+    pub repeater_default_region: Option<[u8; 2]>,
+    /// `PROP_MAC_REPEATER_MIN_RSSI`: minimum RSSI in dBm to
+    /// flood-forward, or `None` for no threshold.
+    pub repeater_min_rssi: Option<i16>,
+    /// `PROP_MAC_REPEATER_MIN_SNR`: minimum SNR in whole dB to
+    /// flood-forward, or `None` for no threshold.
+    pub repeater_min_snr: Option<i8>,
     /// `PROP_IDENT_ROLE`: the advertised `ROLE` byte, or `None` to
     /// derive it from the forwarding state.
     pub ident_role: Option<u8>,
@@ -450,7 +463,9 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
     match env.persist_identity(&payload).await {
         Ok(()) => {
             session.set_boot_identity(public_key);
-            env.trace(format_args!("device identity regenerated after clear+reset"));
+            env.trace(format_args!(
+                "device identity regenerated after clear+reset"
+            ));
         }
         Err(()) => env.trace(format_args!(
             "device identity regenerate: persist FAILED — none in effect"
@@ -476,6 +491,10 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         peers: heapless::Vec::new(),
         dev_key: session.dev_key().copied(),
         repeater_enabled: session.repeater_enabled(),
+        repeater_regions: heapless::Vec::from_slice(session.repeater_regions()).unwrap_or_default(),
+        repeater_default_region: session.repeater_default_region(),
+        repeater_min_rssi: session.repeater_min_rssi(),
+        repeater_min_snr: session.repeater_min_snr(),
         ident_role: session.ident_role(),
         ident_mobile: session.ident_mobile(),
     };
@@ -624,9 +643,10 @@ where
             Either3::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
                     let now_ms = Instant::now().as_millis();
-                    let effect = session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
-                        emitter.push(frame)
-                    });
+                    let effect =
+                        session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
+                            emitter.push(frame)
+                        });
                     emitter.flush(arbitration.destination(), rt.out).await;
                     match effect {
                         Some(Effect::SampleRssi { tid }) => {
@@ -635,9 +655,8 @@ where
                             // deferred PROP_PHY_RSSI get.
                             rt.ctl.request_rssi();
                             let sample = rt.ctl.wait_rssi().await;
-                            session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
+                            session
+                                .respond_rssi(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
                             emitter.flush(arbitration.destination(), rt.out).await;
                         }
                         Some(Effect::SignIdentity { tid }) => {
@@ -687,9 +706,8 @@ where
                                 Some(len) => env.persist_snapshot(&snapshot_buf[..len]).await,
                                 None => Err(()),
                             };
-                            session.respond_save(tid, result, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
+                            session
+                                .respond_save(tid, result, &mut |frame: &[u8]| emitter.push(frame));
                             emitter.flush(arbitration.destination(), rt.out).await;
                         }
                         Some(Effect::ClearSaved { tid }) => {
@@ -818,9 +836,8 @@ where
                     Err(umsh_hal::TxError::CadTimeout) => TxOutcome::ChannelBusy,
                     Err(umsh_hal::TxError::Io(_)) => TxOutcome::Failed,
                 };
-                let effect = session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| {
-                    emitter.push(frame)
-                });
+                let effect =
+                    session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }

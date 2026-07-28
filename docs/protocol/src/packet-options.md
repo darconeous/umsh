@@ -130,7 +130,7 @@ When this option is present, each repeater that will repeat the packet must firs
 ### Region Code (option 11)
 - Type: 2-byte region identifier
 - Semantics: restricts flood-routing to repeaters configured for the specified region.
-- A repeater that does not recognize or is not configured for the region MUST NOT forward the packet when flooding.
+- A repeater configured for one or more regions MUST NOT flood-forward a packet whose region is none of them. A repeater configured for no regions makes no regional claim and applies no such restriction.
 - This option MUST NOT be enforced until the source route list is exhausted.
 - Multiple region-code options may appear on the same packet. In that case, a repeater MAY flood-forward the packet if any one of the listed regions matches local policy.
 - Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.

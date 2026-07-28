@@ -536,11 +536,15 @@ impl Default for OperatingPolicy {
 ///
 /// - **`enabled`** — master on/off switch. When `false`, all inbound forwarding logic is
 ///   skipped even if the other fields are populated.
-/// - **`regions`** — a local list of 2-byte ARNCE region codes used both for flood-forwarding
-///   eligibility checks and, when a flood-forwarded packet is untagged, as the local policy
-///   source for inserting a region code. When non-empty, packets carrying a non-matching region
-///   code are not flood-forwarded; when empty, forwarding does not impose a region check and the
-///   repeater has no local region to insert.
+/// - **`regions`** — a local list of 2-byte ARNCE region codes used as the flood-forwarding
+///   eligibility filter. When non-empty, packets carrying region codes are flood-forwarded only
+///   if at least one of those codes appears here; when empty, forwarding imposes no region check
+///   and a tagged packet is forwarded whatever its region.
+/// - **`default_region`** — the region code inserted into a flood-forwarded packet that carries
+///   none. `None` — the default — means the repeater never tags: untagged packets are forwarded
+///   untagged. Tagging is deliberately opt-in and independent of `regions`, because inserting a
+///   code asserts where the packet *is*, not merely which regions the repeater will carry. An
+///   already-tagged packet is always forwarded with its codes unchanged.
 /// - **`min_rssi` / `min_snr`** — signal-quality thresholds for flood forwarding. Packets
 ///   received below these values are not flood-forwarded; this prevents marginal receptions
 ///   from being re-injected into the network at full power, which would degrade SNR for
@@ -560,8 +564,11 @@ impl Default for OperatingPolicy {
 pub struct RepeaterConfig {
     /// Whether repeater forwarding is enabled.
     pub enabled: bool,
-    /// Allowed repeater region codes.
+    /// Allowed repeater region codes. Empty imposes no region check.
     pub regions: Vec<[u8; 2], 8>,
+    /// Region code inserted into an untagged flood-forwarded packet.
+    /// `None` forwards untagged packets untagged.
+    pub default_region: Option<[u8; 2]>,
     /// Minimum RSSI threshold for flood forwarding.
     pub min_rssi: Option<i16>,
     /// Minimum SNR threshold for flood forwarding.
@@ -592,6 +599,7 @@ impl Default for RepeaterConfig {
         Self {
             enabled: false,
             regions: Vec::new(),
+            default_region: None,
             min_rssi: None,
             min_snr: None,
             flood_contention_snr_low_db: -6,
@@ -2288,8 +2296,7 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer)
-                        .ok();
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
                     handled = true;
                     break;
                 }
@@ -2355,8 +2362,7 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer)
-                        .ok();
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
                 }
 
                 if let Some(data) = Self::echo_request_data(payload) {
@@ -2579,8 +2585,7 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer)
-                                .ok();
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
                             handled = true;
                             break;
                         }
@@ -2633,8 +2638,7 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer)
-                                .ok();
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -3996,11 +4000,12 @@ impl<
                 }
             }
             if saw_region_code {
-                if !matched_region_code {
+                // An empty configured list imposes no regional restriction.
+                if !self.repeater.regions.is_empty() && !matched_region_code {
                     return None;
                 }
             } else {
-                insert_region_code = self.repeater.regions.first().copied();
+                insert_region_code = self.repeater.default_region;
             }
             delay_ms = self.sample_flood_contention_delay_ms(rx, options);
             // An ack-requested packet received with no remaining source-route

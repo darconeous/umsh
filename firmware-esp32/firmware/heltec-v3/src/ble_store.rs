@@ -30,9 +30,8 @@ use trouble_host::prelude::*;
 use umsh_bsp_esp32::flash_store::JOURNAL_RESERVED;
 
 use umsh_journal_store::ble::{self, Snapshot};
-use umsh_journal_store::proto;
 use umsh_journal_store::record::{
-    CommitError, PAGE_SIZE, PageEraser, RecordWriter, erase_journal_page, write_committed_record,
+    CommitError, PAGE_SIZE, PageEraser, RecordReader, RecordWriter, write_committed_record,
 };
 
 pub use umsh_journal_store::ble::{MAX_BONDS, SLOT_SIZE, StoredBond};
@@ -69,6 +68,14 @@ impl PageEraser for JournalFlash {
     }
 }
 
+impl RecordReader for JournalFlash {
+    type Error = ();
+
+    fn read_record(&mut self, address: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.read(address, bytes).map_err(|_| ())
+    }
+}
+
 // ─── Journal placement inside the reserved tail ─────────────────────────
 
 const _: () = assert!(
@@ -97,67 +104,6 @@ pub fn identity_page0(partition: &core::ops::Range<u32>) -> u32 {
 /// snapshot or the identity record away.
 pub fn counter_page0(partition: &core::ops::Range<u32>) -> u32 {
     partition.end - 8 * PAGE_SIZE
-}
-
-/// Scan a two-page journal's slot range for a fully erased slot.
-fn erased_journal_slot(
-    flash: &mut JournalFlash,
-    start: u32,
-    end: u32,
-    slot_size: usize,
-) -> Option<u32> {
-    let mut address = start;
-    while address < end {
-        let mut erased = true;
-        let mut offset = 0usize;
-        while offset < slot_size {
-            let mut chunk = [0u8; 256];
-            let take = (slot_size - offset).min(chunk.len());
-            match flash.0.read(address + offset as u32, &mut chunk[..take]) {
-                Ok(()) if chunk[..take].iter().all(|byte| *byte == 0xff) => {}
-                _ => {
-                    erased = false;
-                    break;
-                }
-            }
-            offset += take;
-        }
-        if erased {
-            return Some(address);
-        }
-        address += slot_size as u32;
-    }
-    None
-}
-
-/// Pick the write target for a two-page rotating journal starting at
-/// `page0`: the next erased slot after the current record, or the
-/// opposite page after erasing it.
-async fn journal_write_target(
-    flash: &mut JournalFlash,
-    current: Option<u32>,
-    page0: u32,
-    slot_size: usize,
-) -> Result<u32, ()> {
-    let page1 = page0 + PAGE_SIZE;
-    let target = if let Some(current) = current {
-        let page = if current < page1 { page0 } else { page1 };
-        erased_journal_slot(flash, current + slot_size as u32, page + PAGE_SIZE, slot_size)
-    } else {
-        erased_journal_slot(flash, page0, page0 + PAGE_SIZE, slot_size)
-    };
-    match target {
-        Some(target) => Ok(target),
-        None => {
-            let page = if current.is_some_and(|slot| slot < page1) {
-                page1
-            } else {
-                page0
-            };
-            erase_journal_page(flash, page).await?;
-            Ok(page)
-        }
-    }
 }
 
 // ─── BLE security journal handle ────────────────────────────────────────
@@ -207,7 +153,13 @@ impl BleStore {
     async fn persist(&mut self, mut snapshot: Snapshot) -> Result<(), ()> {
         snapshot.generation = self.snapshot.generation.wrapping_add(1);
         let mut flash = self.flash.lock().await;
-        let target = journal_write_target(&mut flash, self.slot, self.page0, SLOT_SIZE).await?;
+        let target = umsh_ulcp_runtime::journal::journal_write_target(
+            &mut *flash,
+            self.slot,
+            self.page0,
+            SLOT_SIZE,
+        )
+        .await?;
         let bytes = snapshot.encode();
         match write_committed_record(&mut *flash, target, &bytes).await {
             Ok(()) => {}
@@ -281,128 +233,12 @@ impl BleStore {
 
 /// The stored payload as read at boot (snapshot bytes or the encoded
 /// identity, depending on which journal the handle mounts).
-pub type BootPayload = heapless::Vec<u8, { proto::MAX_PAYLOAD }>;
+/// The stored protocol payload as read at boot.
+pub type BootPayload = umsh_ulcp_runtime::journal::BootPayload;
 
-/// Runtime handle for one full-protocol record journal: the snapshot
-/// journal, the device-identity journal, or the device-node counter
-/// journal, selected by its first page. Port of the nRF firmware's
-/// `ProtoStore`.
-pub struct ProtoStore {
-    flash: &'static SharedFlash,
-    /// First page of this journal's two-page rotation.
-    page0: u32,
-    generation: u32,
-    slot: Option<u32>,
-    /// Oldest generation already handed to the boot restore. Only the
-    /// snapshot-journal handle uses it, and only while the boot path is
-    /// walking back past a rejected payload.
-    walked_back_to: Option<u32>,
-}
-
-impl ProtoStore {
-    pub async fn mount(shared: &'static SharedFlash, page0: u32) -> (Self, Option<BootPayload>) {
-        let mut flash = shared.lock().await;
-        let mut latest: Option<(u32, proto::Stored)> = None;
-        for page in [page0, page0 + PAGE_SIZE] {
-            let mut address = page;
-            while address < page + PAGE_SIZE {
-                let mut bytes = [0u8; proto::SLOT_SIZE];
-                if flash.0.read(address, &mut bytes).is_ok() {
-                    latest = proto::consider_record(latest, address, &bytes);
-                }
-                address += proto::SLOT_SIZE as u32;
-            }
-        }
-        drop(flash);
-        // A tombstone is authoritative "nothing saved": older snapshot
-        // records still physically present are void.
-        let (slot, generation, payload) = match latest {
-            Some((slot, stored)) => {
-                let payload = match stored.record {
-                    proto::Record::Snapshot(payload) => Some(payload),
-                    proto::Record::Cleared => None,
-                };
-                (Some(slot), stored.generation, payload)
-            }
-            None => (None, 0, None),
-        };
-        (
-            Self {
-                flash: shared,
-                page0,
-                generation,
-                slot,
-                walked_back_to: Some(generation),
-            },
-            payload,
-        )
-    }
-
-    /// Copy the newest committed snapshot record strictly older than the
-    /// last one handed out into `out`, for the boot path's walk-back past
-    /// a payload the session rejected.
-    ///
-    /// Re-scans rather than retaining a runner-up at mount, so the mount
-    /// path never buffers a second copy; the scan is only ever paid on a
-    /// boot that already failed to restore. A tombstone ends the walk: it
-    /// asserts "nothing saved", and older records behind it are void.
-    pub async fn older_snapshot(&mut self, out: &mut [u8]) -> Option<usize> {
-        let newer_than = self.walked_back_to?;
-        let mut flash = self.flash.lock().await;
-        let mut latest: Option<(u32, proto::Stored)> = None;
-        for page in [self.page0, self.page0 + PAGE_SIZE] {
-            let mut address = page;
-            while address < page + PAGE_SIZE {
-                let mut bytes = [0u8; proto::SLOT_SIZE];
-                if flash.0.read(address, &mut bytes).is_ok() {
-                    latest = proto::consider_older_record(latest, address, &bytes, newer_than);
-                }
-                address += proto::SLOT_SIZE as u32;
-            }
-        }
-        drop(flash);
-        let (_, stored) = latest?;
-        self.walked_back_to = Some(stored.generation);
-        let proto::Record::Snapshot(payload) = stored.record else {
-            self.walked_back_to = None;
-            return None;
-        };
-        let len = payload.len().min(out.len());
-        out[..len].copy_from_slice(&payload[..len]);
-        (len == payload.len()).then_some(len)
-    }
-
-    pub async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-        if payload.len() > proto::MAX_PAYLOAD {
-            return Err(());
-        }
-        self.write(proto::RecordRef::Snapshot(payload)).await
-    }
-
-    /// The clear transaction is one committed tombstone record: if its
-    /// write fails or is interrupted, the previous record remains
-    /// authoritative. Pages are never erased as part of a clear — stale
-    /// records are reclaimed by the ordinary rotation.
-    pub async fn clear(&mut self) -> Result<(), ()> {
-        self.write(proto::RecordRef::Cleared).await
-    }
-
-    async fn write(&mut self, record: proto::RecordRef<'_>) -> Result<(), ()> {
-        let generation = self.generation.wrapping_add(1);
-        let mut flash = self.flash.lock().await;
-        let target =
-            journal_write_target(&mut flash, self.slot, self.page0, proto::SLOT_SIZE).await?;
-        match proto::write_record(&mut *flash, target, generation, record).await {
-            Ok(()) => {
-                drop(flash);
-                self.generation = generation;
-                self.slot = Some(target);
-                Ok(())
-            }
-            Err(_) => Err(()),
-        }
-    }
-}
+/// This board's journal handle: the shared two-page rotating store
+/// bound to the ESP32 flash driver.
+pub type ProtoStore = umsh_ulcp_runtime::journal::ProtoStore<NoopRawMutex, JournalFlash>;
 
 // ─── Trouble bond conversion helpers (verbatim from the nRF firmware) ────────
 

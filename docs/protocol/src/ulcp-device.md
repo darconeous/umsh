@@ -51,15 +51,15 @@ Code | Name               | Requires           | Grants
 37   | `CAP_DEV_IDENTITY` | —                  | The device identity: `PROP_DEV_KEY`, `PROP_DEV_PRIVATE_KEY`, `PROP_DEV_CHANNEL_KEYS`, `PROP_DEV_PEERS`
 38   | `CAP_DEV_NAME`     | —                  | `PROP_DEV_NAME`
 39   | `CAP_BATTERY`      | —                  | Battery-powered operation and `PROP_BATTERY`
-40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | `PROP_MAC_REPEATER_ENABLED` and autonomous repeater forwarding by the device identity
+40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_ENABLED`, `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
 41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE` — serving and configuring the device identity's advertised node identity
 
 ## Properties
 
 The device domain occupies property identifiers 64–95. Identifiers 70–95
-are the device-behavior settings, of which the repeater switch is the
-first; the rest of the range is reserved for future definition (further
-repeater policy, positioning, periodic advertisement, and similar).
+are the device-behavior settings: 70–79 cover repeater policy and the
+advertised node identity, and 80–95 are reserved for future definition
+(periodic advertisement in 80–87, positioning in 88–95).
 
 Id | Mnemonic                    | Commands                 | Description
 ---|-----------------------------|--------------------------|-------------
@@ -73,6 +73,10 @@ Id | Mnemonic                    | Commands                 | Description
 71 | `PROP_IDENT`                | Get                      | Signed node identity of the device identity
 72 | `PROP_IDENT_ROLE`           | Get, Set                 | Advertised node role, or empty to derive it
 73 | `PROP_IDENT_MOBILE`         | Get, Set                 | Advertise the mobile capability bit
+74 | `PROP_MAC_REPEATER_REGIONS` | Get, Set                | Region codes the device forwards for
+75 | `PROP_MAC_REPEATER_DEFAULT_REGION` | Get, Set         | Region code inserted into untagged flood packets
+76 | `PROP_MAC_REPEATER_MIN_RSSI` | Get, Set                | Minimum received RSSI for flood forwarding
+77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
 
 The RF configuration is also device-domain state, but is specified in
 [Radio Control](ulcp-radio.md); so is the transport configuration in
@@ -317,8 +321,12 @@ does not produce excessive ULCP traffic.
 * Value Type: BOOL
 * Post-Reset Value: Persisted
 
-The first of the device-behavior settings (property identifiers 70–95).
-When true, the **device identity** acts as an
+The first of the device-behavior settings (property identifiers 70–95),
+and the master switch for the repeater policy in
+`PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`,
+`PROP_MAC_REPEATER_MIN_RSSI`, and `PROP_MAC_REPEATER_MIN_SNR`, which are
+configurable while forwarding is disabled and take effect when it is
+enabled. When true, the **device identity** acts as an
 autonomous mesh repeater: its on-board node forwards overheard routable
 frames according to [Repeater Operation](repeater-operation.md), and it
 sets the repeater capability bit in its [node
@@ -339,11 +347,9 @@ The flag is device-domain state: it is part of the saved snapshot, so a
 `CMD_SAVE` arms an unattended repeater across power cycles, and it
 survives a change of host.
 
-Forwarding parameters other than the on/off switch — region codes,
-minimum RSSI/SNR, and flood-contention tuning — are not exposed by this
-property in the current protocol revision; a repeater applies its local
-defaults. Later revisions **MAY** define additional device-behavior
-properties (identifiers 70–95) to configure them.
+Flood-contention tuning — the forwarding delay window, deferral count,
+and similar timing parameters — is not exposed; a repeater applies its
+local defaults.
 
 ### PROP 71: `PROP_IDENT` {#prop-ident}
 
@@ -412,3 +418,101 @@ for a device that moves, false for one installed in a fixed location.
 Orthogonal to `PROP_IDENT_ROLE` and to `PROP_MAC_REPEATER_ENABLED`, and
 orthogonal to whether a host is tethered. A hand-carried repeater and a
 pole-mounted sensor are both ordinary configurations.
+
+### PROP 74: `PROP_MAC_REPEATER_REGIONS` {#prop-mac-repeater-regions}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`
+* Value Type: Concatenated 2-octet [region codes](packet-options.md#region-code-encoding)
+* Post-Reset Value: Empty, or restored from saved state
+
+The set of regions the device identity flood-forwards for, as the codes
+themselves concatenated with no delimiter — byte-for-byte the encoding of
+the [Supported Regions](node-identity.md#supported-regions-option-4)
+identity option. The value length is therefore always even; a device
+**MUST** reject an odd-length write with `STATUS_INVALID_ARGUMENT`, and
+**MAY** reject a write that exceeds the number of entries it can hold.
+
+The list is the filter applied at step 6 of the [forwarding
+procedure](repeater-operation.md#forwarding-procedure): a flood packet
+carrying region codes is forwarded only if at least one of them appears
+here. An **empty** list — the factory default — imposes no regional
+restriction, so a tagged packet is forwarded whatever its region.
+
+A device with forwarding enabled and a non-empty list **SHOULD** advertise
+the same codes in its node identity, so that a peer choosing a route can
+see what a repeater will carry. A device that is not forwarding makes no
+such claim and omits the option.
+
+Whether an untagged packet is tagged on the way out is a separate
+decision, governed by `PROP_MAC_REPEATER_DEFAULT_REGION`.
+
+### PROP 75: `PROP_MAC_REPEATER_DEFAULT_REGION` {#prop-mac-repeater-default-region}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`
+* Value Type: One 2-octet [region code](packet-options.md#region-code-encoding), or empty
+* Post-Reset Value: Empty, or restored from saved state
+
+The region code the device inserts into a flood packet that carries none,
+as permitted at step 6 of the [forwarding
+procedure](repeater-operation.md#forwarding-procedure). An **empty**
+value — the factory default — means the device never tags: untagged
+packets are forwarded untagged. Any other value **MUST** be exactly two
+octets; a device rejects other lengths with `STATUS_INVALID_ARGUMENT`.
+
+Tagging is opt-in because it is a claim about where the packet is, not
+merely about where the repeater is willing to forward. A repeater that
+filters on a region list without asserting one leaves the decision to
+whoever originated the packet.
+
+The configured code **SHOULD** be one of the codes in
+`PROP_MAC_REPEATER_REGIONS` when that list is non-empty, so that the
+repeater will itself forward what it tags. A device does not enforce this
+across the two writes, and the two properties may be set in either order.
+
+Only untagged packets are affected: an already-tagged packet is forwarded
+with its codes unchanged, and a second code is never added.
+
+### PROP 76: `PROP_MAC_REPEATER_MIN_RSSI` {#prop-mac-repeater-min-rssi}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`
+* Value Type: INT16 in dBm, or empty
+* Post-Reset Value: Empty, or restored from saved state
+
+The weakest signal the device will flood-forward, in dBm. An **empty**
+value — the factory default — imposes no threshold. Any other value
+**MUST** be exactly two octets.
+
+The threshold is the repeater's half of step 7 of the [forwarding
+procedure](repeater-operation.md#forwarding-procedure): where the packet
+also carries a minimum, the higher of the two applies. Raising it trades
+reach for a quieter mesh, which is what a dense deployment wants from a
+repeater sitting at the edge of everyone's range.
+
+Applies to flood forwarding only. Source-routed packets are forwarded on
+the strength of the route, not the link.
+
+### PROP 77: `PROP_MAC_REPEATER_MIN_SNR` {#prop-mac-repeater-min-snr}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_REPEATER`
+* Value Type: INT8 in whole dB, or empty
+* Post-Reset Value: Empty, or restored from saved state
+
+The lowest signal-to-noise ratio the device will flood-forward, in whole
+dB. An **empty** value — the factory default — imposes no threshold. Any
+other value **MUST** be exactly one octet.
+
+The threshold is the repeater's half of step 8 of the [forwarding
+procedure](repeater-operation.md#forwarding-procedure), combined with any
+packet-imposed minimum the same way `PROP_MAC_REPEATER_MIN_RSSI` is. On
+spreading factors that decode well below the noise floor, this is the
+more meaningful of the two thresholds.
+
+Applies to flood forwarding only.

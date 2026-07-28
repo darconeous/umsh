@@ -11,6 +11,10 @@ holds the protocol **spec**, a Rust **reference implementation**, embedded
 Spec: `docs/protocol/` (mdBook). Everything here was written with heavy LLM
 assistance and is explicitly experimental — expect code smells and WIP APIs.
 
+There is no significant installed user base, so versioning and migration are a matter
+of immediate convenience and not mandatory at this time. Carefully weigh the design
+costs of migration before considering implementing it.
+
 ## Repository layout
 
 - `crates/` — host-side + `no_std` library crates (the reference implementation):
@@ -68,3 +72,5 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 - **Async**: shared-`AsyncRefCell` poll_fn drivers must use `poll_with_mut` (register-before-borrow self-wakes into a 100% CPU spin). `Spawner` accepts `!Send` tasks; only `SendSpawner` needs `Send`.
 - **Spec tone**: no historical/changelog framing, no over-clarifying, no prescriptive unimplemented features. UMSH is more than a MAC layer — avoid "strictly/only the MAC layer".
 - **Git**: commit only when asked; batch changes. Board bringup status, storage decisions, and many hardware gotchas live in the persistent memory index (`memory/MEMORY.md`) — consult it for board-specific detail.
+- **Questions are not calls to action**: Do not assume that the user asking a question implies that you should take action. Answer the question. Do not make code changes unless that was explicitly requested by the user.
+- **Remember your current directory**: Avoid unnecessarily prepending `cd <PROJECTDIR> &&` to bash commands,  as this causes unnecessary permission prompts.

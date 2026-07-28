@@ -24,7 +24,7 @@ heapless.workspace = true
 rand_core.workspace = true
 umsh-chat-room = { path = "../crates/umsh-chat-room", default-features = false, optional = true }
 umsh-ulcp = { path = "../crates/umsh-ulcp" }
-umsh-core = { path = "../crates/umsh-core", default-features = false }
+umsh-core = { path = "../crates/umsh-core", default-features = false, features = ["region-codec"] }
 umsh-crypto = { path = "../crates/umsh-crypto", default-features = false }
 umsh-hal = { path = "../crates/umsh-hal", default-features = false }
 umsh-mac = { path = "../crates/umsh-mac", default-features = false }

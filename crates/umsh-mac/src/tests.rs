@@ -1623,8 +1623,7 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
         ),
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8])
-        .unwrap();
+    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8]).unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
@@ -1650,8 +1649,7 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
         },
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8])
-        .unwrap();
+    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8]).unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
@@ -1674,8 +1672,7 @@ fn queued_mac_ack_transmits_before_application_traffic() {
     mac.tx_queue_mut()
         .enqueue(TxPriority::Application, b"app", None, None)
         .unwrap();
-    mac.queue_mac_ack([0xCC; 8])
-        .unwrap();
+    mac.queue_mac_ack([0xCC; 8]).unwrap();
 
     block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
 
@@ -3508,6 +3505,7 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
         .regions
         .push([0x78, 0x53])
         .unwrap();
+    repeater.repeater_config_mut().default_region = Some([0x78, 0x53]);
     let repeater_id = repeater
         .add_identity(DummyIdentity::new([0x10; 32]))
         .unwrap();
@@ -3837,6 +3835,7 @@ fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
         .regions
         .push([0x78, 0x53])
         .unwrap();
+    mac.repeater_config_mut().default_region = Some([0x78, 0x53]);
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -3865,6 +3864,112 @@ fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
 
     assert_eq!(options.region_code, Some([0x78, 0x53]));
     assert_eq!(header.flood_hops.unwrap(), FloodHops::new(3, 2).unwrap());
+}
+
+/// Flood-forward an untagged unicast through a repeater configured with
+/// `regions` but the supplied `default_region`, and report the region code
+/// carried by the forwarded frame.
+fn forwarded_region_for_untagged_flood(
+    regions: &[[u8; 2]],
+    default_region: Option<[u8; 2]>,
+) -> Option<[u8; 2]> {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    for region in regions {
+        mac.repeater_config_mut().regions.push(*region).unwrap();
+    }
+    mac.repeater_config_mut().default_region = default_region;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let frame = build_received_unicast_frame(
+        &remote,
+        &keys,
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"hello",
+        false,
+        Some((4, 1)),
+        None,
+        None,
+    );
+
+    mac.radio_mut().queue_received_frame(frame.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone())
+        .unwrap()
+        .region_code
+}
+
+#[test]
+fn receive_one_repeater_leaves_untagged_flood_untagged_without_a_default_region() {
+    assert_eq!(
+        forwarded_region_for_untagged_flood(&[[0x78, 0x53]], None),
+        None,
+        "a configured region list must not imply a default region to insert"
+    );
+}
+
+#[test]
+fn receive_one_repeater_inserts_the_default_region_not_the_first_configured_one() {
+    assert_eq!(
+        forwarded_region_for_untagged_flood(&[[0x31, 0xD9], [0x78, 0x53]], Some([0x78, 0x53])),
+        Some([0x78, 0x53])
+    );
+    // The default region need not appear in the filter list at all.
+    assert_eq!(
+        forwarded_region_for_untagged_flood(&[[0x31, 0xD9]], Some([0xAB, 0xCD])),
+        Some([0xAB, 0xCD])
+    );
+}
+
+#[test]
+fn receive_one_repeater_without_configured_regions_forwards_tagged_floods() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(umsh_core::NodeHint([0x77, 0x66, 0x55]))
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .flood_hops(4)
+        .region_code([0x78, 0x53])
+        .payload(b"hello")
+        .build()
+        .unwrap();
+    {
+        packet.header().unwrap();
+        packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
+    }
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let forwarded = mac.tx_queue_mut().pop_next().expect(
+        "an empty region list imposes no regional restriction, so a tagged \
+         flood packet must still be forwarded",
+    );
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
+    assert_eq!(options.region_code, Some([0x78, 0x53]));
 }
 
 #[test]

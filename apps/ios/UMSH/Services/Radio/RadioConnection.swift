@@ -119,6 +119,10 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case bluetoothUnavailable
     case radioNotFound
     case incompatibleProtocol
+    /// The device refused an encrypted characteristic because it and this
+    /// phone have no usable pairing. Distinct from `incompatibleProtocol`:
+    /// the device is fine, the pairing is missing.
+    case pairingRequired
     case identityUnavailable
     case takeoverNotAllowed
     case operationInProgress

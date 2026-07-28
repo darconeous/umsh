@@ -75,8 +75,8 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 
 6. **Transition from source-routing to flooding**
    - If the source-route option is now empty:
-     - If the packet carries one or more region code options and none of them match this repeater's configured regions, do not forward.
-     - If the packet has no region code option, the repeater MAY insert one according to local policy before flood-forwarding.
+     - If the repeater has a non-empty configured region list and the packet carries one or more region code options, none of which appear in that list, do not forward. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
+     - If the packet has no region code option, the repeater MAY insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
      - If one or more region codes are already present, the repeater MUST preserve them unchanged.
      - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
      - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.

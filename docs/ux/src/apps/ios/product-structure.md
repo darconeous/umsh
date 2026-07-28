@@ -422,6 +422,11 @@ consumer-style signal-strength score. Administrative controls appear only after
 the node and authorization scheme support them; ordinary observation does not
 imply permission to manage infrastructure.
 
+Configuring a repeater the user physically has is a different path with a
+different basis for authority: device setup in Settings connects to it locally
+over Bluetooth, gated by that device's own pairing. Nothing there extends to a
+node observed only through the mesh, and this screen does not link to it.
+
 ## Settings tab
 
 Use a native grouped settings list with these sections:
@@ -457,6 +462,94 @@ Battery belongs beside Connection at the top of Radio Detail, not only in a
 diagnostic section. Show percentage, charging/external-power state, and reading
 age where applicable.
 
+### Devices
+
+A single **Set up a device…** row opens the device-setup sheet. It is the entry
+point for configuring any nearby UMSH device over its local control interface —
+a repeater, a tracker, or a radio destined for another phone.
+
+Device setup is a foreground session and is deliberately unlike the companion
+binding:
+
+- it runs on its own Bluetooth session, concurrent with the companion
+  connection, and neither interrupts the other;
+- it never claims the device for this phone, so the device's existing host
+  identity, filters, and queued traffic are left alone;
+- nothing is remembered between visits — no saved device list, no automatic
+  reconnection, and a dropped link ends the session with **Connection lost**
+  and a retry rather than a background wait; and
+- the device's own Bluetooth pairing still gates every connection.
+
+The sheet opens on a goal: tracker, repeater, this phone's radio, or changing an
+existing device's settings. The goal decides only where the editor starts. Every
+flow reaches the same editor over the same device settings, and any field
+remains editable in any flow.
+
+The scan list marks the phone's own companion radio and does not offer it for
+setup, because the companion connection already holds it. That device is
+selectable only for the adoption path below.
+
+The editor states whose device it is — **Not configured**, **This phone**, or
+**Another host** — as information, not as a gate. It groups device name, radio
+profile and PHY parameters, advertised identity, and repeater policy. The whole
+editor is applied as one operation: the radio is disabled first and re-enabled
+last, the device saves, and the app reads the saved settings back before
+reporting success, so what is confirmed is what the device will boot with. A
+field the device reports back differently is named rather than quietly accepted.
+
+#### Device identity
+
+A device that exposes its own UMSH identity offers it through the same node
+identity screen every other node uses — complete Base58 address, canonical
+hint, and shareable QR — not an abbreviated hint on the editor. A device that
+exposes no identity says so rather than showing an empty row.
+
+That screen offers **Save Peer**, which records the node locally so it can be
+found in Network afterwards. Saving is local only: nothing is transmitted to the
+node, it does not become a contact, and it is not registered for messaging. This
+is the one durable trace a setup session may leave, and only when the user asks
+for it.
+
+#### Advertised identity
+
+Role and mobility are separate questions from forwarding. A role left as
+**Derive from what it does** lets the device present itself honestly — a
+forwarding node advertises as a repeater and anything else as a tracker — and
+the editor states the resulting role in place rather than making the user infer
+it. An explicit role is advertised verbatim, so a mobile repeater and a
+stationary tracker both remain expressible.
+
+#### Repeater policy
+
+Repeater settings appear only for a device that can forward:
+
+- whether the device forwards other nodes' traffic at all;
+- the **routing regions** it relays for;
+- which region, if any, is applied to traffic that arrives untagged; and
+- minimum signal and quality thresholds below which nothing is relayed.
+
+A routing region is a routing domain, not an RF band plan, and the interface
+must never present the two as one choice: a region scopes how far a flood
+travels, while frequency and modulation live in the radio profile. Regions are
+entered as a three-letter airport code, a region name the local mesh has agreed
+on, or a raw code, and are always displayed with that code — `SJC (0x7853)` —
+because the code is what appears in a capture or on another node. An empty
+region list forwards traffic from every region, which is a different statement
+from forwarding nothing; the interface says which one is in effect.
+
+The default-region choice includes an explicit **None — don't tag**, so tagging
+untagged traffic is opt-in. Only a region already in the forwarding list can be
+chosen, which keeps a device from advertising a region it does not relay.
+
+#### Adopting a device as this phone's radio
+
+**Use as this phone's radio** is available from the editor and as a goal of its
+own. It ends the setup session, releases the device, and hands it to the
+ordinary companion-radio path; the Bluetooth pairing established during setup is
+reused. When a companion radio is already bound, the app names it and confirms
+before replacing it, and says that the replaced radio keeps its own settings and
+pairing.
+
 ### Notifications and privacy
 
 - message preview privacy;
@@ -488,11 +581,13 @@ app can participate:
    location-sharing defaults.
 2. **T1000-E Radio** — **Connected · 78%** (or the truthful alternative power
    state) and active preset; selecting it opens Radio Detail.
-3. **Mesh and radio defaults** — regions, routing defaults, named presets, and
+3. **Set up a device…** — configuring any other nearby UMSH device, which is a
+   separate activity from choosing the radio this phone uses.
+4. **Mesh and radio defaults** — regions, routing defaults, named presets, and
    expert controls.
-4. **Notifications** and **Privacy**.
-5. **Data and diagnostics** — storage, logs, export, and versions.
-6. **About UMSH**.
+5. **Notifications** and **Privacy**.
+6. **Data and diagnostics** — storage, logs, export, and versions.
+7. **About UMSH**.
 
 Destructive identity and radio actions appear only inside their respective
 detail screens, never on the Settings overview.

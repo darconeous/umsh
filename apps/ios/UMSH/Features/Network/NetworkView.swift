@@ -137,6 +137,14 @@ struct PeerDetailView: View {
     let pingPeer: ((PeerSummary) async -> PeerPingResult)?
     let fetchIdentity: ((PeerSummary) async -> Bool)?
     let updateAlias: ((PeerSummary, String?) async -> Bool)?
+    /// Offered when this node may not exist locally yet — a device the
+    /// phone is configuring, say. Saving records it in Network and sends
+    /// nothing to the node.
+    let savePeer: (() async -> Bool)?
+    /// Whether that record already exists. The action is offered only when
+    /// it does not; the row still says where the node stands, because a
+    /// section that simply vanishes on save reads as a failure.
+    let isPeerSaved: Bool
 
     @State private var openedConversation: DirectConversationSummary?
     @State private var isOpeningConversation = false
@@ -151,6 +159,9 @@ struct PeerDetailView: View {
     @State private var currentAlias: String?
     @State private var isEditingAlias = false
     @State private var aliasDraft = ""
+    @State private var isSavingPeer = false
+    @State private var didSavePeer = false
+    @State private var savePeerFailed = false
 
     init(
         peer: PeerSummary,
@@ -162,7 +173,9 @@ struct PeerDetailView: View {
         messageActions: ChatMessageActions = .unavailable,
         pingPeer: ((PeerSummary) async -> PeerPingResult)? = nil,
         fetchIdentity: ((PeerSummary) async -> Bool)? = nil,
-        updateAlias: ((PeerSummary, String?) async -> Bool)? = nil
+        updateAlias: ((PeerSummary, String?) async -> Bool)? = nil,
+        savePeer: (() async -> Bool)? = nil,
+        isPeerSaved: Bool = false
     ) {
         self.peer = peer
         _radioSnapshot = radioSnapshot
@@ -174,6 +187,8 @@ struct PeerDetailView: View {
         self.pingPeer = pingPeer
         self.fetchIdentity = fetchIdentity
         self.updateAlias = updateAlias
+        self.savePeer = savePeer
+        self.isPeerSaved = isPeerSaved
         _currentAlias = State(initialValue: peer.alias)
     }
 
@@ -224,8 +239,8 @@ struct PeerDetailView: View {
                     Text("Advertised identity")
                 } footer: {
                     Text(advertised.signature == .valid
-                         ? "These details were published and signed by the peer."
-                         : "These details were published by the peer but are not authenticated.")
+                         ? "These details are claims made by the peer. Nothing here is independently verified."
+                         : "These details are unsigned, so they may not have come from the peer at all. Nothing here is independently verified.")
                 }
             }
 
@@ -267,7 +282,7 @@ struct PeerDetailView: View {
 
                     if let pingStatus {
                         LabeledContent(isPinging ? "Ping" : "Last ping") {
-                            Label(pingStatus.message, systemImage: pingStatus.symbolName)
+                            IconedValue(pingStatus.message, systemImage: pingStatus.symbolName)
                                 .foregroundStyle(pingStatus.color)
                         }
                         if case let .reply(reply) = pingStatus {
@@ -297,6 +312,30 @@ struct PeerDetailView: View {
                     Text("This peer is managed by the saved radio and cannot be removed separately.")
                         .foregroundStyle(.secondary)
                     LabeledContent("Radio", value: radioSnapshot.name ?? "Saved companion radio")
+                }
+            }
+
+            if let savePeer {
+                Section {
+                    if isPeerSaved || didSavePeer {
+                        Label("Saved to Network", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button {
+                            Task { await save(with: savePeer) }
+                        } label: {
+                            Label("Save Peer", systemImage: "square.and.arrow.down")
+                        }
+                        .disabled(isSavingPeer)
+                    }
+                } footer: {
+                    if savePeerFailed {
+                        Text("This node could not be saved. Its identity is unchanged either way.")
+                    } else if isPeerSaved || didSavePeer {
+                        Text("This node is recorded on this phone. Rename it, make it a contact, or remove it from Network.")
+                    } else {
+                        Text("Records this node on this phone so it can be found in Network later. Nothing is sent to the node, and it is not made a contact.")
+                    }
                 }
             }
         }
@@ -352,6 +391,18 @@ struct PeerDetailView: View {
             feedbackTitle = "Alias not saved"
             feedbackMessage = "The alias could not be stored. Try again."
             showsFeedback = true
+        }
+    }
+
+    private func save(with savePeer: () async -> Bool) async {
+        guard !isSavingPeer, !didSavePeer else { return }
+        isSavingPeer = true
+        defer { isSavingPeer = false }
+        savePeerFailed = false
+        if await savePeer() {
+            didSavePeer = true
+        } else {
+            savePeerFailed = true
         }
     }
 
@@ -418,7 +469,67 @@ struct PeerDetailView: View {
     }
 }
 
-/// Rows describing a decoded advertised node identity. Shared by the peer
+/// An icon-and-text value for the trailing side of a `LabeledContent` row.
+///
+/// Deliberately not a `Label`: as `LabeledContent`'s value a `Label` reports
+/// an unbounded height, so the enclosing list row grows to fill the rest of
+/// the screen and leaves a large blank area under the section. An explicit
+/// stack renders identically and measures to its content.
+private struct IconedValue: View {
+    let text: String
+    let systemImage: String
+
+    init(_ text: String, systemImage: String) {
+        self.text = text
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .accessibilityHidden(true)
+            Text(text)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+/// A signature notice for an advertised identity, shown only when the
+/// signature does not verify.
+///
+/// A good signature deliberately renders nothing. It proves only that the
+/// keypair which *is* this address asserted these claims about itself, which
+/// is no evidence the claims are true — a node can sign a fabricated name or
+/// location as easily as a real one. A "verified" badge invites far more
+/// trust than that supports, so the affirmative case stays silent and only a
+/// failure, which is genuinely decision-relevant at import time, speaks up.
+struct AdvertisedIdentityWarning: View {
+    let identity: MeshNodeIdentity
+
+    var body: some View {
+        switch identity.signature {
+        case .valid:
+            EmptyView()
+        case .unsigned:
+            Label(
+                "These details carry no signature, so they may not have come from this node at all.",
+                systemImage: "exclamationmark.triangle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        case .invalid:
+            Label(
+                "The signature on these details does not verify. Do not rely on them.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+    }
+}
+
+/// Rows describing a decoded advertised node identity: the peer's own claims
+/// about itself, none of them independently verified. Shared by the peer
 /// sheet and the import preview.
 struct AdvertisedIdentityRows: View {
     let identity: MeshNodeIdentity
@@ -456,19 +567,6 @@ struct AdvertisedIdentityRows: View {
                     Date(timeIntervalSince1970: TimeInterval(timestamp)),
                     format: .dateTime.year().month().day().hour().minute()
                 )
-            }
-        }
-        LabeledContent("Authenticity") {
-            switch identity.signature {
-            case .valid:
-                Label("Signed by this node", systemImage: "checkmark.seal.fill")
-                    .foregroundStyle(.green)
-            case .unsigned:
-                Label("Not signed", systemImage: "seal")
-                    .foregroundStyle(.secondary)
-            case .invalid:
-                Label("Signature invalid", systemImage: "xmark.seal.fill")
-                    .foregroundStyle(.red)
             }
         }
     }

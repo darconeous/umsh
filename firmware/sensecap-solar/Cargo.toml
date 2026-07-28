@@ -40,10 +40,10 @@ ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
 name = "firmware-sensecap-solar"
-# The protocol, security, transport-arbitration, and BLE implementation are
-# shared with the T-Echo / T-1000E device firmware. Board differences are selected by
+# The protocol, security, transport-arbitration, and BLE implementation live in
+# the shared nRF52840 tracker sources. Board differences are selected by
 # the capability + `board-sensecap-solar` features above.
-path = "../techo/src/main.rs"
+path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
@@ -51,7 +51,7 @@ umsh-bsp-sensecap-solar = { path = "../../crates/umsh-bsp-sensecap-solar", defau
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime" }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex"] }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }

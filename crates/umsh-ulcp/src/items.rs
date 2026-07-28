@@ -24,6 +24,10 @@ pub const CHANNEL_KEY_LEN: usize = 32;
 /// Length of a derived channel identifier (the digest form of a channel
 /// key).
 pub const CHANNEL_ID_LEN: usize = 2;
+/// Length of a routing-domain region code
+/// (`PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, and
+/// the Supported Regions node-identity option they mirror).
+pub const REGION_CODE_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemError {

@@ -19,76 +19,97 @@ use umsh::ulcp::{
     UlcpDevice, UlcpDeviceConfig, FrameLink, HostOwnership, HostProvisioning,
     SavedSnapshot,
 };
-use umsh::core::PublicKey;
+use umsh::core::{PublicKey, RegionCode};
 
 const USAGE: &str = "\
-usage: umsh-ulcpctl <serial-port> <command> [options]\n\
-       umsh-ulcpctl --ble[=selector] <command> [options]\n\
-       umsh-ulcpctl --scan-ble\n\n\
-Manages a ULCP radio device without disturbing it: attaches with the\n\
-non-resetting full-protocol handshake, so an autonomously operating\n\
-board keeps its configuration unless the command changes it.\n\n\
-Commands:\n\
-  info                  print capabilities, ownership, PHY state, and\n\
-                        provisioning digests; changes nothing\n\
-  provision             establish host provisioning (options below)\n\
-  identity              print the device identity public key\n\
-  identity generate     generate a device identity if none exists\n\
-  set-name <name>       set the human-readable device name\n\
-  save                  persist live state across reboots (CMD_SAVE)\n\
-  restore               revert live state to the saved snapshot\n\
-  clear                 erase persisted state; live state keeps running\n\
-  factory-reset         erase ALL state incl. BLE bonds + PIN, then\n\
-                        reboot into a blank factory state (needs --yes)\n\
-  reset                 protocol reset (CMD_RST): state returns to its\n\
-                        post-reset values, restoring any saved\n\
-                        snapshot; the MCU does not reboot\n\
-  pin <6-digits|clear>  set or clear the persisted BLE pairing PIN\n\
-  phy                   print PHY enable state and LoRa parameters\n\
-  phy on|off            enable/disable the radio (PROP_PHY_ENABLED); a\n\
-                        repeater or autonomous node needs the PHY on\n\
-  phy freq <kHz>        set the frequency in kHz (PROP_PHY_FREQ)\n\
-  phy sf <5-12>         set the LoRa spreading factor\n\
-  phy bw <Hz>           set the LoRa bandwidth in Hz\n\
-  phy cr <5-8>          set the LoRa coding-rate denominator (4/N)\n\
-  phy power <dBm>       set the transmit power in dBm (PROP_PHY_TX_POWER)\n\
-  duty                  print duty-cycle usage and limit\n\
-  duty limit <N|off>    set PROP_PHY_DUTY_LIMIT on its raw 0-65535\n\
-                        scale (655 \u{2248} 1% of the hour); `off` disables\n\
-                        enforcement\n\
-  repeater              print whether autonomous repeater forwarding\n\
-                        is enabled (PROP_MAC_REPEATER_ENABLED)\n\
-  repeater on|off       enable/disable repeater forwarding; the on-board\n\
-                        node forwards overheard frames and advertises as\n\
-                        a repeater (needs a provisioned device identity)\n\
-  dev-channel [list]    list device-identity channel ids (digest form)\n\
-  dev-channel add <KEY>    add a device channel key (the on-board node\n\
-                           joins it and processes its multicast)\n\
-  dev-channel remove <KEY> remove a device channel key\n\
-  dev-peer [list]       list device-identity peer public keys\n\
-  dev-peer add <KEY>       add a device peer public key\n\
-  dev-peer remove <KEY>    remove a device peer public key\n\n\
---scan-ble lists nearby companion radios (id, name, RSSI) without\n\
-connecting; the id works as a --ble= selector.\n\n\
-Options:\n\
-  --baud=115200           serial bit rate\n\
-  --trace                 print every ULCP frame on stderr\n\
-  --expect-host-key=KEY   info: report ownership relative to this key\n\
-  --host-key=KEY          provision: host identity public key (required)\n\
-  --channel-key=KEY       provision: channel key; repeatable\n\
-  --peer=PUB,KENC,KMIC    provision: peer public key plus 16-byte hex\n\
-                          pairwise secrets; repeatable\n\
-  --filter=SPEC           provision: dest-hint:HHHHHH, channel-id:HHHH,\n\
-                          or pkt-type:N; repeatable\n\
-  --auto-ack=on|off       provision: delegated MAC acks (default on)\n\
-  --file=PATH             provision: read the same settings from a file\n\
-                          (`setting = value` lines, `#` comments)\n\
-  --force                 provision: displace another host's provisioning\n\
-  --no-save               leave a mutation live-only (mutating commands\n\
-                          otherwise persist automatically via CMD_SAVE)\n\
-  --yes                   factory-reset: confirm the wipe\n\n\
-KEY values are 44-character base58 or 64-character hex. Secrets are\n\
-never echoed in output or traces.\n";
+usage: umsh-ulcpctl <serial-port> <command> [options]
+       umsh-ulcpctl --ble[=selector] <command> [options]
+       umsh-ulcpctl --scan-ble
+
+Manages a ULCP radio device without disturbing it: attaches with the
+non-resetting full-protocol handshake, so an autonomously operating
+board keeps its configuration unless the command changes it.
+
+Commands:
+  info                  print capabilities, ownership, PHY state, and
+                        provisioning digests; changes nothing
+  provision             establish host provisioning (options below)
+  identity              print the device identity public key
+  identity generate     generate a device identity if none exists
+  set-name <name>       set the human-readable device name
+  save                  persist live state across reboots (CMD_SAVE)
+  restore               revert live state to the saved snapshot
+  clear                 erase persisted state; live state keeps running
+  factory-reset         erase ALL state incl. BLE bonds + PIN, then
+                        reboot into a blank factory state (needs --yes)
+  reset                 protocol reset (CMD_RST): state returns to its
+                        post-reset values, restoring any saved
+                        snapshot; the MCU does not reboot
+  pin <6-digits|clear>  set or clear the persisted BLE pairing PIN
+  phy                   print PHY enable state and LoRa parameters
+  phy on|off            enable/disable the radio (PROP_PHY_ENABLED); a
+                        repeater or autonomous node needs the PHY on
+  phy freq <kHz>        set the frequency in kHz (PROP_PHY_FREQ)
+  phy sf <5-12>         set the LoRa spreading factor
+  phy bw <Hz>           set the LoRa bandwidth in Hz
+  phy cr <5-8>          set the LoRa coding-rate denominator (4/N)
+  phy power <dBm>       set the transmit power in dBm (PROP_PHY_TX_POWER)
+  duty                  print duty-cycle usage and limit
+  duty limit <N|off>    set PROP_PHY_DUTY_LIMIT on its raw 0-65535
+                        scale (655 \u{2248} 1% of the hour); `off` disables
+                        enforcement
+  repeater              print the autonomous repeater forwarding policy
+  repeater on|off       enable/disable repeater forwarding; the on-board
+                        node forwards overheard frames and advertises as
+                        a repeater (needs a provisioned device identity)
+  repeater regions <CODE[,...]|none>
+                        only flood-forward packets tagged with one of
+                        these regions; `none` clears the filter, which
+                        forwards regardless of region
+  repeater default-region <CODE|none>
+                        tag untagged floods with this region before
+                        forwarding; `none` forwards them untagged
+  repeater min-rssi <dBm|none>
+                        only forward frames heard at or above this RSSI
+  repeater min-snr <dB|none>
+                        only forward frames heard at or above this SNR
+  dev-channel [list]    list device-identity channel ids (digest form)
+  dev-channel add <KEY>    add a device channel key (the on-board node
+                           joins it and processes its multicast)
+  dev-channel remove <KEY> remove a device channel key
+  dev-peer [list]       list device-identity peer public keys
+  dev-peer add <KEY>       add a device peer public key
+  dev-peer remove <KEY>    remove a device peer public key
+
+--scan-ble lists nearby companion radios (id, name, RSSI) without
+connecting; the id works as a --ble= selector.
+
+Options:
+  --baud=115200           serial bit rate
+  --trace                 print every ULCP frame on stderr
+  --expect-host-key=KEY   info: report ownership relative to this key
+  --host-key=KEY          provision: host identity public key (required)
+  --channel-key=KEY       provision: channel key; repeatable
+  --peer=PUB,KENC,KMIC    provision: peer public key plus 16-byte hex
+                          pairwise secrets; repeatable
+  --filter=SPEC           provision: dest-hint:HHHHHH, channel-id:HHHH,
+                          or pkt-type:N; repeatable
+  --auto-ack=on|off       provision: delegated MAC acks (default on)
+  --file=PATH             provision: read the same settings from a file
+                          (`setting = value` lines, `#` comments)
+  --force                 provision: displace another host's provisioning
+  --no-save               leave a mutation live-only (mutating commands
+                          otherwise persist automatically via CMD_SAVE)
+  --yes                   factory-reset: confirm the wipe
+
+KEY values are 44-character base58 or 64-character hex. Secrets are
+never echoed in output or traces.
+
+CODE values are a 3-letter IATA airport code (SJC), a raw 2-byte code
+(0x7853), or any other text, which is hashed as a region name
+(\"Rogue Valley\"). Region codes are routing-domain tags, not RF band
+plans, so every repeater in an area must agree on the same spelling.
+";
 
 const COMMANDS: &[&str] = &[
     "info",
@@ -138,9 +159,9 @@ enum Command {
     Phy(PhyOp),
     /// `duty` (`None`: report usage + limit) / `duty limit <value>`.
     Duty(Option<u16>),
-    /// `repeater` (`None`: report state) / `repeater on|off`
-    /// (`Some(bool)`: set `PROP_MAC_REPEATER_ENABLED`).
-    Repeater(Option<bool>),
+    /// `repeater` (report) / `repeater on|off` / `repeater
+    /// regions|default-region|min-rssi|min-snr <value>`.
+    Repeater(RepeaterOp),
     DevChannel(TableOp),
     DevPeer(TableOp),
     /// `--ble-scan` (a transport mode more than a command; carried here
@@ -159,6 +180,19 @@ enum PhyOp {
     Bw(u32),
     Cr(u8),
     Power(i8),
+}
+
+/// One operation on the repeater forwarding policy. `Report` reads the
+/// whole policy; the rest write a single `PROP_MAC_REPEATER_*` property.
+/// The `None` payloads clear a gate rather than setting it.
+#[derive(Debug, PartialEq, Eq)]
+enum RepeaterOp {
+    Report,
+    Enable(bool),
+    Regions(Vec<RegionCode>),
+    DefaultRegion(Option<RegionCode>),
+    MinRssi(Option<i16>),
+    MinSnr(Option<i8>),
 }
 
 /// One operation on a device-domain key table (`PROP_DEV_CHANNEL_KEYS`
@@ -571,12 +605,7 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
             Some(other) => return Err(format!("duty does not take {other:?}")),
         },
         "phy" => Command::Phy(parse_phy_op(&positionals)?),
-        "repeater" => match positionals.first().map(String::as_str) {
-            None => Command::Repeater(None),
-            Some("on") if positionals.len() == 1 => Command::Repeater(Some(true)),
-            Some("off") if positionals.len() == 1 => Command::Repeater(Some(false)),
-            _ => return Err("repeater takes `on`, `off`, or no argument".into()),
-        },
+        "repeater" => Command::Repeater(parse_repeater_op(&positionals)?),
         "dev-channel" => Command::DevChannel(parse_table_op(&word, &positionals)?),
         "dev-peer" => Command::DevPeer(parse_table_op(&word, &positionals)?),
         _ => unreachable!("command word validated above"),
@@ -638,6 +667,71 @@ fn parse_phy_op(positionals: &[String]) -> Result<PhyOp, String> {
                 .into(),
         ),
     }
+}
+
+/// Parse the `repeater` sub-command family.
+///
+/// Every gate accepts `none` to clear it. The region list is
+/// comma-separated so a whole policy fits one shell word.
+fn parse_repeater_op(positionals: &[String]) -> Result<RepeaterOp, String> {
+    let value = |what: &str| -> Result<&String, String> {
+        if positionals.len() == 2 {
+            Ok(&positionals[1])
+        } else {
+            Err(format!("repeater {what} takes exactly one value"))
+        }
+    };
+    match positionals.first().map(String::as_str) {
+        None => Ok(RepeaterOp::Report),
+        Some("on") if positionals.len() == 1 => Ok(RepeaterOp::Enable(true)),
+        Some("off") if positionals.len() == 1 => Ok(RepeaterOp::Enable(false)),
+        Some("regions") => {
+            let text = value("regions")?;
+            if text.eq_ignore_ascii_case("none") {
+                return Ok(RepeaterOp::Regions(Vec::new()));
+            }
+            text.split(',')
+                .map(parse_region)
+                .collect::<Result<Vec<_>, _>>()
+                .map(RepeaterOp::Regions)
+        }
+        Some("default-region") => {
+            let text = value("default-region")?;
+            if text.eq_ignore_ascii_case("none") {
+                return Ok(RepeaterOp::DefaultRegion(None));
+            }
+            parse_region(text).map(|code| RepeaterOp::DefaultRegion(Some(code)))
+        }
+        Some("min-rssi") => {
+            let text = value("min-rssi")?;
+            if text.eq_ignore_ascii_case("none") {
+                return Ok(RepeaterOp::MinRssi(None));
+            }
+            text.parse::<i16>()
+                .map(|dbm| RepeaterOp::MinRssi(Some(dbm)))
+                .map_err(|_| format!("repeater min-rssi: expected dBm or `none`, got {text:?}"))
+        }
+        Some("min-snr") => {
+            let text = value("min-snr")?;
+            if text.eq_ignore_ascii_case("none") {
+                return Ok(RepeaterOp::MinSnr(None));
+            }
+            text.parse::<i8>()
+                .map(|db| RepeaterOp::MinSnr(Some(db)))
+                .map_err(|_| format!("repeater min-snr: expected dB or `none`, got {text:?}"))
+        }
+        _ => Err("repeater takes: (none), on, off, regions <CODE[,...]|none>, \
+                  default-region <CODE|none>, min-rssi <dBm|none>, min-snr <dB|none>"
+            .into()),
+    }
+}
+
+/// Parse one region code, rejecting the empty element a stray comma
+/// leaves behind. Anything that is not an airport code or `0x` literal
+/// is hashed as a region name, so this only fails on empty input.
+fn parse_region(text: &str) -> Result<RegionCode, String> {
+    text.parse::<RegionCode>()
+        .map_err(|error| format!("region {text:?}: {error}"))
 }
 
 fn parse_table_op(word: &str, positionals: &[String]) -> Result<TableOp, String> {
@@ -837,15 +931,31 @@ async fn info<L: FrameLink>(
         println!("{:<14}now {now}, limit {limit}", "duty:");
     }
     if sync.has_capability(cap::REPEATER) {
-        let state = radio
-            .get_prop(prop::MAC_REPEATER_ENABLED)
-            .await
-            .ok()
-            .and_then(|v| v.first().copied())
-            .map_or("unknown".to_string(), |byte| {
-                if byte == 0 { "off".into() } else { "on".into() }
-            });
-        println!("{:<14}{state}", "repeater:");
+        // The policy gates only matter once forwarding is on, so an
+        // enabled repeater gets the whole line and a disabled one stays
+        // a single word.
+        match radio.repeater_policy().await {
+            Ok(Some(policy)) if policy.enabled => {
+                let default = policy
+                    .default_region
+                    .map_or("untagged".to_string(), |code| code.to_string());
+                let floor = match (policy.min_rssi, policy.min_snr) {
+                    (None, None) => String::new(),
+                    (rssi, snr) => {
+                        let rssi = rssi.map_or("any".to_string(), |dbm| format!("{dbm} dBm"));
+                        let snr = snr.map_or("any".to_string(), |db| format!("{db} dB"));
+                        format!(", floor {rssi}/{snr}")
+                    }
+                };
+                println!(
+                    "{:<14}on, regions {}, tags {default}{floor}",
+                    "repeater:",
+                    format_regions(&policy.regions)
+                );
+            }
+            Ok(Some(_)) => println!("{:<14}off", "repeater:"),
+            Ok(None) | Err(_) => println!("{:<14}unknown", "repeater:"),
+        }
     }
     if sync.has_capability(cap::BATTERY) {
         // Live telemetry: each GET performs a measurement, so this is
@@ -1096,7 +1206,7 @@ async fn dispatch<L: FrameLink>(
         }
         Command::Phy(op) => phy(&mut radio, op, no_save).await,
         Command::Duty(limit) => duty(&mut radio, limit, no_save).await,
-        Command::Repeater(state) => repeater(&mut radio, state, no_save).await,
+        Command::Repeater(op) => repeater(&mut radio, op, no_save).await,
         Command::DevChannel(op) => {
             dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
@@ -1242,26 +1352,103 @@ fn print_repeater(byte: Option<u8>) {
     }
 }
 
-/// Report or set autonomous repeater forwarding
-/// (`PROP_MAC_REPEATER_ENABLED`). Persisted device-domain state: it takes
-/// effect once a device identity is provisioned (store-and-defer) and
-/// survives reboot. Enabling it makes the on-board node forward overheard
-/// routable frames and advertise as a repeater.
+/// Render a region list for display, naming the empty list as what it
+/// means rather than printing nothing.
+fn format_regions(regions: &[RegionCode]) -> String {
+    if regions.is_empty() {
+        return "any (no regional restriction)".to_string();
+    }
+    regions
+        .iter()
+        .map(RegionCode::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Report or set autonomous repeater forwarding (`PROP_MAC_REPEATER_*`).
+/// Persisted device-domain state: it takes effect once a device identity
+/// is provisioned (store-and-defer) and survives reboot. Enabling it
+/// makes the on-board node forward overheard routable frames and
+/// advertise as a repeater.
 async fn repeater<L: FrameLink>(
     radio: &mut UlcpDevice<L>,
-    state: Option<bool>,
+    op: RepeaterOp,
     no_save: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(enabled) = state {
-        let echoed = radio
-            .set_prop(prop::MAC_REPEATER_ENABLED, &[enabled as u8])
-            .await?;
-        print_repeater(echoed.first().copied());
-        return persist_mutation(radio, no_save, true).await;
+    match op {
+        RepeaterOp::Report => {
+            let Some(policy) = radio.repeater_policy().await? else {
+                return Err("device does not advertise CAP_REPEATER".into());
+            };
+            print_repeater(Some(policy.enabled as u8));
+            println!("{:<16}{}", "  regions:", format_regions(&policy.regions));
+            match policy.default_region {
+                Some(code) => println!("{:<16}{code}", "  default:"),
+                None => println!("{:<16}none (forwards untagged floods untagged)", "  default:"),
+            }
+            match policy.min_rssi {
+                Some(dbm) => println!("{:<16}{dbm} dBm", "  min rssi:"),
+                None => println!("{:<16}any", "  min rssi:"),
+            }
+            match policy.min_snr {
+                Some(db) => println!("{:<16}{db} dB", "  min snr:"),
+                None => println!("{:<16}any", "  min snr:"),
+            }
+            if policy.enabled && policy.default_region.is_some_and(|code| {
+                !policy.regions.is_empty() && !policy.regions.contains(&code)
+            }) {
+                // Legal, and not enforced by the device: the two
+                // properties are written independently. Still almost
+                // always a mistake, since this repeater tags floods with
+                // a region it will not itself forward.
+                println!(
+                    "warning: the default region is not in the forwarding list; \
+                     floods this repeater tags will not be forwarded by it"
+                );
+            }
+            Ok(())
+        }
+        RepeaterOp::Enable(enabled) => {
+            let echoed = radio
+                .set_prop(prop::MAC_REPEATER_ENABLED, &[enabled as u8])
+                .await?;
+            print_repeater(echoed.first().copied());
+            persist_mutation(radio, no_save, true).await
+        }
+        RepeaterOp::Regions(regions) => {
+            let stored = radio.set_repeater_regions(&regions).await?;
+            println!("repeater regions {}", format_regions(&stored));
+            if stored.len() < regions.len() {
+                println!(
+                    "warning: the device kept {} of {} regions (capacity)",
+                    stored.len(),
+                    regions.len()
+                );
+            }
+            persist_mutation(radio, no_save, true).await
+        }
+        RepeaterOp::DefaultRegion(region) => {
+            match radio.set_repeater_default_region(region).await? {
+                Some(code) => println!("repeater default region {code}"),
+                None => println!("repeater default region none (forwards untagged)"),
+            }
+            persist_mutation(radio, no_save, true).await
+        }
+        RepeaterOp::MinRssi(min_rssi) => {
+            match radio.set_repeater_min_rssi(min_rssi).await? {
+                Some(dbm) => println!("repeater min rssi {dbm} dBm"),
+                None => println!("repeater min rssi any"),
+            }
+            persist_mutation(radio, no_save, true).await
+        }
+        RepeaterOp::MinSnr(min_snr) => {
+            match radio.set_repeater_min_snr(min_snr).await? {
+                Some(db) => println!("repeater min snr {db} dB"),
+                None => println!("repeater min snr any"),
+            }
+            persist_mutation(radio, no_save, true).await
+        }
     }
-    let value = radio.get_prop(prop::MAC_REPEATER_ENABLED).await?;
-    print_repeater(value.first().copied());
-    Ok(())
 }
 
 /// Operate on one device-domain key table. The digest form differs by
@@ -1383,6 +1570,15 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    impl Invocation {
+        fn command_repeater(&self) -> &RepeaterOp {
+            match &self.command {
+                Command::Repeater(op) => op,
+                other => panic!("expected a repeater command, got {other:?}"),
+            }
+        }
     }
 
     const KEY_HEX: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
@@ -1540,6 +1736,80 @@ mod tests {
         assert!(error.contains("--yes"), "{error}");
         let confirmed = parse_invocation(&args(&["--ble", "factory-reset", "--yes"])).unwrap();
         assert!(matches!(confirmed.command, Command::FactoryReset));
+    }
+
+    #[test]
+    fn repeater_parses_the_enable_forms() {
+        let show = parse_invocation(&args(&["--ble", "repeater"])).unwrap();
+        assert_eq!(show.command_repeater(), &RepeaterOp::Report);
+        let on = parse_invocation(&args(&["--ble", "repeater", "on"])).unwrap();
+        assert_eq!(on.command_repeater(), &RepeaterOp::Enable(true));
+        let off = parse_invocation(&args(&["--ble", "repeater", "off"])).unwrap();
+        assert_eq!(off.command_repeater(), &RepeaterOp::Enable(false));
+        assert!(parse_invocation(&args(&["--ble", "repeater", "yes"])).is_err());
+    }
+
+    #[test]
+    fn repeater_parses_a_region_list_in_every_code_form() {
+        let invocation =
+            parse_invocation(&args(&["--ble", "repeater", "regions", "SJC,0x7853,Rogue Valley"]))
+                .unwrap();
+        assert_eq!(
+            invocation.command_repeater(),
+            &RepeaterOp::Regions(vec![
+                RegionCode::from_iata("SJC").unwrap(),
+                RegionCode::from_u16(0x7853),
+                RegionCode::from_name("Rogue Valley"),
+            ])
+        );
+    }
+
+    #[test]
+    fn repeater_regions_none_clears_the_filter() {
+        // `none` is the empty list, which means "no regional
+        // restriction" — not a region literally named "none".
+        let invocation = parse_invocation(&args(&["--ble", "repeater", "regions", "none"])).unwrap();
+        assert_eq!(invocation.command_repeater(), &RepeaterOp::Regions(Vec::new()));
+    }
+
+    #[test]
+    fn repeater_parses_the_remaining_gates_and_their_clear_forms() {
+        let default =
+            parse_invocation(&args(&["--ble", "repeater", "default-region", "MFR"])).unwrap();
+        assert_eq!(
+            default.command_repeater(),
+            &RepeaterOp::DefaultRegion(Some(RegionCode::from_iata("MFR").unwrap()))
+        );
+        let cleared =
+            parse_invocation(&args(&["--ble", "repeater", "default-region", "none"])).unwrap();
+        assert_eq!(cleared.command_repeater(), &RepeaterOp::DefaultRegion(None));
+
+        let rssi = parse_invocation(&args(&["--ble", "repeater", "min-rssi", "-110"])).unwrap();
+        assert_eq!(rssi.command_repeater(), &RepeaterOp::MinRssi(Some(-110)));
+        let snr = parse_invocation(&args(&["--ble", "repeater", "min-snr", "-7"])).unwrap();
+        assert_eq!(snr.command_repeater(), &RepeaterOp::MinSnr(Some(-7)));
+        let any = parse_invocation(&args(&["--ble", "repeater", "min-rssi", "none"])).unwrap();
+        assert_eq!(any.command_repeater(), &RepeaterOp::MinRssi(None));
+    }
+
+    #[test]
+    fn repeater_rejects_malformed_policy_arguments() {
+        for arguments in [
+            ["repeater", "regions"].as_slice(),
+            ["repeater", "regions", "SJC", "MFR"].as_slice(),
+            ["repeater", "regions", "SJC,"].as_slice(),
+            ["repeater", "default-region"].as_slice(),
+            ["repeater", "min-rssi", "loud"].as_slice(),
+            ["repeater", "min-rssi", "-40000"].as_slice(),
+            ["repeater", "min-snr", "-200"].as_slice(),
+        ] {
+            let mut argv = vec!["--ble"];
+            argv.extend_from_slice(arguments);
+            assert!(
+                parse_invocation(&args(&argv)).is_err(),
+                "{arguments:?} should not parse"
+            );
+        }
     }
 
     #[test]

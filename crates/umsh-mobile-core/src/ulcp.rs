@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use umsh_core::RegionCode;
 use umsh_ulcp::{
     BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
@@ -37,6 +38,30 @@ pub struct UlcpBatteryRecord {
     pub is_externally_powered: Option<bool>,
 }
 
+/// The device identity's autonomous flood-forwarding policy.
+///
+/// Region codes travel as the opaque 2-octet wire values they are on the
+/// air: the same bytes the device advertises as its Supported Regions
+/// identity option. Text forms are a presentation concern —
+/// [`region_code_from_string`] and [`region_code_description`] convert.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpRepeaterSettingsRecord {
+    /// `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
+    /// this is false, but are still read and written.
+    pub enabled: bool,
+    /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
+    /// forward, each entry exactly two octets. Empty imposes no regional
+    /// restriction rather than blocking every flood.
+    pub regions: Vec<Vec<u8>>,
+    /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
+    /// untagged flood before forwarding it. `None` forwards untagged.
+    pub default_region: Option<Vec<u8>>,
+    /// `PROP_MAC_REPEATER_MIN_RSSI` in dBm. `None` accepts any.
+    pub min_rssi_dbm: Option<i16>,
+    /// `PROP_MAC_REPEATER_MIN_SNR` in whole dB. `None` accepts any.
+    pub min_snr_db: Option<i8>,
+}
+
 /// Read-only, capability-gated device state gathered after host ownership
 /// has been resolved. Counts describe digest forms and contain no key material.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -48,6 +73,11 @@ pub struct UlcpSyncRecord {
     pub supports_device_name: bool,
     pub supports_lora: bool,
     pub supports_duty_cycle_limit: bool,
+    /// The device can forward for the mesh on its own (`CAP_REPEATER`).
+    pub supports_repeater: bool,
+    /// The device serves and configures its own advertised node identity
+    /// (`CAP_IDENT`).
+    pub supports_ident: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
@@ -63,6 +93,14 @@ pub struct UlcpSyncRecord {
     pub host_channel_count: Option<u32>,
     pub host_peer_count: Option<u32>,
     pub auto_ack: Option<bool>,
+    /// Present exactly when `supports_repeater`.
+    pub repeater: Option<UlcpRepeaterSettingsRecord>,
+    /// `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
+    /// from what it is actually doing" and "no `CAP_IDENT`" —
+    /// `supports_ident` distinguishes them.
+    pub ident_role: Option<u8>,
+    /// `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+    pub ident_mobile: Option<bool>,
 }
 
 /// `PROP_SAVED`: what the radio reports about its stored snapshot.
@@ -108,6 +146,31 @@ pub struct UlcpRadioSettingsRecord {
     pub spreading_factor: Option<u8>,
     pub coding_rate_denom: Option<u8>,
     pub duty_cycle_limit: Option<u16>,
+}
+
+/// Complete desired configuration of a device's *own* domain: what it is
+/// and what it does when no phone is attached.
+///
+/// This is the commissioning counterpart to [`UlcpRadioSettingsRecord`],
+/// which describes only the radio. Every capability-gated field must be
+/// present exactly when the device advertises the matching capability, so
+/// the record always states a whole desired configuration rather than a
+/// patch — a property that a future template feature can lean on.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpDeviceConfigRecord {
+    /// The live radio profile, applied with the same disable-first,
+    /// enable-last ordering [`MobileUlcpSession::configure`] uses.
+    pub radio: UlcpRadioSettingsRecord,
+    /// `PROP_IDENT_ROLE`, or `None` to let the device derive its
+    /// advertised role from what it is actually doing. Requires
+    /// `CAP_IDENT`.
+    pub ident_role: Option<u8>,
+    /// `PROP_IDENT_MOBILE`. Present exactly when the device advertises
+    /// `CAP_IDENT`.
+    pub ident_mobile: Option<bool>,
+    /// The flood-forwarding policy. Present exactly when the device
+    /// advertises `CAP_REPEATER`.
+    pub repeater: Option<UlcpRepeaterSettingsRecord>,
 }
 
 /// Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
@@ -221,6 +284,11 @@ enum ExpectedResponse {
 
 struct UlcpSessionState {
     generation: u64,
+    /// Which relationship this session represents. Held here, not only on
+    /// the object, because ownership resolution is what it changes: an
+    /// administrative session reports foreign ownership truthfully but
+    /// never waits for a host decision it will not make.
+    mode: UlcpAttachMode,
     stage: SessionStage,
     tids: TidAllocator,
     expected: HashMap<u8, ExpectedResponse>,
@@ -241,6 +309,7 @@ impl Default for UlcpSessionState {
     fn default() -> Self {
         Self {
             generation: 0,
+            mode: UlcpAttachMode::Tethered,
             stage: SessionStage::Idle,
             tids: TidAllocator::new(),
             expected: HashMap::new(),
@@ -294,20 +363,14 @@ impl MobileUlcpSession {
     /// A session for the phone's own radio: the one it tethers to.
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(UlcpSessionState::default()),
-            mode: UlcpAttachMode::Tethered,
-        })
+        Arc::new(Self::with_mode(UlcpAttachMode::Tethered))
     }
 
     /// A session for a radio this phone administers but does not claim.
     /// [`Self::claim`] is refused; everything else behaves identically.
     #[uniffi::constructor]
     pub fn administrative() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(UlcpSessionState::default()),
-            mode: UlcpAttachMode::Administrative,
-        })
+        Arc::new(Self::with_mode(UlcpAttachMode::Administrative))
     }
 
     /// Which relationship this session represents.
@@ -330,6 +393,7 @@ impl MobileUlcpSession {
         let generation = state.generation.wrapping_add(1);
         *state = UlcpSessionState {
             generation,
+            mode: self.mode,
             stage: SessionStage::Initial,
             selected_host_key,
             ..UlcpSessionState::default()
@@ -406,43 +470,35 @@ impl MobileUlcpSession {
         }
         validate_radio_settings(&settings, &state)?;
 
-        state.stage = SessionStage::Configuring;
         state.expected.clear();
-        let mut values = Vec::new();
-        // Disable before changing live PHY parameters, but enable only after
-        // the complete new profile is in place.
-        if !settings.phy_enabled {
-            values.push((prop::PHY_ENABLED, vec![0]));
-        }
-        if let Some(name) = settings.device_name {
-            values.push((prop::DEV_NAME, name.into_bytes()));
-        }
-        values.extend([
-            (
-                prop::PHY_FREQ,
-                settings.frequency_khz.to_le_bytes().to_vec(),
-            ),
-            (prop::PHY_TX_POWER, vec![settings.transmit_power_dbm as u8]),
-        ]);
-        if let (Some(bandwidth), Some(sf), Some(cr)) = (
-            settings.bandwidth_hz,
-            settings.spreading_factor,
-            settings.coding_rate_denom,
-        ) {
-            values.extend([
-                (prop::PHY_LORA_BW, bandwidth.to_le_bytes().to_vec()),
-                (prop::PHY_LORA_SF, vec![sf]),
-                (prop::PHY_LORA_CR, vec![cr]),
-            ]);
-        }
-        if let Some(limit) = settings.duty_cycle_limit {
-            values.push((prop::PHY_DUTY_LIMIT, limit.to_le_bytes().to_vec()));
-        }
-        if settings.phy_enabled {
-            values.push((prop::PHY_ENABLED, vec![1]));
-        }
+        state.configuration_queue = configuration_values(settings, Vec::new()).into();
+        let mut outbound = Vec::new();
+        state.start_configuration(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
 
-        state.configuration_queue = values.into();
+    /// Apply, verify, and persist a complete configuration of the device's
+    /// own domain: its radio, the role it advertises, and whether and how
+    /// it forwards for the mesh on its own.
+    ///
+    /// This is what commissioning writes. It touches nothing in the host
+    /// domain — no host key, no filters, no queues — so it is equally
+    /// valid from an administrative session on someone else's radio and
+    /// from a tethered session on this phone's own.
+    pub fn configure_device(
+        &self,
+        configuration: UlcpDeviceConfigRecord,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        validate_radio_settings(&configuration.radio, &state)?;
+        let device_values = validate_device_settings(&configuration, &state)?;
+
+        state.expected.clear();
+        state.configuration_queue =
+            configuration_values(configuration.radio, device_values).into();
         let mut outbound = Vec::new();
         state.start_configuration(&mut outbound)?;
         Ok(state.update(outbound))
@@ -724,6 +780,7 @@ impl MobileUlcpSession {
         let generation = state.generation.wrapping_add(1);
         *state = UlcpSessionState {
             generation,
+            mode: self.mode,
             ..UlcpSessionState::default()
         };
         state.update(Vec::new())
@@ -743,6 +800,18 @@ impl MobileUlcpSession {
             }
         }
         state.update(Vec::new())
+    }
+}
+
+impl MobileUlcpSession {
+    fn with_mode(mode: UlcpAttachMode) -> Self {
+        Self {
+            inner: Mutex::new(UlcpSessionState {
+                mode,
+                ..UlcpSessionState::default()
+            }),
+            mode,
+        }
     }
 }
 
@@ -873,6 +942,22 @@ impl UlcpSessionState {
         Ok(())
     }
 
+    /// Whether synchronization may proceed straight to inspection without
+    /// pausing for the user to decide about host ownership.
+    ///
+    /// A tethered session must pause: it is about to become the radio's
+    /// host, and taking a radio from another phone is a decision only the
+    /// user can make. An administrative session never claims anything, so
+    /// there is no decision to pause for — whose radio this is stays worth
+    /// reporting, but only as information.
+    fn attaches_without_host_decision(&self) -> bool {
+        self.mode == UlcpAttachMode::Administrative
+            || matches!(
+                self.ownership(),
+                UlcpHostOwnership::Ours | UlcpHostOwnership::Unsupported
+            )
+    }
+
     fn has_capability(&self, capability: u32) -> Result<bool, MobileError> {
         let capabilities = self
             .responses
@@ -901,11 +986,10 @@ impl UlcpSessionState {
                 if advertises_host_filter == self.host_key_unsupported {
                     return Err(MobileError::InvalidUlcpFrame);
                 }
-                match self.ownership() {
-                    UlcpHostOwnership::Ours | UlcpHostOwnership::Unsupported => {
-                        self.start_inspection(outbound)?;
-                    }
-                    _ => self.stage = SessionStage::AwaitingHost,
+                if self.attaches_without_host_decision() {
+                    self.start_inspection(outbound)?;
+                } else {
+                    self.stage = SessionStage::AwaitingHost;
                 }
             }
             SessionStage::Inspection => self.start_inspection(outbound)?,
@@ -1033,10 +1117,7 @@ impl UlcpSessionState {
         }
         let responses = self.responses.values().cloned().collect();
         self.provisioning = Some(inspect_ulcp_sync(responses)?);
-        if !matches!(
-            self.ownership(),
-            UlcpHostOwnership::Ours | UlcpHostOwnership::Unsupported
-        ) {
+        if !self.attaches_without_host_decision() {
             self.stage = SessionStage::AwaitingHost;
         }
         Ok(())
@@ -1077,6 +1158,18 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
     }
     if has(cap::HOST_AUTO_ACK) {
         properties.push(prop::HOST_AUTO_ACK);
+    }
+    if has(cap::REPEATER) {
+        properties.extend([
+            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+            prop::MAC_REPEATER_MIN_SNR,
+        ]);
+    }
+    if has(cap::IDENT) {
+        properties.extend([prop::IDENT_ROLE, prop::IDENT_MOBILE]);
     }
     Ok(properties)
 }
@@ -1156,6 +1249,28 @@ pub fn inspect_ulcp_sync(
     let auto_ack = has(cap::HOST_AUTO_ACK)
         .then(|| decode_bool(value(prop::HOST_AUTO_ACK)?))
         .transpose()?;
+    let repeater = has(cap::REPEATER)
+        .then(|| -> Result<_, MobileError> {
+            Ok(UlcpRepeaterSettingsRecord {
+                enabled: decode_bool(value(prop::MAC_REPEATER_ENABLED)?)?,
+                regions: decode_region_list(value(prop::MAC_REPEATER_REGIONS)?)?,
+                default_region: decode_optional_region(
+                    value(prop::MAC_REPEATER_DEFAULT_REGION)?,
+                )?,
+                min_rssi_dbm: decode_optional(value(prop::MAC_REPEATER_MIN_RSSI)?, decode_i16)?,
+                min_snr_db: decode_optional(value(prop::MAC_REPEATER_MIN_SNR)?, decode_i8)?,
+            })
+        })
+        .transpose()?;
+    // An empty PROP_IDENT_ROLE is the device saying it derives its own
+    // role, which is the same `None` a device without CAP_IDENT reports.
+    let ident_role = has(cap::IDENT)
+        .then(|| decode_optional(value(prop::IDENT_ROLE)?, decode_u8))
+        .transpose()?
+        .flatten();
+    let ident_mobile = has(cap::IDENT)
+        .then(|| decode_bool(value(prop::IDENT_MOBILE)?))
+        .transpose()?;
 
     Ok(UlcpSyncRecord {
         capability_count: capabilities
@@ -1168,6 +1283,8 @@ pub fn inspect_ulcp_sync(
         supports_device_name: has(cap::DEV_NAME),
         supports_lora: has(cap::PHY_LORA),
         supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
+        supports_repeater: has(cap::REPEATER),
+        supports_ident: has(cap::IDENT),
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
@@ -1183,6 +1300,9 @@ pub fn inspect_ulcp_sync(
         host_channel_count,
         host_peer_count,
         auto_ack,
+        repeater,
+        ident_role,
+        ident_mobile,
     })
 }
 
@@ -1220,6 +1340,10 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
     if has(cap::HOST_RX_QUEUE) && !has(cap::HOST_FILTER)
         || has(cap::HOST_KEYS) && !has(cap::HOST_FILTER)
         || has(cap::HOST_AUTO_ACK) && (!has(cap::HOST_KEYS) || !has(cap::HOST_RX_QUEUE))
+        // A device with no identity of its own has nothing to forward for
+        // and nothing to advertise.
+        || has(cap::REPEATER) && !has(cap::DEV_IDENTITY)
+        || has(cap::IDENT) && !has(cap::DEV_IDENTITY)
     {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -1268,6 +1392,174 @@ fn decode_u8(value: &[u8]) -> Result<u8, MobileError> {
 
 fn decode_i8(value: &[u8]) -> Result<i8, MobileError> {
     decode_u8(value).map(|value| value as i8)
+}
+
+fn decode_i16(value: &[u8]) -> Result<i16, MobileError> {
+    value
+        .try_into()
+        .map(i16::from_le_bytes)
+        .map_err(|_| MobileError::InvalidUlcpFrame)
+}
+
+/// Decode a property whose empty value means "unset" rather than zero.
+fn decode_optional<T>(
+    value: &[u8],
+    decode: impl Fn(&[u8]) -> Result<T, MobileError>,
+) -> Result<Option<T>, MobileError> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    decode(value).map(Some)
+}
+
+/// Split a `PROP_MAC_REPEATER_REGIONS` value into individual codes.
+///
+/// Deliberately imposes no upper bound: how many regions a device holds
+/// is its own business, and a device reporting more than this phone would
+/// ever write is not a malformed frame.
+fn decode_region_list(value: &[u8]) -> Result<Vec<Vec<u8>>, MobileError> {
+    if !value.len().is_multiple_of(items::REGION_CODE_LEN) {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    Ok(value
+        .chunks(items::REGION_CODE_LEN)
+        .map(<[u8]>::to_vec)
+        .collect())
+}
+
+fn decode_optional_region(value: &[u8]) -> Result<Option<Vec<u8>>, MobileError> {
+    match value.len() {
+        0 => Ok(None),
+        items::REGION_CODE_LEN => Ok(Some(value.to_vec())),
+        _ => Err(MobileError::InvalidUlcpFrame),
+    }
+}
+
+/// Order one configuration pass: everything that changes live PHY
+/// behavior happens with the radio down, and the radio comes back up only
+/// once the complete new profile is in place.
+///
+/// `device_values` are the device-domain writes, which ride between the
+/// two PHY_ENABLED writes for the same reason the PHY parameters do — a
+/// repeater must not start forwarding under half of its new policy.
+fn configuration_values(
+    settings: UlcpRadioSettingsRecord,
+    device_values: Vec<(u32, Vec<u8>)>,
+) -> Vec<(u32, Vec<u8>)> {
+    let mut values = Vec::new();
+    if !settings.phy_enabled {
+        values.push((prop::PHY_ENABLED, vec![0]));
+    }
+    if let Some(name) = settings.device_name {
+        values.push((prop::DEV_NAME, name.into_bytes()));
+    }
+    values.extend([
+        (
+            prop::PHY_FREQ,
+            settings.frequency_khz.to_le_bytes().to_vec(),
+        ),
+        (prop::PHY_TX_POWER, vec![settings.transmit_power_dbm as u8]),
+    ]);
+    if let (Some(bandwidth), Some(sf), Some(cr)) = (
+        settings.bandwidth_hz,
+        settings.spreading_factor,
+        settings.coding_rate_denom,
+    ) {
+        values.extend([
+            (prop::PHY_LORA_BW, bandwidth.to_le_bytes().to_vec()),
+            (prop::PHY_LORA_SF, vec![sf]),
+            (prop::PHY_LORA_CR, vec![cr]),
+        ]);
+    }
+    if let Some(limit) = settings.duty_cycle_limit {
+        values.push((prop::PHY_DUTY_LIMIT, limit.to_le_bytes().to_vec()));
+    }
+    values.extend(device_values);
+    if settings.phy_enabled {
+        values.push((prop::PHY_ENABLED, vec![1]));
+    }
+    values
+}
+
+/// Check the device-domain half of a commissioning record against what
+/// the device says it can do, and reduce it to property writes.
+///
+/// Capability-gated fields must be present exactly when the capability
+/// is: the record states a whole desired configuration, so a field the
+/// device cannot honor is a caller mistake rather than something to
+/// silently drop.
+fn validate_device_settings(
+    configuration: &UlcpDeviceConfigRecord,
+    state: &UlcpSessionState,
+) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
+    let mut values = Vec::new();
+
+    let supports_ident = state.has_capability(cap::IDENT)?;
+    if configuration.ident_mobile.is_some() != supports_ident
+        || (configuration.ident_role.is_some() && !supports_ident)
+    {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    if supports_ident {
+        // An empty PROP_IDENT_ROLE hands the choice back to the device.
+        values.push((
+            prop::IDENT_ROLE,
+            configuration.ident_role.map(|role| vec![role]).unwrap_or_default(),
+        ));
+        values.push((
+            prop::IDENT_MOBILE,
+            vec![configuration.ident_mobile.unwrap_or(false) as u8],
+        ));
+    }
+
+    let supports_repeater = state.has_capability(cap::REPEATER)?;
+    if configuration.repeater.is_some() != supports_repeater {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    if let Some(repeater) = &configuration.repeater {
+        let mut regions = Vec::with_capacity(repeater.regions.len() * items::REGION_CODE_LEN);
+        for region in &repeater.regions {
+            if region.len() != items::REGION_CODE_LEN {
+                return Err(MobileError::InvalidUlcpFrame);
+            }
+            regions.extend_from_slice(region);
+        }
+        if let Some(default_region) = &repeater.default_region {
+            if default_region.len() != items::REGION_CODE_LEN {
+                return Err(MobileError::InvalidUlcpFrame);
+            }
+        }
+        // Enabling last means the forwarding policy is already whole by
+        // the time the device starts acting on it. The device does not
+        // cross-check the default region against the forwarding list —
+        // that is a SHOULD the presenting UI is better placed to warn on.
+        values.extend([
+            (prop::MAC_REPEATER_REGIONS, regions),
+            (
+                prop::MAC_REPEATER_DEFAULT_REGION,
+                repeater.default_region.clone().unwrap_or_default(),
+            ),
+            (
+                prop::MAC_REPEATER_MIN_RSSI,
+                repeater
+                    .min_rssi_dbm
+                    .map(|rssi| rssi.to_le_bytes().to_vec())
+                    .unwrap_or_default(),
+            ),
+            (
+                prop::MAC_REPEATER_MIN_SNR,
+                repeater
+                    .min_snr_db
+                    .map(|snr| vec![snr as u8])
+                    .unwrap_or_default(),
+            ),
+            (
+                prop::MAC_REPEATER_ENABLED,
+                vec![repeater.enabled as u8],
+            ),
+        ]);
+    }
+    Ok(values)
 }
 
 fn validate_radio_settings(
@@ -1465,6 +1757,32 @@ pub fn inspect_ulcp_battery(value: Vec<u8>) -> Result<UlcpBatteryRecord, MobileE
     })
 }
 
+/// Read a region code from what someone typed, yielding the two wire
+/// octets used everywhere else in the ULCP and mesh surfaces.
+///
+/// Three ASCII letters are a nearest-airport IATA code, `0xXXXX` is a
+/// literal code, and anything else is a region *name* hashed into a
+/// disjoint part of the code space — so "SJC" and "San Jose" are
+/// deliberately different regions, and no name can ever collide with an
+/// airport.
+#[uniffi::export]
+pub fn region_code_from_string(text: String) -> Result<Vec<u8>, MobileError> {
+    text.parse::<RegionCode>()
+        .map(|code| code.to_bytes().to_vec())
+        .map_err(|_| MobileError::InvalidRegionCode)
+}
+
+/// Render a region code for display. Codes derived from an airport come
+/// back as their three letters; everything else as `0xXXXX`, which
+/// [`region_code_from_string`] reads back.
+#[uniffi::export]
+pub fn region_code_description(code: Vec<u8>) -> Result<String, MobileError> {
+    let bytes: [u8; items::REGION_CODE_LEN] = code
+        .try_into()
+        .map_err(|_| MobileError::InvalidRegionCode)?;
+    Ok(RegionCode::from_bytes(bytes).to_string())
+}
+
 /// Stateful, bounded receiver for Frame Out notifications.
 #[derive(uniffi::Object)]
 pub struct MobileGattReassembler {
@@ -1554,6 +1872,113 @@ mod tests {
             );
         }
         last.unwrap()
+    }
+
+    /// Capabilities of a device that is a full mesh citizen in its own
+    /// right: it has an identity, advertises one, and can forward.
+    fn commissionable_capabilities() -> Vec<u32> {
+        vec![
+            cap::HOST_FILTER,
+            cap::SAVE,
+            cap::DEV_NAME,
+            cap::DEV_IDENTITY,
+            cap::REPEATER,
+            cap::IDENT,
+        ]
+    }
+
+    /// Answer whatever the session asks for, for a device with the
+    /// capabilities above and a factory-default device domain.
+    fn commissionable_value(property: u32) -> (u32, Vec<u8>) {
+        let value = match property {
+            prop::LAST_STATUS => vec![0],
+            prop::PROTOCOL_VERSION => vec![6, 0],
+            prop::CAPS => encoded_capabilities(&commissionable_capabilities()),
+            prop::DEV_NAME => b"Ridge repeater".to_vec(),
+            prop::DEV_KEY => vec![0x5A; 32],
+            prop::BATTERY => Vec::new(),
+            prop::INTERFACE_TYPE => vec![INTERFACE_TYPE as u8],
+            prop::PHY_ENABLED => vec![1],
+            prop::PHY_FREQ => 915_000u32.to_le_bytes().to_vec(),
+            prop::PHY_TX_POWER => vec![14],
+            prop::SAVED => vec![saved::CURRENT],
+            prop::HOST_RX_FILTERS => Vec::new(),
+            prop::MAC_REPEATER_ENABLED => vec![0],
+            prop::MAC_REPEATER_REGIONS
+            | prop::MAC_REPEATER_DEFAULT_REGION
+            | prop::MAC_REPEATER_MIN_RSSI
+            | prop::MAC_REPEATER_MIN_SNR
+            | prop::IDENT_ROLE => Vec::new(),
+            prop::IDENT_MOBILE => vec![0],
+            other => unreachable!("unexpected property {other}"),
+        };
+        (property, value)
+    }
+
+    /// Answer every bounded read batch until the session stops asking.
+    fn drive_reads(
+        session: &MobileUlcpSession,
+        requests: Vec<Vec<u8>>,
+        value: impl Fn(u32) -> (u32, Vec<u8>),
+    ) -> UlcpSessionUpdateRecord {
+        let mut pending = requests;
+        let mut last = None;
+        while !pending.is_empty() {
+            let update = answer_requests(session, pending, &value);
+            pending = update.outbound_frames.clone();
+            last = Some(update);
+        }
+        last.expect("at least one batch")
+    }
+
+    /// Bring a session to `Attached` against a commissionable device that
+    /// reports `host_key` as its tethered host.
+    fn attach_commissionable(
+        session: &MobileUlcpSession,
+        selected_host_key: Option<Vec<u8>>,
+        host_key: Vec<u8>,
+    ) -> UlcpSessionUpdateRecord {
+        let begin = session.begin(selected_host_key).unwrap();
+        drive_reads(session, begin.outbound_frames, move |property| {
+            if property == prop::HOST_KEY {
+                (property, host_key.clone())
+            } else {
+                commissionable_value(property)
+            }
+        })
+    }
+
+    /// Consume a configuration batch, returning the writes it made as a
+    /// property map, the order they were issued in, and the `CMD_SAVE`
+    /// transaction that closed it.
+    fn drive_configuration(
+        session: &MobileUlcpSession,
+        first_batch: Vec<Vec<u8>>,
+    ) -> (HashMap<u32, Vec<u8>>, Vec<u32>, u8) {
+        let mut pending = VecDeque::from(first_batch);
+        let mut written = HashMap::new();
+        let mut order = Vec::new();
+        loop {
+            let request = pending.pop_front().expect("configuration ends in a save");
+            let parsed = Frame::parse(&request).unwrap();
+            if parsed.command() == Some(Cmd::Save) {
+                return (written, order, parsed.header.tid());
+            }
+            assert_eq!(parsed.command(), Some(Cmd::PropSet));
+            let payload = PropPayload::parse(parsed.payload).unwrap();
+            order.push(payload.key);
+            written.insert(payload.key, payload.value.to_vec());
+            let update = session
+                .consume(property_response(
+                    parsed.header.tid(),
+                    payload.key,
+                    payload.value,
+                ))
+                .unwrap_or_else(|error| {
+                    panic!("write of property {} failed: {error:?}", payload.key)
+                });
+            pending.extend(update.outbound_frames);
+        }
     }
 
     #[test]
@@ -1864,6 +2289,361 @@ mod tests {
         assert_eq!(
             changed_host.snapshot.host_ownership,
             UlcpHostOwnership::OtherHost
+        );
+    }
+
+    #[test]
+    fn administrative_session_attaches_without_claiming_anyones_radio() {
+        let phone = vec![0xAA; 32];
+        let other_phone = vec![0xBB; 32];
+
+        // A radio someone else tethered. An administrative session has no
+        // decision to put to the user, so it attaches — and still reports
+        // whose radio it is, because that is worth showing.
+        let session = MobileUlcpSession::administrative();
+        let attached =
+            attach_commissionable(&session, Some(phone.clone()), other_phone.clone());
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.host_ownership,
+            UlcpHostOwnership::OtherHost
+        );
+        assert_eq!(
+            session.claim(phone.clone()),
+            Err(MobileError::AdministrativeSession)
+        );
+
+        // An unclaimed radio likewise: commissioning ten repeaters must
+        // not leave this phone's host key on any of them.
+        let unclaimed = MobileUlcpSession::administrative();
+        let attached =
+            attach_commissionable(&unclaimed, Some(phone.clone()), Vec::new());
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.host_ownership,
+            UlcpHostOwnership::Unclaimed
+        );
+
+        // The tethered session is the one that must pause: it is about to
+        // take the radio from the other phone.
+        let tethered = MobileUlcpSession::new();
+        let begin = tethered.begin(Some(phone.clone())).unwrap();
+        let awaiting =
+            answer_requests(&tethered, begin.outbound_frames, move |property| {
+                if property == prop::HOST_KEY {
+                    (property, other_phone.clone())
+                } else {
+                    commissionable_value(property)
+                }
+            });
+        assert_eq!(awaiting.snapshot.phase, UlcpSessionPhase::AwaitingHost);
+
+        // A host-key change pushed mid-session does not evict an
+        // administrative session either.
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::HOST_KEY,
+                &[0xCC; 32],
+            ))
+            .unwrap();
+        assert_eq!(pushed.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            pushed.snapshot.host_ownership,
+            UlcpHostOwnership::OtherHost
+        );
+    }
+
+    #[test]
+    fn attached_snapshot_reports_the_devices_own_domain() {
+        let session = MobileUlcpSession::administrative();
+        let attached = attach_commissionable(&session, None, Vec::new());
+        let provisioning = attached.snapshot.provisioning.unwrap();
+        assert!(provisioning.supports_repeater);
+        assert!(provisioning.supports_ident);
+        assert_eq!(provisioning.ident_role, None);
+        assert_eq!(provisioning.ident_mobile, Some(false));
+        assert_eq!(
+            provisioning.repeater,
+            Some(UlcpRepeaterSettingsRecord {
+                enabled: false,
+                regions: Vec::new(),
+                default_region: None,
+                min_rssi_dbm: None,
+                min_snr_db: None,
+            })
+        );
+
+        // A device with no repeater or identity capability reports the
+        // absence rather than a default-shaped policy.
+        let plain = inspect_ulcp_sync(vec![
+            response(prop::CAPS, &[cap::WRITABLE_RAW_STREAM as u8]),
+            response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+            response(prop::PHY_ENABLED, &[1]),
+            response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[14]),
+        ])
+        .unwrap();
+        assert!(!plain.supports_repeater);
+        assert!(!plain.supports_ident);
+        assert_eq!(plain.repeater, None);
+        assert_eq!(plain.ident_mobile, None);
+    }
+
+    #[test]
+    fn repeater_policy_round_trips_through_the_sync_reducer() {
+        let capabilities = encoded_capabilities(&commissionable_capabilities());
+        let sync = inspect_ulcp_sync(vec![
+            response(prop::CAPS, &capabilities),
+            response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+            response(prop::PHY_ENABLED, &[1]),
+            response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[14]),
+            response(prop::SAVED, &[saved::CURRENT]),
+            response(prop::HOST_RX_FILTERS, &[]),
+            response(prop::MAC_REPEATER_ENABLED, &[1]),
+            // SJC and SFO, the two-octet codes exactly as advertised.
+            response(prop::MAC_REPEATER_REGIONS, &[0x78, 0x53, 0x7C, 0x0F]),
+            response(prop::MAC_REPEATER_DEFAULT_REGION, &[0x78, 0x53]),
+            response(prop::MAC_REPEATER_MIN_RSSI, &(-115i16).to_le_bytes()),
+            response(prop::MAC_REPEATER_MIN_SNR, &[(-7i8) as u8]),
+            response(prop::IDENT_ROLE, &[3]),
+            response(prop::IDENT_MOBILE, &[1]),
+        ])
+        .unwrap();
+        assert_eq!(
+            sync.repeater,
+            Some(UlcpRepeaterSettingsRecord {
+                enabled: true,
+                regions: vec![vec![0x78, 0x53], vec![0x7C, 0x0F]],
+                default_region: Some(vec![0x78, 0x53]),
+                min_rssi_dbm: Some(-115),
+                min_snr_db: Some(-7),
+            })
+        );
+        assert_eq!(sync.ident_role, Some(3));
+        assert_eq!(sync.ident_mobile, Some(true));
+
+        // An odd-length region list is not a set of region codes, and a
+        // repeater without an identity of its own is not a repeater.
+        let malformed = |property, value: &[u8]| {
+            let mut responses = vec![
+                response(prop::CAPS, &capabilities),
+                response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+                response(prop::PHY_ENABLED, &[1]),
+                response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+                response(prop::PHY_TX_POWER, &[14]),
+                response(prop::SAVED, &[saved::CURRENT]),
+                response(prop::MAC_REPEATER_ENABLED, &[0]),
+                response(prop::MAC_REPEATER_REGIONS, &[]),
+                response(prop::MAC_REPEATER_DEFAULT_REGION, &[]),
+                response(prop::MAC_REPEATER_MIN_RSSI, &[]),
+                response(prop::MAC_REPEATER_MIN_SNR, &[]),
+                response(prop::IDENT_ROLE, &[]),
+                response(prop::IDENT_MOBILE, &[0]),
+            ];
+            responses.retain(|entry| entry.property_id != property);
+            responses.push(response(property, value));
+            inspect_ulcp_sync(responses)
+        };
+        assert_eq!(
+            malformed(prop::MAC_REPEATER_REGIONS, &[0x78, 0x53, 0x7C]),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            malformed(prop::MAC_REPEATER_DEFAULT_REGION, &[0x78]),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            malformed(prop::MAC_REPEATER_MIN_RSSI, &[0x8D]),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            ulcp_inspection_properties(encoded_capabilities(&[cap::REPEATER])),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+    }
+
+    #[test]
+    fn configuring_a_device_writes_its_whole_domain_as_a_property_map() {
+        let session = MobileUlcpSession::administrative();
+        let attached = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xBB; 32]);
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+
+        let configured = session
+            .configure_device(UlcpDeviceConfigRecord {
+                radio: UlcpRadioSettingsRecord {
+                    device_name: Some("Ridge repeater".into()),
+                    phy_enabled: true,
+                    frequency_khz: 906_875,
+                    transmit_power_dbm: 22,
+                    bandwidth_hz: None,
+                    spreading_factor: None,
+                    coding_rate_denom: None,
+                    duty_cycle_limit: None,
+                },
+                ident_role: Some(3),
+                ident_mobile: Some(false),
+                repeater: Some(UlcpRepeaterSettingsRecord {
+                    enabled: true,
+                    regions: vec![vec![0x78, 0x53]],
+                    default_region: Some(vec![0x78, 0x53]),
+                    min_rssi_dbm: Some(-115),
+                    min_snr_db: Some(-7),
+                }),
+            })
+            .unwrap();
+        assert_eq!(configured.snapshot.phase, UlcpSessionPhase::Configuring);
+
+        let (written, order, save_tid) =
+            drive_configuration(&session, configured.outbound_frames);
+
+        // The whole configuration is a property -> value map with nothing
+        // else in it. A template feature that produces such a map has
+        // everything it needs; nothing here is shaped around this record.
+        assert_eq!(
+            written,
+            HashMap::from([
+                (prop::DEV_NAME, b"Ridge repeater".to_vec()),
+                (prop::PHY_FREQ, 906_875u32.to_le_bytes().to_vec()),
+                (prop::PHY_TX_POWER, vec![22]),
+                (prop::IDENT_ROLE, vec![3]),
+                (prop::IDENT_MOBILE, vec![0]),
+                (prop::MAC_REPEATER_REGIONS, vec![0x78, 0x53]),
+                (prop::MAC_REPEATER_DEFAULT_REGION, vec![0x78, 0x53]),
+                (prop::MAC_REPEATER_MIN_RSSI, (-115i16).to_le_bytes().to_vec()),
+                (prop::MAC_REPEATER_MIN_SNR, vec![(-7i8) as u8]),
+                (prop::MAC_REPEATER_ENABLED, vec![1]),
+                (prop::PHY_ENABLED, vec![1]),
+            ])
+        );
+        // Forwarding starts only once the whole policy — and the radio it
+        // forwards over — is in place.
+        assert_eq!(
+            &order[order.len() - 2..],
+            &[prop::MAC_REPEATER_ENABLED, prop::PHY_ENABLED]
+        );
+
+        let attached = session
+            .consume(property_response(save_tid, prop::LAST_STATUS, &[0]))
+            .unwrap();
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.host_ownership,
+            UlcpHostOwnership::OtherHost
+        );
+        let provisioning = attached.snapshot.provisioning.unwrap();
+        assert_eq!(provisioning.frequency_khz, 906_875);
+        assert_eq!(provisioning.ident_role, Some(3));
+        assert_eq!(
+            provisioning.repeater,
+            Some(UlcpRepeaterSettingsRecord {
+                enabled: true,
+                regions: vec![vec![0x78, 0x53]],
+                default_region: Some(vec![0x78, 0x53]),
+                min_rssi_dbm: Some(-115),
+                min_snr_db: Some(-7),
+            })
+        );
+    }
+
+    #[test]
+    fn device_configuration_must_match_what_the_device_can_do() {
+        let session = MobileUlcpSession::administrative();
+        attach_commissionable(&session, None, Vec::new());
+
+        let radio = UlcpRadioSettingsRecord {
+            device_name: None,
+            phy_enabled: true,
+            frequency_khz: 915_000,
+            transmit_power_dbm: 14,
+            bandwidth_hz: None,
+            spreading_factor: None,
+            coding_rate_denom: None,
+            duty_cycle_limit: None,
+        };
+        let repeater = UlcpRepeaterSettingsRecord {
+            enabled: true,
+            regions: Vec::new(),
+            default_region: None,
+            min_rssi_dbm: None,
+            min_snr_db: None,
+        };
+        let configure = |ident_role, ident_mobile, repeater| {
+            session.configure_device(UlcpDeviceConfigRecord {
+                radio: radio.clone(),
+                ident_role,
+                ident_mobile,
+                repeater,
+            })
+        };
+
+        // Every capability-gated field is required, because the record
+        // states a whole desired configuration rather than a patch.
+        assert_eq!(
+            configure(Some(3), None, Some(repeater.clone())),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            configure(None, Some(false), None),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        // A region code is two octets or it is not a region code.
+        assert_eq!(
+            configure(
+                None,
+                Some(false),
+                Some(UlcpRepeaterSettingsRecord {
+                    regions: vec![vec![0x78]],
+                    ..repeater.clone()
+                })
+            ),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            configure(
+                None,
+                Some(false),
+                Some(UlcpRepeaterSettingsRecord {
+                    default_region: Some(vec![0x78, 0x53, 0x00]),
+                    ..repeater.clone()
+                })
+            ),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+
+        // An omitted role is the device deriving its own, written as an
+        // empty value rather than skipped.
+        let configured = configure(None, Some(true), Some(repeater)).unwrap();
+        let (written, ..) = drive_configuration(&session, configured.outbound_frames);
+        assert_eq!(written.get(&prop::IDENT_ROLE), Some(&Vec::new()));
+        assert_eq!(written.get(&prop::IDENT_MOBILE), Some(&vec![1]));
+        assert_eq!(written.get(&prop::MAC_REPEATER_REGIONS), Some(&Vec::new()));
+        assert_eq!(written.get(&prop::MAC_REPEATER_MIN_RSSI), Some(&Vec::new()));
+    }
+
+    #[test]
+    fn region_codes_convert_between_text_and_wire_octets() {
+        assert_eq!(region_code_from_string("SJC".into()).unwrap(), [0x78, 0x53]);
+        assert_eq!(
+            region_code_description(vec![0x78, 0x53]).unwrap(),
+            "SJC"
+        );
+        // A name lands outside the airport letter space, so it never
+        // renders as three letters and round-trips through hex.
+        let named = region_code_from_string("Rogue Valley".into()).unwrap();
+        assert_eq!(named, [0xDF, 0x6F]);
+        let described = region_code_description(named.clone()).unwrap();
+        assert_eq!(described, "0xDF6F");
+        assert_eq!(region_code_from_string(described).unwrap(), named);
+
+        assert_eq!(
+            region_code_from_string("  ".into()),
+            Err(MobileError::InvalidRegionCode)
+        );
+        assert_eq!(
+            region_code_description(vec![0x78]),
+            Err(MobileError::InvalidRegionCode)
         );
     }
 

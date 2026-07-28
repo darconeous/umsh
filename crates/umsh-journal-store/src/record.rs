@@ -30,6 +30,20 @@ pub trait PageEraser {
     async fn erase_page(&mut self, start: u32, end: u32) -> Result<(), Self::Error>;
 }
 
+/// Flash reader used by a journal mount and by the boot path's
+/// walk-back scan.
+///
+/// Synchronous, unlike the writer and eraser: every backend this runs on
+/// reads either from a memory-mapped window or from a cached SPI read,
+/// and a mount scan issues one call per slot across two pages — making
+/// it async would put an await in that loop for no backend that needs
+/// one.
+pub trait RecordReader {
+    type Error;
+
+    fn read_record(&mut self, address: u32, bytes: &mut [u8]) -> Result<(), Self::Error>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommitError<E> {
     Body(E),

@@ -23,7 +23,7 @@ pub use umsh_ulcp_runtime::device_node::{
 
 /// The node's platform binding: everything generic resolved against this
 /// board's counter store.
-type CounterStore = crate::NodeCounterStore;
+type CounterStore = crate::firmware::NodeCounterStore;
 type DeviceNode = node::DeviceNode<CounterStore>;
 type DeviceNodeHandle = node::DeviceNodeHandle<CounterStore>;
 type DeviceNodeHost = node::DeviceNodeHost<CounterStore>;
@@ -63,10 +63,32 @@ async fn node_beacon_task(
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
-/// This board has no battery-level estimator to feed and no indicator
-/// to confirm a beacon on, so both hooks stay at their no-op defaults.
+/// This board's UX couplings.
+///
+/// The T-1000E marks each completed node transmit for its battery-level
+/// estimator (voltage sampled near a transmission is sagged, not resting
+/// OCV) and confirms a button beacon with its LED and buzzer; the T-Echo
+/// has neither.
 fn hooks() -> node::NodeHooks {
-    node::NodeHooks::default()
+    #[allow(unused_mut)]
+    let mut hooks = node::NodeHooks::default();
+    #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
+    {
+        hooks.note_external_load = umsh_bsp_t1000e::power::note_external_load;
+    }
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-sensecap-solar"))]
+    {
+        hooks.note_external_load = umsh_bsp_sensecap_solar::power::note_external_load;
+    }
+    #[cfg(feature = "t1000e")]
+    {
+        hooks.beacon_confirm = || {
+            umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL
+                .signal(umsh_ux_tracker::led::LedSequence::ActionConfirm);
+            umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&umsh_ux_tracker::buzzer::melodies::BEACON_ACK);
+        };
+    }
+    hooks
 }
 
 /// Construct the node around the device identity and spawn its tasks.
@@ -76,20 +98,20 @@ pub async fn bring_up(
     identity_secret: &[u8; 32],
     node_seed: [u8; 32],
     t_frame_ms: u32,
-    counters: &'static crate::NodeCountersMutex,
+    counters: &'static crate::firmware::NodeCountersMutex,
 ) {
     // Seed the node's copy of the device name before bring-up, so the
     // Identity Request responder's profile is correct from its first
     // reply rather than only from the first name change.
-    set_device_name(&crate::device_name_snapshot().await);
+    set_device_name(&crate::firmware::device_name_snapshot().await);
     let hooks = hooks();
     let parts = node::bring_up(
         &NODE_MAC_CELL,
         identity_secret,
         node_seed,
         t_frame_ms,
-        crate::NodeCounterStore::new(counters),
-        &crate::DUTY_LEDGER,
+        crate::firmware::NodeCounterStore::new(counters),
+        &crate::firmware::DUTY_LEDGER,
         hooks,
     )
     .await;

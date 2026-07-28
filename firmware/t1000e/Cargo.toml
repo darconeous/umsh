@@ -35,9 +35,9 @@ ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
 name = "firmware-t1000e"
-# The protocol, security, transport-arbitration, and BLE implementation are
-# shared with the T-Echo device firmware. Board differences are selected by `t1000e`.
-path = "../techo/src/main.rs"
+# The protocol, security, transport-arbitration, and BLE implementation live in
+# the shared nRF52840 tracker sources. Board differences are selected by `t1000e`.
+path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
@@ -45,9 +45,9 @@ umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = fa
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
-# Board-agnostic device runtime shared with the T-Echo (same main.rs) and the
-# ESP32 port: leaf modules + the session driver.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime" }
+# Board-agnostic device runtime shared with the other nRF52840 tracker boards
+# (same main.rs) and the ESP32 port: leaf modules + the session driver.
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex"] }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }

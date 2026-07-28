@@ -81,7 +81,7 @@ repository = "https://github.com/darconeous/umsh"
 [patch.crates-io]
 lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "703914572c5900247af30769b0b0875009c1687d" }
 lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "703914572c5900247af30769b0b0875009c1687d" }
-trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "fef9a7a95283be3103e638463a08d355077e2500" }
+trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "675edc8a373b58ccdeaf1821653b41e19e595bab" }
 nrf-sdc         = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
 nrf-mpsl        = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
 

@@ -3220,7 +3220,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/darconeous/trouble.git?rev=fef9a7a95283be3103e638463a08d355077e2500#fef9a7a95283be3103e638463a08d355077e2500"
+source = "git+https://github.com/darconeous/trouble.git?rev=675edc8a373b58ccdeaf1821653b41e19e595bab#675edc8a373b58ccdeaf1821653b41e19e595bab"
 dependencies = [
  "aes",
  "bt-hci",
@@ -3244,7 +3244,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/darconeous/trouble.git?rev=fef9a7a95283be3103e638463a08d355077e2500#fef9a7a95283be3103e638463a08d355077e2500"
+source = "git+https://github.com/darconeous/trouble.git?rev=675edc8a373b58ccdeaf1821653b41e19e595bab#675edc8a373b58ccdeaf1821653b41e19e595bab"
 dependencies = [
  "convert_case",
  "darling",
@@ -3408,6 +3408,8 @@ dependencies = [
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [
+ "hamaddr",
+ "sha2",
  "zeroize",
 ]
 
@@ -3557,10 +3559,18 @@ dependencies = [
  "embassy-time",
  "heapless 0.8.0",
  "lora-phy",
+ "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "umsh-core",
  "umsh-crypto",
  "umsh-hal",
  "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
 ]

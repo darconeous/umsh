@@ -54,13 +54,20 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         /// Legacy key (pre state-machine). Migrated into `connectedUUID` +
         /// `shouldAutoConnect` once, at init.
         static let lastAttachedPeripheral = "radio.lastAttachedPeripheral"
+        /// The name the bound radio last reported over ULCP.
+        ///
+        /// `CBPeripheral.name` is iOS's cached GAP name, and iOS does not
+        /// refresh it when a device is renamed — it keeps serving the name
+        /// the radio had when it was first discovered, sometimes until the
+        /// pairing is removed. Without this, every screen outside an
+        /// attached session shows the old name.
+        static let deviceName = "radio.deviceName"
     }
 
-    private enum UUIDs {
-        static let service = CBUUID(string: "21EB6B15-0001-4CCF-92E4-A079171BEC97")
-        static let frameIn = CBUUID(string: "21EB6B15-0002-4CCF-92E4-A079171BEC97")
-        static let frameOut = CBUUID(string: "21EB6B15-0003-4CCF-92E4-A079171BEC97")
-    }
+    /// The ULCP service is not this type's private business — administrative
+    /// sessions discover the same one. `RadioGatt` owns the identifiers; this
+    /// alias keeps the call sites here reading as they always have.
+    private typealias UUIDs = RadioGatt
 
     private var central: CBCentralManager?
     private let bluetoothQueue = DispatchQueue(
@@ -119,6 +126,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var lastYieldedChatBatchID: UInt64?
     private var lastChatBatchYield = DispatchTime.distantFuture
     private var autoEnableAttemptedGeneration: UInt64?
+    private var autoClaimAttemptedGeneration: UInt64?
 
     /// Stable restoration identifier: iOS relaunches the app in the
     /// background for ULCP events only when a central with this
@@ -433,7 +441,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // Bind immediately: the user chose this radio, so it is now the
         // auto-reconnect target and a standing connect is being issued for it.
         rememberConnected(target.identifier)
-        publish(state: .connecting, name: target.name, localIdentifier: target.identifier)
+        publish(state: .connecting, name: displayName(for: target), localIdentifier: target.identifier)
         issueConnect(target, on: central, reason: "selectRadio")
         completion.resume()
     }
@@ -468,7 +476,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         var entry = discovered[peripheral.identifier]
             ?? DiscoveredEntry(
                 peripheral: peripheral,
-                name: advertisedName ?? peripheral.name,
+                name: advertisedName ?? displayName(for: peripheral),
                 rssiDBm: rssi.intValue,
                 lastSeen: DispatchTime.now()
             )
@@ -694,7 +702,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 from: peripheral
             )
         } catch {
-            reportOperationFailure("The radio could not replace its configured host", name: peripheral.name)
+            reportOperationFailure("The radio could not replace its configured host", name: displayName(for: peripheral))
             throw RadioConnectionError.incompatibleProtocol
         }
     }
@@ -968,7 +976,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             publishDisconnected(problem: nil)
             return
         }
-        publish(state: .disconnecting, name: peripheral.name)
+        publish(state: .disconnecting, name: displayName(for: peripheral))
         central?.cancelPeripheralConnection(peripheral)
     }
 
@@ -1030,7 +1038,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         let attempt = autoConnectAttempt
         publish(
             state: .reconnecting,
-            name: remembered.name,
+            name: displayName(for: remembered),
             localIdentifier: remembered.identifier
         )
         issueConnect(remembered, on: central, reason: "startAutomaticConnection")
@@ -1049,7 +1057,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             self.automaticConnectionInProgress = false
             self.publish(
                 state: .waitingForRadio,
-                name: remembered.name,
+                name: displayName(for: remembered),
                 localIdentifier: remembered.identifier
             )
         }
@@ -1189,6 +1197,34 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             .flatMap(UUID.init(uuidString:))
     }
 
+    /// The name the bound radio reported over ULCP the last time it was
+    /// attached. Persisted so a rename survives a relaunch instead of
+    /// reverting to Bluetooth's cached name until the next attach.
+    private var rememberedDeviceName: String? {
+        get { defaults.string(forKey: PreferenceKey.deviceName) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: PreferenceKey.deviceName)
+            } else {
+                defaults.removeObject(forKey: PreferenceKey.deviceName)
+            }
+        }
+    }
+
+    /// The name to show for `peripheral`.
+    ///
+    /// The device's own ULCP-reported name is authoritative and
+    /// `CBPeripheral.name` is a cache that does not track renames, so the
+    /// remembered name wins for the bound radio. Any other peripheral —
+    /// one being discovered, one never attached — has only the cache.
+    private func displayName(for peripheral: CBPeripheral?) -> String? {
+        guard let peripheral else { return rememberedDeviceName }
+        guard peripheral.identifier == rememberedPeripheralIdentifier else {
+            return peripheral.name
+        }
+        return rememberedDeviceName ?? peripheral.name
+    }
+
     /// Auto-reconnect intent. Reading and writing this always goes through
     /// UserDefaults so the invariant survives force-quit and background
     /// relaunch.
@@ -1200,6 +1236,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     /// Bind the app to `identifier` and arm auto-reconnect. This is the only
     /// place both persisted fields are set together on a successful attach.
     private func rememberConnected(_ identifier: UUID) {
+        // A different radio has a different name; keeping the old one would
+        // label the new radio until its first attach reports otherwise.
+        if rememberedPeripheralIdentifier != identifier {
+            rememberedDeviceName = nil
+        }
         defaults.set(identifier.uuidString, forKey: PreferenceKey.connectedUUID)
         shouldAutoConnect = true
     }
@@ -1211,6 +1252,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     /// our service, and anything handed back by state restoration. Pass `keep`
     /// to spare one peripheral (e.g. a live link being torn down separately so
     /// its `didDisconnect` UI flow still runs).
+    ///
+    /// Peripherals held by an administrative session are always spared.
+    /// `retrieveConnectedPeripherals(withServices:)` returns every device on
+    /// the phone advertising the ULCP service — including one a concurrent
+    /// commissioning session is in the middle of configuring, which this
+    /// sweep has no business touching.
     private func cancelAllServiceConnections(except keep: UUID? = nil) {
         guard let central, central.state == .poweredOn else { return }
         var targets: [CBPeripheral] = []
@@ -1222,7 +1269,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         targets += restoredPeripherals
         var seen = Set<UUID>()
         for target in targets
-        where target.identifier != keep && seen.insert(target.identifier).inserted {
+        where target.identifier != keep
+            && !AdminSessionRegistry.shared.contains(target.identifier)
+            && seen.insert(target.identifier).inserted {
             // NOTE: cancelPeripheralConnection withdraws only THIS app's
             // interest. A connection owned by another app (or another install
             // of this app) on the same phone survives this call untouched.
@@ -1329,11 +1378,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func beginSynchronization(on peripheral: CBPeripheral) {
         guard let frameIn else {
-            terminateConnectionForFatalProtocolError("The radio has no writable ULCP endpoint", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has no writable ULCP endpoint", name: displayName(for: peripheral))
             return
         }
         guard frameIn.properties.contains(.write) else {
-            terminateConnectionForFatalProtocolError("The radio requires an unsupported write mode", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio requires an unsupported write mode", name: displayName(for: peripheral))
             return
         }
 
@@ -1347,7 +1396,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 from: peripheral
             )
         } catch {
-            terminateConnectionForFatalProtocolError("The ULCP session could not start", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The ULCP session could not start", name: displayName(for: peripheral))
         }
     }
 
@@ -1385,7 +1434,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             guard let frame = try reassembler.push(segment: value) else { return }
             try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
         } catch {
-            terminateConnectionForFatalProtocolError("The radio sent an invalid ULCP frame", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio sent an invalid ULCP frame", name: displayName(for: peripheral))
         }
     }
 
@@ -1410,7 +1459,15 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         case .ours: .matchesCurrentIdentity
         case .otherHost: .belongsToAnotherIdentity
         }
-        snapshot.name = update.snapshot.deviceName ?? snapshot.name ?? peripheral.name
+        // The device's own answer is the only authoritative name; record it
+        // so every disconnected screen can use it instead of Bluetooth's
+        // cached one, which does not follow a rename.
+        if let reported = update.snapshot.deviceName,
+           peripheral.identifier == rememberedPeripheralIdentifier,
+           reported != rememberedDeviceName {
+            rememberedDeviceName = reported
+        }
+        snapshot.name = update.snapshot.deviceName ?? snapshot.name ?? displayName(for: peripheral)
         if let deviceKey = update.snapshot.deviceKey {
             let identity = try UMSHMobileCore.inspectPublicIdentityBytes(publicKey: deviceKey)
             snapshot.deviceIdentity = MeshPublicIdentity(
@@ -1469,6 +1526,25 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             && autoEnableAttemptedGeneration != update.snapshot.generation
         if shouldAutoEnable {
             autoEnableAttemptedGeneration = update.snapshot.generation
+        }
+
+        // The host domain is volatile: the radio boots with no host key, so
+        // every power cycle would otherwise park at awaitingHost and demand
+        // "Set Up for This Phone" again. Binding a radio in the app (picking
+        // it, or completing an attach) is the user's decision; once bound,
+        // the phone simply takes the radio — even from another host, since
+        // the last claim legitimately wins. One attempt per transport
+        // generation: a rejected claim falls back to the manual buttons
+        // instead of looping.
+        let shouldAutoClaim = update.snapshot.phase == .awaitingHost
+            && (update.snapshot.hostOwnership == .unclaimed
+                || update.snapshot.hostOwnership == .otherHost)
+            && selectedHostKey != nil
+            && rememberedPeripheralIdentifier == peripheral.identifier
+            && !update.waitingForResponses
+            && autoClaimAttemptedGeneration != update.snapshot.generation
+        if shouldAutoClaim {
+            autoClaimAttemptedGeneration = update.snapshot.generation
         }
 
         var rawTransmitDelay: TimeInterval?
@@ -1571,6 +1647,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             }
         }
 
+        if shouldAutoClaim {
+            bluetoothQueue.async { [weak self] in
+                guard let self, self.peripheral === peripheral,
+                      peripheral.state == .connected else { return }
+                Self.logger.notice("Bound radio awaiting a host decision; claiming automatically")
+                // A failed claim already reports through the snapshot; the
+                // manual buttons remain as the fallback path.
+                try? self.claimForCurrentIdentityOnQueue()
+            }
+        }
+
         if let rawTransmitDelay {
             bluetoothQueue.asyncAfter(deadline: .now() + rawTransmitDelay) { [weak self] in
                 guard let self, self.peripheral === peripheral else { return }
@@ -1579,7 +1666,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 } catch {
                     self.dropPendingRawFrame(
                         reason: "The ULCP session rejected an outbound frame before transmission",
-                        name: peripheral.name
+                        name: displayName(for: peripheral)
                     )
                 }
             }
@@ -1609,7 +1696,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             }
             self.reportOperationFailure(
                 "The companion radio did not finish synchronizing",
-                name: peripheral.name
+                name: displayName(for: peripheral)
             )
         }
     }
@@ -1736,7 +1823,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             pingWaiters.removeAll()
             reportOperationFailure(
                 "The Rust mesh session could not use the companion radio: \(error)",
-                name: peripheral.name
+                name: displayName(for: peripheral)
             )
         }
     }
@@ -1781,10 +1868,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         } catch {
             // Continue draining without turning an unsendable frame into a
             // recursive transport failure.
+            let name = displayName(for: peripheral)
             bluetoothQueue.async { [weak self] in
                 self?.dropPendingRawFrame(
                     reason: "The ULCP session rejected an outbound frame before transmission",
-                    name: peripheral.name
+                    name: name
                 )
             }
         }
@@ -1895,6 +1983,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         pendingRawFrames.removeAll()
         rawTransmitsInFlight.removeAll()
         autoEnableAttemptedGeneration = nil
+        autoClaimAttemptedGeneration = nil
         syncAttempt = UUID()
         preservesFailureOnDisconnect = false
         automaticConnectionInProgress = false
@@ -1938,7 +2027,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         restorationPendingResume = true
         publish(
             state: .reconnecting,
-            name: remembered.name,
+            name: displayName(for: remembered),
             localIdentifier: remembered.identifier
         )
     }
@@ -1953,7 +2042,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         case .connected:
             publish(
                 state: .attaching,
-                name: peripheral.name,
+                name: displayName(for: peripheral),
                 localIdentifier: peripheral.identifier
             )
             peripheral.discoverServices([UUIDs.service])
@@ -1977,7 +2066,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
                 self.automaticConnectionInProgress = false
                 self.publish(
                     state: .waitingForRadio,
-                    name: remembered.name,
+                    name: displayName(for: remembered),
                     localIdentifier: remembered.identifier
                 )
             }
@@ -2007,7 +2096,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         publish(
             state: .connecting,
-            name: advertisedName ?? peripheral.name,
+            name: advertisedName ?? displayName(for: peripheral),
             localIdentifier: peripheral.identifier
         )
         issueConnect(peripheral, on: central, reason: "scanMatch")
@@ -2027,7 +2116,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         autoConnectAttempt = UUID()
         publish(
             state: .attaching,
-            name: peripheral.name,
+            name: displayName(for: peripheral),
             localIdentifier: peripheral.identifier
         )
         peripheral.discoverServices([UUIDs.service])
@@ -2055,14 +2144,14 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
             issueConnect(peripheral, on: central, reason: "didFailToConnect re-arm")
             publish(
                 state: .waitingForRadio,
-                name: peripheral.name,
+                name: displayName(for: peripheral),
                 localIdentifier: peripheral.identifier
             )
             return
         }
         terminateConnectionForFatalProtocolError(
-            error?.localizedDescription ?? "The companion radio connection failed",
-            name: peripheral.name
+            error.map(BluetoothErrorText.describe) ?? "The companion radio connection failed",
+            name: displayName(for: peripheral)
         )
         clearPeripheral()
     }
@@ -2087,7 +2176,7 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         }
         if intentionalDisconnect || !shouldAutoConnect {
             clearPeripheral()
-            publishDisconnected(name: peripheral.name, problem: nil)
+            publishDisconnected(name: displayName(for: peripheral), problem: nil)
             return
         }
         // A remote or link-loss disconnect is provisional. Keep the UI in a
@@ -2099,13 +2188,60 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
 }
 
 extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
+    /// The radio told us its attribute database changed.
+    ///
+    /// iOS delivers this after a Service Changed indication and has already
+    /// invalidated the affected `CBService`, which takes every
+    /// `CBCharacteristic` we hold with it. Continuing against those stale
+    /// references addresses attributes by handles that have moved — writes
+    /// land on whatever now occupies them. The only correct response is to
+    /// drop everything cached about the link and discover it again, which
+    /// re-enters the ordinary attach path.
+    ///
+    /// A radio renamed while connected, or updated to firmware with a
+    /// different set of services, arrives here.
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didModifyServices invalidatedServices: [CBService]
+    ) {
+        guard invalidatedServices.contains(where: { $0.uuid == UUIDs.service }) else { return }
+        Self.logger.notice(
+            "event: didModifyServices — rediscovering \(peripheral.identifier, privacy: .public)"
+        )
+        frameIn = nil
+        frameOut = nil
+        pendingWrites.removeAll()
+        pendingRawFrames.removeAll()
+        writeInProgress = false
+        currentWriteRawTransactionID = nil
+        // Anything already handed to the radio for transmission is lost with
+        // the old handles; leaving it outstanding would strand the mesh
+        // session waiting for completions that cannot arrive.
+        if !rawTransmitsInFlight.isEmpty {
+            rawTransmitsInFlight.removeAll()
+            do {
+                try meshSession?.failOutboundTransmissions()
+            } catch {
+                Self.logger.error("Could not fail outbound transmissions across a service change")
+            }
+        }
+        // `beginSynchronization` restarts the ULCP session once the new
+        // characteristics are in hand.
+        publish(
+            state: .attaching,
+            name: displayName(for: peripheral),
+            localIdentifier: peripheral.identifier
+        )
+        peripheral.discoverServices([UUIDs.service])
+    }
+
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         if let error {
-            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(BluetoothErrorText.describe(error), name: displayName(for: peripheral))
             return
         }
         guard let service = peripheral.services?.first(where: { $0.uuid == UUIDs.service }) else {
-            terminateConnectionForFatalProtocolError("The radio does not expose the ULCP service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio does not expose the ULCP service", name: displayName(for: peripheral))
             return
         }
         peripheral.discoverCharacteristics([UUIDs.frameIn, UUIDs.frameOut], for: service)
@@ -2117,18 +2253,18 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         error: (any Error)?
     ) {
         if let error {
-            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(BluetoothErrorText.describe(error), name: displayName(for: peripheral))
             return
         }
         frameIn = service.characteristics?.first(where: { $0.uuid == UUIDs.frameIn })
         frameOut = service.characteristics?.first(where: { $0.uuid == UUIDs.frameOut })
         guard frameIn != nil, let frameOut else {
-            terminateConnectionForFatalProtocolError("The radio has an incompatible ULCP service", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio has an incompatible ULCP service", name: displayName(for: peripheral))
             return
         }
         publish(
             state: .pairing,
-            name: peripheral.name,
+            name: displayName(for: peripheral),
             localIdentifier: peripheral.identifier
         )
         peripheral.setNotifyValue(true, for: frameOut)
@@ -2141,11 +2277,11 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     ) {
         guard characteristic.uuid == UUIDs.frameOut else { return }
         if let error {
-            terminateConnectionForFatalProtocolError(error.localizedDescription, name: peripheral.name)
+            terminateConnectionForFatalProtocolError(BluetoothErrorText.describe(error), name: displayName(for: peripheral))
             return
         }
         guard characteristic.isNotifying else {
-            terminateConnectionForFatalProtocolError("The radio refused the ULCP attachment", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio refused the ULCP attachment", name: displayName(for: peripheral))
             return
         }
         beginSynchronization(on: peripheral)
@@ -2181,8 +2317,8 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
                 )
             }
             reportOperationFailure(
-                "The ULCP write was not accepted: \(error.localizedDescription)",
-                name: peripheral.name
+                "\(BluetoothErrorText.describe(error))",
+                name: displayName(for: peripheral)
             )
             return
         }
@@ -2197,13 +2333,13 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         guard characteristic.uuid == UUIDs.frameOut else { return }
         if let error {
             reportOperationFailure(
-                "The ULCP notification could not be read: \(error.localizedDescription)",
-                name: peripheral.name
+                "\(BluetoothErrorText.describe(error))",
+                name: displayName(for: peripheral)
             )
             return
         }
         guard let value = characteristic.value else {
-            terminateConnectionForFatalProtocolError("The radio sent an empty GATT notification", name: peripheral.name)
+            terminateConnectionForFatalProtocolError("The radio sent an empty GATT notification", name: displayName(for: peripheral))
             return
         }
         receive(value, from: peripheral)

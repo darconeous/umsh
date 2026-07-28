@@ -505,6 +505,61 @@ wake path is likely entangled with a bootloader GPIO behavior on this
 board; not investigated further this pass. Prefer P1.01 for wake; P1.07
 wake works but may need a reset to reach the application.
 
+### Corrected button mapping and wake behavior (2026-07-27)
+
+**The two paragraphs above are wrong about which button misbehaves, and
+about P1.01 wake working at all.** They were written from PCB silkscreen,
+which is invisible in the assembled product. Corrected from direct
+observation on an enclosed unit:
+
+- The **enclosure injection-molding** labels are the only ones a user ever
+  sees. **"PWR" = P1.01** (the firmware's hold-to-power-off button);
+  **"USR" = P1.07**. So the case labelling agrees with the firmware's
+  functional assignment — the "buttons are swapped" framing applies only
+  to the PCB silkscreen and is irrelevant to operation.
+- **Any press of PWR (P1.01) while the device is in System OFF enters a
+  bootloader/DFU mode — always.** Duration is irrelevant; a bare tap does
+  it. This is not the occasional quirk previously attributed to P1.07.
+  Escaping it requires replacing the bootloader.
+
+Two consequences:
+
+1. **P1.01 cannot carry a hold-at-boot gesture**, because the wake press
+   itself never reaches the application.
+2. **USR (P1.07) is the only usable power-on button.** The System OFF
+   teardown arms both pins as GPIO-DETECT wake sources, but only the
+   P1.07 path reaches the application. The operational UX is therefore
+   asymmetric: **hold PWR to turn off, press USR to turn on.**
+
+**P1.07 is clean through reset (confirmed 2026-07-27).** A held USR press
+spanning power-on reaches the application; the bootloader does not
+consume it. The earlier "waking via P1.07 enters a non-standard
+bootloader mode" note is therefore **wrong** — it was the PWR/P1.01
+behavior misattributed to the wrong button. Disregard it.
+
+### Force-pairing boot gesture (USR / P1.07)
+
+This board has no display menu (the T-Echo re-pairing route) and no
+gesture FSM, so a bonded node had no way back into BLE pairing mode
+without a USB cable. It uses the T-1000E ceremony, carried by USR:
+
+- **hold USR (P1.07) through power-on, past ~1 s** → BLE pairing mode is
+  forced open for this power cycle even when bonds exist;
+- acknowledged by **two white blinks on LED_A** (P0.15) the instant the
+  threshold is crossed, deliberately distinct from the three that
+  acknowledge hold-to-power-off;
+- pairing mode itself then shows as the existing `BLE_LED_MODE == 1`
+  double blink on LED_B (P0.19).
+
+USR is also the button that powers the node on, so the level at t=0
+cannot distinguish the ceremony from an ordinary wake press; only a press
+still held at one second counts. There is no collision with the power
+button: power-off is PWR-only, and P1.07 is otherwise unused by this
+board's firmware while running.
+
+**Hardware-validated 2026-07-27**: a bonded node re-enters pairing mode
+via this gesture.
+
 ### Reset and enclosure power control
 
 Seeed lists separate power on/off, reset, and user-defined controls. The

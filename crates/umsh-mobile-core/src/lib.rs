@@ -21,13 +21,15 @@ mod mobile_chat;
 mod mobile_mesh;
 
 pub use ulcp::{
-    UlcpBatteryRecord, UlcpHostOwnership, UlcpOperationErrorRecord,
-    UlcpPropertyFrameRecord, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
-    UlcpSessionPhase, UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord,
-    UlcpSyncRecord, GattSegmentRecord, MobileUlcpSession, MobileGattReassembler,
+    UlcpAttachMode, UlcpBatteryRecord, UlcpDeviceConfigRecord, UlcpHostOwnership,
+    UlcpOperationErrorRecord, UlcpPropertyFrameRecord, UlcpRadioSettingsRecord,
+    UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
+    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord,
+    GattSegmentRecord, MobileUlcpSession, MobileGattReassembler,
     ulcp_gatt_segments, ulcp_inspection_properties, ulcp_prop_get,
     ulcp_prop_set, ulcp_save, inspect_ulcp_battery,
     inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync,
+    region_code_description, region_code_from_string,
 };
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use mobile_chat::{
@@ -48,7 +50,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 26;
+pub const MOBILE_API_VERSION: u16 = 27;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -65,6 +67,9 @@ pub enum MobileError {
     InvalidGattSegment,
     /// A tethering operation was attempted on an administrative session.
     AdministrativeSession,
+    /// Text could not be read as a region code, or a supplied code was
+    /// not exactly two octets.
+    InvalidRegionCode,
 }
 
 impl MobileError {
@@ -82,6 +87,7 @@ impl MobileError {
             Self::InvalidUlcpFrame => "mobile.error.ulcp.invalid_frame",
             Self::InvalidGattSegment => "mobile.error.ulcp.invalid_gatt_segment",
             Self::AdministrativeSession => "mobile.error.ulcp.administrative_session",
+            Self::InvalidRegionCode => "mobile.error.region_code.invalid",
         }
     }
 
@@ -99,6 +105,7 @@ impl MobileError {
             Self::InvalidUlcpFrame => "ULCP_INVALID_FRAME",
             Self::InvalidGattSegment => "ULCP_INVALID_GATT_SEGMENT",
             Self::AdministrativeSession => "ULCP_ADMINISTRATIVE_SESSION",
+            Self::InvalidRegionCode => "REGION_CODE_INVALID",
         }
     }
 }

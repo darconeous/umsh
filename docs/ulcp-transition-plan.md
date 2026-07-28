@@ -27,7 +27,7 @@ The code is already most of the way here and the naming is now actively
 misleading.
 
 - Role is already a runtime flag. `advertised_identity()` in
-  `firmware/techo/src/device_node.rs:178` flips between
+  `firmware/nrf52-tracker/src/device_node.rs:178` flips between
   `NodeRole::Repeater` and `NodeRole::Tracker` from an atomic reconciled out of
   the device-domain snapshot. There is no compile-time repeater/companion fork
   anywhere in the tree.
@@ -410,7 +410,7 @@ least-recently-used entry. Update the test at :138–:140, which currently pins
 the refuse-when-full behavior, to assert eviction-when-full instead.
 
 Both platforms call the shared policy — nRF at
-`firmware/techo/src/main.rs:1254`, Heltec V3 at
+`firmware/nrf52-tracker/src/main.rs:1254`, Heltec V3 at
 `firmware-esp32/firmware/heltec-v3/src/main.rs:521` — so both
 corrections land once, in one function, with the tests updated alongside.
 
@@ -660,7 +660,7 @@ it looks like. The ceiling is `driver::FRAME_IN_MAX = 300`
 (`crates/umsh-ulcp-runtime/src/driver.rs:45`), not the 512-octet GATT
 reassembly bound: both transports funnel through
 `FrameBuf = heapless::Vec<u8, 300>`, the BLE path staging its reassembled frame
-into one (`firmware/techo/src/main.rs:2079`) and the serial path
+into one (`firmware/nrf52-tracker/src/main.rs:2079`) and the serial path
 decoding straight into `hdlc::Decoder<FRAME_IN_MAX>` (`main.rs:2464`). A
 `PeerKeyEntry` is 64 octets (`crates/umsh-ulcp/src/items.rs:57`), so with a
 header octet, a command octet and the PUI-encoded property number, a whole-table

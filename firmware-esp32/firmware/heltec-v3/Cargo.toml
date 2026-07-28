@@ -30,7 +30,7 @@ umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
 # map. Default features pull the radio and journal-store machinery.
-umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime" }
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node"] }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }

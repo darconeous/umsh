@@ -1,20 +1,20 @@
 //! The ULCP session state machine.
 
 use heapless::{Deque, Vec as HeaplessVec};
-use umsh_ulcp::Status;
-use umsh_ulcp::airtime::lora_airtime_ms;
-use umsh_ulcp::battery::{self, BatteryStatus};
-use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
-use umsh_ulcp::ids::{self, cap, prop, stream};
-use umsh_ulcp::items::{self, Filter, ItemError};
-use umsh_ulcp::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
-use umsh_ulcp::pui;
 use umsh_core::options::{OptionDecoder, OptionEncoder};
 use umsh_core::{
     ChannelKey, EncodeError, NodeHint, PacketBuilder, PacketHeader, PacketType, SourceAddrRef,
 };
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
+use umsh_ulcp::Status;
+use umsh_ulcp::airtime::lora_airtime_ms;
+use umsh_ulcp::battery::{self, BatteryStatus};
+use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::ids::{self, cap, prop, stream};
+use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
+use umsh_ulcp::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
+use umsh_ulcp::pui;
 
 use crate::duty::DutyLedger;
 
@@ -303,6 +303,23 @@ struct DeviceDomain {
     /// Persisted device-domain state; takes effect only once a device
     /// identity is provisioned (store-and-defer otherwise).
     repeater_enabled: bool,
+    /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter.
+    /// Empty imposes no regional restriction. Configurable while
+    /// forwarding is disabled; it simply takes effect when enabled.
+    repeater_regions: RepeaterRegions,
+    /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the code inserted into an
+    /// untagged flood packet, or `None` to never tag.
+    ///
+    /// Deliberately independent of `repeater_regions`: the filter says
+    /// what this device is willing to carry, while tagging asserts where
+    /// the packet is. A device can do either without the other.
+    repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
+    /// `PROP_MAC_REPEATER_MIN_RSSI`: minimum received RSSI in dBm for
+    /// flood forwarding, or `None` for no threshold.
+    repeater_min_rssi: Option<i16>,
+    /// `PROP_MAC_REPEATER_MIN_SNR`: minimum received SNR in whole dB for
+    /// flood forwarding, or `None` for no threshold.
+    repeater_min_snr: Option<i8>,
     /// `PROP_IDENT_ROLE`: the advertised `ROLE` byte, or `None` to
     /// derive it from what the device is actually doing.
     ///
@@ -340,6 +357,10 @@ impl DeviceDomain {
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
             repeater_enabled: false,
+            repeater_regions: RepeaterRegions::default(),
+            repeater_default_region: None,
+            repeater_min_rssi: None,
+            repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
         }
@@ -856,6 +877,60 @@ impl DevPeerTable {
     }
 }
 
+/// Maximum number of `PROP_MAC_REPEATER_REGIONS` entries. Matches the
+/// MAC's own repeater region capacity, so any value this session accepts
+/// fits the forwarding policy it ends up configuring.
+pub const MAX_REPEATER_REGIONS: usize = 8;
+
+/// `PROP_MAC_REPEATER_REGIONS`: the region codes the device identity
+/// flood-forwards for.
+///
+/// Held in the wire encoding — codes concatenated with no delimiter —
+/// because that is byte-for-byte the Supported Regions node identity
+/// option, so the property value and the advertisement are the same
+/// bytes and neither has to reshape the other.
+#[derive(Clone, Copy, Default)]
+struct RepeaterRegions {
+    bytes: [u8; MAX_REPEATER_REGIONS * REGION_CODE_LEN],
+    len: usize,
+}
+
+impl RepeaterRegions {
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Parse a whole-value write. An odd length is a malformed value
+    /// rather than an oversized one; more codes than the device can hold
+    /// is `STATUS_NOMEM`, the same answer the key tables give.
+    fn parse(value: &[u8]) -> Result<Self, Status> {
+        if !value.len().is_multiple_of(REGION_CODE_LEN) {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        if value.len() > MAX_REPEATER_REGIONS * REGION_CODE_LEN {
+            return Err(Status::NOMEM);
+        }
+        let mut regions = Self::default();
+        regions.bytes[..value.len()].copy_from_slice(value);
+        regions.len = value.len();
+        Ok(regions)
+    }
+}
+
+/// Parse a `PROP_MAC_REPEATER_DEFAULT_REGION` value: one region code, or
+/// empty for "never tag".
+fn parse_region_code(value: &[u8]) -> Result<Option<[u8; REGION_CODE_LEN]>, Status> {
+    match value.len() {
+        0 => Ok(None),
+        REGION_CODE_LEN => Ok(Some([value[0], value[1]])),
+        _ => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
 /// Number of recently-transmitted ack-requested frames whose ack MICs we
 /// remember for filtering returning MAC acks. Sized to cover the acks that
 /// can be in flight over a round trip; 4 bytes each, so the whole ring is
@@ -953,7 +1028,8 @@ impl HostDomain {
         if let Some(mic) = frame.get(header.mic_range.clone())
             && mic.len() >= 4
         {
-            self.expected_ack_mics.note([mic[0], mic[1], mic[2], mic[3]]);
+            self.expected_ack_mics
+                .note([mic[0], mic[1], mic[2], mic[3]]);
         }
     }
 
@@ -1077,7 +1153,10 @@ struct SavedProperty {
 /// identifiers are `u32` in [`ids`] and reach 4864, while the option
 /// codec numbers options in `u16`. Everything saved fits.
 const fn saved(number: u32, phase: ApplyPhase, repeatable: bool) -> SavedProperty {
-    assert!(number <= u16::MAX as u32, "saved property number must fit u16");
+    assert!(
+        number <= u16::MAX as u32,
+        "saved property number must fit u16"
+    );
     SavedProperty {
         number: number as u16,
         phase,
@@ -1119,6 +1198,10 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::MAC_REPEATER_ENABLED, ApplyPhase::Config, false),
     saved(prop::IDENT_ROLE, ApplyPhase::Config, false),
     saved(prop::IDENT_MOBILE, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_REGIONS, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_DEFAULT_REGION, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_MIN_RSSI, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_MIN_SNR, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
 ];
 
@@ -1194,6 +1277,10 @@ struct SavedState {
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
     repeater_enabled: bool,
+    repeater_regions: RepeaterRegions,
+    repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
+    repeater_min_rssi: Option<i16>,
+    repeater_min_snr: Option<i8>,
     ident_role: Option<u8>,
     ident_mobile: bool,
 }
@@ -1214,6 +1301,10 @@ impl SavedState {
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
             repeater_enabled: device.repeater_enabled,
+            repeater_regions: device.repeater_regions,
+            repeater_default_region: device.repeater_default_region,
+            repeater_min_rssi: device.repeater_min_rssi,
+            repeater_min_snr: device.repeater_min_snr,
             ident_role: device.ident_role,
             ident_mobile: device.ident_mobile,
         }
@@ -1238,6 +1329,10 @@ impl SavedState {
             dev_channel_keys: ChannelKeyTable::default(),
             dev_peers: DevPeerTable::default(),
             repeater_enabled: false,
+            repeater_regions: RepeaterRegions::default(),
+            repeater_default_region: None,
+            repeater_min_rssi: None,
+            repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
         }
@@ -1297,6 +1392,25 @@ impl SavedState {
                 None => Ok(()),
             },
             prop::IDENT_MOBILE => encoder.put(number, &[self.ident_mobile as u8]),
+            // The unset forms of the repeater policy are all "empty", and
+            // empty is the default, so an unset gate is omitted outright
+            // rather than written as a zero-length option.
+            prop::MAC_REPEATER_REGIONS => match self.repeater_regions.is_empty() {
+                true => Ok(()),
+                false => encoder.put(number, self.repeater_regions.as_slice()),
+            },
+            prop::MAC_REPEATER_DEFAULT_REGION => match &self.repeater_default_region {
+                Some(code) => encoder.put(number, code),
+                None => Ok(()),
+            },
+            prop::MAC_REPEATER_MIN_RSSI => match self.repeater_min_rssi {
+                Some(rssi) => encoder.put(number, &rssi.to_le_bytes()),
+                None => Ok(()),
+            },
+            prop::MAC_REPEATER_MIN_SNR => match self.repeater_min_snr {
+                Some(snr) => encoder.put(number, &[snr as u8]),
+                None => Ok(()),
+            },
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             _ => unreachable!("SAVED_SCHEMA row without an encoder arm"),
         }
@@ -1329,10 +1443,7 @@ impl SavedState {
         let mut seen: u32 = 0;
         for item in OptionDecoder::new(options) {
             let (number, value) = item.map_err(|_| SnapshotError::Malformed)?;
-            let Some(index) = SAVED_SCHEMA
-                .iter()
-                .position(|entry| entry.number == number)
-            else {
+            let Some(index) = SAVED_SCHEMA.iter().position(|entry| entry.number == number) else {
                 continue;
             };
             if !SAVED_SCHEMA[index].repeatable {
@@ -1396,6 +1507,18 @@ impl SavedState {
             }
             prop::IDENT_ROLE => self.ident_role = Some(parse_u8(value).map_err(invalid)?),
             prop::IDENT_MOBILE => self.ident_mobile = parse_bool(value).map_err(invalid)?,
+            prop::MAC_REPEATER_REGIONS => {
+                self.repeater_regions = RepeaterRegions::parse(value).map_err(invalid)?
+            }
+            prop::MAC_REPEATER_DEFAULT_REGION => {
+                self.repeater_default_region = parse_region_code(value).map_err(invalid)?
+            }
+            prop::MAC_REPEATER_MIN_RSSI => {
+                self.repeater_min_rssi = Some(parse_i16(value).map_err(invalid)?)
+            }
+            prop::MAC_REPEATER_MIN_SNR => {
+                self.repeater_min_snr = Some(parse_i8(value).map_err(invalid)?)
+            }
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
@@ -1634,6 +1757,33 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.repeater_enabled
     }
 
+    /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter,
+    /// in wire order — concatenated 2-octet codes, empty for no
+    /// restriction. This is also exactly the Supported Regions identity
+    /// option payload, so a caller advertising the device's regions can
+    /// forward these bytes unchanged.
+    pub fn repeater_regions(&self) -> &[u8] {
+        self.device.repeater_regions.as_slice()
+    }
+
+    /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the code inserted into an
+    /// untagged flood packet, or `None` to never tag.
+    pub fn repeater_default_region(&self) -> Option<[u8; REGION_CODE_LEN]> {
+        self.device.repeater_default_region
+    }
+
+    /// `PROP_MAC_REPEATER_MIN_RSSI`: minimum received RSSI in dBm for
+    /// flood forwarding, or `None` for no threshold.
+    pub fn repeater_min_rssi(&self) -> Option<i16> {
+        self.device.repeater_min_rssi
+    }
+
+    /// `PROP_MAC_REPEATER_MIN_SNR`: minimum received SNR in whole dB for
+    /// flood forwarding, or `None` for no threshold.
+    pub fn repeater_min_snr(&self) -> Option<i8> {
+        self.device.repeater_min_snr
+    }
+
     /// The live `PROP_DEV_KEY` value. `None` once a factory reset
     /// (`CMD_CLEAR` + `CMD_RST`) completes — the firmware uses this
     /// edge to make a running device node dormant.
@@ -1729,6 +1879,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     }
                     prop::IDENT_ROLE => self.device.ident_role = saved.ident_role,
                     prop::IDENT_MOBILE => self.device.ident_mobile = saved.ident_mobile,
+                    prop::MAC_REPEATER_REGIONS => {
+                        self.device.repeater_regions = saved.repeater_regions
+                    }
+                    prop::MAC_REPEATER_DEFAULT_REGION => {
+                        self.device.repeater_default_region = saved.repeater_default_region
+                    }
+                    prop::MAC_REPEATER_MIN_RSSI => {
+                        self.device.repeater_min_rssi = saved.repeater_min_rssi
+                    }
+                    prop::MAC_REPEATER_MIN_SNR => {
+                        self.device.repeater_min_snr = saved.repeater_min_snr
+                    }
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
@@ -2828,6 +2990,41 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // The forwarding policy. All four are accepted while
+            // forwarding is disabled and simply take effect when it is
+            // enabled, so an administrator can stage a whole repeater
+            // configuration and turn it on last. Empty means "no gate"
+            // in every case, which is also the post-reset value.
+            prop::MAC_REPEATER_REGIONS => {
+                self.device.repeater_regions = RepeaterRegions::parse(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            // Not cross-checked against the region list: the two are
+            // written separately and in either order, so enforcing
+            // membership here would reject a legitimate write purely for
+            // arriving first.
+            prop::MAC_REPEATER_DEFAULT_REGION => {
+                self.device.repeater_default_region = parse_region_code(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::MAC_REPEATER_MIN_RSSI => {
+                self.device.repeater_min_rssi = match value.is_empty() {
+                    true => None,
+                    false => Some(parse_i16(value)?),
+                };
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::MAC_REPEATER_MIN_SNR => {
+                self.device.repeater_min_snr = match value.is_empty() {
+                    true => None,
+                    false => Some(parse_i8(value)?),
+                };
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // This device's queue size is fixed; adjustment is optional in
             // the spec and unimplemented here.
             prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
@@ -3128,6 +3325,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::DEV_CHANNEL_KEYS
                 | prop::DEV_PEERS
                 | prop::MAC_REPEATER_ENABLED
+                | prop::MAC_REPEATER_REGIONS
+                | prop::MAC_REPEATER_DEFAULT_REGION
+                | prop::MAC_REPEATER_MIN_RSSI
+                | prop::MAC_REPEATER_MIN_SNR
                 | prop::IDENT
                 | prop::IDENT_ROLE
                 | prop::IDENT_MOBILE
@@ -3247,6 +3448,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.ident_mobile as u8;
                 1
             }
+            prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
+            prop::MAC_REPEATER_DEFAULT_REGION => match &self.device.repeater_default_region {
+                Some(code) => put(out, code),
+                None => 0,
+            },
+            prop::MAC_REPEATER_MIN_RSSI => match self.device.repeater_min_rssi {
+                Some(rssi) => put(out, &rssi.to_le_bytes()),
+                None => 0,
+            },
+            prop::MAC_REPEATER_MIN_SNR => match self.device.repeater_min_snr {
+                Some(snr) => {
+                    out[0] = snr as u8;
+                    1
+                }
+                None => 0,
+            },
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
@@ -3402,6 +3619,10 @@ fn parse_u8(value: &[u8]) -> Result<u8, Status> {
 
 fn parse_i8(value: &[u8]) -> Result<i8, Status> {
     parse_u8(value).map(|byte| byte as i8)
+}
+
+fn parse_i16(value: &[u8]) -> Result<i16, Status> {
+    parse_u16(value).map(|half| half as i16)
 }
 
 fn parse_u16(value: &[u8]) -> Result<u16, Status> {
@@ -3783,9 +4004,191 @@ mod tests {
         assert_eq!(get(&mut booted, prop::MAC_REPEATER_ENABLED), [1]);
 
         // A fresh unprovisioned session defaults off.
-        let fresh: TestSession =
-            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        let fresh: TestSession = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         assert!(!fresh.repeater_enabled());
+    }
+
+    /// The four forwarding gates are configurable while forwarding is
+    /// off — an administrator stages the policy and enables it last —
+    /// and each survives save and boot-from-snapshot.
+    #[test]
+    fn repeater_policy_round_trips_and_persists() {
+        let mut session = test_session();
+
+        // Post-reset every gate is unset, which reads as empty.
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_REGIONS),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_DEFAULT_REGION),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_MIN_RSSI),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_MIN_SNR),
+            Vec::<u8>::new()
+        );
+
+        // Written with forwarding still disabled.
+        assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [0]);
+        let (emitted, effect) = set(
+            &mut session,
+            prop::MAC_REPEATER_REGIONS,
+            &[0x78, 0x53, 0x31, 0xD9],
+        );
+        assert_eq!(effect, None, "policy is not radio-affecting");
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::MAC_REPEATER_REGIONS);
+        assert_eq!(value, [0x78, 0x53, 0x31, 0xD9]);
+        set(
+            &mut session,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            &[0x78, 0x53],
+        );
+        // −115 dBm, little-endian.
+        set(&mut session, prop::MAC_REPEATER_MIN_RSSI, &[0x8D, 0xFF]);
+        // −7 dB.
+        set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[0xF9]);
+
+        assert_eq!(session.repeater_regions(), [0x78, 0x53, 0x31, 0xD9]);
+        assert_eq!(session.repeater_default_region(), Some([0x78, 0x53]));
+        assert_eq!(session.repeater_min_rssi(), Some(-115));
+        assert_eq!(session.repeater_min_snr(), Some(-7));
+
+        // Survives save + boot-from-snapshot.
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.repeater_regions(), [0x78, 0x53, 0x31, 0xD9]);
+        assert_eq!(booted.repeater_default_region(), Some([0x78, 0x53]));
+        assert_eq!(booted.repeater_min_rssi(), Some(-115));
+        assert_eq!(booted.repeater_min_snr(), Some(-7));
+        booted.attach(true);
+        assert_eq!(
+            get(&mut booted, prop::MAC_REPEATER_MIN_RSSI),
+            [0x8D, 0xFF],
+            "the reported value is the little-endian INT16 that was written"
+        );
+        assert_eq!(get(&mut booted, prop::MAC_REPEATER_MIN_SNR), [0xF9]);
+    }
+
+    /// Every gate clears back to unset by writing it empty, and a
+    /// snapshot taken with them unset carries no option at all — which
+    /// is what makes absence and the default decode identically.
+    #[test]
+    fn repeater_policy_clears_back_to_unset() {
+        let mut session = test_session();
+        set(&mut session, prop::MAC_REPEATER_REGIONS, &[0x78, 0x53]);
+        set(
+            &mut session,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            &[0x78, 0x53],
+        );
+        set(&mut session, prop::MAC_REPEATER_MIN_RSSI, &[0x8D, 0xFF]);
+        set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[0xF9]);
+
+        set(&mut session, prop::MAC_REPEATER_REGIONS, &[]);
+        set(&mut session, prop::MAC_REPEATER_DEFAULT_REGION, &[]);
+        set(&mut session, prop::MAC_REPEATER_MIN_RSSI, &[]);
+        set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[]);
+
+        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(session.repeater_default_region(), None);
+        assert_eq!(session.repeater_min_rssi(), None);
+        assert_eq!(session.repeater_min_snr(), None);
+
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(booted.repeater_default_region(), None);
+        assert_eq!(booted.repeater_min_rssi(), None);
+        assert_eq!(booted.repeater_min_snr(), None);
+    }
+
+    /// A malformed gate is refused outright rather than truncated or
+    /// rounded into range, so a host never believes it configured a
+    /// policy the device did not accept.
+    #[test]
+    fn repeater_policy_rejects_malformed_values() {
+        let mut session = test_session();
+
+        // Region lists are whole codes; an odd length is malformed, not
+        // merely oversized.
+        let (emitted, _) = set(
+            &mut session,
+            prop::MAC_REPEATER_REGIONS,
+            &[0x78, 0x53, 0x31],
+        );
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        // More codes than the device can hold is a capacity answer.
+        let over_capacity = [0xAAu8; (MAX_REPEATER_REGIONS + 1) * REGION_CODE_LEN];
+        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_REGIONS, &over_capacity);
+        expect_status(&emitted[0], 2, Status::NOMEM);
+
+        // The default region is exactly one code or nothing.
+        let (emitted, _) = set(
+            &mut session,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            &[0x78, 0x53, 0x31],
+        );
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        // The thresholds are fixed-width.
+        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_MIN_RSSI, &[0x8D]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[0xF9, 0xFF]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        // Nothing was partially applied.
+        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(session.repeater_default_region(), None);
+        assert_eq!(session.repeater_min_rssi(), None);
+        assert_eq!(session.repeater_min_snr(), None);
+    }
+
+    /// The default region is not required to appear in the region list.
+    /// The two are written separately and in either order, so a
+    /// membership check here would reject a legitimate write purely for
+    /// arriving first.
+    #[test]
+    fn repeater_default_region_is_not_cross_checked_against_the_region_list() {
+        let mut session = test_session();
+        // Default first, list second.
+        set(
+            &mut session,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            &[0x78, 0x53],
+        );
+        assert_eq!(session.repeater_default_region(), Some([0x78, 0x53]));
+        set(&mut session, prop::MAC_REPEATER_REGIONS, &[0x31, 0xD9]);
+        assert_eq!(session.repeater_regions(), [0x31, 0xD9]);
+        assert_eq!(
+            session.repeater_default_region(),
+            Some([0x78, 0x53]),
+            "a later region-list write must not silently drop the default"
+        );
+
+        // A default with no list at all is equally allowed: filtering and
+        // tagging are independent decisions.
+        let mut session = test_session();
+        set(
+            &mut session,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            &[0xAB, 0xCD],
+        );
+        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(session.repeater_default_region(), Some([0xAB, 0xCD]));
     }
 
     #[test]
@@ -3821,7 +4224,9 @@ mod tests {
         let (_, effect) = send_packet(&mut session, 1, &[0xAB; 8], &[], 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
         let mut emitted = Vec::new();
-        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
         let duty_before = get(&mut session, prop::PHY_DUTY_NOW);
         assert_ne!(duty_before, 0u16.to_le_bytes());
 
@@ -3878,7 +4283,9 @@ mod tests {
         session.attach(true);
         assert!(!session.has_pending_tx());
         let mut emitted = Vec::new();
-        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
         assert!(emitted.is_empty());
 
         // The new session is free to transmit (no stale BUSY).
@@ -4209,7 +4616,9 @@ mod tests {
 
         // Completion emits OK with the original TID and records duty.
         let mut emitted = Vec::new();
-        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
         expect_status(&emitted[0], 4, Status::OK);
         assert!(!session.has_pending_tx());
         let duty = get(&mut session, prop::PHY_DUTY_NOW);
@@ -4239,7 +4648,9 @@ mod tests {
         for tid in 2..=4 {
             assert_eq!(session.tx_data(), &[tid; 8]);
             let mut emitted = Vec::new();
-            let effect = session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes| emitted.push(bytes.to_vec()));
+            let effect = session.on_tx_result(TxOutcome::Sent, 0, &mut |bytes| {
+                emitted.push(bytes.to_vec())
+            });
             expect_status(&emitted[0], tid, Status::OK);
             assert_eq!(effect, (tid != 4).then_some(Effect::StartTransmit));
         }
@@ -4446,15 +4857,21 @@ mod tests {
             prop::MAC_REPEATER_ENABLED,
             prop::IDENT_ROLE,
             prop::IDENT_MOBILE,
+            // The repeater policy is whole-value too: a region list is
+            // replaced outright, never accumulated a code at a time.
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+            prop::MAC_REPEATER_MIN_SNR,
         ] {
             let len = frame::prop_insert(&mut buf, 1, known, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 74 is in the reserved
-        // device-behavior range the spec has not assigned.
-        for unknown in [74, 1_234] {
+        // An unknown property is not found; 80 opens the advertisement
+        // sub-range, which is reserved but not yet assigned.
+        for unknown in [80, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -4659,7 +5076,10 @@ mod tests {
         // hint; with nothing transmitted, its ack_mic matches no expected
         // send, so it is dropped (see mac_ack_accepted_only_when_expected).
         assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
-        assert!(!delivered(&mut session, &mac_ack_with_mic([0xC4, 0xC4, 0xC4, 0xC4])));
+        assert!(!delivered(
+            &mut session,
+            &mac_ack_with_mic([0xC4, 0xC4, 0xC4, 0xC4])
+        ));
         assert!(!delivered(&mut session, &unicast_to([1, 2, 3])));
         assert!(!delivered(&mut session, &broadcast_frame()));
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
@@ -4672,7 +5092,10 @@ mod tests {
         install_host_key(&mut session, &[0xC4; 32]); // configure filtering
 
         // Before sending anything, no ack is expected.
-        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+        assert!(!delivered(
+            &mut session,
+            &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
+        ));
 
         // Transmit an ack-requested frame; its MIC prefix is now expected.
         let frame = sealed_unar(7, &test_pairwise(), false);
@@ -4689,7 +5112,10 @@ mod tests {
         // route still passes (lazy eviction).
         assert!(delivered(&mut session, &mac_ack_with_mic(ack_mic)));
         // An ack for a different (unsent) frame is still rejected.
-        assert!(!delivered(&mut session, &mac_ack_with_mic([0x99, 0x88, 0x77, 0x66])));
+        assert!(!delivered(
+            &mut session,
+            &mac_ack_with_mic([0x99, 0x88, 0x77, 0x66])
+        ));
     }
 
     #[test]
@@ -4702,7 +5128,10 @@ mod tests {
         install_host_key(&mut session, &[0xC4; 32]); // configure filtering
 
         // No matching send, so the implicit ack_mic filter rejects it.
-        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+        assert!(!delivered(
+            &mut session,
+            &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
+        ));
 
         // Explicitly request MacAck frames by type.
         insert_item(
@@ -4712,7 +5141,10 @@ mod tests {
         );
 
         // Now the same unexpected ack is accepted via the explicit filter.
-        assert!(delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+        assert!(delivered(
+            &mut session,
+            &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
+        ));
     }
 
     #[test]
@@ -4920,7 +5352,10 @@ mod tests {
         );
         assert!(delivered(&mut session, &unicast_to([0x11, 0x22, 0x33])));
         // A MAC ack for a frame we never sent is dropped.
-        assert!(!delivered(&mut session, &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])));
+        assert!(!delivered(
+            &mut session,
+            &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
+        ));
         assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
         assert!(!delivered(&mut session, &broadcast_frame()));
 
@@ -5653,11 +6088,19 @@ mod tests {
 
         let first = sealed_unar(5, &keys, false);
         let effect = rx_effect(&mut session, &first, 0);
-        expect_ack_transmit(&mut session, effect, Some(expected_ack_trailer(&first, &keys)));
+        expect_ack_transmit(
+            &mut session,
+            effect,
+            Some(expected_ack_trailer(&first, &keys)),
+        );
 
         // Exact retransmission: coalesced (no new entry) and re-acked.
         let effect = rx_effect(&mut session, &first, 10);
-        expect_ack_transmit(&mut session, effect, Some(expected_ack_trailer(&first, &keys)));
+        expect_ack_transmit(
+            &mut session,
+            effect,
+            Some(expected_ack_trailer(&first, &keys)),
+        );
 
         // Advance the baseline well past the re-ack window.
         for counter in 6..=14 {
@@ -5935,7 +6378,9 @@ mod tests {
     #[test]
     fn saved_schema_orders_by_identifier_and_applies_by_phase() {
         assert!(
-            SAVED_SCHEMA.windows(2).all(|pair| pair[0].number < pair[1].number),
+            SAVED_SCHEMA
+                .windows(2)
+                .all(|pair| pair[0].number < pair[1].number),
             "the option encoder rejects a number below the last one written"
         );
         let enable = SAVED_SCHEMA
@@ -6290,7 +6735,9 @@ mod tests {
         // must not claim an ack that never went out.
         let effect = rx_effect(&mut session, &frame, 0);
         assert_eq!(effect, Some(Effect::StartTransmit));
-        session.on_tx_result(TxOutcome::Failed, 0, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+        session.on_tx_result(TxOutcome::Failed, 0, &mut |_: &[u8]| {
+            panic!("autonomous ack is silent")
+        });
 
         // The sender retransmits; the duplicate re-ack completes, which
         // marks the original (still queued, still unacked) entry.
@@ -6300,7 +6747,9 @@ mod tests {
             Some(Effect::StartTransmit),
             "re-ack after failed TX"
         );
-        session.on_tx_result(TxOutcome::Sent, 10, &mut |_: &[u8]| panic!("autonomous ack is silent"));
+        session.on_tx_result(TxOutcome::Sent, 10, &mut |_: &[u8]| {
+            panic!("autonomous ack is silent")
+        });
 
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1, "duplicate coalesced");

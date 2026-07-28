@@ -58,6 +58,10 @@ Id   | Mnemonic                                                                 
 71   | [`PROP_IDENT`](ulcp-device.md#prop-ident)                                  | Get                      | `CAP_IDENT`
 72   | [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role)                        | Get, Set                 | `CAP_IDENT`
 73   | [`PROP_IDENT_MOBILE`](ulcp-device.md#prop-ident-mobile)                    | Get, Set                 | `CAP_IDENT`
+74   | [`PROP_MAC_REPEATER_REGIONS`](ulcp-device.md#prop-mac-repeater-regions)    | Get, Set                 | `CAP_REPEATER`
+75   | [`PROP_MAC_REPEATER_DEFAULT_REGION`](ulcp-device.md#prop-mac-repeater-default-region) | Get, Set      | `CAP_REPEATER`
+76   | [`PROP_MAC_REPEATER_MIN_RSSI`](ulcp-device.md#prop-mac-repeater-min-rssi)  | Get, Set                 | `CAP_REPEATER`
+77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`

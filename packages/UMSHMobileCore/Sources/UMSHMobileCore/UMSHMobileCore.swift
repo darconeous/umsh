@@ -1879,6 +1879,18 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func configure(settings: UlcpRadioSettingsRecord) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Apply, verify, and persist a complete configuration of the device's
+     * own domain: its radio, the role it advertises, and whether and how
+     * it forwards for the mesh on its own.
+     *
+     * This is what commissioning writes. It touches nothing in the host
+     * domain — no host key, no filters, no queues — so it is equally
+     * valid from an administrative session on someone else's radio and
+     * from a tethered session on this phone's own.
+     */
+    func configureDevice(configuration: UlcpDeviceConfigRecord) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Consume one complete ULCP frame and advance the session reducer.
      */
     func consume(frame: Data) throws  -> UlcpSessionUpdateRecord
@@ -2065,6 +2077,26 @@ open func configure(settings: UlcpRadioSettingsRecord)throws  -> UlcpSessionUpda
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure(
             self.uniffiCloneHandle(),
         FfiConverterTypeUlcpRadioSettingsRecord_lower(settings),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply, verify, and persist a complete configuration of the device's
+     * own domain: its radio, the role it advertises, and whether and how
+     * it forwards for the mesh on its own.
+     *
+     * This is what commissioning writes. It touches nothing in the host
+     * domain — no host key, no filters, no queues — so it is equally
+     * valid from an administrative session on someone else's radio and
+     * from a tethered session on this phone's own.
+     */
+open func configureDevice(configuration: UlcpDeviceConfigRecord)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure_device(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeUlcpDeviceConfigRecord_lower(configuration),uniffiCallStatus
     )
 })
 }
@@ -3696,6 +3728,112 @@ public func FfiConverterTypeUlcpBatteryRecord_lower(_ value: UlcpBatteryRecord) 
 
 
 /**
+ * Complete desired configuration of a device's *own* domain: what it is
+ * and what it does when no phone is attached.
+ *
+ * This is the commissioning counterpart to [`UlcpRadioSettingsRecord`],
+ * which describes only the radio. Every capability-gated field must be
+ * present exactly when the device advertises the matching capability, so
+ * the record always states a whole desired configuration rather than a
+ * patch — a property that a future template feature can lean on.
+ */
+public struct UlcpDeviceConfigRecord: Equatable, Hashable {
+    /**
+     * The live radio profile, applied with the same disable-first,
+     * enable-last ordering [`MobileUlcpSession::configure`] uses.
+     */
+    public var radio: UlcpRadioSettingsRecord
+    /**
+     * `PROP_IDENT_ROLE`, or `None` to let the device derive its
+     * advertised role from what it is actually doing. Requires
+     * `CAP_IDENT`.
+     */
+    public var identRole: UInt8?
+    /**
+     * `PROP_IDENT_MOBILE`. Present exactly when the device advertises
+     * `CAP_IDENT`.
+     */
+    public var identMobile: Bool?
+    /**
+     * The flood-forwarding policy. Present exactly when the device
+     * advertises `CAP_REPEATER`.
+     */
+    public var repeater: UlcpRepeaterSettingsRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The live radio profile, applied with the same disable-first,
+         * enable-last ordering [`MobileUlcpSession::configure`] uses.
+         */radio: UlcpRadioSettingsRecord,
+        /**
+         * `PROP_IDENT_ROLE`, or `None` to let the device derive its
+         * advertised role from what it is actually doing. Requires
+         * `CAP_IDENT`.
+         */identRole: UInt8?,
+        /**
+         * `PROP_IDENT_MOBILE`. Present exactly when the device advertises
+         * `CAP_IDENT`.
+         */identMobile: Bool?,
+        /**
+         * The flood-forwarding policy. Present exactly when the device
+         * advertises `CAP_REPEATER`.
+         */repeater: UlcpRepeaterSettingsRecord?) {
+        self.radio = radio
+        self.identRole = identRole
+        self.identMobile = identMobile
+        self.repeater = repeater
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpDeviceConfigRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpDeviceConfigRecord {
+        return
+            try UlcpDeviceConfigRecord(
+                radio: FfiConverterTypeUlcpRadioSettingsRecord.read(from: &buf),
+                identRole: FfiConverterOptionUInt8.read(from: &buf),
+                identMobile: FfiConverterOptionBool.read(from: &buf),
+                repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpDeviceConfigRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpRadioSettingsRecord.write(value.radio, into: &buf)
+        FfiConverterOptionUInt8.write(value.identRole, into: &buf)
+        FfiConverterOptionBool.write(value.identMobile, into: &buf)
+        FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDeviceConfigRecord_lift(_ buf: RustBuffer) throws -> UlcpDeviceConfigRecord {
+    return try FfiConverterTypeUlcpDeviceConfigRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConfigRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpDeviceConfigRecord.lower(value)
+}
+
+
+/**
  * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
  * This is an operation failure, never evidence that the transport framing is
  * corrupt or that the BLE connection should be closed.
@@ -4048,6 +4186,118 @@ public func FfiConverterTypeUlcpReceivedFrameRecord_lower(_ value: UlcpReceivedF
 
 
 /**
+ * The device identity's autonomous flood-forwarding policy.
+ *
+ * Region codes travel as the opaque 2-octet wire values they are on the
+ * air: the same bytes the device advertises as its Supported Regions
+ * identity option. Text forms are a presentation concern —
+ * [`region_code_from_string`] and [`region_code_description`] convert.
+ */
+public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
+    /**
+     * `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
+     * this is false, but are still read and written.
+     */
+    public var enabled: Bool
+    /**
+     * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
+     * forward, each entry exactly two octets. Empty imposes no regional
+     * restriction rather than blocking every flood.
+     */
+    public var regions: [Data]
+    /**
+     * `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
+     * untagged flood before forwarding it. `None` forwards untagged.
+     */
+    public var defaultRegion: Data?
+    /**
+     * `PROP_MAC_REPEATER_MIN_RSSI` in dBm. `None` accepts any.
+     */
+    public var minRssiDbm: Int16?
+    /**
+     * `PROP_MAC_REPEATER_MIN_SNR` in whole dB. `None` accepts any.
+     */
+    public var minSnrDb: Int8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
+         * this is false, but are still read and written.
+         */enabled: Bool,
+        /**
+         * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
+         * forward, each entry exactly two octets. Empty imposes no regional
+         * restriction rather than blocking every flood.
+         */regions: [Data],
+        /**
+         * `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
+         * untagged flood before forwarding it. `None` forwards untagged.
+         */defaultRegion: Data?,
+        /**
+         * `PROP_MAC_REPEATER_MIN_RSSI` in dBm. `None` accepts any.
+         */minRssiDbm: Int16?,
+        /**
+         * `PROP_MAC_REPEATER_MIN_SNR` in whole dB. `None` accepts any.
+         */minSnrDb: Int8?) {
+        self.enabled = enabled
+        self.regions = regions
+        self.defaultRegion = defaultRegion
+        self.minRssiDbm = minRssiDbm
+        self.minSnrDb = minSnrDb
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpRepeaterSettingsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpRepeaterSettingsRecord {
+        return
+            try UlcpRepeaterSettingsRecord(
+                enabled: FfiConverterBool.read(from: &buf),
+                regions: FfiConverterSequenceData.read(from: &buf),
+                defaultRegion: FfiConverterOptionData.read(from: &buf),
+                minRssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                minSnrDb: FfiConverterOptionInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpRepeaterSettingsRecord, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterSequenceData.write(value.regions, into: &buf)
+        FfiConverterOptionData.write(value.defaultRegion, into: &buf)
+        FfiConverterOptionInt16.write(value.minRssiDbm, into: &buf)
+        FfiConverterOptionInt8.write(value.minSnrDb, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRepeaterSettingsRecord_lift(_ buf: RustBuffer) throws -> UlcpRepeaterSettingsRecord {
+    return try FfiConverterTypeUlcpRepeaterSettingsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpRepeaterSettingsRecord_lower(_ value: UlcpRepeaterSettingsRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpRepeaterSettingsRecord.lower(value)
+}
+
+
+/**
  * Typed state published after each bounded ULCP-session transition.
  */
 public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
@@ -4251,6 +4501,15 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var supportsDeviceName: Bool
     public var supportsLora: Bool
     public var supportsDutyCycleLimit: Bool
+    /**
+     * The device can forward for the mesh on its own (`CAP_REPEATER`).
+     */
+    public var supportsRepeater: Bool
+    /**
+     * The device serves and configures its own advertised node identity
+     * (`CAP_IDENT`).
+     */
+    public var supportsIdent: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
@@ -4266,10 +4525,42 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var hostChannelCount: UInt32?
     public var hostPeerCount: UInt32?
     public var autoAck: Bool?
+    /**
+     * Present exactly when `supports_repeater`.
+     */
+    public var repeater: UlcpRepeaterSettingsRecord?
+    /**
+     * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
+     * from what it is actually doing" and "no `CAP_IDENT`" —
+     * `supports_ident` distinguishes them.
+     */
+    public var identRole: UInt8?
+    /**
+     * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+     */
+    public var identMobile: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?) {
+    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool,
+        /**
+         * The device can forward for the mesh on its own (`CAP_REPEATER`).
+         */supportsRepeater: Bool,
+        /**
+         * The device serves and configures its own advertised node identity
+         * (`CAP_IDENT`).
+         */supportsIdent: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+        /**
+         * Present exactly when `supports_repeater`.
+         */repeater: UlcpRepeaterSettingsRecord?,
+        /**
+         * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
+         * from what it is actually doing" and "no `CAP_IDENT`" —
+         * `supports_ident` distinguishes them.
+         */identRole: UInt8?,
+        /**
+         * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+         */identMobile: Bool?) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
@@ -4277,6 +4568,8 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsDeviceName = supportsDeviceName
         self.supportsLora = supportsLora
         self.supportsDutyCycleLimit = supportsDutyCycleLimit
+        self.supportsRepeater = supportsRepeater
+        self.supportsIdent = supportsIdent
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -4292,6 +4585,9 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.hostChannelCount = hostChannelCount
         self.hostPeerCount = hostPeerCount
         self.autoAck = autoAck
+        self.repeater = repeater
+        self.identRole = identRole
+        self.identMobile = identMobile
     }
 
 
@@ -4317,6 +4613,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsDeviceName: FfiConverterBool.read(from: &buf),
                 supportsLora: FfiConverterBool.read(from: &buf),
                 supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
+                supportsRepeater: FfiConverterBool.read(from: &buf),
+                supportsIdent: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
@@ -4331,7 +4629,10 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 filterCount: FfiConverterOptionUInt32.read(from: &buf),
                 hostChannelCount: FfiConverterOptionUInt32.read(from: &buf),
                 hostPeerCount: FfiConverterOptionUInt32.read(from: &buf),
-                autoAck: FfiConverterOptionBool.read(from: &buf)
+                autoAck: FfiConverterOptionBool.read(from: &buf),
+                repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf),
+                identRole: FfiConverterOptionUInt8.read(from: &buf),
+                identMobile: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -4343,6 +4644,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsDeviceName, into: &buf)
         FfiConverterBool.write(value.supportsLora, into: &buf)
         FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
+        FfiConverterBool.write(value.supportsRepeater, into: &buf)
+        FfiConverterBool.write(value.supportsIdent, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
@@ -4358,6 +4661,9 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.hostChannelCount, into: &buf)
         FfiConverterOptionUInt32.write(value.hostPeerCount, into: &buf)
         FfiConverterOptionBool.write(value.autoAck, into: &buf)
+        FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
+        FfiConverterOptionUInt8.write(value.identRole, into: &buf)
+        FfiConverterOptionBool.write(value.identMobile, into: &buf)
     }
 }
 
@@ -4951,6 +5257,11 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * A tethering operation was attempted on an administrative session.
      */
     case AdministrativeSession
+    /**
+     * Text could not be read as a region code, or a supplied code was
+     * not exactly two octets.
+     */
+    case InvalidRegionCode
 
 
 
@@ -4991,6 +5302,7 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 9: return .InvalidUlcpFrame
         case 10: return .InvalidGattSegment
         case 11: return .AdministrativeSession
+        case 12: return .InvalidRegionCode
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -5045,6 +5357,10 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
 
         case .AdministrativeSession:
             writeInt(&buf, Int32(11))
+
+
+        case .InvalidRegionCode:
+            writeInt(&buf, Int32(12))
 
         }
     }
@@ -5727,6 +6043,30 @@ fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt8: FfiConverterRustBuffer {
+    typealias SwiftType = Int8?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt8.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt8.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
     typealias SwiftType = UInt16?
 
@@ -6031,6 +6371,30 @@ fileprivate struct FfiConverterOptionTypeUlcpRawTransmitResultRecord: FfiConvert
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpRawTransmitResultRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpRepeaterSettingsRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpRepeaterSettingsRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpRepeaterSettingsRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -6703,6 +7067,37 @@ public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> Ulcp
 })
 }
 /**
+ * Render a region code for display. Codes derived from an airport come
+ * back as their three letters; everything else as `0xXXXX`, which
+ * [`region_code_from_string`] reads back.
+ */
+public func regionCodeDescription(code: Data)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_region_code_description(
+        FfiConverterData.lower(code),uniffiCallStatus
+    )
+})
+}
+/**
+ * Read a region code from what someone typed, yielding the two wire
+ * octets used everywhere else in the ULCP and mesh surfaces.
+ *
+ * Three ASCII letters are a nearest-airport IATA code, `0xXXXX` is a
+ * literal code, and anything else is a region *name* hashed into a
+ * disjoint part of the code space — so "SJC" and "San Jose" are
+ * deliberately different regions, and no name can ever collide with an
+ * airport.
+ */
+public func regionCodeFromString(text: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_region_code_from_string(
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_FACTORY_RESET` request with the shared ULCP codec.
  */
 public func ulcpFactoryReset(transactionId: UInt8)throws  -> Data  {
@@ -6832,6 +7227,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 51182) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 17603) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 15378) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_factory_reset() != 65397) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6938,6 +7339,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure() != 23539) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_device() != 26744) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_consume() != 10958) {

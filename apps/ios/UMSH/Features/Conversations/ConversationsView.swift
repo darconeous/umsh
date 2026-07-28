@@ -190,6 +190,12 @@ struct NodeImportView: View {
                     CanonicalAddressView(address: preview.publicIdentity.canonicalAddress)
                     if let identity = preview.identity {
                         AdvertisedIdentityRows(identity: identity)
+                        // Import is the moment a bad signature is worth
+                        // acting on; a good one says nothing.
+                        AdvertisedIdentityWarning(identity: identity)
+                        Text("These details are the node's own claims about itself.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Text("Previewing does not save this peer or transmit anything.")
                         .font(.caption)
@@ -415,6 +421,12 @@ struct DirectConversationView: View {
                                             ? { deletingMessage = message }
                                             : nil
                                     )
+                                    // Every bubble measures a UITextView, so
+                                    // an unrelated invalidation (a radio
+                                    // snapshot, a keystroke in the composer)
+                                    // would otherwise re-measure the whole
+                                    // non-lazy transcript.
+                                    .equatable()
                                     .id(item.id)
                                 case let .gap(_, count):
                                     GapPlaceholderBubble(count: count)
@@ -830,7 +842,7 @@ private struct GapPlaceholderBubble: View {
     }
 }
 
-private struct ChatMessageBubble: View {
+private struct ChatMessageBubble: View, @MainActor Equatable {
     let message: ChatMessageSummary
     /// Quiet states (Delivered/Sent) only annotate the newest outbound
     /// message; older ones would repeat the same information on every row.
@@ -839,6 +851,16 @@ private struct ChatMessageBubble: View {
     var onDelete: (() -> Void)?
 
     @State private var showsOriginalBody = false
+
+    /// The closures are not comparable, but they are derived from the message
+    /// and only their presence changes what the menu offers; a bubble whose
+    /// message and delivery annotation are unchanged renders identically.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.message == rhs.message
+            && lhs.isMostRecentOutbound == rhs.isMostRecentOutbound
+            && (lhs.onEdit == nil) == (rhs.onEdit == nil)
+            && (lhs.onDelete == nil) == (rhs.onDelete == nil)
+    }
 
     private var isFailed: Bool {
         message.deliveryState?.lowercased() == "failed"

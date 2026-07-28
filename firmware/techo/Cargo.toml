@@ -72,7 +72,11 @@ ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
 name = "firmware-techo"
-path = "src/main.rs"
+# The nRF52840 tracker sources are shared by every board in this family
+# (T-Echo, T-1000E, SenseCAP Solar); each board package is a thin
+# manifest selecting its `board-*` feature. Board differences are chosen
+# by `default`, above.
+path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
@@ -82,7 +86,7 @@ umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 # Board-agnostic device leaf modules (Phase 5 extraction, increment A):
 # transport arbitration, counter map, BLE pairing policy, radio mux.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime" }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex"] }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }

@@ -186,6 +186,71 @@ Acceptance criteria:
 - Enabling key provisioning includes a concise security disclosure.
 - The interface never claims the radio holds the user's private identity key.
 
+### IOS-RAD-06: Set up a device that is not this phone's radio
+
+**As a user with more than one UMSH device,** I want to configure a device from
+my phone without giving up the radio my phone is already using.
+
+Acceptance criteria:
+
+- Device setup is reachable from Settings and runs as a foreground sheet.
+- The companion radio stays connected and usable throughout, and setup never
+  redirects the phone's traffic to the device being configured.
+- The scan list marks the phone's own radio and does not offer it for setup.
+- The device's host ownership — not configured, this phone, or another host — is
+  stated as information; a device belonging to another phone remains editable
+  and its host domain is untouched.
+- The device's own UMSH identity is reachable from the editor through the same
+  node identity screen used elsewhere, including its complete address and
+  shareable code; a device that exposes no identity says so.
+- Saving that node to Network is available and explicitly local: nothing is sent
+  to the node and it does not become a contact or a messaging peer.
+- The app claims nothing: after setup the device has no new relationship to this
+  phone beyond the Bluetooth pairing it already required.
+- Nothing about the device is remembered after the sheet closes unless the user
+  saved it.
+- A dropped link ends the session with a stated reason and a retry, and says
+  that nothing was changed on the device.
+
+### IOS-RAD-07: Commission a repeater
+
+**As someone deploying a repeater,** I want to say which traffic it relays
+without confusing that with its radio settings.
+
+Acceptance criteria:
+
+- Repeater settings appear only for a device that can forward.
+- Forwarding is a single explicit choice, and the interface states what the
+  device does in each state.
+- Routing regions are labeled as a routing domain and are never presented as a
+  frequency, band, or radio preset.
+- A region is entered as an airport code, a region name, or a raw code, and is
+  displayed with its code in every list and picker.
+- An empty region list is described as forwarding traffic from every region, not
+  as forwarding nothing.
+- Tagging untagged traffic is opt-in and offers an explicit "don't tag" choice;
+  only a region the device relays can be selected.
+- The role may be left for the device to derive, and the editor states the role
+  the device will advertise as a result.
+- Applying writes the whole policy as one operation, saves it on the device, and
+  reads it back; a value the device reports differently is named.
+
+### IOS-RAD-08: Adopt a configured device as this phone's radio
+
+**As a user who has just set up a device,** I want to start using it as my
+companion radio without pairing it a second time.
+
+Acceptance criteria:
+
+- Adoption is available from the editor and as a goal of its own.
+- The setup session ends and releases the device before the companion
+  connection takes it.
+- The Bluetooth pairing established during setup is reused.
+- When a radio is already bound, the app names it and asks before replacing it,
+  and states that the replaced radio keeps its own settings and pairing.
+- After adoption the device is subject to the ordinary companion rules,
+  including host identity provisioning.
+
 ## Import, discovery, and contacts
 
 ### IOS-DIS-01: Scan another person's node URI

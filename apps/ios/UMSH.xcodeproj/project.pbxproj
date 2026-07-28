@@ -26,12 +26,20 @@
 		100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */; };
 		100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */; };
 		100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */; };
+		100000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */; };
+		100000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */; };
+		100000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */; };
 		100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* UMSH/Models/ConversationModels.swift */; };
 		100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */; };
 		100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */; };
 		100000000000000000000017 /* UMSH/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* UMSH/Assets.xcassets */; };
 		100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */; };
 		100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */; };
+		100000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */; };
+		100000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */; };
+		100000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceConfigView.swift */; };
+		100000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */; };
+		100000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,12 +62,20 @@
 		200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/FrameCounterReservationStore.swift; sourceTree = "<group>"; };
 		200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Persistence/SQLiteApplicationStore.swift; sourceTree = "<group>"; };
 		200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/CoreBluetoothRadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioGatt.swift; sourceTree = "<group>"; };
+		200000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/AdminSessionRegistry.swift; sourceTree = "<group>"; };
+		200000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/AdministrativeDeviceSession.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* UMSH/Models/ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/ConversationModels.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityQRCodeView.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Notifications/ChatNotificationService.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* UMSH/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = UMSH/Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/DiscoveredRadio.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/RadioPickerView.swift; sourceTree = "<group>"; };
+		200000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift; sourceTree = "<group>"; };
+		200000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceScanView.swift; sourceTree = "<group>"; };
+		200000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceConfigView.swift; sourceTree = "<group>"; };
+		200000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift; sourceTree = "<group>"; };
+		200000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/BluetoothErrorText.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,9 +121,17 @@
 				200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */,
 				200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */,
 				200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */,
+				200000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */,
+				200000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */,
+				200000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */,
 				200000000000000000000014 /* UMSH/Models/ConversationModels.swift */,
 				200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */,
 				200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */,
+				200000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */,
+				200000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */,
+				200000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceConfigView.swift */,
+				200000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */,
+				200000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift */,
 				200000000000000000000017 /* UMSH/Assets.xcassets */,
 			);
 			name = Sources;
@@ -216,9 +240,17 @@
 				100000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift in Sources */,
 				100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */,
 				100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */,
+				100000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */,
+				100000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */,
+				100000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift in Sources */,
 				100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */,
 				100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */,
 				100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */,
+				100000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift in Sources */,
+				100000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift in Sources */,
+				100000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceConfigView.swift in Sources */,
+				100000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift in Sources */,
+				100000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

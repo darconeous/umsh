@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 23)
+        precondition(mobileApiVersion() == 27)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
@@ -25,14 +25,14 @@ struct MobileCoreSmokeTest {
         precondition(nodePreview.canonicalAddress == rawIdentity.canonicalAddress)
         precondition(!nodePreview.hasIdentityData)
 
-        let propertyGet = try companionPropGet(transactionId: 3, propertyId: 4_864)
-        let propertySet = try companionPropSet(
+        let propertyGet = try ulcpPropGet(transactionId: 3, propertyId: 4_864)
+        let propertySet = try ulcpPropSet(
             transactionId: 6,
             propertyId: 96,
             value: Data(repeating: 7, count: 32)
         )
         precondition(propertySet.count > 32)
-        let segments = try companionGattSegments(frame: propertyGet, maximumValueLength: 4)
+        let segments = try ulcpGattSegments(frame: propertyGet, maximumValueLength: 4)
         precondition(segments.count > 1)
         let reassembler = MobileGattReassembler()
         var reassembled: Data?
@@ -43,16 +43,16 @@ struct MobileCoreSmokeTest {
         }
         precondition(reassembled == propertyGet)
 
-        let battery = try inspectCompanionBattery(value: Data([0b110, 82, 1]))
+        let battery = try inspectUlcpBattery(value: Data([0b110, 82, 1]))
         precondition(battery.percentage == 82)
         precondition(battery.isExternallyPowered == true)
 
-        let inspectionProperties = try companionInspectionProperties(
+        let inspectionProperties = try ulcpInspectionProperties(
             capabilities: Data([8])
         )
         precondition(inspectionProperties == [3, 32, 35, 37])
         let frequency = withUnsafeBytes(of: UInt32(915_000).littleEndian) { Data($0) }
-        let sync = try inspectCompanionSync(responses: [
+        let sync = try inspectUlcpSync(responses: [
             UlcpPropertyFrameRecord(
                 transactionId: 1,
                 command: 6,
@@ -87,6 +87,53 @@ struct MobileCoreSmokeTest {
         precondition(sync.phyEnabled)
         precondition(sync.frequencyKhz == 915_000)
         precondition(sync.queuedFrames == nil)
+
+        precondition(!sync.supportsRepeater)
+        precondition(sync.repeater == nil)
+
+        let sjc = try regionCodeFromString(text: "SJC")
+        precondition(sjc == Data([0x78, 0x53]))
+        precondition(try! regionCodeDescription(code: sjc) == "SJC")
+        let named = try regionCodeFromString(text: "Rogue Valley")
+        precondition(try! regionCodeDescription(code: named) == "0xDF6F")
+
+        let administrative = MobileUlcpSession.administrative()
+        precondition(administrative.attachMode() == .administrative)
+        _ = try administrative.begin(selectedHostKey: Data(repeating: 0xAA, count: 32))
+        do {
+            _ = try administrative.claim(hostKey: Data(repeating: 0xAA, count: 32))
+            preconditionFailure("Administrative session unexpectedly claimed a radio")
+        } catch MobileError.AdministrativeSession {
+            // Commissioning never writes a host key.
+        }
+        do {
+            _ = try administrative.configureDevice(
+                configuration: UlcpDeviceConfigRecord(
+                    radio: UlcpRadioSettingsRecord(
+                        deviceName: nil,
+                        phyEnabled: true,
+                        frequencyKhz: 915_000,
+                        transmitPowerDbm: 14,
+                        bandwidthHz: nil,
+                        spreadingFactor: nil,
+                        codingRateDenom: nil,
+                        dutyCycleLimit: nil
+                    ),
+                    identRole: nil,
+                    identMobile: nil,
+                    repeater: UlcpRepeaterSettingsRecord(
+                        enabled: true,
+                        regions: [sjc],
+                        defaultRegion: sjc,
+                        minRssiDbm: -115,
+                        minSnrDb: -7
+                    )
+                )
+            )
+            preconditionFailure("Configuration unexpectedly succeeded before attaching")
+        } catch MobileError.InvalidUlcpFrame {
+            // Configuration requires an attached session.
+        }
 
         let counterRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("umsh-mobile-counter-\(UUID().uuidString)")

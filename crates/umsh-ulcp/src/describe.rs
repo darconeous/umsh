@@ -39,6 +39,13 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::DEV_NAME => "PROP_DEV_NAME",
         prop::BATTERY => "PROP_BATTERY",
         prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
+        prop::IDENT => "PROP_IDENT",
+        prop::IDENT_ROLE => "PROP_IDENT_ROLE",
+        prop::IDENT_MOBILE => "PROP_IDENT_MOBILE",
+        prop::MAC_REPEATER_REGIONS => "PROP_MAC_REPEATER_REGIONS",
+        prop::MAC_REPEATER_DEFAULT_REGION => "PROP_MAC_REPEATER_DEFAULT_REGION",
+        prop::MAC_REPEATER_MIN_RSSI => "PROP_MAC_REPEATER_MIN_RSSI",
+        prop::MAC_REPEATER_MIN_SNR => "PROP_MAC_REPEATER_MIN_SNR",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
@@ -69,6 +76,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::DEV_NAME => "DEV_NAME",
         cap::BATTERY => "BATTERY",
         cap::REPEATER => "REPEATER",
+        cap::IDENT => "IDENT",
         _ => return None,
     })
 }
@@ -191,7 +199,30 @@ mod tests {
     fn names_capabilities() {
         assert_eq!(capability_name(cap::HOST_RX_QUEUE), Some("HOST_RX_QUEUE"));
         assert_eq!(capability_name(cap::BATTERY), Some("BATTERY"));
+        assert_eq!(capability_name(cap::REPEATER), Some("REPEATER"));
+        assert_eq!(capability_name(cap::IDENT), Some("IDENT"));
         assert_eq!(capability_name(60_000), None);
+    }
+
+    #[test]
+    fn names_repeater_policy_properties() {
+        assert_eq!(
+            property_name(prop::MAC_REPEATER_REGIONS),
+            Some("PROP_MAC_REPEATER_REGIONS")
+        );
+        assert_eq!(
+            property_name(prop::MAC_REPEATER_DEFAULT_REGION),
+            Some("PROP_MAC_REPEATER_DEFAULT_REGION")
+        );
+        assert_eq!(
+            property_name(prop::MAC_REPEATER_MIN_RSSI),
+            Some("PROP_MAC_REPEATER_MIN_RSSI")
+        );
+        assert_eq!(
+            property_name(prop::MAC_REPEATER_MIN_SNR),
+            Some("PROP_MAC_REPEATER_MIN_SNR")
+        );
+        assert_eq!(property_name(prop::IDENT_ROLE), Some("PROP_IDENT_ROLE"));
     }
 
     #[test]
