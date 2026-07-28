@@ -12,14 +12,13 @@
     allow(unused_variables, dead_code)
 )]
 
+use umsh::core::{PublicKey, RegionCode};
+use umsh::ulcp::{
+    FrameLink, HostOwnership, HostProvisioning, SavedSnapshot, UlcpDevice, UlcpDeviceConfig,
+};
 use umsh::ulcp_wire::battery::{BatteryChargeState, BatteryStatus};
 use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop};
 use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
-use umsh::ulcp::{
-    UlcpDevice, UlcpDeviceConfig, FrameLink, HostOwnership, HostProvisioning,
-    SavedSnapshot,
-};
-use umsh::core::{PublicKey, RegionCode};
 
 const USAGE: &str = "\
 usage: umsh-ulcpctl <serial-port> <command> [options]
@@ -638,7 +637,9 @@ fn parse_phy_op(positionals: &[String]) -> Result<PhyOp, String> {
         Some("off") if positionals.len() == 1 => Ok(PhyOp::Enable(false)),
         Some("freq") => {
             let n = num(value("freq")?, "freq")?;
-            u32::try_from(n).map(PhyOp::Freq).map_err(|_| "phy freq out of range".into())
+            u32::try_from(n)
+                .map(PhyOp::Freq)
+                .map_err(|_| "phy freq out of range".into())
         }
         Some("sf") => {
             let n = num(value("sf")?, "sf")?;
@@ -649,7 +650,9 @@ fn parse_phy_op(positionals: &[String]) -> Result<PhyOp, String> {
         }
         Some("bw") => {
             let n = num(value("bw")?, "bw")?;
-            u32::try_from(n).map(PhyOp::Bw).map_err(|_| "phy bw out of range".into())
+            u32::try_from(n)
+                .map(PhyOp::Bw)
+                .map_err(|_| "phy bw out of range".into())
         }
         Some("cr") => {
             let n = num(value("cr")?, "cr")?;
@@ -660,7 +663,9 @@ fn parse_phy_op(positionals: &[String]) -> Result<PhyOp, String> {
         }
         Some("power") => {
             let n = num(value("power")?, "power")?;
-            i8::try_from(n).map(PhyOp::Power).map_err(|_| "phy power out of range".into())
+            i8::try_from(n)
+                .map(PhyOp::Power)
+                .map_err(|_| "phy power out of range".into())
         }
         _ => Err(
             "phy takes: (none), on, off, freq <kHz>, sf <5-12>, bw <Hz>, cr <5-8>, power <dBm>"
@@ -720,9 +725,11 @@ fn parse_repeater_op(positionals: &[String]) -> Result<RepeaterOp, String> {
                 .map(|db| RepeaterOp::MinSnr(Some(db)))
                 .map_err(|_| format!("repeater min-snr: expected dB or `none`, got {text:?}"))
         }
-        _ => Err("repeater takes: (none), on, off, regions <CODE[,...]|none>, \
+        _ => Err(
+            "repeater takes: (none), on, off, regions <CODE[,...]|none>, \
                   default-region <CODE|none>, min-rssi <dBm|none>, min-snr <dB|none>"
-            .into()),
+                .into(),
+        ),
     }
 }
 
@@ -1035,7 +1042,9 @@ async fn provision<L: FrameLink>(
     let sync = radio.sync(Some(&desired.host_key)).await?;
     match sync.ownership {
         HostOwnership::Unsupported => {
-            return Err("this device does not support host provisioning (no CAP_HOST_FILTER)".into());
+            return Err(
+                "this device does not support host provisioning (no CAP_HOST_FILTER)".into(),
+            );
         }
         HostOwnership::OtherHost(other) if !force => {
             return Err(format!(
@@ -1149,7 +1158,11 @@ async fn dispatch<L: FrameLink>(
         "attached: device={} boot_status={:?} mode={}",
         radio.dev_version(),
         radio.boot_status(),
-        if tethered { "tethered" } else { "administrative" },
+        if tethered {
+            "tethered"
+        } else {
+            "administrative"
+        },
     );
     let no_save = invocation.no_save;
     match invocation.command {
@@ -1229,10 +1242,20 @@ async fn phy_report<L: FrameLink>(
         .unwrap_or(0)
         != 0;
     let mut parts = vec![if enabled { "enabled" } else { "disabled" }.to_string()];
-    if let Some(freq) = radio.get_prop(prop::PHY_FREQ).await.ok().and_then(|v| decode_u32(&v)) {
+    if let Some(freq) = radio
+        .get_prop(prop::PHY_FREQ)
+        .await
+        .ok()
+        .and_then(|v| decode_u32(&v))
+    {
         parts.push(format!("{freq} kHz"));
     }
-    if let Some(bw) = radio.get_prop(prop::PHY_LORA_BW).await.ok().and_then(|v| decode_u32(&v)) {
+    if let Some(bw) = radio
+        .get_prop(prop::PHY_LORA_BW)
+        .await
+        .ok()
+        .and_then(|v| decode_u32(&v))
+    {
         parts.push(format!("BW {bw} Hz"));
     }
     if let Some(sf) = radio
@@ -1384,7 +1407,10 @@ async fn repeater<L: FrameLink>(
             println!("{:<16}{}", "  regions:", format_regions(&policy.regions));
             match policy.default_region {
                 Some(code) => println!("{:<16}{code}", "  default:"),
-                None => println!("{:<16}none (forwards untagged floods untagged)", "  default:"),
+                None => println!(
+                    "{:<16}none (forwards untagged floods untagged)",
+                    "  default:"
+                ),
             }
             match policy.min_rssi {
                 Some(dbm) => println!("{:<16}{dbm} dBm", "  min rssi:"),
@@ -1394,9 +1420,11 @@ async fn repeater<L: FrameLink>(
                 Some(db) => println!("{:<16}{db} dB", "  min snr:"),
                 None => println!("{:<16}any", "  min snr:"),
             }
-            if policy.enabled && policy.default_region.is_some_and(|code| {
-                !policy.regions.is_empty() && !policy.regions.contains(&code)
-            }) {
+            if policy.enabled
+                && policy.default_region.is_some_and(|code| {
+                    !policy.regions.is_empty() && !policy.regions.contains(&code)
+                })
+            {
                 // Legal, and not enforced by the device: the two
                 // properties are written independently. Still almost
                 // always a mistake, since this repeater tags floods with
@@ -1751,9 +1779,13 @@ mod tests {
 
     #[test]
     fn repeater_parses_a_region_list_in_every_code_form() {
-        let invocation =
-            parse_invocation(&args(&["--ble", "repeater", "regions", "SJC,0x7853,Rogue Valley"]))
-                .unwrap();
+        let invocation = parse_invocation(&args(&[
+            "--ble",
+            "repeater",
+            "regions",
+            "SJC,0x7853,Rogue Valley",
+        ]))
+        .unwrap();
         assert_eq!(
             invocation.command_repeater(),
             &RepeaterOp::Regions(vec![
@@ -1768,8 +1800,12 @@ mod tests {
     fn repeater_regions_none_clears_the_filter() {
         // `none` is the empty list, which means "no regional
         // restriction" — not a region literally named "none".
-        let invocation = parse_invocation(&args(&["--ble", "repeater", "regions", "none"])).unwrap();
-        assert_eq!(invocation.command_repeater(), &RepeaterOp::Regions(Vec::new()));
+        let invocation =
+            parse_invocation(&args(&["--ble", "repeater", "regions", "none"])).unwrap();
+        assert_eq!(
+            invocation.command_repeater(),
+            &RepeaterOp::Regions(Vec::new())
+        );
     }
 
     #[test]

@@ -10,9 +10,9 @@ use rand::Rng;
 use umsh_core::PublicKey;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Destination,
-    Direction, Engine, EngineConfig, Event, MessageMutation, MutationKind, Output, Presence,
-    ResolvedRef, StreamCheckpoint, Transmission,
+    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Destination, Direction,
+    Engine, EngineConfig, Event, MessageMutation, MutationKind, Output, Presence, ResolvedRef,
+    StreamCheckpoint, Transmission,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
 use umsh_text::validate::DirectChannelProfile;
@@ -699,10 +699,7 @@ mod tests {
             .expect("edit mutation");
         assert_eq!(edit.original_handle, None);
         assert_eq!(edit.original_wire_id, insert.wire_id);
-        assert_eq!(
-            edit.original_direction,
-            Some(MobileChatDirection::Outbound)
-        );
+        assert_eq!(edit.original_direction, Some(MobileChatDirection::Outbound));
         assert_eq!(edit.peer_address, insert.peer_address);
         assert_eq!(edit.body.as_deref(), Some("v2"));
 

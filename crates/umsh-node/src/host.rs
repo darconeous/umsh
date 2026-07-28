@@ -140,8 +140,9 @@ impl<M: MacBackend> Host<M> {
             OwnedMacCommand,
         )>::new()));
         let pending_pfs_ref = pending_pfs.clone();
-        let pending_identity =
-            Rc::new(RefCell::new(Vec::<(LocalNode<M>, IdentityResponsePlan)>::new()));
+        let pending_identity = Rc::new(RefCell::new(
+            Vec::<(LocalNode<M>, IdentityResponsePlan)>::new(),
+        ));
         let pending_identity_ref = pending_identity.clone();
         let dispatcher = self.dispatcher.clone();
         let nodes = self.nodes.clone();

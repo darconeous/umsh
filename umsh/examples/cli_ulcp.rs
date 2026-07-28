@@ -28,7 +28,7 @@ use umsh_sync::AsyncRefCell;
 use rand::{Rng as _, rng};
 
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, UlcpError, FrameLink};
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig, UlcpError};
 use umsh::{
     crypto::{
         CryptoEngine, NodeIdentity,
@@ -114,8 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(feature = "serial-radio")]
             {
                 println!("attaching to {path} ...");
-                let mut radio =
-                    UlcpDevice::open_serial(&path, baud, cfg.radio_config()).await?;
+                let mut radio = UlcpDevice::open_serial(&path, baud, cfg.radio_config()).await?;
                 prepare_radio(&mut radio).await?;
                 return run_cli(cfg, radio).await;
             }

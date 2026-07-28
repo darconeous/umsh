@@ -276,7 +276,8 @@ async fn dump_radio_state(
     mdltn: &ModulationParams,
     rx_pkt: &PacketParams,
 ) -> Result<(), RadioError> {
-    lora.prepare_for_rx(RxMode::Continuous, mdltn, rx_pkt).await?;
+    lora.prepare_for_rx(RxMode::Continuous, mdltn, rx_pkt)
+        .await?;
     lora.start_rx().await?;
     Timer::after_millis(5).await;
 

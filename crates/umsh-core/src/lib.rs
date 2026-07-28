@@ -53,13 +53,13 @@ pub use builder::{
     UnicastBuilder, state,
 };
 pub use error::{AddressParseError, BuildError, EncodeError, ParseError};
-#[cfg(feature = "region-codec")]
-pub use region::{RegionCode, RegionCodeError};
 pub use packet::{
     ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
     PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,
     SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, iter_options,
 };
+#[cfg(feature = "region-codec")]
+pub use region::{RegionCode, RegionCodeError};
 
 #[cfg(test)]
 mod tests {
@@ -148,8 +148,8 @@ mod tests {
         assert_eq!(
             bytes,
             &[
-                0xD0, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03, 0xA0, 0x00, 0x00, 0x00, 0x07, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0xD0, 0xC3, 0xD4, 0x25, 0xA1, 0xB2, 0x03, 0xA0, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ],
         );
         let header = PacketHeader::parse(bytes).unwrap();

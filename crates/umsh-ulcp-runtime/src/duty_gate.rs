@@ -18,8 +18,8 @@
 //! is effectively shed — exactly the spec's posture (transmits never
 //! wait for duty-cycle allowance).
 
-use umsh_ulcp_device::DutyLedger;
 use umsh_hal::{Clock, Radio, RxInfo, TxError, TxOptions};
+use umsh_ulcp_device::DutyLedger;
 
 /// A [`Radio`] decorator enforcing the shared duty budget.
 pub struct DutyGatedRadio<R, C> {

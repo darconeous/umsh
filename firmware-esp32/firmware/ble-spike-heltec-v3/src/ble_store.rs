@@ -132,7 +132,12 @@ async fn journal_write_target(
     let page1 = page0 + PAGE_SIZE;
     let target = if let Some(current) = current {
         let page = if current < page1 { page0 } else { page1 };
-        erased_journal_slot(flash, current + slot_size as u32, page + PAGE_SIZE, slot_size)
+        erased_journal_slot(
+            flash,
+            current + slot_size as u32,
+            page + PAGE_SIZE,
+            slot_size,
+        )
     } else {
         erased_journal_slot(flash, page0, page0 + PAGE_SIZE, slot_size)
     };
@@ -197,8 +202,7 @@ impl BleStore {
     async fn persist(&mut self, mut snapshot: Snapshot) -> Result<(), ()> {
         snapshot.generation = self.snapshot.generation.wrapping_add(1);
         let mut flash = self.flash.lock().await;
-        let target =
-            journal_write_target(&mut flash, self.slot, self.page0, SLOT_SIZE).await?;
+        let target = journal_write_target(&mut flash, self.slot, self.page0, SLOT_SIZE).await?;
         let bytes = snapshot.encode();
         match write_committed_record(&mut *flash, target, &bytes).await {
             Ok(()) => {}
@@ -278,10 +282,7 @@ pub struct ProtoStore {
 }
 
 impl ProtoStore {
-    pub async fn mount(
-        shared: &'static SharedFlash,
-        page0: u32,
-    ) -> (Self, Option<BootPayload>) {
+    pub async fn mount(shared: &'static SharedFlash, page0: u32) -> (Self, Option<BootPayload>) {
         let mut flash = shared.lock().await;
         let mut latest: Option<(u32, proto::Stored)> = None;
         for page in [page0, page0 + PAGE_SIZE] {

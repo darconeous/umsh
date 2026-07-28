@@ -11,9 +11,9 @@
 
 use std::time::Duration;
 
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, SerialFrameLink};
 use umsh::core::{NodeHint, PacketBuilder};
 use umsh::hal::{CadPolicy, Radio, TxOptions};
+use umsh::ulcp::{SerialFrameLink, UlcpDevice, UlcpDeviceConfig};
 
 fn config() -> UlcpDeviceConfig {
     let mut config = UlcpDeviceConfig::new(910_525, 62_500, 7, 5);
@@ -43,9 +43,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.get(1).map(String::as_str) == Some("tx") {
         let stream = tokio_serial::new(args[2].as_str(), 115_200).open_native_async()?;
         let mut tx = UlcpDevice::new(SerialFrameLink::new(stream), config()).await?;
-        println!("tx-only {} on {} @ MeshCore US (src hint AB:CD:EF)", tx.dev_version(), args[2]);
+        println!(
+            "tx-only {} on {} @ MeshCore US (src hint AB:CD:EF)",
+            tx.dev_version(),
+            args[2]
+        );
         for counter in 0u32..40 {
-            match Radio::transmit(&mut tx, &beacon(counter), TxOptions { cad: CadPolicy::Skip }).await
+            match Radio::transmit(
+                &mut tx,
+                &beacon(counter),
+                TxOptions {
+                    cad: CadPolicy::Skip,
+                },
+            )
+            .await
             {
                 Ok(()) => println!("tx beacon counter={counter}"),
                 Err(error) => println!("tx FAILED counter={counter}: {error:?}"),
@@ -63,7 +74,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rx_stream = tokio_serial::new(rx_port.as_str(), 115_200).open_native_async()?;
     let mut rx = UlcpDevice::attach_existing(SerialFrameLink::new(rx_stream), config()).await?;
-    println!("rx {} on {rx_port} (attached, non-resetting)", rx.dev_version());
+    println!(
+        "rx {} on {rx_port} (attached, non-resetting)",
+        rx.dev_version()
+    );
     // Live delivery bypassing whatever host filters the board carries.
     rx.set_prop(umsh::ulcp_wire::ids::prop::MAC_PROMISCUOUS, &[1])
         .await?;
@@ -87,7 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tx_fut = async {
         for counter in 0u32..30 {
-            match Radio::transmit(&mut tx, &beacon(counter), TxOptions { cad: CadPolicy::Skip }).await
+            match Radio::transmit(
+                &mut tx,
+                &beacon(counter),
+                TxOptions {
+                    cad: CadPolicy::Skip,
+                },
+            )
+            .await
             {
                 Ok(()) => println!("tx beacon counter={counter}"),
                 Err(error) => println!("tx FAILED counter={counter}: {error:?}"),

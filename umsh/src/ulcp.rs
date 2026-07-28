@@ -20,6 +20,10 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::time::Instant;
 
+use umsh_core::{ChannelKey, RegionCode};
+use umsh_crypto::CryptoEngine;
+use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::battery::BatteryStatus;
@@ -30,10 +34,6 @@ use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
 use umsh_ulcp::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
 use umsh_ulcp::pui;
-use umsh_core::{ChannelKey, RegionCode};
-use umsh_crypto::CryptoEngine;
-use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
 
 /// Capacity of the HDLC reassembly buffer (unescaped frame + FCS).
 const WIRE_BUF: usize = 1024;
@@ -995,9 +995,7 @@ where
                 | prop::HOST_AUTO_ACK
         );
         match self.mode {
-            AttachMode::Administrative if host_domain => {
-                Err(UlcpError::AdministrativeAttach)
-            }
+            AttachMode::Administrative if host_domain => Err(UlcpError::AdministrativeAttach),
             _ => Ok(()),
         }
     }
@@ -1033,10 +1031,7 @@ where
     /// Use [`Self::attach_administrative`] to configure a device you do
     /// not intend to tether to — one phone administering ten repeaters
     /// must not write `PROP_HOST_KEY` on any of them.
-    pub async fn attach_existing(
-        link: L,
-        config: UlcpDeviceConfig,
-    ) -> Result<Self, UlcpError> {
+    pub async fn attach_existing(link: L, config: UlcpDeviceConfig) -> Result<Self, UlcpError> {
         Self::attach_with_mode(link, config, AttachMode::Tethered).await
     }
 
@@ -1076,9 +1071,7 @@ where
 
         let version = radio.get_prop(prop::PROTOCOL_VERSION).await?;
         if version.first().copied() != Some(ids::PROTOCOL_MAJOR_VERSION) {
-            return Err(UlcpError::Protocol(
-                "protocol major version mismatch",
-            ));
+            return Err(UlcpError::Protocol("protocol major version mismatch"));
         }
         let dev_version = radio.get_prop(prop::DEV_VERSION).await?;
         radio.dev_version = String::from_utf8_lossy(&dev_version)
@@ -1142,9 +1135,7 @@ where
         }
         let authoritative = self.set_prop(prop::DEV_NAME, name.as_bytes()).await?;
         if authoritative != name.as_bytes() {
-            return Err(UlcpError::Protocol(
-                "PROP_DEV_NAME response mismatch",
-            ));
+            return Err(UlcpError::Protocol("PROP_DEV_NAME response mismatch"));
         }
         Ok(())
     }
@@ -1294,9 +1285,7 @@ where
         // Reject devices speaking an incompatible protocol revision.
         let version = self.get_prop(prop::PROTOCOL_VERSION).await?;
         if version.first().copied() != Some(ids::PROTOCOL_MAJOR_VERSION) {
-            return Err(UlcpError::Protocol(
-                "protocol major version mismatch",
-            ));
+            return Err(UlcpError::Protocol("protocol major version mismatch"));
         }
 
         let dev_version = self.get_prop(prop::DEV_VERSION).await?;
@@ -1342,8 +1331,8 @@ where
     pub async fn get_prop(&mut self, key: u32) -> Result<Vec<u8>, UlcpError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 8];
-        let len = frame::prop_get(&mut buf, tid, key)
-            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        let len =
+            frame::prop_get(&mut buf, tid, key).map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
             .await
@@ -1351,11 +1340,7 @@ where
 
     /// Set a property via `CMD_PROP_SET`, returning the authoritative
     /// value echoed by the device.
-    pub async fn set_prop(
-        &mut self,
-        key: u32,
-        value: &[u8],
-    ) -> Result<Vec<u8>, UlcpError> {
+    pub async fn set_prop(&mut self, key: u32, value: &[u8]) -> Result<Vec<u8>, UlcpError> {
         self.require_tethered(key)?;
         let tid = self.alloc_tid();
         let mut buf = vec![0u8; value.len() + 8];
@@ -1373,11 +1358,7 @@ where
     /// `item` is in the property's item form with no length prefix.
     /// A duplicate fails with `STATUS_ALREADY` unless the property
     /// defines replacement semantics (`PROP_HOST_PEER_KEYS`).
-    pub async fn insert_prop_item(
-        &mut self,
-        key: u32,
-        item: &[u8],
-    ) -> Result<Vec<u8>, UlcpError> {
+    pub async fn insert_prop_item(&mut self, key: u32, item: &[u8]) -> Result<Vec<u8>, UlcpError> {
         self.require_tethered(key)?;
         let tid = self.alloc_tid();
         let mut buf = vec![0u8; item.len() + 8];
@@ -1417,8 +1398,7 @@ where
     ) -> Result<(), UlcpError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
-        let len =
-            encode(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
+        let len = encode(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
             .await
@@ -1447,8 +1427,8 @@ where
     ) -> Result<(), UlcpError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
-        let len = frame::queue_drain(&mut buf, tid)
-            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        let len =
+            frame::queue_drain(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
@@ -1530,8 +1510,7 @@ where
     pub async fn restore(&mut self) -> Result<RestoreCompletion, UlcpError> {
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
-        let len = frame::restore(&mut buf, tid)
-            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        let len = frame::restore(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
@@ -1565,14 +1544,9 @@ where
     ///
     /// This property is the protocol's sole status-only property write: the
     /// value is never echoed. `None` clears the configured passkey.
-    pub async fn set_ble_pairing_pin(
-        &mut self,
-        pin: Option<u32>,
-    ) -> Result<(), UlcpError> {
+    pub async fn set_ble_pairing_pin(&mut self, pin: Option<u32>) -> Result<(), UlcpError> {
         if pin.is_some_and(|pin| pin > 999_999) {
-            return Err(UlcpError::Protocol(
-                "BLE pairing PIN out of range",
-            ));
+            return Err(UlcpError::Protocol("BLE pairing PIN out of range"));
         }
         let tid = self.alloc_tid();
         let value = pin.map(u32::to_le_bytes);
@@ -1652,7 +1626,9 @@ where
         );
         let device_name = self.device_name().await?;
         let saved = match has(cap::SAVE) {
-            true => Some(SavedSnapshot::from_octet(&self.get_prop(prop::SAVED).await?)?),
+            true => Some(SavedSnapshot::from_octet(
+                &self.get_prop(prop::SAVED).await?,
+            )?),
             false => None,
         };
         let (queue_count, queue_dropped) = if has(cap::HOST_RX_QUEUE) {
@@ -1931,9 +1907,7 @@ where
                     Err(UlcpError::Status(status))
                 }
             }
-            _ => Err(UlcpError::Protocol(
-                "response for unexpected property",
-            )),
+            _ => Err(UlcpError::Protocol("response for unexpected property")),
         }
     }
 
@@ -1960,9 +1934,7 @@ where
                     Err(UlcpError::Status(status))
                 }
             }
-            _ => Err(UlcpError::Protocol(
-                "response for unexpected property",
-            )),
+            _ => Err(UlcpError::Protocol("response for unexpected property")),
         }
     }
 
@@ -2072,11 +2044,7 @@ where
     /// Read from the stream until the response for `tid` arrives.
     ///
     /// Frames received meanwhile are queued for [`Radio::poll_receive`].
-    async fn wait_response(
-        &mut self,
-        tid: u8,
-        deadline: Instant,
-    ) -> Result<Response, UlcpError> {
+    async fn wait_response(&mut self, tid: u8, deadline: Instant) -> Result<Response, UlcpError> {
         loop {
             // Drain responses before honoring a reset notice: if both
             // arrived in one read, the response was sent first and the
@@ -2315,8 +2283,7 @@ fn decode_status(value: &[u8]) -> Status {
 fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
     let mut filters = Vec::new();
     for item in items::prefixed_items(value) {
-        let item =
-            item.map_err(|_| UlcpError::Protocol("malformed PROP_HOST_RX_FILTERS"))?;
+        let item = item.map_err(|_| UlcpError::Protocol("malformed PROP_HOST_RX_FILTERS"))?;
         filters.push(
             items::Filter::decode(item)
                 .map_err(|_| UlcpError::Protocol("malformed PROP_HOST_RX_FILTERS"))?,
@@ -2687,27 +2654,15 @@ mod tests {
         let mut config = BleFrameLinkConfig::default();
         assert!(config.validate().is_ok());
         config.segment_payload = 0;
-        assert!(matches!(
-            config.validate(),
-            Err(UlcpError::Protocol(_))
-        ));
+        assert!(matches!(config.validate(), Err(UlcpError::Protocol(_))));
         config.segment_payload = 512;
-        assert!(matches!(
-            config.validate(),
-            Err(UlcpError::Protocol(_))
-        ));
+        assert!(matches!(config.validate(), Err(UlcpError::Protocol(_))));
         config.segment_payload = 19;
         config.operation_timeout = Duration::ZERO;
-        assert!(matches!(
-            config.validate(),
-            Err(UlcpError::Protocol(_))
-        ));
+        assert!(matches!(config.validate(), Err(UlcpError::Protocol(_))));
         config.operation_timeout = Duration::from_secs(1);
         config.pairing_timeout = Duration::ZERO;
-        assert!(matches!(
-            config.validate(),
-            Err(UlcpError::Protocol(_))
-        ));
+        assert!(matches!(config.validate(), Err(UlcpError::Protocol(_))));
     }
 
     #[cfg(feature = "ble-radio")]
@@ -2871,9 +2826,7 @@ mod tests {
             .remove_prop_item(prop::HOST_PEER_KEYS, &[0x11; 32])
             .await
             .unwrap_err();
-        assert!(
-            matches!(error, UlcpError::Status(status) if status == Status::ITEM_NOT_FOUND)
-        );
+        assert!(matches!(error, UlcpError::Status(status) if status == Status::ITEM_NOT_FOUND));
     }
 
     #[tokio::test]

@@ -15,22 +15,11 @@ use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 use umsh_uri::UmshUri;
 use zeroize::Zeroize;
 
-mod ulcp;
 mod counter_store;
 mod mobile_chat;
 mod mobile_mesh;
+mod ulcp;
 
-pub use ulcp::{
-    UlcpAttachMode, UlcpBatteryRecord, UlcpDeviceConfigRecord, UlcpHostOwnership,
-    UlcpOperationErrorRecord, UlcpPropertyFrameRecord, UlcpRadioSettingsRecord,
-    UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
-    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord,
-    GattSegmentRecord, MobileUlcpSession, MobileGattReassembler,
-    ulcp_gatt_segments, ulcp_inspection_properties, ulcp_prop_get,
-    ulcp_prop_set, ulcp_save, inspect_ulcp_battery,
-    inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync,
-    region_code_description, region_code_from_string,
-};
 pub use counter_store::{CounterStoreError, MobileCounterStore};
 pub use mobile_chat::{
     MobileChatArchiveLookupRecord, MobileChatArchiveRecord, MobileChatArchiveResultKind,
@@ -42,6 +31,15 @@ pub use mobile_mesh::{
     MobileMeshAdvertisementRecord, MobileMeshError, MobileMeshOutboundFrameRecord,
     MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRouteKind, MobileMeshRouteRecord,
     MobileMeshRxRecord, MobileMeshSession, MobileMeshSessionUpdateRecord,
+};
+pub use ulcp::{
+    GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAttachMode, UlcpBatteryRecord,
+    UlcpDeviceConfigRecord, UlcpHostOwnership, UlcpOperationErrorRecord, UlcpPropertyFrameRecord,
+    UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
+    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, inspect_ulcp_battery,
+    inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync, region_code_description,
+    region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties, ulcp_prop_get,
+    ulcp_prop_set, ulcp_save,
 };
 
 uniffi::setup_scaffolding!();
@@ -215,18 +213,16 @@ pub fn inspect_node_uri(uri: String) -> Result<NodeUriPreviewRecord, MobileError
     let identity = public_identity_record(&node.public_key);
     let (decoded, payload) = match node.identity_data {
         None => (None, None),
-        Some(data) => match umsh_uri::decode_base58_bytes(data)
-            .ok()
-            .and_then(|bytes| {
-                node_identity_record(&node.public_key, &bytes)
-                    .ok()
-                    .map(|record| (record, bytes))
-            }) {
+        Some(data) => match umsh_uri::decode_base58_bytes(data).ok().and_then(|bytes| {
+            node_identity_record(&node.public_key, &bytes)
+                .ok()
+                .map(|record| (record, bytes))
+        }) {
             None => (None, None),
             Some((record, bytes)) => {
                 // Tampered bundles are shown as invalid but never persisted.
-                let payload = (record.signature != IdentitySignatureState::Invalid)
-                    .then_some(bytes);
+                let payload =
+                    (record.signature != IdentitySignatureState::Invalid).then_some(bytes);
                 (Some(record), payload)
             }
         },

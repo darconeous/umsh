@@ -19,8 +19,8 @@ use embassy_nrf::nvmc::Nvmc;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 
 pub use umsh_flash_store::{
-    ALIAS_HEADER_LEN, MAX_ALIAS_LEN, MAX_CHANNEL_NAME_LEN, MAX_CHANNELS, MAX_KEY_LEN, MAX_PEERS,
-    MAX_PEER_RECORD_LEN, SCRATCH_LEN,
+    ALIAS_HEADER_LEN, MAX_ALIAS_LEN, MAX_CHANNEL_NAME_LEN, MAX_CHANNELS, MAX_KEY_LEN,
+    MAX_PEER_RECORD_LEN, MAX_PEERS, SCRATCH_LEN,
 };
 
 /// Storage range reserved on internal NVMC.

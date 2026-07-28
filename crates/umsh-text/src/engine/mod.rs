@@ -430,10 +430,7 @@ pub enum ComposeIntent<'a> {
         status: bool,
     },
     /// Replace a previously composed message's content.
-    Edit {
-        original: ComposeRef,
-        body: &'a str,
-    },
+    Edit { original: ComposeRef, body: &'a str },
     /// Delete a previously composed message (empty edit on the wire).
     Delete { original: ComposeRef },
 }
@@ -863,7 +860,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     .outbound
                     .get(&lookup.conversation)
                     .and_then(|stream| stream.refs.lookup(lookup.sequence.message_id))
-                    .map(|handle| (handle, lookup.sequence.fragment.map(|fragment| fragment.index)));
+                    .map(|handle| {
+                        (
+                            handle,
+                            lookup.sequence.fragment.map(|fragment| fragment.index),
+                        )
+                    });
                 self.queue_transmit(destination, None, frame, track);
             }
             _ => {
@@ -1144,7 +1146,10 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     ) {
         // A handle already registered for this wire ID is a gap placeholder
         // reserved earlier at the live edge — this frame fills it in place.
-        let placeholder = self.inbound.get(&key).and_then(|stream| stream.refs.lookup(id));
+        let placeholder = self
+            .inbound
+            .get(&key)
+            .and_then(|stream| stream.refs.lookup(id));
 
         if let Some(original_id) = content.editing {
             // The backfilled frame turned out to be an edit, not a standalone
@@ -1255,7 +1260,10 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 // A handle already registered for this wire ID is a gap
                 // placeholder reserved earlier; reuse it so the reassembly
                 // fills that ordered slot in place.
-                let placeholder = self.inbound.get(&key).and_then(|stream| stream.refs.lookup(id));
+                let placeholder = self
+                    .inbound
+                    .get(&key)
+                    .and_then(|stream| stream.refs.lookup(id));
                 let handle = placeholder.unwrap_or_else(|| self.alloc_handle());
                 let mut slot = empty_slot(key, epoch, id, fragment.count, handle, now_ms);
                 slot.late = placeholder.is_some();
@@ -2591,7 +2599,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// was exhausted, expired, disclaimed, or abandoned. The row stays in
     /// place as a visible loss marker rather than silently vanishing.
     fn flip_placeholder_unavailable(&mut self, key: StreamKey, id: u8, handle: MessageHandle) {
-        let epoch = self.inbound.get(&key).map(|stream| stream.epoch).unwrap_or(0);
+        let epoch = self
+            .inbound
+            .get(&key)
+            .map(|stream| stream.epoch)
+            .unwrap_or(0);
         self.emit_mutation(
             handle,
             MutationKind::Insert {

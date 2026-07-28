@@ -139,8 +139,8 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
     let mut panic_buf = [0u8; umsh_bsp_esp32::panic_capture::MSG_CAPACITY];
-    let previous_panic = umsh_bsp_esp32::panic_capture::take_panic_message(&mut panic_buf)
-        .map(|msg| {
+    let previous_panic =
+        umsh_bsp_esp32::panic_capture::take_panic_message(&mut panic_buf).map(|msg| {
             println!("previous boot panicked: {msg}");
             // Copied out char-by-char: the capture buffer is borrowed from
             // the stack and the message may be longer than the CLI banner
@@ -230,10 +230,9 @@ async fn main(spawner: Spawner) {
         InputConfig::default().with_pull(Pull::None),
     );
 
-    let (lora, mdltn, rx_pkt, tx_pkt) =
-        init_radio(radio_spi, radio_reset, radio_dio1, radio_busy)
-            .await
-            .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
+    let (lora, mdltn, rx_pkt, tx_pkt) = init_radio(radio_spi, radio_reset, radio_dio1, radio_busy)
+        .await
+        .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
     // Worst-case airtime hint for the MAC scheduler. Stated in the same
     // terms as `meshcore_us_params` builds them.
     let t_frame_ms = umsh_radio_loraphy::airtime_ms(
@@ -289,7 +288,11 @@ async fn main(spawner: Spawner) {
             let channel = Channel::private(ChannelKey(*key_bytes), name.as_str());
             let _ = node.join(&channel).await;
         }
-        println!("restored {} peers, {} channels", peers.len(), channels.len());
+        println!(
+            "restored {} peers, {} channels",
+            peers.len(),
+            channels.len()
+        );
     }
     // RX counter boundaries land on registered peers, so this must follow
     // peer registration.
@@ -320,8 +323,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(cli_task(node, local_key, storage, uart_rx, previous_panic).unwrap());
 
     // ── OLED ─────────────────────────────────────────────────────────────
-    let mut battery =
-        BatterySampler::new(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO37);
+    let mut battery = BatterySampler::new(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO37);
     let mut vext = Vext::new(peripherals.GPIO36);
     let mut oled_reset = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
     let i2c = I2c::new(
@@ -354,10 +356,8 @@ async fn init_radio(
     reset: Output<'static>,
     dio1: Input<'static>,
     busy: Input<'static>,
-) -> Result<
-    (Radio, ModulationParams, PacketParams, PacketParams),
-    lora_phy::mod_params::RadioError,
-> {
+) -> Result<(Radio, ModulationParams, PacketParams, PacketParams), lora_phy::mod_params::RadioError>
+{
     let kind = radio::new_radio_kind(spi, reset, dio1, busy)?;
     let mut lora = LoRa::new(kind, false, Delay).await?;
     let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)?;

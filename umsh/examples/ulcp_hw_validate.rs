@@ -20,17 +20,17 @@
 
 use std::time::{Duration, Instant};
 
-use umsh::ulcp_wire::ids::{cap, prop};
-use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
-use umsh::ulcp_wire::meta::{BufferedRxMeta, RX_FLAG_ACKED};
-use umsh::ulcp::{
-    UlcpDevice, UlcpDeviceConfig, FrameLink, HostOwnership, HostProvisioning, DeviceSync,
-    SavedSnapshot, SerialFrameLink,
-};
 use umsh::core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType, PublicKey};
 use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh::crypto::{CryptoEngine, PairwiseKeys};
 use umsh::hal::{CadPolicy, Radio, TxOptions};
+use umsh::ulcp::{
+    DeviceSync, FrameLink, HostOwnership, HostProvisioning, SavedSnapshot, SerialFrameLink,
+    UlcpDevice, UlcpDeviceConfig,
+};
+use umsh::ulcp_wire::ids::{cap, prop};
+use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
+use umsh::ulcp_wire::meta::{BufferedRxMeta, RX_FLAG_ACKED};
 
 /// This host's identity for the validation run (a fixed test vector,
 /// like the integration tests').
@@ -83,8 +83,7 @@ fn parse_key32(text: &str) -> Result<[u8; 32], String> {
 
 async fn open(
     port: &str,
-) -> Result<UlcpDevice<SerialFrameLink<tokio_serial::SerialStream>>, Box<dyn std::error::Error>>
-{
+) -> Result<UlcpDevice<SerialFrameLink<tokio_serial::SerialStream>>, Box<dyn std::error::Error>> {
     use tokio_serial::SerialPortBuilderExt;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
     let started = Instant::now();
@@ -424,7 +423,10 @@ async fn rf_blast(
     use tokio_serial::SerialPortBuilderExt;
     let stream = tokio_serial::new(port, 115_200).open_native_async()?;
     let mut radio = UlcpDevice::new(SerialFrameLink::new(stream), config()).await?;
-    println!("peer device={} base={base} count={count}", radio.dev_version());
+    println!(
+        "peer device={} base={base} count={count}",
+        radio.dev_version()
+    );
     if let Some(power) = power_dbm {
         radio.set_prop(prop::PHY_TX_POWER, &[power as u8]).await?;
         println!("peer tx power {power} dBm");
@@ -434,7 +436,10 @@ async fn rf_blast(
         let counter = base + offset;
         let frame = sealed_unicast(counter, true, &pairwise(), [0xC4, 0xC4, 0xC4]);
         transmit(&mut radio, &frame).await?;
-        println!("  unicast counter={counter} ({} bytes) on the air", frame.len());
+        println!(
+            "  unicast counter={counter} ({} bytes) on the air",
+            frame.len()
+        );
         // Report everything the peer hears in the inter-frame window —
         // the DUT's delegated ack lands ~120 ms after each unicast, so
         // silence here while an air capture shows the ack is proof of a

@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 
 use serde::Serialize;
+use umsh_core::{PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, SourceAddrRef};
 use umsh_ulcp::{
     BufferedRxMeta, Frame, FrameDescription, PropPayload, StreamPayload, capability_name,
     frame::{self, Cmd, TID_MAX},
@@ -16,7 +17,6 @@ use umsh_ulcp::{
     meta::{RX_FLAG_ACKED, RX_FLAG_BUFFERED},
     property_name, pui,
 };
-use umsh_core::{PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, SourceAddrRef};
 
 #[cfg(feature = "sim-device")]
 mod sim;
@@ -1961,12 +1961,8 @@ mod tests {
         assert_eq!(request.command(), Some(Cmd::Save));
 
         let mut response = [0; 16];
-        let len = frame::last_status(
-            &mut response,
-            request.header.tid(),
-            umsh_ulcp::Status::OK,
-        )
-        .unwrap();
+        let len =
+            frame::last_status(&mut response, request.header.tid(), umsh_ulcp::Status::OK).unwrap();
         ingest_serial_frame(&mut engine, &response[..len]);
         let events = std::iter::from_fn(|| engine.take_event()).collect::<Vec<_>>();
         assert!(events.iter().any(|event| matches!(
@@ -2018,8 +2014,7 @@ mod tests {
             0,
             0,
         ];
-        let len =
-            frame::str_recv(&mut ulcp_frame, stream::PHY_RAW, &packet, &metadata).unwrap();
+        let len = frame::str_recv(&mut ulcp_frame, stream::PHY_RAW, &packet, &metadata).unwrap();
         let mut engine = DebuggerEngine::default();
         ingest_serial_frame(&mut engine, &ulcp_frame[..len]);
 

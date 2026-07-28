@@ -461,7 +461,8 @@ mod firmware {
         // Mount durable user preferences before deciding whether normal
         // application startup is permitted. GPREGRET2 remains only a fast
         // mirror and a retained critical-shutdown reason.
-        let storage: &'static NvmcStorage = STORAGE.init(flash_store::new_storage(Nvmc::new(p.NVMC)));
+        let storage: &'static NvmcStorage =
+            STORAGE.init(flash_store::new_storage(Nvmc::new(p.NVMC)));
 
         let reset_reasons = embassy_nrf::pac::POWER.resetreas().read();
         embassy_nrf::pac::POWER

@@ -816,7 +816,13 @@ mod tests {
         let dispatcher = Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new()));
         let membership = Rc::new(RefCell::new(NodeMembership::new()));
         let state = Rc::new(RefCell::new(LocalNodeState::new()));
-        LocalNode::new(LocalIdentityId(1), mac.clone(), dispatcher, membership, state)
+        LocalNode::new(
+            LocalIdentityId(1),
+            mac.clone(),
+            dispatcher,
+            membership,
+            state,
+        )
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]

@@ -18,9 +18,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use umsh::ulcp::{
-    UlcpDevice, UlcpDeviceConfig, UlcpError, FrameLink, HostOwnership,
-    HostProvisioning, SavedSnapshot, describe_frame,
+    FrameLink, HostOwnership, HostProvisioning, SavedSnapshot, UlcpDevice, UlcpDeviceConfig,
+    UlcpError, describe_frame,
 };
+use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
+use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
+use umsh_crypto::{CryptoEngine, NodeIdentity as _, PairwiseKeys};
 use umsh_ulcp::Status;
 use umsh_ulcp::ids::cap;
 use umsh_ulcp::items::{Filter, PeerKeyEntry};
@@ -28,9 +31,6 @@ use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED};
 use umsh_ulcp_device::{
     Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, SessionConfig, TxOutcome,
 };
-use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
-use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_crypto::{CryptoEngine, NodeIdentity as _, PairwiseKeys};
 
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256>;
 
@@ -203,7 +203,8 @@ struct SessionLink {
 impl FrameLink for SessionLink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), UlcpError> {
         let mut sim = self.sim.lock().unwrap();
-        sim.log.push(format!("host→device {}", describe_frame(frame)));
+        sim.log
+            .push(format!("host→device {}", describe_frame(frame)));
         let now_ms = sim.now_ms;
         let mut emitted = Vec::new();
         let effect = sim
@@ -617,10 +618,9 @@ async fn full_queue_drains_losslessly_through_the_callback() {
 async fn insecure_link_refuses_key_provisioning() {
     let sim = SimDevice::new();
     attach(&sim, false);
-    let mut radio =
-        UlcpDevice::attach_existing(SessionLink { sim: sim.clone() }, host_config())
-            .await
-            .unwrap();
+    let mut radio = UlcpDevice::attach_existing(SessionLink { sim: sim.clone() }, host_config())
+        .await
+        .unwrap();
 
     match radio.ensure_device_identity().await {
         Err(UlcpError::Status(status)) => {

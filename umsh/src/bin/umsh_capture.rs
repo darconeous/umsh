@@ -18,13 +18,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hamaddr::HamAddr;
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
 use umsh::core::options::OptionDecoder;
 use umsh::core::{
     OptionNumber, PacketHeader, PacketType, PayloadType, PublicKey, RegionCode, RouterHint,
     SourceAddrRef,
 };
 use umsh::hal::Radio;
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig};
 
 const USAGE: &str = "\
 usage: umsh-capture <serial-port> [options]\n\
@@ -331,11 +331,7 @@ impl PcapWriter {
         Ok(())
     }
 
-    fn write_ulcp(
-        &mut self,
-        direction: CaptureDirection,
-        frame: &[u8],
-    ) -> std::io::Result<()> {
+    fn write_ulcp(&mut self, direction: CaptureDirection, frame: &[u8]) -> std::io::Result<()> {
         if !self.layers.ulcp() {
             return Ok(());
         }
@@ -456,10 +452,7 @@ impl<L> CapturingFrameLink<L> {
 }
 
 impl<L: FrameLink> FrameLink for CapturingFrameLink<L> {
-    async fn send_frame(
-        &mut self,
-        frame: &[u8],
-    ) -> Result<(), umsh::ulcp::UlcpError> {
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), umsh::ulcp::UlcpError> {
         self.record(CaptureDirection::HostToDevice, frame)?;
         self.inner.send_frame(frame).await
     }
@@ -934,10 +927,18 @@ fn field_map(header: &PacketHeader, len: usize) -> Vec<Option<Field>> {
             paint(&mut map, cursor..cursor + 2, Field::Channel);
             paint(&mut map, cursor + 2..options.start, Field::SecInfo);
             if matches!(header.source, SourceAddrRef::Encrypted { .. }) {
-                paint(&mut map, options.end..header.body_range.start, Field::EncAddr);
+                paint(
+                    &mut map,
+                    options.end..header.body_range.start,
+                    Field::EncAddr,
+                );
             } else {
                 paint(&mut map, options.end..options.end + 3, Field::Dst);
-                paint(&mut map, options.end + 3..header.body_range.start, Field::Src);
+                paint(
+                    &mut map,
+                    options.end + 3..header.body_range.start,
+                    Field::Src,
+                );
             }
         }
     }
@@ -1165,15 +1166,14 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
 fn source_text(packet: &[u8], header: &PacketHeader) -> Option<String> {
     match header.source {
         SourceAddrRef::Hint(hint) => Some(hint.to_string()),
-        SourceAddrRef::FullKeyAt { offset } => Some(
-            packet
-                .get(offset..offset + 32)
-                .map_or_else(|| "<truncated>".to_owned(), |bytes| {
-                    let mut key = [0u8; 32];
-                    key.copy_from_slice(bytes);
-                    PublicKey(key).to_string()
-                }),
-        ),
+        SourceAddrRef::FullKeyAt { offset } => Some(packet.get(offset..offset + 32).map_or_else(
+            || "<truncated>".to_owned(),
+            |bytes| {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(bytes);
+                PublicKey(key).to_string()
+            },
+        )),
         SourceAddrRef::Encrypted { .. } => Some("<enc>".to_owned()),
         SourceAddrRef::None => None,
     }
@@ -1387,8 +1387,7 @@ mod tests {
     fn ethernet_pcap_preserves_ulcp_direction_and_payload() {
         let path = temp_capture_path("ulcp");
         let mut writer =
-            PcapWriter::create(&path, CaptureLayers::Ulcp, PcapEncapsulation::Ethernet)
-                .unwrap();
+            PcapWriter::create(&path, CaptureLayers::Ulcp, PcapEncapsulation::Ethernet).unwrap();
         writer
             .write_ulcp(CaptureDirection::HostToDevice, &[0x81, 0x02, 0x26])
             .unwrap();
@@ -1443,16 +1442,12 @@ mod tests {
         // budget and added it to the accumulated count. Neither nibble is a
         // total, so both are shown, in the order they appear in the byte.
         let forwarded = PacketHeader::parse(&FORWARDED_UNICAST).unwrap();
-        assert!(
-            summary_line(&FORWARDED_UNICAST, &forwarded, false).contains("fhops=4:1"),
-        );
+        assert!(summary_line(&FORWARDED_UNICAST, &forwarded, false).contains("fhops=4:1"),);
     }
 
     /// Packet #110 from a live capture: a MAC ack with a flood-hop field and
     /// an empty options block.
-    const MAC_ACK: [u8; 10] = [
-        0xc9, 0x10, 0x8c, 0xb6, 0x8f, 0x5d, 0x97, 0x00, 0xed, 0xe7,
-    ];
+    const MAC_ACK: [u8; 10] = [0xc9, 0x10, 0x8c, 0xb6, 0x8f, 0x5d, 0x97, 0x00, 0xed, 0xe7];
 
     /// Packet #109 from a live capture: a forwarded ack-requested unicast
     /// whose source route was consumed by the repeater that carried it.
@@ -1559,11 +1554,21 @@ mod tests {
         assert_eq!(option_chip(9, &[0xfd]), "min-snr=-3");
         assert_eq!(option_chip(6, &[]), "retry");
         assert_eq!(
-            option_chip(4, HamAddr::try_from_callsign("KJ6QOH").unwrap().as_trimmed_slice()),
+            option_chip(
+                4,
+                HamAddr::try_from_callsign("KJ6QOH")
+                    .unwrap()
+                    .as_trimmed_slice()
+            ),
             "op=KJ6QOH",
         );
         assert_eq!(
-            option_chip(7, HamAddr::try_from_callsign("KZ2X").unwrap().as_trimmed_slice()),
+            option_chip(
+                7,
+                HamAddr::try_from_callsign("KZ2X")
+                    .unwrap()
+                    .as_trimmed_slice()
+            ),
             "via=KZ2X",
         );
         // Unknown options survive, and the critical ones are marked.

@@ -54,9 +54,9 @@ mod ulcp;
 
 use static_cell::StaticCell;
 
-use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use ble_store::{BleStore, MAX_BONDS, ProtoStore, bond_identity_is_persistable, trouble_bond};
 use ulcp::UlcpResponder;
+use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 
 /// The one flash driver behind every journal (bonds, snapshot, identity).
 static SHARED_FLASH: StaticCell<ble_store::SharedFlash> = StaticCell::new();
@@ -209,7 +209,11 @@ async fn render_status(display: &mut Display, connected: bool) {
 
     draw_line(
         display,
-        if connected { "link: up" } else { "link: advertising" },
+        if connected {
+            "link: up"
+        } else {
+            "link: advertising"
+        },
         3,
         style,
     );
@@ -275,8 +279,7 @@ async fn gatt_connection<C: Controller>(
     conn.raw().set_bondable(true)?;
     render_status(display, true).await;
     let mut attached = false;
-    let mut reassembler: ulcp::Reassembler<{ ulcp::MAX_FRAME }> =
-        ulcp::Reassembler::new();
+    let mut reassembler: ulcp::Reassembler<{ ulcp::MAX_FRAME }> = ulcp::Reassembler::new();
     let result = gatt_connection_loop(
         server,
         conn,
@@ -452,10 +455,7 @@ async fn gatt_connection_loop<C: Controller>(
                             let (responses, pin_request) = match staged.extend_from_slice(frame) {
                                 Ok(()) => session.handle_frame(&staged, now_ms).await,
                                 Err(_) => {
-                                    println!(
-                                        "ulcp: frame staging=FAILED len={}",
-                                        frame.len()
-                                    );
+                                    println!("ulcp: frame staging=FAILED len={}", frame.len());
                                     continue;
                                 }
                             };
@@ -470,10 +470,8 @@ async fn gatt_connection_loop<C: Controller>(
                                     applied = stack.set_fixed_passkey(request.pin).is_ok();
                                 }
                                 if applied {
-                                    PAIRING_PIN.store(
-                                        request.pin.unwrap_or(u32::MAX),
-                                        Ordering::Release,
-                                    );
+                                    PAIRING_PIN
+                                        .store(request.pin.unwrap_or(u32::MAX), Ordering::Release);
                                     apply_pairing_gate(stack);
                                 }
                                 println!(

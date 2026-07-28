@@ -781,11 +781,7 @@ pub mod software {
     /// Verify a detached Ed25519 signature against `pk`. Used for standalone
     /// node-identity bundles (QR codes, broadcasts) whose signed range must
     /// verify before the bundle's claims are presented as authenticated.
-    pub fn verify_ed25519_signature(
-        pk: &PublicKey,
-        message: &[u8],
-        signature: &[u8; 64],
-    ) -> bool {
+    pub fn verify_ed25519_signature(pk: &PublicKey, message: &[u8], signature: &[u8; 64]) -> bool {
         let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&pk.0) else {
             return false;
         };

@@ -160,7 +160,10 @@ mod monitor {
     ///
     /// Wrap in `#[embassy_executor::task]` in the firmware binary so the
     /// linker sees a concrete monomorphisation.
-    pub async fn run_battery_monitor(mut saadc: Saadc<'static, 1>, mut divider_gate: Output<'static>) {
+    pub async fn run_battery_monitor(
+        mut saadc: Saadc<'static, 1>,
+        mut divider_gate: Output<'static>,
+    ) {
         const CONSECUTIVE_NEEDED: u8 = 10;
         const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
         // Active-low divider gate: HIGH = disconnected (idle, no draw).

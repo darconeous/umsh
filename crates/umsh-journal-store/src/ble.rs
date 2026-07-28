@@ -46,11 +46,13 @@ pub enum BondUpsert {
 /// eviction candidate). A bond matching by `address_kind` + `address` is
 /// refreshed in place and moved to the MRU end; a new bond is appended at
 /// the MRU end, evicting the current LRU entry first if the list is full.
-pub fn upsert_bond(bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>, bond: StoredBond) -> BondUpsert {
-    if let Some(index) = bonds
-        .iter()
-        .position(|existing| existing.address_kind == bond.address_kind && existing.address == bond.address)
-    {
+pub fn upsert_bond(
+    bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>,
+    bond: StoredBond,
+) -> BondUpsert {
+    if let Some(index) = bonds.iter().position(|existing| {
+        existing.address_kind == bond.address_kind && existing.address == bond.address
+    }) {
         if bonds[index] == bond && index == bonds.len() - 1 {
             return BondUpsert::Unchanged;
         }
@@ -71,7 +73,11 @@ pub fn upsert_bond(bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>, bond: Store
 /// present and not already there. Returns `true` when the order changed
 /// (and the caller should persist), `false` when the bond was already MRU
 /// or is not stored at all.
-pub fn touch_bond(bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>, address_kind: u8, address: [u8; 6]) -> bool {
+pub fn touch_bond(
+    bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>,
+    address_kind: u8,
+    address: [u8; 6],
+) -> bool {
     let Some(index) = bonds
         .iter()
         .position(|existing| existing.address_kind == address_kind && existing.address == address)

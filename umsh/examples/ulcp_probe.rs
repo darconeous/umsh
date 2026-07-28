@@ -20,8 +20,8 @@
     allow(unused_variables, unused_assignments, dead_code)
 )]
 
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
 use umsh::hal::{Radio, TxOptions};
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

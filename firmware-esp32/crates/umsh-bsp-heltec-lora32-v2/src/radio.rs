@@ -25,7 +25,7 @@ use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
 use lora_phy::iv::GenericSx127xInterfaceVariant;
 use lora_phy::mod_params::RadioError;
-use lora_phy::sx127x::{Config, Sx1276, Sx127x};
+use lora_phy::sx127x::{Config, Sx127x, Sx1276};
 
 /// The radio's SPI device: the shared bus is exclusively the radio's on
 /// this board, with NSS as the managed CS pin.

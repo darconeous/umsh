@@ -31,7 +31,7 @@ use umsh::{
 };
 
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig};
 
 const IDENTITIES: usize = 4;
 const PEERS: usize = 16;
@@ -337,9 +337,7 @@ async fn run_serial_chat(
         radio_config.tx_power_dbm = 14;
         let radio = UlcpDevice::open_serial(&serial_path, baud_rate, radio_config)
             .await
-            .map_err(|error| {
-                std::io::Error::other(format!("radio attach failed: {error:?}"))
-            })?;
+            .map_err(|error| std::io::Error::other(format!("radio attach failed: {error:?}")))?;
         println!("companion radio: {}", radio.dev_version());
         run_radio_chat(identity_path, skip_counter_load, peer_key, radio).await
     }

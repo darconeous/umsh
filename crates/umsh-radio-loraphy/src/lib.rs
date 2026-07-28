@@ -215,7 +215,8 @@ where
     }
     let power = tx_req.power_dbm.unwrap_or(default_power_dbm);
     async {
-        lora.prepare_for_tx(mdltn, tx_pkt, power, &tx_req.data).await?;
+        lora.prepare_for_tx(mdltn, tx_pkt, power, &tx_req.data)
+            .await?;
         lora.tx().await
     }
     .await

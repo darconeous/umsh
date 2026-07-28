@@ -917,8 +917,12 @@ impl MobileMeshSession {
         client_token: u32,
         body: String,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        self.compose_chat(&peer_address, client_token, ChatComposeRequest::Text { body })
-            .await
+        self.compose_chat(
+            &peer_address,
+            client_token,
+            ChatComposeRequest::Text { body },
+        )
+        .await
     }
 
     /// Compose an edit of a previously sent message. The original may come
@@ -2069,7 +2073,12 @@ mod tests {
             alice.peer_route(address(&bob_identity)).await.unwrap(),
             MobileMeshRouteRecord::unknown()
         );
-        assert!(!alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+        assert!(
+            !alice
+                .clear_peer_route(address(&bob_identity))
+                .await
+                .unwrap()
+        );
 
         let operation = alice.ping(address(&bob_identity), 2_000).unwrap();
         let _ = bob.ping(address(&alice_identity), 2_000).unwrap();
@@ -2119,12 +2128,22 @@ mod tests {
 
         // Resetting reports that a route was held, and leaves the peer with
         // nothing cached. A second reset has nothing left to discard.
-        assert!(alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+        assert!(
+            alice
+                .clear_peer_route(address(&bob_identity))
+                .await
+                .unwrap()
+        );
         assert_eq!(
             alice.peer_route(address(&bob_identity)).await.unwrap(),
             MobileMeshRouteRecord::unknown()
         );
-        assert!(!alice.clear_peer_route(address(&bob_identity)).await.unwrap());
+        assert!(
+            !alice
+                .clear_peer_route(address(&bob_identity))
+                .await
+                .unwrap()
+        );
 
         // Clearing a route must not disturb the peer's crypto state: the next
         // ping still completes, and teaches the route again.
@@ -2160,7 +2179,10 @@ mod tests {
                     })
                     .unwrap();
             }
-            assert!(Instant::now() < deadline, "ping after reset did not complete");
+            assert!(
+                Instant::now() < deadline,
+                "ping after reset did not complete"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(
@@ -2181,20 +2203,26 @@ mod tests {
         let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity, bob_store).await.unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store)
+            .await
+            .unwrap();
 
         // The signed bundle used for QR/URI sharing verifies out of band.
         let bundle = alice
             .sign_identity_bundle(Some("Alice's Phone".to_owned()), Some(1_760_000_000))
             .await
             .unwrap();
-        let record =
-            crate::decode_node_identity(address(&alice_identity), bundle.clone()).unwrap();
+        let record = crate::decode_node_identity(address(&alice_identity), bundle.clone()).unwrap();
         assert_eq!(record.signature, crate::IdentitySignatureState::Valid);
         assert_eq!(record.name.as_deref(), Some("Alice's Phone"));
         assert_eq!(record.role_label, "Chat");
         let uri = crate::node_uri_with_identity(address(&alice_identity), bundle).unwrap();
-        assert!(crate::inspect_node_uri(uri).unwrap().identity_payload.is_some());
+        assert!(
+            crate::inspect_node_uri(uri)
+                .unwrap()
+                .identity_payload
+                .is_some()
+        );
 
         alice
             .advertise_identity(Some("Alice's Phone".to_owned()), None)
@@ -2365,8 +2393,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let local_identity = identity(65);
         let silent_peer = identity(66);
-        let store = MobileCounterStore::new(directory.path().join("wake-late").display().to_string())
-            .unwrap();
+        let store =
+            MobileCounterStore::new(directory.path().join("wake-late").display().to_string())
+                .unwrap();
         let session = MobileMeshSession::new(local_identity, store).await.unwrap();
 
         session.ping(address(&silent_peer), 5_000).unwrap();

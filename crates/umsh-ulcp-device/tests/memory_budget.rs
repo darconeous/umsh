@@ -1,8 +1,8 @@
 //! RAM-budget measurement for the session object embedded firmwares
 //! carry in a task future. Run with `--nocapture` to see the numbers.
 
-use umsh_ulcp_device::Session;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh_ulcp_device::Session;
 
 #[test]
 fn session_size_within_budget() {

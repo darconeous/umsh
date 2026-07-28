@@ -314,8 +314,7 @@ impl<'a> IdentityRequestFilters<'a> {
                 identity_filter::FILTER_NODE_CAPS => {
                     caps_present = true;
                     // Match if the node has every requested bit set.
-                    caps_match |= value.len() == 1
-                        && (capabilities.bits() & value[0]) == value[0];
+                    caps_match |= value.len() == 1 && (capabilities.bits() & value[0]) == value[0];
                 }
                 other if other & 1 == 1 => {
                     // Unknown critical option: assume we are excluded.
@@ -422,7 +421,10 @@ mod tests {
 
     #[test]
     fn identity_request_options_are_appended_verbatim() {
-        let options = IdentityRequestBuilder::new().nonce(0x01020304).unwrap().build();
+        let options = IdentityRequestBuilder::new()
+            .nonce(0x01020304)
+            .unwrap()
+            .build();
         let mut buf = [0u8; 16];
         let len = encode(&MacCommand::IdentityRequest { options: &options }, &mut buf).unwrap();
         assert_eq!(buf[0], 0x01);
@@ -434,10 +436,18 @@ mod tests {
         // Mirrors PeerConnection::request_identity: a nonce-only options block
         // framed with a leading PayloadType::MacCommand byte. The receiver
         // dispatches on payload[0], then parses the command body.
-        let options = IdentityRequestBuilder::new().nonce(0xCAFEF00D).unwrap().build();
+        let options = IdentityRequestBuilder::new()
+            .nonce(0xCAFEF00D)
+            .unwrap()
+            .build();
         let mut buf = [0u8; 128];
         buf[0] = umsh_core::PayloadType::MacCommand as u8;
-        let n = encode(&MacCommand::IdentityRequest { options: &options }, &mut buf[1..]).unwrap() + 1;
+        let n = encode(
+            &MacCommand::IdentityRequest { options: &options },
+            &mut buf[1..],
+        )
+        .unwrap()
+            + 1;
 
         assert_eq!(buf[0], umsh_core::PayloadType::MacCommand as u8);
         let decoded = parse(&buf[1..n]).expect("command body should parse");
@@ -452,7 +462,10 @@ mod tests {
 
     #[test]
     fn identity_filters_nonce_round_trips() {
-        let options = IdentityRequestBuilder::new().nonce(0xDEADBEEF).unwrap().build();
+        let options = IdentityRequestBuilder::new()
+            .nonce(0xDEADBEEF)
+            .unwrap()
+            .build();
         let filters = IdentityRequestFilters::new(&options);
         assert_eq!(filters.nonce().unwrap(), Some(0xDEADBEEF));
 
@@ -465,7 +478,11 @@ mod tests {
         let filters = IdentityRequestFilters::new(&[]);
         assert!(
             filters
-                .selects(NodeRole::Sensor, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .selects(
+                    NodeRole::Sensor,
+                    NodeCapabilities::empty(),
+                    &NodeHint([1, 2, 3])
+                )
                 .unwrap()
         );
     }
@@ -543,7 +560,9 @@ mod tests {
             filters
                 .selects(
                     NodeRole::Chat,
-                    NodeCapabilities::REPEATER | NodeCapabilities::TEXT_MESSAGES | NodeCapabilities::MOBILE,
+                    NodeCapabilities::REPEATER
+                        | NodeCapabilities::TEXT_MESSAGES
+                        | NodeCapabilities::MOBILE,
                     &hint,
                 )
                 .unwrap()
@@ -566,7 +585,11 @@ mod tests {
         let filters = IdentityRequestFilters::new(&buf[..n]);
         assert!(
             !filters
-                .selects(NodeRole::Chat, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .selects(
+                    NodeRole::Chat,
+                    NodeCapabilities::empty(),
+                    &NodeHint([1, 2, 3])
+                )
                 .unwrap()
         );
     }
@@ -582,7 +605,11 @@ mod tests {
         let filters = IdentityRequestFilters::new(&buf[..n]);
         assert!(
             filters
-                .selects(NodeRole::Repeater, NodeCapabilities::empty(), &NodeHint([1, 2, 3]))
+                .selects(
+                    NodeRole::Repeater,
+                    NodeCapabilities::empty(),
+                    &NodeHint([1, 2, 3])
+                )
                 .unwrap()
         );
     }

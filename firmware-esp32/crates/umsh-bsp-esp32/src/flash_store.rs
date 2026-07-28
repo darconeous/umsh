@@ -154,8 +154,8 @@ pub fn open_partition(
 /// released before the store is built.
 fn storage_range(flash: &mut FlashStorage<'static>) -> Result<Range<u32>, StorageInitError> {
     let mut buf = [0u8; PARTITION_TABLE_MAX_LEN];
-    let table =
-        partitions::read_partition_table(flash, &mut buf).map_err(StorageInitError::PartitionTable)?;
+    let table = partitions::read_partition_table(flash, &mut buf)
+        .map_err(StorageInitError::PartitionTable)?;
 
     let entry = table
         .iter()

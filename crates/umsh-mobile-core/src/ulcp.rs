@@ -497,8 +497,7 @@ impl MobileUlcpSession {
         let device_values = validate_device_settings(&configuration, &state)?;
 
         state.expected.clear();
-        state.configuration_queue =
-            configuration_values(configuration.radio, device_values).into();
+        state.configuration_queue = configuration_values(configuration.radio, device_values).into();
         let mut outbound = Vec::new();
         state.start_configuration(&mut outbound)?;
         Ok(state.update(outbound))
@@ -589,8 +588,8 @@ impl MobileUlcpSession {
             if parsed.header.tid() != frame::TID_UNSOLICITED {
                 return Err(MobileError::InvalidUlcpFrame);
             }
-            let payload = StreamPayload::parse(parsed.payload)
-                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            let payload =
+                StreamPayload::parse(parsed.payload).map_err(|_| MobileError::InvalidUlcpFrame)?;
             if payload.stream != umsh_ulcp::ids::stream::PHY_RAW {
                 return Err(MobileError::InvalidUlcpFrame);
             }
@@ -600,17 +599,15 @@ impl MobileUlcpSession {
             if state.stage == SessionStage::Idle {
                 return Err(MobileError::InvalidUlcpFrame);
             }
-            return Ok(
-                state.update_with_received(vec![UlcpReceivedFrameRecord {
-                    data: payload.data.to_vec(),
-                    rssi_dbm: metadata.rx.rssi_dbm,
-                    lqi: metadata.rx.lqi.map(core::num::NonZeroU8::get),
-                    snr_cb: metadata.rx.snr_cb,
-                    was_buffered: metadata.flags & RX_FLAG_BUFFERED != 0,
-                    was_acknowledged: metadata.flags & RX_FLAG_ACKED != 0,
-                    age_seconds: metadata.age_s,
-                }]),
-            );
+            return Ok(state.update_with_received(vec![UlcpReceivedFrameRecord {
+                data: payload.data.to_vec(),
+                rssi_dbm: metadata.rx.rssi_dbm,
+                lqi: metadata.rx.lqi.map(core::num::NonZeroU8::get),
+                snr_cb: metadata.rx.snr_cb,
+                was_buffered: metadata.flags & RX_FLAG_BUFFERED != 0,
+                was_acknowledged: metadata.flags & RX_FLAG_ACKED != 0,
+                age_seconds: metadata.age_s,
+            }]));
         }
         let response = inspect_ulcp_property_frame(frame)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
@@ -904,10 +901,7 @@ impl UlcpSessionState {
         }
     }
 
-    fn apply_property(
-        &mut self,
-        response: &UlcpPropertyFrameRecord,
-    ) -> Result<(), MobileError> {
+    fn apply_property(&mut self, response: &UlcpPropertyFrameRecord) -> Result<(), MobileError> {
         if response.command != Cmd::PropIs as u8 {
             // Insert/remove notifications are valid protocol frames, but none
             // of the mobile snapshot fields are multi-value payloads.
@@ -1254,9 +1248,7 @@ pub fn inspect_ulcp_sync(
             Ok(UlcpRepeaterSettingsRecord {
                 enabled: decode_bool(value(prop::MAC_REPEATER_ENABLED)?)?,
                 regions: decode_region_list(value(prop::MAC_REPEATER_REGIONS)?)?,
-                default_region: decode_optional_region(
-                    value(prop::MAC_REPEATER_DEFAULT_REGION)?,
-                )?,
+                default_region: decode_optional_region(value(prop::MAC_REPEATER_DEFAULT_REGION)?)?,
                 min_rssi_dbm: decode_optional(value(prop::MAC_REPEATER_MIN_RSSI)?, decode_i16)?,
                 min_snr_db: decode_optional(value(prop::MAC_REPEATER_MIN_SNR)?, decode_i8)?,
             })
@@ -1306,10 +1298,7 @@ pub fn inspect_ulcp_sync(
     })
 }
 
-fn property_value(
-    responses: &[UlcpPropertyFrameRecord],
-    key: u32,
-) -> Result<&[u8], MobileError> {
+fn property_value(responses: &[UlcpPropertyFrameRecord], key: u32) -> Result<&[u8], MobileError> {
     let mut matching = responses
         .iter()
         .filter(|response| response.property_id == key);
@@ -1324,8 +1313,7 @@ fn decode_capabilities(value: &[u8]) -> Result<Vec<u32>, MobileError> {
     let mut capabilities = Vec::new();
     let mut rest = value;
     while !rest.is_empty() {
-        let (capability, used) =
-            pui::decode(rest).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let (capability, used) = pui::decode(rest).map_err(|_| MobileError::InvalidUlcpFrame)?;
         if capabilities.contains(&capability) {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -1504,7 +1492,10 @@ fn validate_device_settings(
         // An empty PROP_IDENT_ROLE hands the choice back to the device.
         values.push((
             prop::IDENT_ROLE,
-            configuration.ident_role.map(|role| vec![role]).unwrap_or_default(),
+            configuration
+                .ident_role
+                .map(|role| vec![role])
+                .unwrap_or_default(),
         ));
         values.push((
             prop::IDENT_MOBILE,
@@ -1553,10 +1544,7 @@ fn validate_device_settings(
                     .map(|snr| vec![snr as u8])
                     .unwrap_or_default(),
             ),
-            (
-                prop::MAC_REPEATER_ENABLED,
-                vec![repeater.enabled as u8],
-            ),
+            (prop::MAC_REPEATER_ENABLED, vec![repeater.enabled as u8]),
         ]);
     }
     Ok(values)
@@ -1609,9 +1597,7 @@ fn decode_fixed_count<const N: usize>(value: &[u8]) -> Result<u32, MobileError> 
     let count = items::fixed_items::<N>(value)
         .map_err(|_| MobileError::InvalidUlcpFrame)?
         .count();
-    count
-        .try_into()
-        .map_err(|_| MobileError::InvalidUlcpFrame)
+    count.try_into().map_err(|_| MobileError::InvalidUlcpFrame)
 }
 
 fn decode_filter_count(value: &[u8]) -> Result<u32, MobileError> {
@@ -1619,9 +1605,7 @@ fn decode_filter_count(value: &[u8]) -> Result<u32, MobileError> {
     for item in items::prefixed_items(value) {
         let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
         Filter::decode(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
-        count = count
-            .checked_add(1)
-            .ok_or(MobileError::InvalidUlcpFrame)?;
+        count = count.checked_add(1).ok_or(MobileError::InvalidUlcpFrame)?;
     }
     Ok(count)
 }
@@ -1724,11 +1708,8 @@ fn ulcp_operation_error(
 
 /// Parse and validate a property notification or response.
 #[uniffi::export]
-pub fn inspect_ulcp_property_frame(
-    bytes: Vec<u8>,
-) -> Result<UlcpPropertyFrameRecord, MobileError> {
-    let parsed =
-        PropertyNotification::parse(&bytes).map_err(|_| MobileError::InvalidUlcpFrame)?;
+pub fn inspect_ulcp_property_frame(bytes: Vec<u8>) -> Result<UlcpPropertyFrameRecord, MobileError> {
+    let parsed = PropertyNotification::parse(&bytes).map_err(|_| MobileError::InvalidUlcpFrame)?;
     let command = match parsed.kind {
         PropertyNotificationKind::Is => Cmd::PropIs,
         PropertyNotificationKind::Inserted => Cmd::PropInserted,
@@ -2266,10 +2247,7 @@ mod tests {
                 },
             );
         assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
-        assert_eq!(
-            attached.snapshot.host_ownership,
-            UlcpHostOwnership::Ours
-        );
+        assert_eq!(attached.snapshot.host_ownership, UlcpHostOwnership::Ours);
         assert_eq!(
             attached.snapshot.provisioning.unwrap().saved,
             Some(SavedSnapshotRecord::Current)
@@ -2282,10 +2260,7 @@ mod tests {
                 &[0xBB; 32],
             ))
             .unwrap();
-        assert_eq!(
-            changed_host.snapshot.phase,
-            UlcpSessionPhase::AwaitingHost
-        );
+        assert_eq!(changed_host.snapshot.phase, UlcpSessionPhase::AwaitingHost);
         assert_eq!(
             changed_host.snapshot.host_ownership,
             UlcpHostOwnership::OtherHost
@@ -2301,8 +2276,7 @@ mod tests {
         // decision to put to the user, so it attaches — and still reports
         // whose radio it is, because that is worth showing.
         let session = MobileUlcpSession::administrative();
-        let attached =
-            attach_commissionable(&session, Some(phone.clone()), other_phone.clone());
+        let attached = attach_commissionable(&session, Some(phone.clone()), other_phone.clone());
         assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
         assert_eq!(
             attached.snapshot.host_ownership,
@@ -2316,8 +2290,7 @@ mod tests {
         // An unclaimed radio likewise: commissioning ten repeaters must
         // not leave this phone's host key on any of them.
         let unclaimed = MobileUlcpSession::administrative();
-        let attached =
-            attach_commissionable(&unclaimed, Some(phone.clone()), Vec::new());
+        let attached = attach_commissionable(&unclaimed, Some(phone.clone()), Vec::new());
         assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
         assert_eq!(
             attached.snapshot.host_ownership,
@@ -2328,14 +2301,13 @@ mod tests {
         // take the radio from the other phone.
         let tethered = MobileUlcpSession::new();
         let begin = tethered.begin(Some(phone.clone())).unwrap();
-        let awaiting =
-            answer_requests(&tethered, begin.outbound_frames, move |property| {
-                if property == prop::HOST_KEY {
-                    (property, other_phone.clone())
-                } else {
-                    commissionable_value(property)
-                }
-            });
+        let awaiting = answer_requests(&tethered, begin.outbound_frames, move |property| {
+            if property == prop::HOST_KEY {
+                (property, other_phone.clone())
+            } else {
+                commissionable_value(property)
+            }
+        });
         assert_eq!(awaiting.snapshot.phase, UlcpSessionPhase::AwaitingHost);
 
         // A host-key change pushed mid-session does not evict an
@@ -2348,10 +2320,7 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(pushed.snapshot.phase, UlcpSessionPhase::Attached);
-        assert_eq!(
-            pushed.snapshot.host_ownership,
-            UlcpHostOwnership::OtherHost
-        );
+        assert_eq!(pushed.snapshot.host_ownership, UlcpHostOwnership::OtherHost);
     }
 
     #[test]
@@ -2495,8 +2464,7 @@ mod tests {
             .unwrap();
         assert_eq!(configured.snapshot.phase, UlcpSessionPhase::Configuring);
 
-        let (written, order, save_tid) =
-            drive_configuration(&session, configured.outbound_frames);
+        let (written, order, save_tid) = drive_configuration(&session, configured.outbound_frames);
 
         // The whole configuration is a property -> value map with nothing
         // else in it. A template feature that produces such a map has
@@ -2511,7 +2479,10 @@ mod tests {
                 (prop::IDENT_MOBILE, vec![0]),
                 (prop::MAC_REPEATER_REGIONS, vec![0x78, 0x53]),
                 (prop::MAC_REPEATER_DEFAULT_REGION, vec![0x78, 0x53]),
-                (prop::MAC_REPEATER_MIN_RSSI, (-115i16).to_le_bytes().to_vec()),
+                (
+                    prop::MAC_REPEATER_MIN_RSSI,
+                    (-115i16).to_le_bytes().to_vec()
+                ),
                 (prop::MAC_REPEATER_MIN_SNR, vec![(-7i8) as u8]),
                 (prop::MAC_REPEATER_ENABLED, vec![1]),
                 (prop::PHY_ENABLED, vec![1]),
@@ -2625,10 +2596,7 @@ mod tests {
     #[test]
     fn region_codes_convert_between_text_and_wire_octets() {
         assert_eq!(region_code_from_string("SJC".into()).unwrap(), [0x78, 0x53]);
-        assert_eq!(
-            region_code_description(vec![0x78, 0x53]).unwrap(),
-            "SJC"
-        );
+        assert_eq!(region_code_description(vec![0x78, 0x53]).unwrap(), "SJC");
         // A name lands outside the airport letter space, so it never
         // renders as three letters and round-trips through hex.
         let named = region_code_from_string("Rogue Valley".into()).unwrap();
@@ -2901,10 +2869,7 @@ mod tests {
                 duty_cycle_limit: Some(6_553),
             })
             .unwrap();
-        assert_eq!(
-            configured.snapshot.phase,
-            UlcpSessionPhase::Configuring
-        );
+        assert_eq!(configured.snapshot.phase, UlcpSessionPhase::Configuring);
         assert_eq!(
             configured.outbound_frames.len(),
             usize::from(frame::TID_MAX)

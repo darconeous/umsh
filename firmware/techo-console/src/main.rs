@@ -648,7 +648,8 @@ mod firmware {
         }
 
         // ── NV storage ────────────────────────────────────────────────────────
-        let storage: &'static NvmcStorage = STORAGE.init(flash_store::new_storage(Nvmc::new(p.NVMC)));
+        let storage: &'static NvmcStorage =
+            STORAGE.init(flash_store::new_storage(Nvmc::new(p.NVMC)));
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this

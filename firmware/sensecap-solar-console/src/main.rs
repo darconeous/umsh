@@ -307,9 +307,7 @@ USER_BUTTON (P1.01) and PWR (P1.07) edges auto-report.";
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
         spawner
-            .spawn(
-                ident_task(tx, rx, led_a, btn1, btn2, prev_panic_buf, prev_panic_len).unwrap(),
-            );
+            .spawn(ident_task(tx, rx, led_a, btn1, btn2, prev_panic_buf, prev_panic_len).unwrap());
 
         join(usb.run(), heartbeat(led_b, wdt_handle)).await;
     }

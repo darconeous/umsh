@@ -317,7 +317,9 @@ fn gap_device_name(name: &[u8]) -> GapDeviceName {
 /// Publish the configured name on the GAP Device Name characteristic, so a
 /// client reads the current name rather than the one the device booted with.
 async fn sync_gap_device_name(server: &UlcpServer<'_>) {
-    let Some(gap) = server.gap.as_ref() else { return };
+    let Some(gap) = server.gap.as_ref() else {
+        return;
+    };
     let name = device_name_snapshot().await;
     if server
         .set(&gap.device_name, &gap_device_name(name.as_slice()))
@@ -337,7 +339,9 @@ async fn announce_gatt_change(
     server: &UlcpServer<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
 ) {
-    let Some(gap) = server.gap.as_ref() else { return };
+    let Some(gap) = server.gap.as_ref() else {
+        return;
+    };
     // A client that has not subscribed cannot be told anything, and
     // `indicate` reports that case as success. Checking first keeps the
     // stale marker set so the next connection tries again.
@@ -346,7 +350,11 @@ async fn announce_gatt_change(
         return;
     }
     const WHOLE_TABLE: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
-    match gap.service_changed.indicate(conn, &WHOLE_TABLE, false).await {
+    match gap
+        .service_changed
+        .indicate(conn, &WHOLE_TABLE, false)
+        .await
+    {
         Ok(()) => {
             GATT_NAME_STALE.store(false, Ordering::Release);
             debug_log(format_args!("service-changed indicated"));

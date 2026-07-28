@@ -51,18 +51,18 @@ use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
+use esp_radio::ble::controller::BleConnector;
 use lora_phy::LoRa;
 use lora_phy::mod_params::{ModulationParams, PacketParams};
-use esp_radio::ble::controller::BleConnector;
 use static_cell::StaticCell;
 use umsh_bsp_esp32::flash_store;
 use umsh_bsp_esp32::rng::EspCryptoRng;
-use umsh_crypto::NodeIdentity as _;
-use umsh_crypto::software::SoftwareIdentity;
 use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
 use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::radio::{self, Radio};
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
+use umsh_crypto::NodeIdentity as _;
+use umsh_crypto::software::SoftwareIdentity;
 use umsh_hal::KeyValueStore as _;
 use umsh_radio_loraphy::{Channels, TxRequest};
 use umsh_ux_tracker::battery::{BatteryState, BatteryThresholds, classify, soc_from_ocv};
@@ -327,10 +327,8 @@ async fn init_radio(
     reset: Output<'static>,
     dio1: Input<'static>,
     busy: Input<'static>,
-) -> Result<
-    (Radio, ModulationParams, PacketParams, PacketParams),
-    lora_phy::mod_params::RadioError,
-> {
+) -> Result<(Radio, ModulationParams, PacketParams, PacketParams), lora_phy::mod_params::RadioError>
+{
     let kind = radio::new_radio_kind(spi, reset, dio1, busy)?;
     let mut lora = LoRa::new(kind, false, Delay).await?;
     let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)?;
@@ -416,7 +414,10 @@ async fn load_or_create_identity(
     let hint = identity.hint();
     let mut rendered: heapless::String<8> = heapless::String::new();
     let _ = write!(rendered, "{hint}");
-    println!("identity: {rendered} (pk {:02x?})", &identity.public_key().0);
+    println!(
+        "identity: {rendered} (pk {:02x?})",
+        &identity.public_key().0
+    );
     Some(rendered)
 }
 

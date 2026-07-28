@@ -11,8 +11,8 @@
 
 use std::time::{Duration, Instant};
 
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig};
 use umsh::ulcp_wire::ids::prop;
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, FrameLink};
 
 struct Options {
     transport: String,

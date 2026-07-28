@@ -171,8 +171,8 @@ mod firmware {
     use nrf_sdc::mpsl::{self, MultiprotocolServiceLayer};
     use nrf_sdc::{self as sdc};
     use static_cell::StaticCell;
-    use trouble_host::prelude::*;
     use trouble_host::gap;
+    use trouble_host::prelude::*;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
     #[cfg(any(feature = "system-off-techo", feature = "t1000e"))]
@@ -1573,9 +1573,14 @@ mod firmware {
     /// reads is the current name rather than whatever the device booted
     /// with.
     async fn sync_gap_device_name(server: &UlcpServer<'_>) {
-        let Some(gap) = server.gap.as_ref() else { return };
+        let Some(gap) = server.gap.as_ref() else {
+            return;
+        };
         let name = device_name_snapshot().await;
-        if server.set(&gap.device_name, &gap_device_name(name.as_slice())).is_err() {
+        if server
+            .set(&gap.device_name, &gap_device_name(name.as_slice()))
+            .is_err()
+        {
             debug_log(format_args!("gap device-name update FAILED"));
         }
     }
@@ -1592,7 +1597,9 @@ mod firmware {
         server: &UlcpServer<'_>,
         conn: &GattConnection<'_, '_, DefaultPacketPool>,
     ) {
-        let Some(gap) = server.gap.as_ref() else { return };
+        let Some(gap) = server.gap.as_ref() else {
+            return;
+        };
         // A client that has not subscribed cannot be told anything, and
         // `indicate` reports that case as success. Checking first keeps the
         // stale marker set so the next connection tries again.
@@ -1601,7 +1608,11 @@ mod firmware {
             return;
         }
         const WHOLE_TABLE: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
-        match gap.service_changed.indicate(conn, &WHOLE_TABLE, false).await {
+        match gap
+            .service_changed
+            .indicate(conn, &WHOLE_TABLE, false)
+            .await
+        {
             Ok(()) => {
                 GATT_NAME_STALE.store(false, Ordering::Release);
                 debug_log(format_args!("service-changed indicated"));

@@ -16,14 +16,14 @@
 
 use esp_println::println;
 
+use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
+use umsh_crypto::{CryptoEngine, NodeIdentity as _};
+use umsh_journal_store::proto;
 use umsh_ulcp::Status;
 use umsh_ulcp::ids::DUTY_LIMIT_DISABLED;
 use umsh_ulcp_device::{
     DutyLedger, Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, SessionConfig,
 };
-use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_crypto::{CryptoEngine, NodeIdentity as _};
-use umsh_journal_store::proto;
 
 use crate::EspCryptoRng;
 use crate::ble_store::{BootPayload, ProtoStore};
@@ -109,9 +109,9 @@ impl UlcpResponder {
         if let Some(payload) = boot_snapshot {
             // Spike: no generation walk-back, just report the outcome.
             match session.restore_at_boot(&payload) {
-                Ok(effect) => println!(
-                    "ulcp: boot-restore=ok effect={effect:?} (radio effects dropped)"
-                ),
+                Ok(effect) => {
+                    println!("ulcp: boot-restore=ok effect={effect:?} (radio effects dropped)")
+                }
                 Err(error) => {
                     session.note_snapshot_rejected();
                     println!("ulcp: boot-restore=REJECTED error={error:?}");
@@ -137,7 +137,11 @@ impl UlcpResponder {
     /// response frame it emits (directly and via deferred effects). A PIN
     /// write is not completed here — it is surfaced for the caller to
     /// apply against the bond journal and live stack first.
-    pub async fn handle_frame(&mut self, frame: &[u8], now_ms: u64) -> (OutQueue, Option<PinRequest>) {
+    pub async fn handle_frame(
+        &mut self,
+        frame: &[u8],
+        now_ms: u64,
+    ) -> (OutQueue, Option<PinRequest>) {
         let mut out = OutQueue::new();
         let effect = {
             let mut emit = |bytes: &[u8]| push_frame(&mut out, bytes);

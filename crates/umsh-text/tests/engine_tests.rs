@@ -181,9 +181,7 @@ fn drain(engine: &mut TestEngine) -> Vec<Drained> {
                     late,
                     notify,
                 },
-                MutationKind::Edit {
-                    original, body, ..
-                } => Drained::Edit {
+                MutationKind::Edit { original, body, .. } => Drained::Edit {
                     original,
                     body: engine.body(&body).to_string(),
                 },
@@ -929,7 +927,13 @@ fn gap_reserves_placeholder_then_fills_in_place() {
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
     drain(&mut engine);
     // ID 1 is lost; ID 2 opens a gap.
-    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(2, "c"),
+        100,
+    );
     let outputs = drain(&mut engine);
 
     let placeholder_pos = outputs
@@ -943,8 +947,14 @@ fn gap_reserves_placeholder_then_fills_in_place() {
     let trigger_pos = outputs
         .iter()
         .position(|output| {
-            matches!(output,
-                Drained::Insert { wire_id: Some(2), presence: Presence::Present, .. })
+            matches!(
+                output,
+                Drained::Insert {
+                    wire_id: Some(2),
+                    presence: Presence::Present,
+                    ..
+                }
+            )
         })
         .expect("triggering message insert");
     assert!(
@@ -960,7 +970,13 @@ fn gap_reserves_placeholder_then_fills_in_place() {
     };
 
     // ID 1 finally arrives and fills the reserved slot in place.
-    feed(&mut engine, &direct_envelope(), None, &sequenced(1, "b"), 200);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(1, "b"),
+        200,
+    );
     let outputs = drain(&mut engine);
     let fill = outputs
         .iter()
@@ -977,7 +993,10 @@ fn gap_reserves_placeholder_then_fills_in_place() {
             _ => None,
         })
         .expect("backfill insert");
-    assert_eq!(fill.0, placeholder_handle, "fill reuses the reserved handle");
+    assert_eq!(
+        fill.0, placeholder_handle,
+        "fill reuses the reserved handle"
+    );
     assert_eq!(fill.1, "b");
     assert_eq!(fill.2, Presence::Present);
     assert!(fill.3, "backfill is flagged received-late");
@@ -989,9 +1008,21 @@ fn gap_reserves_placeholder_then_fills_in_place() {
 #[test]
 fn edit_filling_gap_deletes_placeholder() {
     let mut engine = engine();
-    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "orig"), 0);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(0, "orig"),
+        0,
+    );
     drain(&mut engine);
-    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(2, "c"),
+        100,
+    );
     let outputs = drain(&mut engine);
     let placeholder_handle = outputs
         .iter()
@@ -1031,7 +1062,13 @@ fn exhausted_gap_flips_placeholder_to_unavailable() {
     let mut engine = engine();
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
     drain(&mut engine);
-    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 100);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(2, "c"),
+        100,
+    );
     let outputs = drain(&mut engine);
     let placeholder_handle = outputs
         .iter()
@@ -1074,7 +1111,13 @@ fn exhausted_gap_flips_placeholder_to_unavailable() {
 fn disclaimed_gap_flips_placeholder_to_unavailable() {
     let mut engine = engine();
     feed(&mut engine, &direct_envelope(), None, &sequenced(0, "a"), 0);
-    feed(&mut engine, &direct_envelope(), None, &sequenced(2, "c"), 50);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(2, "c"),
+        50,
+    );
     let outputs = drain(&mut engine);
     let placeholder_handle = outputs
         .iter()
@@ -1157,7 +1200,10 @@ fn edit_replaces_archive_with_edited_content_only() {
     let parsed = parse_payload(&replacement);
     assert_eq!(parsed.sequence, Some(MessageSequence::unfragmented(0)));
     assert_eq!(parsed.body, b"edited");
-    assert_eq!(parsed.editing, None, "the replacement is a plain content frame");
+    assert_eq!(
+        parsed.editing, None,
+        "the replacement is a plain content frame"
+    );
 
     // The resend service round trip serves the edited content.
     feed(
@@ -1274,14 +1320,14 @@ fn edit_of_missing_message_fills_placeholder() {
             } if *handle == placeholder_handle && body == "edited")),
         "the edit's content fills the reserved slot in place"
     );
-    assert!(
-        outputs.iter().any(|output| matches!(output,
-            Drained::Event(Event::RepairFinished {
-                message_id: 1,
-                outcome: RepairOutcome::Repaired,
-                ..
-            })))
-    );
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Event(Event::RepairFinished {
+            message_id: 1,
+            outcome: RepairOutcome::Repaired,
+            ..
+        })
+    )));
 
     // No resend request goes out for content the edit superseded.
     engine.tick(60_000);
@@ -1292,13 +1338,18 @@ fn edit_of_missing_message_fills_placeholder() {
     );
 
     // The superseded original still arriving must not overwrite the edit.
-    feed(&mut engine, &direct_envelope(), None, &sequenced(1, "old"), 200);
-    let outputs = drain(&mut engine);
-    assert!(
-        outputs
-            .iter()
-            .any(|output| matches!(output, Drained::Diagnostic(Diagnostic::DuplicateMessage { message_id: 1 })))
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(1, "old"),
+        200,
     );
+    let outputs = drain(&mut engine);
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Diagnostic(Diagnostic::DuplicateMessage { message_id: 1 })
+    )));
     assert!(
         !outputs
             .iter()
@@ -1353,11 +1404,23 @@ fn delete_of_missing_message_removes_placeholder() {
 #[test]
 fn single_frame_arrival_notifies() {
     let mut engine = engine();
-    feed(&mut engine, &direct_envelope(), None, &sequenced(0, "hi"), 0);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(0, "hi"),
+        0,
+    );
     let outputs = drain(&mut engine);
     assert!(
-        outputs.iter().any(|output| matches!(output,
-            Drained::Insert { wire_id: Some(0), notify: true, .. })),
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert {
+                wire_id: Some(0),
+                notify: true,
+                ..
+            }
+        )),
         "a single-frame inbound message notifies on arrival"
     );
 }
@@ -1368,8 +1431,14 @@ fn fragmented_completion_notifies_exactly_once() {
     feed_fragment(&mut engine, 5, 0, 2, b"hello ", 0);
     let announce = drain(&mut engine);
     assert!(
-        announce.iter().any(|output| matches!(output,
-            Drained::Insert { notify: false, status: CompletionStatus::Partial { .. }, .. })),
+        announce.iter().any(|output| matches!(
+            output,
+            Drained::Insert {
+                notify: false,
+                status: CompletionStatus::Partial { .. },
+                ..
+            }
+        )),
         "the incomplete announcing insert does not notify"
     );
 
@@ -1378,8 +1447,14 @@ fn fragmented_completion_notifies_exactly_once() {
     let notifies = complete
         .iter()
         .filter(|output| {
-            matches!(output,
-                Drained::UpdateBody { notify: true, status: CompletionStatus::Complete, .. })
+            matches!(
+                output,
+                Drained::UpdateBody {
+                    notify: true,
+                    status: CompletionStatus::Complete,
+                    ..
+                }
+            )
         })
         .count();
     assert_eq!(notifies, 1, "completion notifies exactly once");
@@ -1414,11 +1489,19 @@ fn stalled_fragment_notifies_at_deadline_once() {
 #[test]
 fn control_frames_do_not_notify() {
     let mut engine = engine();
-    feed(&mut engine, &direct_envelope(), None, &resend_request(0, false), 0);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        0,
+    );
     let outputs = drain(&mut engine);
     assert!(
-        !outputs.iter().any(|output| matches!(output,
-            Drained::Insert { notify: true, .. } | Drained::UpdateBody { notify: true, .. })),
+        !outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { notify: true, .. } | Drained::UpdateBody { notify: true, .. }
+        )),
         "control frames never produce a notify"
     );
 }
@@ -1451,7 +1534,13 @@ fn resend_ack_reconciles_original_delivery() {
     }
     let archived = archived.expect("archived payload");
 
-    feed(&mut engine, &direct_envelope(), None, &resend_request(0, false), 1_000);
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &resend_request(0, false),
+        1_000,
+    );
     let mut request_id = None;
     while let Some(output) = engine.poll_output() {
         if let Output::LookupOutbound { request_id: id, .. } = output {
@@ -1460,7 +1549,11 @@ fn resend_ack_reconciles_original_delivery() {
     }
     let request_id = request_id.expect("lookup request");
 
-    engine.archive_result(request_id, ArchiveResult::Found { payload: &archived }, 1_010);
+    engine.archive_result(
+        request_id,
+        ArchiveResult::Found { payload: &archived },
+        1_010,
+    );
     let mut resend_tx = None;
     while let Some(output) = engine.poll_output() {
         if let Output::Transmit(transmission) = output {
