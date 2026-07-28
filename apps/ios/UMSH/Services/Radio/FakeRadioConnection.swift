@@ -50,6 +50,10 @@ actor FakeRadioConnection: RadioConnection {
         AsyncStream { _ in }
     }
 
+    func peerHeardEvents() -> AsyncStream<RadioPeerHeardEvent> {
+        AsyncStream { _ in }
+    }
+
     func advertiseIdentity(name: String?) async throws {
         throw RadioConnectionError.identityUnavailable
     }

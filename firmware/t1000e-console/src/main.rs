@@ -263,7 +263,8 @@ mod firmware {
             // Audible feedback first so the user hears the press even if
             // the MAC layer fails or stalls.
             umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::BEACON_ACK);
-            let _ = beacon_node.send_all(&[], &SendOptions::default()).await;
+            let options = SendOptions::default().with_trace_route();
+            let _ = beacon_node.send_all(&[], &options).await;
         }
     }
 

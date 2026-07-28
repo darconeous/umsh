@@ -187,6 +187,32 @@ pub struct MobileMeshAdvertisementRecord {
     pub source_authenticated: bool,
 }
 
+/// Evidence that a peer was on the air, emitted for every accepted frame
+/// regardless of what it carried.
+///
+/// A beacon is the case this exists for: it has no payload, so it produces no
+/// advertisement, no message, and no ping reply, yet it is the cheapest
+/// possible proof that a node is still reachable. Presence is not a claim
+/// about content, so nothing here needs to be authenticated to be useful —
+/// it says only that a frame naming this sender was accepted.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshPeerHeardRecord {
+    /// Canonical Base58 address of the sender, when the frame named a full
+    /// public key or the MAC could resolve one. `None` for a hint-only
+    /// source, which the platform may still resolve against its own peer
+    /// list — see `node_hint`.
+    pub peer_address: Option<String>,
+    /// The 3-byte source node hint, when the frame carried one. Hints are
+    /// ambiguous by design: a platform matching one against saved peers must
+    /// treat a multi-way match as no match at all.
+    pub node_hint: Option<Vec<u8>>,
+    /// Whether the MAC authenticated this frame's sender. A beacon is an
+    /// unauthenticated broadcast, so this is usually `false`; it is reported
+    /// so the platform can tell "a frame claiming to be from X" from "a frame
+    /// proven to be from X".
+    pub source_authenticated: bool,
+}
+
 /// Platform-side listener invoked when `poll_update` has new data waiting.
 ///
 /// Called on the worker thread; implementations must only schedule a drain
@@ -279,6 +305,7 @@ pub struct MobileMeshSessionUpdateRecord {
     pub outbound_frames: Vec<MobileMeshOutboundFrameRecord>,
     pub ping_events: Vec<MobileMeshPingEventRecord>,
     pub advertisement_events: Vec<MobileMeshAdvertisementRecord>,
+    pub peer_heard_events: Vec<MobileMeshPeerHeardRecord>,
     /// Chat effects remain in the facade until Swift durably applies them and
     /// acknowledges this batch. Repeated polls may return the same batch.
     pub chat_batch_id: Option<u64>,
@@ -720,6 +747,7 @@ pub struct MobileMeshSession {
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
     advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
+    peer_heard: Mutex<std_mpsc::Receiver<MobileMeshPeerHeardRecord>>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
     next_chat_batch_id: Mutex<u64>,
@@ -1066,6 +1094,10 @@ impl MobileMeshSession {
         if let Ok(receiver) = self.advertisements.lock() {
             advertisement_events.extend(receiver.try_iter());
         }
+        let mut peer_heard_events = Vec::new();
+        if let Ok(receiver) = self.peer_heard.lock() {
+            peer_heard_events.extend(receiver.try_iter());
+        }
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
         let mut chat_archive_lookups = Vec::new();
@@ -1102,6 +1134,7 @@ impl MobileMeshSession {
             outbound_frames,
             ping_events,
             advertisement_events,
+            peer_heard_events,
             chat_batch_id,
             chat_mutations,
             chat_deliveries,
@@ -1156,6 +1189,7 @@ impl MobileMeshSession {
         let (outbound_tx, outbound) = std_mpsc::channel();
         let (event_tx, events) = std_mpsc::channel();
         let (advertisement_tx, advertisements) = std_mpsc::channel();
+        let (peer_heard_tx, peer_heard) = std_mpsc::channel();
         let (chat_event_tx, chat_events) = std_mpsc::channel();
         let outbound_tx = NotifyingSender {
             tx: outbound_tx,
@@ -1167,6 +1201,10 @@ impl MobileMeshSession {
         };
         let advertisement_tx = NotifyingSender {
             tx: advertisement_tx,
+            wake: wake.clone(),
+        };
+        let peer_heard_tx = NotifyingSender {
+            tx: peer_heard_tx,
             wake: wake.clone(),
         };
         let chat_event_tx = NotifyingSender {
@@ -1207,6 +1245,7 @@ impl MobileMeshSession {
                         worker_transmit_completions,
                         event_tx,
                         advertisement_tx,
+                        peer_heard_tx,
                         chat_event_tx,
                         ready_tx,
                     ),
@@ -1223,6 +1262,7 @@ impl MobileMeshSession {
             transmit_completions,
             events: Mutex::new(events),
             advertisements: Mutex::new(advertisements),
+            peer_heard: Mutex::new(peer_heard),
             chat_events: Mutex::new(chat_events),
             pending_chat_events: Mutex::new(None),
             next_chat_batch_id: Mutex::new(1),
@@ -1290,6 +1330,7 @@ async fn run_worker(
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: NotifyingSender<MobileMeshPingEventRecord>,
     advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
+    peer_heard: NotifyingSender<MobileMeshPeerHeardRecord>,
     chat_events: NotifyingSender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
@@ -1330,6 +1371,18 @@ async fn run_worker(
     let mut host = Host::new(handle);
     let node = host.add_node(identity_id);
     let mut chat = MobileChatState::new(local_key);
+    // Registered before every other receive handler: dispatch stops at the
+    // first handler that claims a packet, and presence is true of packets
+    // that something else goes on to claim. It never claims one itself.
+    let peer_heard_events = peer_heard.clone();
+    let peer_heard_subscription = node.on_receive(move |packet| {
+        let _ = peer_heard_events.send(MobileMeshPeerHeardRecord {
+            peer_address: packet.from_key().map(|peer| encode_peer_address(&peer)),
+            node_hint: packet.from_hint().map(|hint| hint.0.to_vec()),
+            source_authenticated: packet.source_authenticated(),
+        });
+        false
+    });
     let inbound_text = Rc::new(RefCell::new(Vec::<InboundText>::new()));
     let inbound_text_callback = inbound_text.clone();
     let text_subscription = node.on_receive(move |packet| {
@@ -1358,12 +1411,8 @@ async fn run_worker(
         let Some(peer) = packet.from_key() else {
             return false;
         };
-        let peer_address: String = umsh_core::base58::encode(&peer.0)
-            .into_iter()
-            .map(char::from)
-            .collect();
         let _ = advertisement_events.send(MobileMeshAdvertisementRecord {
-            peer_address,
+            peer_address: encode_peer_address(&peer),
             payload: packet.payload().to_vec(),
             source_authenticated: packet.source_authenticated(),
         });
@@ -1412,6 +1461,7 @@ async fn run_worker(
     let _subscriptions = (
         pong_subscription,
         timeout_subscription,
+        peer_heard_subscription,
         text_subscription,
         advertisement_subscription,
     );
@@ -1504,9 +1554,15 @@ async fn run_worker(
                                     let mut frame = Vec::with_capacity(bundle.len() + 1);
                                     frame.push(PayloadType::NodeIdentity as u8);
                                     frame.extend_from_slice(&bundle);
+                                    // Full source so the detached signature
+                                    // is checkable; trace route so a listener
+                                    // learns a path back to this phone from
+                                    // the same frame.
                                     node.send_all(
                                         &frame,
-                                        &SendOptions::default().with_full_source(),
+                                        &SendOptions::default()
+                                            .with_full_source()
+                                            .with_trace_route(),
                                     )
                                     .await
                                     .map(|_| ())
@@ -1942,6 +1998,15 @@ fn decode_peer(address: &str) -> Result<PublicKey, MobileError> {
     Ok(PublicKey(bytes))
 }
 
+/// The canonical fixed-width Base58 rendering of a peer key, matching what
+/// `decode_peer` accepts and what the platform stores as an address.
+fn encode_peer_address(peer: &PublicKey) -> String {
+    umsh_core::base58::encode(&peer.0)
+        .into_iter()
+        .map(char::from)
+        .collect()
+}
+
 fn emit_ping_failure(events: &NotifyingSender<MobileMeshPingEventRecord>, operation_id: u64) {
     let _ = events.send(MobileMeshPingEventRecord {
         operation_id,
@@ -2242,7 +2307,16 @@ mod tests {
                 .unwrap();
             }
             let bob_update = bob.poll_update();
+            // Presence is reported for the same frame, independently of what
+            // it carried: this is the only signal a payload-free beacon
+            // produces, so it must not be conditional on a payload.
+            let heard = bob_update.peer_heard_events;
             if let Some(event) = bob_update.advertisement_events.into_iter().next() {
+                assert_eq!(
+                    heard.iter().find_map(|record| record.peer_address.clone()),
+                    Some(address(&alice_identity)),
+                    "the frame that carried the advertisement also reported presence"
+                );
                 assert_eq!(event.peer_address, address(&alice_identity));
                 // A broadcast has no MIC, so the platform is told the sender
                 // was not authenticated and must fall back to the bundle's

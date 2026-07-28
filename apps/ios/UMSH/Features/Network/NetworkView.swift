@@ -209,7 +209,9 @@ struct PeerDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Type", value: peer.isUlcpDevice ? "Companion radio identity" : peer.kind.label)
+                // The node's own claim, refreshed whenever a fresher identity
+                // lands — not a local category anyone has to keep correct.
+                LabeledContent("Role", value: peer.role.label)
                 LabeledContent("Node hint", value: peer.identity.hint.text)
                 // The one-line answer to "how does this phone reach it?",
                 // above the fold; the Route section below has the detail.
@@ -247,7 +249,10 @@ struct PeerDetailView: View {
                 } header: {
                     Text("Advertised identity")
                 } footer: {
-                    Text(advertised.signature == .valid
+                    // A reply to an Identity Request is a MIC-authenticated
+                    // unicast and deliberately carries no signature of its
+                    // own, so "unsigned" alone does not mean "unattributable".
+                    Text(peer.advertisedIdentityIsAttributable
                          ? "These details are claims made by the peer. Nothing here is independently verified."
                          : "These details are unsigned, so they may not have come from the peer at all. Nothing here is independently verified.")
                 }

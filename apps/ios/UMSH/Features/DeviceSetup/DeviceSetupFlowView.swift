@@ -96,7 +96,7 @@ final class AdminFlowController {
 
     private let hostIdentity: MeshPublicIdentity?
     private let promoteRadio: (UUID) async throws -> Void
-    private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)?
+    private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)?
     private let session = AdministrativeDeviceSession()
     private var snapshotTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
@@ -106,7 +106,7 @@ final class AdminFlowController {
         companionIdentifier: UUID?,
         companionName: String?,
         promoteRadio: @escaping (UUID) async throws -> Void,
-        saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
     ) {
         self.hostIdentity = hostIdentity
         self.companionIdentifier = companionIdentifier
@@ -118,9 +118,9 @@ final class AdminFlowController {
     /// Record the device being configured as a peer, so the operator can
     /// find it in Network after the sheet closes. Nothing about the setup
     /// session itself is persisted.
-    func savePeer(kind: PeerKind) async -> Bool {
+    func savePeer(role: PeerRole) async -> Bool {
         guard let saveDevicePeer, let identity = snapshot.deviceIdentity else { return false }
-        return await saveDevicePeer(identity, snapshot.name, kind)
+        return await saveDevicePeer(identity, snapshot.name, role)
     }
 
     var canSavePeer: Bool { saveDevicePeer != nil }
@@ -299,7 +299,7 @@ struct DeviceSetupFlowView: View {
         companionIdentifier: UUID?,
         companionName: String?,
         promoteRadio: @escaping (UUID) async throws -> Void,
-        saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil,
+        saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil,
         isPeerSaved: @escaping (String) -> Bool = { _ in false },
         peerActions: PeerActions = .unavailable
     ) {

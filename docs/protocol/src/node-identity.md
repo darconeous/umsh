@@ -229,3 +229,5 @@ The optional 64-byte EdDSA signature is generally included only when the identit
 - broadcasts
 
 When the enclosing packet already carries a MIC, the EdDSA signature MAY be omitted.
+
+A signature is checkable only against the sending node's public key, so a signed broadcast [advertisement](beacons.md#advertisements) MUST carry its source address in full-key form. A hint-only advertisement can be verified only by a receiver that already holds the key, which is not the audience an advertisement is for.

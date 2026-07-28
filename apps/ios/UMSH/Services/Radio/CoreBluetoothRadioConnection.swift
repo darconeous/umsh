@@ -92,6 +92,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var chatContinuations: [UUID: AsyncStream<RadioChatUpdate>.Continuation] = [:]
     private var advertisementContinuations:
         [UUID: AsyncStream<RadioAdvertisementEvent>.Continuation] = [:]
+    private var peerHeardContinuations:
+        [UUID: AsyncStream<RadioPeerHeardEvent>.Continuation] = [:]
     private var scanRequested = false
     private var scanExcludesRememberedRadio = false
     private var scanAttempt = UUID()
@@ -252,6 +254,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     continuation.onTermination = { [weak self] _ in
                         self?.bluetoothQueue.async { [weak self] in
                             self?.advertisementContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent> {
+        await withCheckedContinuation { result in
+            bluetoothQueue.async { [self] in
+                // One event per accepted frame, so this is the busiest of the
+                // event streams. Dropping the oldest under back-pressure is
+                // right for presence: a stale sighting is worth less than the
+                // one that superseded it.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
+                    let id = UUID()
+                    peerHeardContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.bluetoothQueue.async { [weak self] in
+                            self?.peerHeardContinuations[id] = nil
                         }
                     }
                 }
@@ -1794,6 +1817,16 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 )
                 for continuation in advertisementContinuations.values {
                     continuation.yield(advertisement)
+                }
+            }
+            for event in update.peerHeardEvents {
+                let heard = RadioPeerHeardEvent(
+                    peerAddress: event.peerAddress,
+                    nodeHint: event.nodeHint,
+                    sourceAuthenticated: event.sourceAuthenticated
+                )
+                for continuation in peerHeardContinuations.values {
+                    continuation.yield(heard)
                 }
             }
             if let chatBatchID = update.chatBatchId,

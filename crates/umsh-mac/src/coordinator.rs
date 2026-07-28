@@ -3765,11 +3765,14 @@ impl<
         let Some(cache_key) = Self::forward_dup_key(header, frame) else {
             return false;
         };
-        if self.multicast_unknown_dup_cache.contains(&cache_key) {
+        let now_ms = self.clock.now_ms();
+        if self
+            .multicast_unknown_dup_cache
+            .contains(&cache_key, now_ms)
+        {
             return false;
         }
-        self.multicast_unknown_dup_cache
-            .insert(cache_key, self.clock.now_ms());
+        self.multicast_unknown_dup_cache.insert(cache_key, now_ms);
         true
     }
 
@@ -3981,7 +3984,7 @@ impl<
         let Some(cache_key) = Self::forward_dup_key(header, frame) else {
             return false;
         };
-        if self.dup_cache.contains(&cache_key) {
+        if self.dup_cache.contains(&cache_key, self.clock.now_ms()) {
             self.defer_pending_forward(&cache_key, header, rx, &options);
             return false;
         }

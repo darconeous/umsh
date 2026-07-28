@@ -98,7 +98,9 @@
 //! - [`DuplicateCache`] — a fixed-size FIFO ring that records recently-seen
 //!   [`DupCacheKey`] values. Before forwarding or delivering any received frame, the
 //!   coordinator checks this cache; matching entries are silently dropped. Prevents
-//!   re-delivery of frames that echoed back via multiple repeater paths.
+//!   re-delivery of frames that echoed back via multiple repeater paths. Entries
+//!   leave after [`DUP_CACHE_TTL_MS`] or when the ring recycles, whichever is first;
+//!   a hashed key repeats for the life of the sender, so age is what releases it.
 //! - [`DupCacheKey`] — keyed on the truncated MIC for authenticated packets (unforgeable
 //!   and compact) or a 32-bit hash of the frame body for unauthenticated ones (broadcast).
 //! - [`ReplayWindow`] — per-peer, per-identity sliding window over frame counters. Rejects
@@ -292,7 +294,9 @@ mod handle;
 mod peers;
 mod send;
 
-pub use cache::{DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow};
+pub use cache::{
+    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+};
 pub use coordinator::{
     AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
     LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,

@@ -28,6 +28,7 @@ Parameters:
 
 - cache size = implementation configurable (see [sizing guidance](#cache-sizing) below)
 - eviction policy = oldest entry removed when full
+- entry lifetime = bounded (see [entry expiry](#entry-expiry) below)
 
 The cache key is derived from the packet as follows:
 
@@ -45,6 +46,14 @@ Before forwarding a packet, the repeater checks the cache:
 To avoid racy reforward behavior, the repeater should insert the cache key into the cache as soon as it accepts the packet for forwarding, not after transmission completes.
 
 Shorter cache keys increase the probability of false-positive collisions. Deployments that use 4-byte or 8-byte MICs should account for this when sizing the duplicate cache.
+
+### Entry Expiry
+
+Cache entries MUST also age out. Capacity alone does not bound how long a key is suppressed, and a MIC-less packet's cache key is derived from its content: a node that repeats an identical packet — a beacon, whose body is empty and whose non-dynamic options do not change — produces the same key every time. On a quiet mesh, capacity-only eviction would suppress that node's packets for as long as the repeater runs.
+
+An entry SHOULD be discarded once it is older than a **cache lifetime** measured from when the key was first inserted. One hour is a reasonable default: long enough that every retransmission of a single packet still collapses to one forward, short enough that a node re-announcing itself is heard again well within the time anyone would wait for it.
+
+A repeat of a key already held MUST NOT extend that entry's lifetime. Refreshing the timestamp on each sighting would let a node repeating itself inside the window hold its own suppression open indefinitely, which is the behavior expiry exists to prevent.
 
 ### Cache Sizing
 

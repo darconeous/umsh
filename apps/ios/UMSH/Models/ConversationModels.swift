@@ -7,12 +7,19 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     let advertisedName: String?
     let isContact: Bool
     let systemRole: String?
-    let kind: PeerKind
+    /// The role last recorded for this node, so the answer survives a restart
+    /// and so a device configured through this phone reads correctly before it
+    /// has ever been heard on the air. Superseded by a live advertisement.
+    let storedRole: PeerRole
     /// Decoded advertised identity, when a bundle has been imported or
     /// received for this peer.
     var advertisedIdentity: MeshNodeIdentity? = nil
-    /// When we last heard from this peer by any means — advertisement, inbound
-    /// message, delivery ack, or ping reply. `nil` until the first evidence.
+    /// Whether the MAC authenticated the frame that delivered
+    /// `advertisedIdentity`. See `advertisedIdentityIsAttributable`.
+    var advertisedIdentityAuthenticated: Bool = false
+    /// When we last heard from this peer by any means — beacon, advertisement,
+    /// inbound message, delivery ack, or ping reply. `nil` until the first
+    /// evidence.
     var lastHeard: Date? = nil
 
     var displayName: String {
@@ -21,42 +28,102 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
 
     var isUlcpDevice: Bool { systemRole == "companion_radio" }
 
-    /// Whether this node plausibly forwards other nodes' traffic: filed as a
-    /// repeater on this phone, or advertising the repeater role or
-    /// capability. An advertisement is the node's own claim, not proof.
+    /// What this node says it is. A live advertisement wins over the stored
+    /// role, so the answer tracks the node rather than whatever was true when
+    /// the row was created.
+    var role: PeerRole {
+        guard let advertisedIdentity else { return storedRole }
+        return PeerRole(roleCode: advertisedIdentity.roleCode)
+    }
+
+    /// Whether this node plausibly forwards other nodes' traffic: advertising
+    /// the repeater role, or the repeater capability alongside some other
+    /// role. An advertisement is the node's own claim, not proof.
     var isLikelyRepeater: Bool {
-        if kind == .repeater { return true }
-        guard let advertisedIdentity else { return false }
-        return NodeRoleChoice.kind(for: advertisedIdentity.roleCode) == .repeater
-            || advertisedIdentity.capabilities.contains(MeshNodeIdentity.repeaterCapabilityLabel)
+        role == .repeater
+            || advertisedIdentity?.capabilities
+                .contains(MeshNodeIdentity.repeaterCapabilityLabel) == true
+    }
+
+    /// Whether the advertised claims may be attributed to this peer at all.
+    ///
+    /// Something has to have authenticated them: either the bundle's own
+    /// signature verifies against the key, or the MAC authenticated the frame
+    /// that carried it. A broadcast advertisement has no MIC and must
+    /// therefore be signed; an Identity Request reply is a MIC-authenticated
+    /// unicast that deliberately carries no signature. A signature that is
+    /// present and fails is never trusted, however the bundle arrived.
+    var advertisedIdentityIsAttributable: Bool {
+        switch advertisedIdentity?.signature {
+        case .valid: true
+        case .unsigned: advertisedIdentityAuthenticated
+        case .invalid, nil: false
+        }
     }
 }
 
-enum PeerKind: String, CaseIterable, Hashable, Sendable, Identifiable {
-    case person
-    case room
-    case sensor
+/// What a node says it is, named from the wire role byte in its advertised
+/// identity.
+///
+/// Deliberately not a local filing category the operator picks. The role is
+/// the node's own claim and arrives with its identity, so it updates on its
+/// own as fresher advertisements land and can never drift out of date against
+/// what the node is actually doing.
+enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
     case repeater
+    case chat
+    case tracker
+    case sensor
     case bridge
+    /// No identity has been heard for this node yet, or the role byte it
+    /// claimed is one this app has no name for. An unrecognized byte still
+    /// round-trips on the wire; it just cannot be described here.
     case unknown
 
     var id: Self { self }
 
+    /// The roles a device can be configured to advertise. `unknown` is not
+    /// among them: it describes an absence, not a choice.
+    static let selectable: [PeerRole] = [.repeater, .chat, .tracker, .sensor, .bridge]
+
     var label: String {
         switch self {
-        case .person: "Person"
-        case .room: "Room"
-        case .sensor: "Sensor"
         case .repeater: "Repeater"
+        case .chat: "Chat"
+        case .tracker: "Tracker"
+        case .sensor: "Sensor"
         case .bridge: "Bridge"
-        case .unknown: "Unspecified"
+        case .unknown: "Unknown"
         }
+    }
+
+    /// The wire role byte, for the roles that name one.
+    var roleCode: UInt8? {
+        switch self {
+        case .repeater: 1
+        case .chat: 2
+        case .tracker: 3
+        case .sensor: 4
+        case .bridge: 5
+        case .unknown: nil
+        }
+    }
+
+    init(roleCode: UInt8) {
+        self = PeerRole.selectable.first { $0.roleCode == roleCode } ?? .unknown
+    }
+
+    /// How a role byte is described, keeping an unrecognized one visible as a
+    /// number rather than flattening it to "Unknown" — the node did claim
+    /// something.
+    static func label(forCode code: UInt8) -> String {
+        let role = PeerRole(roleCode: code)
+        return role == .unknown ? "Role \(code)" : role.label
     }
 }
 
 struct PeerImportDetails: Sendable {
     let alias: String?
-    let kind: PeerKind
     let isContact: Bool
 }
 

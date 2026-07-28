@@ -23,7 +23,7 @@ struct SettingsView: View {
     let stopDiscovery: () async -> Void
     /// Records a device met during setup as an ordinary peer. Absent when
     /// there is no identity or store to record it against.
-    var saveDevicePeer: ((MeshPublicIdentity, String?, PeerKind) async -> Bool)? = nil
+    var saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
     /// Whether a node address is already in this phone's Network list.
     var isPeerSaved: (String) -> Bool = { _ in false }
     /// Handed to every peer sheet reachable from Settings so those sheets
@@ -421,7 +421,7 @@ struct RadioDetailView: View {
                                 advertisedName: snapshot.name,
                                 isContact: false,
                                 systemRole: "companion_radio",
-                                kind: .unknown
+                                storedRole: .unknown
                             ),
                             radioSnapshot: $snapshot,
                             actions: peerActions

@@ -6,6 +6,10 @@ protocol RadioConnection: AnyObject, Sendable {
     func receivedFrames() async -> AsyncStream<RadioReceivedFrame>
     func chatUpdates() async -> AsyncStream<RadioChatUpdate>
     func advertisementEvents() async -> AsyncStream<RadioAdvertisementEvent>
+    /// Every frame the mesh accepted, reported as presence only. This is the
+    /// sole signal a beacon produces, so it is what keeps "last heard" honest
+    /// for nodes that are reachable but have nothing to say.
+    func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent>
     func advertiseIdentity(name: String?) async throws
     func signIdentityBundle(name: String?) async throws -> Data
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
@@ -113,6 +117,32 @@ struct RadioAdvertisementEvent: Equatable, Sendable {
         case .unsigned: sourceAuthenticated
         case .invalid: false
         }
+    }
+}
+
+/// Evidence that a node was on the air. Carries no claims — only who sent a
+/// frame the mesh accepted, and how confidently that can be said.
+struct RadioPeerHeardEvent: Equatable, Sendable {
+    /// Canonical Base58 address, when the frame named a full public key.
+    let peerAddress: String?
+    /// The 3-byte source hint, when the frame carried one.
+    let nodeHint: Data?
+    /// Whether the MAC authenticated the sender. A beacon is an
+    /// unauthenticated broadcast, so this is normally false.
+    let sourceAuthenticated: Bool
+
+    /// Which saved peer this was, if it can be said at all.
+    ///
+    /// A full key is decisive. A hint is three bytes of a 32-byte key and is
+    /// ambiguous by design, so it resolves a peer only when exactly one saved
+    /// peer could have sent it: a hint two peers share names neither.
+    func resolve(among peers: [PeerSummary]) -> PeerSummary? {
+        if let peerAddress {
+            return peers.first { $0.identity.canonicalAddress == peerAddress }
+        }
+        guard let nodeHint else { return nil }
+        let candidates = peers.filter { $0.identity.hint.bytes == nodeHint }
+        return candidates.count == 1 ? candidates[0] : nil
     }
 }
 

@@ -3163,6 +3163,108 @@ public func FfiConverterTypeMobileMeshOutboundFrameRecord_lower(_ value: MobileM
 }
 
 
+/**
+ * Evidence that a peer was on the air, emitted for every accepted frame
+ * regardless of what it carried.
+ *
+ * A beacon is the case this exists for: it has no payload, so it produces no
+ * advertisement, no message, and no ping reply, yet it is the cheapest
+ * possible proof that a node is still reachable. Presence is not a claim
+ * about content, so nothing here needs to be authenticated to be useful —
+ * it says only that a frame naming this sender was accepted.
+ */
+public struct MobileMeshPeerHeardRecord: Equatable, Hashable {
+    /**
+     * Canonical Base58 address of the sender, when the frame named a full
+     * public key or the MAC could resolve one. `None` for a hint-only
+     * source, which the platform may still resolve against its own peer
+     * list — see `node_hint`.
+     */
+    public var peerAddress: String?
+    /**
+     * The 3-byte source node hint, when the frame carried one. Hints are
+     * ambiguous by design: a platform matching one against saved peers must
+     * treat a multi-way match as no match at all.
+     */
+    public var nodeHint: Data?
+    /**
+     * Whether the MAC authenticated this frame's sender. A beacon is an
+     * unauthenticated broadcast, so this is usually `false`; it is reported
+     * so the platform can tell "a frame claiming to be from X" from "a frame
+     * proven to be from X".
+     */
+    public var sourceAuthenticated: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Canonical Base58 address of the sender, when the frame named a full
+         * public key or the MAC could resolve one. `None` for a hint-only
+         * source, which the platform may still resolve against its own peer
+         * list — see `node_hint`.
+         */peerAddress: String?,
+        /**
+         * The 3-byte source node hint, when the frame carried one. Hints are
+         * ambiguous by design: a platform matching one against saved peers must
+         * treat a multi-way match as no match at all.
+         */nodeHint: Data?,
+        /**
+         * Whether the MAC authenticated this frame's sender. A beacon is an
+         * unauthenticated broadcast, so this is usually `false`; it is reported
+         * so the platform can tell "a frame claiming to be from X" from "a frame
+         * proven to be from X".
+         */sourceAuthenticated: Bool) {
+        self.peerAddress = peerAddress
+        self.nodeHint = nodeHint
+        self.sourceAuthenticated = sourceAuthenticated
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPeerHeardRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPeerHeardRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPeerHeardRecord {
+        return
+            try MobileMeshPeerHeardRecord(
+                peerAddress: FfiConverterOptionString.read(from: &buf),
+                nodeHint: FfiConverterOptionData.read(from: &buf),
+                sourceAuthenticated: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshPeerHeardRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.peerAddress, into: &buf)
+        FfiConverterOptionData.write(value.nodeHint, into: &buf)
+        FfiConverterBool.write(value.sourceAuthenticated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerHeardRecord_lift(_ buf: RustBuffer) throws -> MobileMeshPeerHeardRecord {
+    return try FfiConverterTypeMobileMeshPeerHeardRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerHeardRecord_lower(_ value: MobileMeshPeerHeardRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPeerHeardRecord.lower(value)
+}
+
+
 public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var operationId: UInt64
     public var outcome: MobileMeshPingOutcome
@@ -3419,6 +3521,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     public var outboundFrames: [MobileMeshOutboundFrameRecord]
     public var pingEvents: [MobileMeshPingEventRecord]
     public var advertisementEvents: [MobileMeshAdvertisementRecord]
+    public var peerHeardEvents: [MobileMeshPeerHeardRecord]
     /**
      * Chat effects remain in the facade until Swift durably applies them and
      * acknowledges this batch. Repeated polls may return the same batch.
@@ -3436,7 +3539,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * Complete raw UMSH frames ready for the ULCP PHY transport. Each
          * frame must be completed after the device reports the physical radio
          * result; queue acceptance is not transmit completion.
-         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord],
+         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord], peerHeardEvents: [MobileMeshPeerHeardRecord],
         /**
          * Chat effects remain in the facade until Swift durably applies them and
          * acknowledges this batch. Repeated polls may return the same batch.
@@ -3444,6 +3547,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.outboundFrames = outboundFrames
         self.pingEvents = pingEvents
         self.advertisementEvents = advertisementEvents
+        self.peerHeardEvents = peerHeardEvents
         self.chatBatchId = chatBatchId
         self.chatMutations = chatMutations
         self.chatDeliveries = chatDeliveries
@@ -3470,6 +3574,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 outboundFrames: FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.read(from: &buf),
                 pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf),
                 advertisementEvents: FfiConverterSequenceTypeMobileMeshAdvertisementRecord.read(from: &buf),
+                peerHeardEvents: FfiConverterSequenceTypeMobileMeshPeerHeardRecord.read(from: &buf),
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
                 chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
                 chatDeliveries: FfiConverterSequenceTypeMobileChatDeliveryRecord.read(from: &buf),
@@ -3482,6 +3587,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.write(value.outboundFrames, into: &buf)
         FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
         FfiConverterSequenceTypeMobileMeshAdvertisementRecord.write(value.advertisementEvents, into: &buf)
+        FfiConverterSequenceTypeMobileMeshPeerHeardRecord.write(value.peerHeardEvents, into: &buf)
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
         FfiConverterSequenceTypeMobileChatDeliveryRecord.write(value.chatDeliveries, into: &buf)
@@ -7113,6 +7219,31 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshOutboundFrameRecord: FfiCon
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileMeshOutboundFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshPeerHeardRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshPeerHeardRecord]
+
+    public static func write(_ value: [MobileMeshPeerHeardRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshPeerHeardRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshPeerHeardRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshPeerHeardRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshPeerHeardRecord.read(from: &buf))
         }
         return seq
     }

@@ -504,7 +504,13 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
         }
         match trigger {
             BeaconTrigger::Button => {
-                if node.send_all(&[], &SendOptions::default()).await.is_ok() {
+                // A beacon's whole job is "I am here, and here is a path
+                // back to me". The trace route is what carries the second
+                // half: repeaters prepend their hints as they forward, so a
+                // listener that already knows this node learns a usable
+                // source route from a packet that costs no payload at all.
+                let options = SendOptions::default().with_trace_route();
+                if node.send_all(&[], &options).await.is_ok() {
                     (hooks.beacon_confirm)();
                 }
             }
@@ -554,9 +560,14 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     }
     buf[len..len + 64].copy_from_slice(&signature);
     len += 64;
-    node.send_all(&buf[..len], &SendOptions::default())
-        .await
-        .is_ok()
+    // Full source, not a hint: the bundle's detached signature is only
+    // checkable against the sender's public key, and a broadcast carries no
+    // MIC to authenticate it otherwise. A hint-only advertisement is
+    // unverifiable by anyone who does not already hold the key, which is
+    // exactly the audience an advertisement is for. Trace route for the same
+    // reason a beacon carries one.
+    let options = SendOptions::default().with_full_source().with_trace_route();
+    node.send_all(&buf[..len], &options).await.is_ok()
 }
 
 /// Keeps the Identity Request responder's profile name synced to the live

@@ -48,9 +48,29 @@ fn duplicate_cache_evicts_oldest_entry() {
     cache.insert(DupCacheKey::Hash32(2), 2);
     cache.insert(DupCacheKey::Hash32(3), 3);
 
-    assert!(!cache.contains(&DupCacheKey::Hash32(1)));
-    assert!(cache.contains(&DupCacheKey::Hash32(2)));
-    assert!(cache.contains(&DupCacheKey::Hash32(3)));
+    assert!(!cache.contains(&DupCacheKey::Hash32(1), 3));
+    assert!(cache.contains(&DupCacheKey::Hash32(2), 3));
+    assert!(cache.contains(&DupCacheKey::Hash32(3), 3));
+}
+
+#[test]
+fn duplicate_cache_entries_age_out() {
+    let mut cache = DuplicateCache::<4>::new();
+    cache.insert(DupCacheKey::Hash32(1), 1_000);
+
+    assert!(cache.contains(&DupCacheKey::Hash32(1), 1_000 + DUP_CACHE_TTL_MS - 1));
+    assert!(!cache.contains(&DupCacheKey::Hash32(1), 1_000 + DUP_CACHE_TTL_MS));
+}
+
+/// A key repeated inside its window ages from when it was first seen, so a
+/// node repeating itself cannot keep its own suppression alive indefinitely.
+#[test]
+fn duplicate_cache_repeat_does_not_extend_the_window() {
+    let mut cache = DuplicateCache::<4>::new();
+    cache.insert(DupCacheKey::Hash32(1), 0);
+    cache.insert(DupCacheKey::Hash32(1), DUP_CACHE_TTL_MS / 2);
+
+    assert!(!cache.contains(&DupCacheKey::Hash32(1), DUP_CACHE_TTL_MS));
 }
 
 #[test]
@@ -4054,6 +4074,50 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
             assert_eq!(forwarded.not_before_ms, now_ms);
         }
     }
+}
+
+/// A beacon carries no body and no MIC, so every repetition from a node
+/// hashes to the same duplicate key. Without an expiry the first one a
+/// repeater forwards would be the last one it ever forwards.
+#[test]
+fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "the first sighting of a beacon is forwarded"
+    );
+
+    // The identical beacon inside the window is a repeat of one packet.
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a repeat inside the suppression window is not forwarded again"
+    );
+
+    mac.clock().advance_ms(crate::cache::DUP_CACHE_TTL_MS);
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "the node is heard again once its entry has aged out"
+    );
 }
 
 #[test]

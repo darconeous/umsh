@@ -21,6 +21,11 @@ struct StoredNode: Equatable, Sendable {
     /// Raw advertised-identity payload bytes (node-identity.md wire form),
     /// decoded for display through the Rust facade on load.
     let advertisement: Data?
+    /// Whether the MAC authenticated the frame that delivered `advertisement`.
+    /// A bundle that arrived as a MIC-authenticated unicast reply carries no
+    /// signature of its own, so this is the only surviving evidence that it
+    /// really came from the peer.
+    let advertisementAuthenticated: Bool
     /// Wall-clock instant we last heard from this peer by any means
     /// (advertisement, inbound message, delivery ack, ping reply). `nil`
     /// until the first inbound evidence lands.
@@ -239,15 +244,16 @@ actor SQLiteApplicationStore {
         nodeKind: String? = nil,
         systemRole: String? = nil,
         radioIdentifier: String? = nil,
-        advertisement: Data? = nil
+        advertisement: Data? = nil,
+        advertisementAuthenticated: Bool = false
     ) throws {
         let statement = try prepare(
             """
             INSERT INTO node (
                 owner_identity_id, public_address, alias, alias_search,
                 advertised_name, is_contact, system_role, radio_identifier, node_kind,
-                advertisement
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                advertisement, advertisement_authenticated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
                 alias = COALESCE(excluded.alias, node.alias),
                 alias_search = CASE WHEN excluded.alias IS NULL
@@ -257,7 +263,13 @@ actor SQLiteApplicationStore {
                 system_role = COALESCE(excluded.system_role, node.system_role),
                 radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier),
                 node_kind = COALESCE(excluded.node_kind, node.node_kind),
-                advertisement = COALESCE(excluded.advertisement, node.advertisement)
+                advertisement = COALESCE(excluded.advertisement, node.advertisement),
+                -- Provenance belongs to the bundle it describes, so it moves
+                -- only when the bundle does. A call that carries no
+                -- advertisement leaves both untouched.
+                advertisement_authenticated = CASE WHEN excluded.advertisement IS NULL
+                    THEN node.advertisement_authenticated
+                    ELSE excluded.advertisement_authenticated END
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -271,6 +283,7 @@ actor SQLiteApplicationStore {
         try bindOptional(radioIdentifier, to: statement, at: 8)
         try bindOptional(nodeKind, to: statement, at: 9)
         try bindOptional(advertisement, to: statement, at: 10)
+        try check(sqlite3_bind_int(statement, 11, advertisementAuthenticated ? 1 : 0))
         try stepDone(statement)
     }
 
@@ -433,7 +446,8 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement, last_heard_at
+                   is_contact, system_role, node_kind, advertisement,
+                   advertisement_authenticated, last_heard_at
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
                      alias_search, id
@@ -482,7 +496,8 @@ actor SQLiteApplicationStore {
             """
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
                    n.advertised_name, n.is_contact, n.system_role, n.node_kind,
-                   n.advertisement, n.last_heard_at, c.draft_text
+                   n.advertisement, n.advertisement_authenticated, n.last_heard_at,
+                   c.draft_text
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
@@ -497,7 +512,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 11)
+                        draftText: Self.stringColumn(statement, at: 12)
                     )
                 )
             case SQLITE_DONE:
@@ -854,7 +869,8 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement, last_heard_at
+                   is_contact, system_role, node_kind, advertisement,
+                   advertisement_authenticated, last_heard_at
             FROM node
             WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
             ORDER BY alias_search, id
@@ -938,7 +954,8 @@ actor SQLiteApplicationStore {
             systemRole: Self.optionalStringColumn(statement, at: offset + 6),
             nodeKind: Self.optionalStringColumn(statement, at: offset + 7),
             advertisement: Self.optionalDataColumn(statement, at: offset + 8),
-            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 9)
+            advertisementAuthenticated: sqlite3_column_int(statement, offset + 9) != 0,
+            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 10)
         )
     }
 
@@ -1566,6 +1583,32 @@ actor SQLiteApplicationStore {
                     sql: """
                     ALTER TABLE chat_message ADD COLUMN original_body TEXT;
                     PRAGMA user_version = 11;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 12 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Whether the MAC authenticated the frame that delivered the
+                // stored advertisement. A bundle's own signature is recoverable
+                // from the payload at any time; how it *arrived* is not, and an
+                // Identity Request reply is a MIC-authenticated unicast that
+                // deliberately carries no signature. Without this, such a reply
+                // is indistinguishable on reload from an unsigned broadcast
+                // anyone could have sent. Existing rows default to 0: we have
+                // no record either way, which is what the old display assumed.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node
+                        ADD COLUMN advertisement_authenticated INTEGER NOT NULL DEFAULT 0;
+                    PRAGMA user_version = 12;
                     """
                 )
                 try execute(database, sql: "COMMIT")

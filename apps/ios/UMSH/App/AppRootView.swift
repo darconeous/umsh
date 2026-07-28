@@ -209,6 +209,11 @@ struct AppRootView: View {
             }
         }
         .task {
+            for await heard in await radioConnection.peerHeardEvents() {
+                await applyPeerHeard(heard)
+            }
+        }
+        .task {
             for await peerAddress in notificationService.conversationOpens {
                 await openConversationFromNotification(peerAddress: peerAddress)
             }
@@ -262,13 +267,37 @@ struct AppRootView: View {
                 alias: nil,
                 advertisedName: identity.name,
                 isContact: false,
-                advertisement: advertisement.payload
+                // The node's own statement of what it is, refreshed on every
+                // bundle so the recorded role tracks the node.
+                nodeKind: PeerRole(roleCode: identity.roleCode).rawValue,
+                advertisement: advertisement.payload,
+                advertisementAuthenticated: advertisement.sourceAuthenticated
             )
             await touchLastHeard(advertisement.peerAddress)
             await reloadApplicationState()
         } catch {
             Self.logger.error("Failed to persist received advertisement")
         }
+    }
+
+    /// Record that a saved peer was on the air.
+    ///
+    /// A beacon carries no payload, so this is the only trace it leaves: no
+    /// advertisement, no message, no ping reply. Presence needs no
+    /// authentication to be worth recording — the claim being made is only
+    /// "a frame naming this node was accepted", and a spoofer gains nothing
+    /// by making a node look reachable. Nothing is created here: a node this
+    /// phone has never saved has no row, and hearing it is not a reason to
+    /// start keeping one.
+    @MainActor
+    private func applyPeerHeard(_ heard: RadioPeerHeardEvent) async {
+        guard let peer = heard.resolve(among: peers) else { return }
+        // Reloading the whole application state for every accepted frame
+        // would be a full transcript read per packet. Skip the write and the
+        // reload when the recorded instant would not visibly move.
+        if let lastHeard = peer.lastHeard, Date().timeIntervalSince(lastHeard) < 1 { return }
+        await touchLastHeard(peer.identity.canonicalAddress)
+        await reloadApplicationState()
     }
 
     @MainActor
@@ -437,7 +466,10 @@ struct AppRootView: View {
                 alias: details.alias,
                 advertisedName: preview.identity?.name,
                 isContact: details.isContact,
-                nodeKind: details.kind.rawValue,
+                // The role comes from the bundle, not the operator. An
+                // imported payload is only ever handed over with a verified
+                // signature, so it needs no MAC authentication to be believed.
+                nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
                 advertisement: preview.identityPayload
             )
             if startConversation {
@@ -462,7 +494,7 @@ struct AppRootView: View {
     private func saveAdministeredDevice(
         _ identity: MeshPublicIdentity,
         name: String?,
-        kind: PeerKind
+        role: PeerRole
     ) async -> Bool {
         guard let applicationStore, let localIdentity else { return false }
         do {
@@ -472,7 +504,7 @@ struct AppRootView: View {
                 alias: nil,
                 advertisedName: name,
                 isContact: false,
-                nodeKind: kind.rawValue
+                nodeKind: role.rawValue
             )
             await reloadApplicationState()
             return true
@@ -1016,8 +1048,9 @@ struct AppRootView: View {
                     advertisedName: stored.advertisedName,
                     isContact: stored.isContact,
                     systemRole: stored.systemRole,
-                    kind: stored.nodeKind.flatMap(PeerKind.init(rawValue:)) ?? .unknown,
+                    storedRole: stored.nodeKind.flatMap(PeerRole.init(rawValue:)) ?? .unknown,
                     advertisedIdentity: advertisedIdentity,
+                    advertisedIdentityAuthenticated: stored.advertisementAuthenticated,
                     lastHeard: stored.lastHeardAt
                 )
             }

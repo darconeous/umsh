@@ -29,8 +29,9 @@ pub use mobile_chat::{
 };
 pub use mobile_mesh::{
     MobileMeshAdvertisementRecord, MobileMeshError, MobileMeshOutboundFrameRecord,
-    MobileMeshPingEventRecord, MobileMeshPingOutcome, MobileMeshRouteKind, MobileMeshRouteRecord,
-    MobileMeshRxRecord, MobileMeshSession, MobileMeshSessionUpdateRecord,
+    MobileMeshPeerHeardRecord, MobileMeshPingEventRecord, MobileMeshPingOutcome,
+    MobileMeshRouteKind, MobileMeshRouteRecord, MobileMeshRxRecord, MobileMeshSession,
+    MobileMeshSessionUpdateRecord,
 };
 pub use ulcp::{
     GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAttachMode, UlcpBatteryRecord,

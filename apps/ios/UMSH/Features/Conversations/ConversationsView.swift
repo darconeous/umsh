@@ -162,7 +162,6 @@ struct NodeImportView: View {
     @State private var problem: String?
     @State private var isInspecting = false
     @State private var name = ""
-    @State private var kind = PeerKind.person
     @State private var isContact = true
 
     var body: some View {
@@ -203,13 +202,11 @@ struct NodeImportView: View {
                 }
                 Section("Local details") {
                     TextField("Name (optional)", text: $name)
-                    Picker("Type", selection: $kind) {
-                        ForEach(PeerKind.allCases) { kind in
-                            Text(kind.label).tag(kind)
-                        }
-                    }
                     Toggle("Save as contact", isOn: $isContact)
-                    Text("Name and type are stored only on this phone; they are not authenticated claims from the peer.")
+                    // What the node *is* is not a local detail: it comes from
+                    // the identity above and updates itself when the node says
+                    // otherwise, so there is nothing to pick here.
+                    Text("The name is stored only on this phone; it is not an authenticated claim from the peer.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -260,7 +257,6 @@ struct NodeImportView: View {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return PeerImportDetails(
             alias: trimmed.isEmpty ? nil : trimmed,
-            kind: kind,
             isContact: isContact
         )
     }

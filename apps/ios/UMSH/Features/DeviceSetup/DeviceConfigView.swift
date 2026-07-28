@@ -64,7 +64,7 @@ struct DeviceConfigView: View {
         // A tracker says what it is. A repeater leaves the role empty on
         // purpose: the device derives "repeater" from the fact that it is
         // forwarding, so the advertised role cannot drift from the truth.
-        _identRole = State(initialValue: goal == .tracker ? NodeRoleChoice.tracker.byte : sync.identRole)
+        _identRole = State(initialValue: goal == .tracker ? PeerRole.tracker.roleCode : sync.identRole)
         _identMobile = State(initialValue: goal == .tracker ? true : (sync.identMobile ?? false))
         _repeaterEnabled = State(initialValue: goal == .repeaterNode ? true : (repeater?.enabled ?? false))
         _regions = State(initialValue: repeater?.regions ?? [])
@@ -178,7 +178,7 @@ struct DeviceConfigView: View {
                         radioSnapshot: .constant(.idle),
                         actions: peerActions,
                         savePeer: controller.canSavePeer
-                            ? { await controller.savePeer(kind: advertisedKind) }
+                            ? { await controller.savePeer(role: advertisedPeerRole) }
                             : nil,
                         isPeerSaved: isPeerSaved(identity.canonicalAddress)
                     )
@@ -273,8 +273,8 @@ struct DeviceConfigView: View {
         Section {
             Picker("Role", selection: $identRole) {
                 Text("Derive from what it does").tag(UInt8?.none)
-                ForEach(NodeRoleChoice.selectable) { choice in
-                    Text(choice.label).tag(UInt8?.some(choice.byte))
+                ForEach(PeerRole.selectable) { role in
+                    Text(role.label).tag(role.roleCode)
                 }
             }
             Toggle("Device moves around", isOn: $identMobile)
@@ -314,7 +314,7 @@ struct DeviceConfigView: View {
         guard let identRole else {
             return repeaterEnabled && sync.supportsRepeater ? "Repeater" : "Tracker"
         }
-        return NodeRoleChoice.label(for: identRole)
+        return PeerRole.label(forCode: identRole)
     }
 
     /// The device presented as an ordinary node, so it can be shown through
@@ -328,18 +328,18 @@ struct DeviceConfigView: View {
             advertisedName: controller.snapshot.name,
             isContact: false,
             systemRole: nil,
-            kind: advertisedKind
+            storedRole: advertisedPeerRole
         )
     }
 
     /// What the device advertises *today*, from its reported settings rather
     /// than the unsaved form — a peer record must not be filed under a role
     /// the device has not been given yet.
-    private var advertisedKind: PeerKind {
+    private var advertisedPeerRole: PeerRole {
         guard let role = sync.identRole else {
             return sync.repeater?.enabled == true ? .repeater : .unknown
         }
-        return NodeRoleChoice.kind(for: role)
+        return PeerRole(roleCode: role)
     }
 
     private var configuration: UlcpDeviceConfigRecord? {
@@ -470,38 +470,5 @@ struct DeviceConfigView: View {
         if requested.identMobile != readback.identMobile { return "device mobility" }
         if requested.repeater != readback.repeater { return "the repeater policy" }
         return nil
-    }
-}
-
-/// The node roles an operator can pick by name.
-///
-/// Deliberately not every role on the wire: a role byte the device does not
-/// recognize still round-trips, but offering one in a picker would be
-/// inviting a configuration nobody can act on.
-struct NodeRoleChoice: Identifiable {
-    let byte: UInt8
-    let label: String
-    /// How a node in this role is filed when it is recorded locally. The
-    /// local peer model is coarser than the wire role, so more than one
-    /// role lands on **Unspecified** rather than being given a category the
-    /// app cannot act on.
-    let peerKind: PeerKind
-
-    var id: UInt8 { byte }
-
-    static let repeaterNode = NodeRoleChoice(byte: 1, label: "Repeater", peerKind: .repeater)
-    static let chat = NodeRoleChoice(byte: 2, label: "Chat", peerKind: .person)
-    static let tracker = NodeRoleChoice(byte: 3, label: "Tracker", peerKind: .unknown)
-    static let sensor = NodeRoleChoice(byte: 4, label: "Sensor", peerKind: .sensor)
-    static let bridge = NodeRoleChoice(byte: 5, label: "Bridge", peerKind: .bridge)
-
-    static let selectable = [repeaterNode, chat, tracker, sensor, bridge]
-
-    static func label(for byte: UInt8) -> String {
-        selectable.first { $0.byte == byte }?.label ?? "Role \(byte)"
-    }
-
-    static func kind(for byte: UInt8) -> PeerKind {
-        selectable.first { $0.byte == byte }?.peerKind ?? .unknown
     }
 }
