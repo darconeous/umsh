@@ -71,9 +71,11 @@ Flooding works across bridges, but the remaining flood hop count is clamped when
 
 UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.
 
-If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the **route retry option**, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.
+If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the **route retry option**, which allows repeaters to forward it even if they already suppressed the original attempt.
 
-See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwarding-confirmation) and [Repeater Operation § Source-Route Failure Recovery](repeater-operation.md#source-route-failure-recovery).
+A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows `FHOPS` accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.
+
+See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwarding-confirmation) and [Repeater Operation § Route Failure Recovery](repeater-operation.md#route-failure-recovery).
 
 ## Channel Access
 

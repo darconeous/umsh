@@ -85,17 +85,17 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 ### Route Retry (option 6)
 - Type: zero-length flag
-- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.
+- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.
 - If more than one option with this number is present, the packet MUST be dropped.
 - This option is intended for sender-originated route recovery, not for ordinary first transmission.
+- The failed assumption need not be a source route. A sender that narrowed `FHOPS` because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.
 - When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
 - The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
 - A sender using this option for route recovery typically:
-  - removes the stale source-route option
-  - adds or refreshes flood hops
+  - removes the stale source-route option, if one was present
+  - adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend
   - includes a trace-route option to learn a replacement route
   - preserves the same frame counter and payload
-- This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.
 
 ### Station Callsign (option 7)
 - Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)

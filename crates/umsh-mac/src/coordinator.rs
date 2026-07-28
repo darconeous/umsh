@@ -4398,8 +4398,12 @@ impl<
         if options.route_retry {
             return None;
         }
-        let source_route = resend.source_route.as_ref()?;
-        if source_route.is_empty() {
+        let source_route = resend
+            .source_route
+            .as_ref()
+            .filter(|route| !route.is_empty());
+        if source_route.is_none() && resend.requested_flood_hops.is_none() {
+            // Neither a route to abandon nor an application budget to restore.
             return None;
         }
 
@@ -4523,12 +4527,15 @@ impl<
         &self,
         peer: &PublicKey,
         header: &PacketHeader,
-        source_route: &heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>,
+        source_route: Option<&heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
         requested: Option<u8>,
     ) -> Option<u8> {
-        // The failed attempt rode a route, so its own `FHOPS_REM` was narrowed
-        // to what that route cost. Rediscovery has to reach past the break, so
-        // prefer the budget the application was willing to spend.
+        // The failed attempt was narrowed against a route assumption — either
+        // an attached source route, or a cached route that clamped `FHOPS_REM`
+        // below what was asked for. Rediscovery has to reach past the break,
+        // so prefer the budget the application was willing to spend; it is
+        // also the ceiling, since route recovery may undo the MAC's narrowing
+        // but not exceed the caller's own limit.
         let requested = requested
             .filter(|hops| *hops > 0)
             .map(|hops| hops.clamp(1, MAX_FLOOD_HOPS));
@@ -4545,8 +4552,8 @@ impl<
                 }
                 _ => None,
             });
-        let route_len = u8::try_from(source_route.len())
-            .ok()
+        let route_len = source_route
+            .and_then(|route| u8::try_from(route.len()).ok())
             .map(|hops| hops.clamp(1, MAX_FLOOD_HOPS));
 
         requested.or(existing).or(cached).or(route_len).or(Some(5))
@@ -4802,6 +4809,20 @@ impl<
             .min(t_frame_ms.saturating_mul(4))
     }
 
+    /// Whether a timed-out send carries a route assumption worth abandoning.
+    ///
+    /// An attached source route is the obvious case: the named path did not
+    /// deliver. The subtler one is a flood budget the MAC narrowed on the
+    /// sender's behalf. A peer cached as [`CachedRoute::Direct`] transmits at
+    /// [`ESTABLISHED_ROUTE_EXTRA_HOPS`] however wide a flood the application
+    /// asked for, so a peer that has since moved out of direct range cannot be
+    /// reached by repeating the same frame — and nothing in the options records
+    /// that a route was ever assumed. That is the same staleness as a dead
+    /// source-route hint, kept in `FHOPS` instead of in an option.
+    ///
+    /// A budget the *application* chose is left alone. Route recovery exists to
+    /// undo the MAC's own narrowing, not to flood wider than the caller was
+    /// willing to.
     fn can_attempt_route_retry(pending: &PendingAck<FRAME>) -> bool {
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
@@ -4812,13 +4833,27 @@ impl<
         ) else {
             return false;
         };
-        !options.route_retry
-            && pending
-                .resend
-                .source_route
-                .as_ref()
-                .map(|route| !route.is_empty())
-                .unwrap_or(false)
+        if options.route_retry {
+            return false;
+        }
+        let has_source_route = pending
+            .resend
+            .source_route
+            .as_ref()
+            .map(|route| !route.is_empty())
+            .unwrap_or(false);
+        if has_source_route {
+            return true;
+        }
+        // An absent `FHOPS` byte is a budget of zero: the send went out direct.
+        let sent = header
+            .flood_hops
+            .map(|hops| hops.remaining())
+            .unwrap_or_default();
+        pending
+            .resend
+            .requested_flood_hops
+            .is_some_and(|requested| requested > sent)
     }
 
     fn direct_ack_timeout_ms(&self) -> u64 {

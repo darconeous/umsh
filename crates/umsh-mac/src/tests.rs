@@ -6592,6 +6592,169 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     assert!(pending_options.route_retry);
 }
 
+/// A peer cached as directly reachable transmits at
+/// `ESTABLISHED_ROUTE_EXTRA_HOPS` no matter how wide a flood the caller asked
+/// for, and carries no option saying so. When it stops answering, the cache
+/// entry is exactly as stale as a dead source-route hint — the retry has to
+/// abandon it and flood at the budget the application actually requested.
+#[test]
+fn route_retry_escalates_a_send_narrowed_by_a_cached_direct_route() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::Direct);
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .with_flood_hops(5),
+        )
+        .unwrap()
+        .unwrap();
+
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+    let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
+    let original_options = ParsedOptions::extract(
+        original.frame.as_slice(),
+        original_header.options_range.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        original_header.flood_hops.unwrap().remaining(),
+        ESTABLISHED_ROUTE_EXTRA_HOPS,
+        "a direct cache entry should narrow the attempt's budget"
+    );
+    assert!(
+        original_options.source_route.is_none(),
+        "the narrowing is recorded in FHOPS, not in an option"
+    );
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+
+    let mut timeout_seen = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timeout_seen = true;
+        }
+    })
+    .unwrap();
+    assert!(!timeout_seen, "the send should be retried, not abandoned");
+
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    let retry_header = PacketHeader::parse(retry.frame.as_slice()).unwrap();
+    let retry_options =
+        ParsedOptions::extract(retry.frame.as_slice(), retry_header.options_range.clone()).unwrap();
+    assert!(retry_options.route_retry);
+    assert!(
+        retry_options.trace_route.is_some(),
+        "the retry should ask for a replacement route"
+    );
+    assert_eq!(retry_header.flood_hops.unwrap().remaining(), 5);
+    assert_eq!(
+        &retry.frame.as_slice()[retry_header.mic_range.clone()],
+        &original.frame.as_slice()[original_header.mic_range.clone()],
+        "route retry re-sends the same logical packet"
+    );
+}
+
+/// A caller that asked for a direct send gets a direct send. Route recovery
+/// undoes the MAC's own narrowing; it does not overrule the application.
+#[test]
+fn route_retry_is_not_attempted_when_the_caller_chose_the_narrow_budget() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::Direct);
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true).no_flood(),
+        )
+        .unwrap()
+        .unwrap();
+
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+    let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
+    assert!(
+        original_header.flood_hops.is_none(),
+        "no_flood should leave the FHOPS byte off entirely"
+    );
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+
+    let mut timeout_seen = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timeout_seen = true;
+        }
+    })
+    .unwrap();
+
+    assert!(timeout_seen, "a caller-chosen direct send should time out");
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "route retry must not invent a flood the caller declined"
+    );
+}
+
+/// Nothing was narrowed, so there is no route assumption to abandon.
+#[test]
+fn route_retry_is_not_attempted_when_the_send_already_flooded_as_asked() {
+    let (mut mac, local_id, peer_key, _peer_id) = mac_with_keyed_peer();
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .with_flood_hops(5),
+        )
+        .unwrap()
+        .unwrap();
+
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+    let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
+    assert_eq!(original_header.flood_hops.unwrap().remaining(), 5);
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+
+    let mut timeout_seen = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timeout_seen = true;
+        }
+    })
+    .unwrap();
+
+    assert!(timeout_seen);
+    assert!(mac.tx_queue_mut().pop_next().is_none());
+}
+
 #[test]
 fn route_retry_restores_the_full_budget_after_a_narrowed_source_routed_send() {
     let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();

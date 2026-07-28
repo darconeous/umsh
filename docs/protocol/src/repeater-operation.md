@@ -147,22 +147,29 @@ where `n` is the 1-based retry number. After this delay expires, the retry is tr
 
 A node MUST NOT retry more than 3 times.
 
-### Source-Route Failure Recovery
+### Route Failure Recovery
 
-When a node uses a cached source route for an ack-requested unicast or blind-unicast packet and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.
+When a node sends an ack-requested unicast or blind-unicast packet against a cached route and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.
+
+Two kinds of cached route can fail this way, and they fail identically from the sender's point of view:
+
+- an explicit **source route**, carried in the packet as a [source-route option](packet-options.md#source-route-option-3)
+- a cached **distance** — the destination believed to be directly reachable, or reachable within a known number of flood hops — which narrows `FHOPS` and leaves no trace in the options
 
 A practical recovery rule is:
 
-1. if the sender exhausts the retry budget for a packet sent using a cached source route, it SHOULD treat that cached route as failed
+1. if the sender exhausts the retry budget for a packet sent against a cached route, it SHOULD treat that cached route as failed
 2. the failed route SHOULD be discarded or marked unusable for immediate reuse
 3. if the sender wishes to re-attempt delivery of the **same logical packet**, it SHOULD:
    - preserve the same frame counter, payload, and MIC
-   - remove the stale source-route option
+   - remove the stale source-route option, if one was present
    - add or refresh flood hops
    - include a trace-route option if route rediscovery is desired
    - set the [Route Retry option](packet-options.md#route-retry-option-6)
 
-This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the rerouted attempt even if they already suppressed the original source-routed attempt as a duplicate.
+The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.
+
+This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.
 
 This preserves a useful separation of responsibilities:
 
