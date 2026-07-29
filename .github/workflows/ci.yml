@@ -146,18 +146,42 @@ jobs:
       - name: Build mobile-core xcframework + Swift bindings
         run: ./scripts/ios/build-mobile-core.sh
 
+      # GitHub rotates the simulators in its macOS images, so pinning a device
+      # name is a standing breakage: the image this first ran on had no
+      # "iPhone 16" at all (its oldest iPhone was 16e). Resolve a concrete
+      # simulator UDID at run time instead — newest iOS runtime, any iPhone.
+      - name: Select an iOS simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          best = None
+          for runtime, devices in data.items():
+              if "SimRuntime.iOS-" not in runtime:
+                  continue
+              version = tuple(int(p) for p in runtime.split("iOS-")[1].split("-"))
+              for device in devices:
+                  if device["name"].startswith("iPhone"):
+                      if best is None or version > best[0]:
+                          best = (version, device["udid"], device["name"])
+                      break
+          if best is None:
+              sys.exit("no available iPhone simulator found")
+          print(best[1])
+          print("selected:", best[2], best[0], file=sys.stderr)
+          ')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
       # The package pins .iOS(.v18), so `swift test` on the macOS host can't
       # run it — a simulator destination is required. xcodebuild derives the
       # UMSHMobileCore scheme from Package.swift (no checked-in .xcscheme).
-      # Device name may need bumping as GitHub's macOS runner images rotate
-      # available simulator runtimes; check `xcrun simctl list devicetypes`
-      # on the runner if this starts failing to resolve a destination.
       - name: Test UMSHMobileCore Swift package
         run: |
           cd packages/UMSHMobileCore
           xcodebuild test \
             -scheme UMSHMobileCore \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
       # No app-level XCTest target exists yet (UMSH.xcscheme's TestAction has
@@ -183,10 +207,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: esp-rs/xtensa-toolchain@v1.5
+      # espup resolves the "latest" Xtensa Rust release through the GitHub API,
+      # which 403s from Actions runners when unauthenticated (shared runner IPs
+      # are aggressively rate-limited). espup reads GITHUB_TOKEN and its docs
+      # recommend setting it in CI. The action itself declares no token input,
+      # so it goes in the step env. If the lookup is still flaky, pin the
+      # `version:` input to skip the API call entirely.
+      - uses: esp-rs/xtensa-toolchain@v1.7.0
         with:
           ldproxy: false
           buildtargets: esp32s3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
         with:
