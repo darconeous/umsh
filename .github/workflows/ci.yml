@@ -1,0 +1,195 @@
+name: CI
+
+# Tiering rationale: the "fast" job covers the bulk of
+# protocol/crypto/wire-format regressions in about a minute on stock Ubuntu.
+# The nRF52840 firmware job is release-only because dev builds overflow flash
+# on these boards (see CLAUDE.md) — it's also the only thing that would have
+# caught a flash-budget regression before it shipped. The Apple job runs on
+# every push/PR since this is a public repo (macOS runner minutes are free
+# here); ESP32 is pushed to main-only / manual-dispatch since it's the least
+# load-bearing target right now (Heltec V2 parked, only V3 active) and needs
+# a heavier toolchain bring-up.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: fmt, test, clippy, docs, dissector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      # NOTE: plain `cargo test`, not `--workspace` — the latter drags in
+      # firmware/* crates that aren't meant to build on host and currently
+      # fail (umsh-ulcp-runtime needs an embedded-target embassy feature).
+      # default-members in Cargo.toml is what excludes them.
+      # --locked here (and not in the firmware/ESP32 jobs, which go through
+      # the Makefile) is enough to catch a Cargo.toml change that forgot to
+      # update the committed lockfile — they all share the root Cargo.lock.
+      - name: cargo test
+        run: cargo test --locked
+
+      # Report-only for now: there are pre-existing clippy warnings in the
+      # tree (collapsible-if, needless-borrow, too-many-arguments). Flip to
+      # `cargo clippy -- -D warnings` once those are cleaned up.
+      - name: cargo clippy (report only)
+        run: cargo clippy --all-targets
+        continue-on-error: true
+
+      - name: Install mdbook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: "latest"
+
+      - name: mdbook build
+        run: mdbook build docs/protocol/
+
+      # run_tests.lua needs Lua 5.3+ and stubs the Wireshark API, so no
+      # Wireshark install is required. Crypto-level checks self-skip when
+      # luagcrypt is absent (27 assertions still run).
+      - name: Wireshark dissector unit tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          lua5.4 dissectors/tests/run_tests.lua
+
+  firmware-nrf52840:
+    name: firmware (nRF52840) / ${{ matrix.board }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `make_target` maps to a Makefile target where one exists, so CI
+          # reuses the exact same build recipe developers use locally. Only
+          # ble-spike-techo has no Makefile target (it's a throwaway bring-up
+          # spike, not a product image) so it's built directly.
+          - board: techo
+            make_target: build-techo
+          - board: techo-console
+            make_target: build-techo-console
+          - board: t1000e
+            make_target: build-t1000e
+          - board: t1000e-console
+            make_target: build-t1000e-console
+          - board: sensecap-solar
+            make_target: build-sensecap-solar
+          - board: sensecap-solar-console
+            make_target: build-sensecap-solar-console
+          - board: wio-tracker-l1-console
+            make_target: build-wio-tracker-l1-console
+          - board: ble-spike-techo
+            make_target: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+
+      # The firmware crates are members of the ROOT workspace (no per-firmware
+      # Cargo.lock, and the Makefile's TARGET_DIR is root-relative), so the
+      # cache tracks the root workspace, not firmware/<board>. Only the
+      # working directory differs per board — that's what picks up the
+      # per-firmware .cargo/config.toml.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.board }}
+
+      # nrf-sdc-sys / nrf-mpsl-sys run bindgen at build time (cross-targeting
+      # ARM via clang args), so libclang must be present. It's normally in the
+      # runner image already; installing it explicitly removes a whole class
+      # of confusing build.rs failures.
+      - name: Install libclang (bindgen)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+
+      # nRF52840 firmware only links in --release (dev overflows flash).
+      - name: Build (release)
+        run: |
+          if [ -n "${{ matrix.make_target }}" ]; then
+            make ${{ matrix.make_target }}
+          else
+            cd firmware/${{ matrix.board }} && cargo build --release
+          fi
+
+  apple:
+    name: iOS / mobile-core
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build mobile-core xcframework + Swift bindings
+        run: ./scripts/ios/build-mobile-core.sh
+
+      # The package pins .iOS(.v18), so `swift test` on the macOS host can't
+      # run it — a simulator destination is required. xcodebuild derives the
+      # UMSHMobileCore scheme from Package.swift (no checked-in .xcscheme).
+      # Device name may need bumping as GitHub's macOS runner images rotate
+      # available simulator runtimes; check `xcrun simctl list devicetypes`
+      # on the runner if this starts failing to resolve a destination.
+      - name: Test UMSHMobileCore Swift package
+        run: |
+          cd packages/UMSHMobileCore
+          xcodebuild test \
+            -scheme UMSHMobileCore \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO
+
+      # No app-level XCTest target exists yet (UMSH.xcscheme's TestAction has
+      # no Testables) — this is a build-only gate until one's added.
+      - name: Build UMSH app (simulator)
+        run: |
+          xcodebuild build \
+            -project apps/ios/UMSH.xcodeproj \
+            -scheme UMSH \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+  esp32:
+    name: firmware (ESP32) / ${{ matrix.make_target }}
+    runs-on: ubuntu-latest
+    # Main-only / manual: heavier toolchain bring-up, and the least
+    # load-bearing target right now (Heltec V2 is parked, only V3 is active).
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        make_target: [build-heltec-v3, build-heltec-v3-console]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          ldproxy: false
+          buildtargets: esp32s3
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware-esp32
+
+      - run: make ${{ matrix.make_target }}
