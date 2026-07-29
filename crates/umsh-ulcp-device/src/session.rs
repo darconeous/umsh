@@ -1497,8 +1497,11 @@ impl SavedState {
             prop::PHY_FREQ => {
                 self.settings.freq_khz = validate_freq_khz(config, value).map_err(invalid)?
             }
+            // A snapshot carrying a power this radio cannot reach — one
+            // restored across a hardware change — clamps like a live
+            // write rather than failing the whole restore.
             prop::PHY_TX_POWER => {
-                self.settings.tx_power_dbm = validate_tx_power(config, value).map_err(invalid)?
+                self.settings.tx_power_dbm = clamp_tx_power(config, value).map_err(invalid)?
             }
             prop::PHY_LORA_BW => self.settings.bw_hz = validate_bw_hz(value).map_err(invalid)?,
             prop::PHY_LORA_SF => self.settings.sf = validate_sf(value).map_err(invalid)?,
@@ -1545,9 +1548,7 @@ impl SavedState {
             prop::MAC_REPEATER_MIN_SNR => {
                 self.repeater_min_snr = Some(parse_i8(value).map_err(invalid)?)
             }
-            prop::DEV_DISCOVERABLE => {
-                self.dev_discoverable = parse_bool(value).map_err(invalid)?
-            }
+            prop::DEV_DISCOVERABLE => self.dev_discoverable = parse_bool(value).map_err(invalid)?,
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
@@ -1920,9 +1921,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::MAC_REPEATER_MIN_SNR => {
                         self.device.repeater_min_snr = saved.repeater_min_snr
                     }
-                    prop::DEV_DISCOVERABLE => {
-                        self.device.dev_discoverable = saved.dev_discoverable
-                    }
+                    prop::DEV_DISCOVERABLE => self.device.dev_discoverable = saved.dev_discoverable,
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
@@ -2891,7 +2890,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 Ok(true)
             }
             prop::PHY_TX_POWER => {
-                self.device.settings.tx_power_dbm = validate_tx_power(&self.config, value)?;
+                self.device.settings.tx_power_dbm = clamp_tx_power(&self.config, value)?;
                 Ok(true)
             }
             prop::PHY_LORA_BW => {
@@ -3321,10 +3320,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             data,
             tid,
             airtime_ms,
+            // The per-frame override is clamped to the radio's range for
+            // the same reason `PROP_PHY_TX_POWER` is: an unreachable
+            // power transmits at the nearest reachable one.
             power: match tx_meta.power {
                 meta::TX_POWER_DEFAULT => TxPower::Default,
                 meta::TX_POWER_MAX => TxPower::Max,
-                dbm => TxPower::Dbm(dbm),
+                dbm => TxPower::Dbm(
+                    dbm.clamp(self.config.min_tx_power_dbm, self.config.max_tx_power_dbm),
+                ),
             },
             autonomous: false,
             ack_for: None,
@@ -3699,6 +3703,13 @@ fn valid_device_name(value: &[u8]) -> bool {
 // a value a host could never write is also a value a snapshot cannot
 // smuggle in. They validate the value only: transport authorization is
 // the caller's business, and the restore path deliberately has none.
+//
+// Values naming a discrete choice (a frequency, a modem setting) are
+// rejected outright when unsupported, because the nearest supported
+// value is a different choice and silently substituting it produces a
+// radio that cannot talk to the network it was pointed at. Values
+// expressing "as much as the hardware has" are clamped instead — see
+// `clamp_tx_power`.
 
 fn validate_freq_khz(config: &SessionConfig, value: &[u8]) -> Result<u32, Status> {
     let freq_khz = parse_u32(value)?;
@@ -3708,12 +3719,13 @@ fn validate_freq_khz(config: &SessionConfig, value: &[u8]) -> Result<u32, Status
     Ok(freq_khz)
 }
 
-fn validate_tx_power(config: &SessionConfig, value: &[u8]) -> Result<i8, Status> {
-    let power = parse_i8(value)?;
-    if !(config.min_tx_power_dbm..=config.max_tx_power_dbm).contains(&power) {
-        return Err(Status::INVALID_ARGUMENT);
-    }
-    Ok(power)
+/// Transmit power is a hardware capability, not a protocol choice: a
+/// request the radio cannot reach is honored as closely as it can be,
+/// and the `CMD_PROP_IS` echo of the stored value reports what the host
+/// actually got. Nothing else advertises the achievable range, so that
+/// echo is how a host discovers it. Only the width is an error.
+fn clamp_tx_power(config: &SessionConfig, value: &[u8]) -> Result<i8, Status> {
+    Ok(parse_i8(value)?.clamp(config.min_tx_power_dbm, config.max_tx_power_dbm))
 }
 
 fn validate_bw_hz(value: &[u8]) -> Result<u32, Status> {
@@ -4411,6 +4423,39 @@ mod tests {
         assert_eq!(get(&mut session, prop::PHY_FREQ), 906_875u32.to_le_bytes());
     }
 
+    /// The test radio spans -9..=22 dBm. A request outside it succeeds
+    /// at the nearest reachable power, and the echoed `CMD_PROP_IS` —
+    /// the only place the range is visible — reports what was installed.
+    #[test]
+    fn tx_power_clamps_to_radio_range() {
+        let mut session = test_session();
+        for (requested, expected) in [(-20i8, -9i8), (40, 22), (-9, -9), (22, 22), (14, 14)] {
+            let (emitted, effect) = set(&mut session, prop::PHY_TX_POWER, &[requested as u8]);
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::PHY_TX_POWER);
+            assert_eq!(value, [expected as u8], "set {requested} dBm");
+            assert!(
+                matches!(effect, Some(Effect::ApplyRadio(s)) if s.tx_power_dbm == expected),
+                "set {requested} dBm"
+            );
+            assert_eq!(get(&mut session, prop::PHY_TX_POWER), [expected as u8]);
+        }
+    }
+
+    /// The per-frame `TX_POWER` override obeys the same range as the
+    /// property, so a host cannot route around it by staging a transmit.
+    #[test]
+    fn tx_power_override_clamps_to_radio_range() {
+        for (requested, expected) in [(-20i8, -9i8), (40, 22)] {
+            let mut session = test_session();
+            enable(&mut session);
+            let meta = [requested as u8, 0x00];
+            let (_, effect) = send_packet(&mut session, 4, &[0u8; 8], &meta, 0);
+            assert_eq!(effect, Some(Effect::StartTransmit));
+            assert_eq!(session.tx_power(), TxPower::Dbm(expected), "tx {requested}");
+        }
+    }
+
     #[test]
     fn invalid_values_rejected() {
         let mut session = test_session();
@@ -4420,7 +4465,9 @@ mod tests {
             (prop::PHY_LORA_CR, &[9][..]),
             (prop::PHY_LORA_BW, &123_456u32.to_le_bytes()[..]),
             (prop::PHY_FREQ, &10_000u32.to_le_bytes()[..]),
-            (prop::PHY_TX_POWER, &[40][..]),
+            // Out-of-range TX power clamps rather than failing; only a
+            // wrong-width value is an error.
+            (prop::PHY_TX_POWER, &[14, 0][..]),
             (prop::PHY_ENABLED, &[2][..]),
             (prop::PHY_LORA_SW, &0xBEEFu16.to_le_bytes()[..]),
             // Wrong width.

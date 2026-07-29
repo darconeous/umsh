@@ -131,7 +131,9 @@ and will have the following format:
 The `Send` metadata is the following fields in order:
 
 * `TX_POWER` (`i8`): Transmit power override (`0x7F` indicates to use the radio
-  default, `0x7E` indicates to transmit at maximum power)
+  default, `0x7E` indicates to transmit at maximum power). A power the radio
+  cannot reach is clamped to its range, as for
+  [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power).
 * `TX_FLAGS` (`u8`): Transmit flags
   * `TX_FLAG_NOCCA` Bit 0: If set, do not use CCA (or the equivalent LoRa
     mechanism)

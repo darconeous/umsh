@@ -96,21 +96,34 @@ pub struct UlcpSyncRecord {
     pub host_channel_count: Option<u32>,
     pub host_peer_count: Option<u32>,
     pub auto_ack: Option<bool>,
-    /// Present exactly when `supports_repeater`.
+    /// Present when `supports_repeater` and the device reported the whole
+    /// policy.
     pub repeater: Option<UlcpRepeaterSettingsRecord>,
     /// `PROP_DEV_PEERS`: the peer public keys stored on the device
-    /// identity, read back losslessly. Present exactly when
-    /// `supports_device_identity`.
+    /// identity, read back losslessly. Present when
+    /// `supports_device_identity` and the device reported the list.
     pub dev_peer_keys: Option<Vec<Vec<u8>>>,
-    /// `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
-    /// from what it is actually doing" and "no `CAP_IDENT`" —
-    /// `supports_ident` distinguishes them.
+    /// `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
+    /// what it is actually doing", "no `CAP_IDENT`", and "the device would
+    /// not report it" — `supports_ident` and `unreadable_properties`
+    /// distinguish them.
     pub ident_role: Option<u8>,
-    /// `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+    /// `PROP_IDENT_MOBILE`. Present when `supports_ident` and the device
+    /// reported it.
     pub ident_mobile: Option<bool>,
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
-    /// Identity Requests. Present exactly when `supports_device_identity`.
+    /// Identity Requests. Present when `supports_device_identity` and the
+    /// device reported it.
     pub dev_discoverable: Option<bool>,
+    /// Capability-gated properties the device advertised but would not
+    /// report, in ascending order.
+    ///
+    /// A device that refuses a property — old firmware behind a newer
+    /// capability, a property it never implemented — is a device with an
+    /// unknown setting, not one this phone cannot administer. Their values
+    /// are absent above, they are left out of configuration writes, and
+    /// nothing about them can be verified after a save.
+    pub unreadable_properties: Vec<u32>,
 }
 
 /// `PROP_SAVED`: what the radio reports about its stored snapshot.
@@ -291,7 +304,10 @@ enum ExpectedResponse {
     Property(u32),
     Claim,
     Save,
-    ConfigurationProperty(u32, Vec<u8>),
+    /// A `CMD_PROP_SET` of this property. The value written is not kept:
+    /// the device's `CMD_PROP_IS` is what the property is worth, so there
+    /// is nothing to compare it against.
+    ConfigurationProperty(u32),
     SaveConfiguration,
     RawTransmit,
     /// A `CMD_PROP_INSERT` of this key into `PROP_DEV_PEERS`.
@@ -491,7 +507,7 @@ impl MobileUlcpSession {
         validate_radio_settings(&settings, &state)?;
 
         state.expected.clear();
-        state.configuration_queue = configuration_values(settings, Vec::new()).into();
+        state.configuration_queue = state.writable(configuration_values(settings, Vec::new()));
         let mut outbound = Vec::new();
         state.start_configuration(&mut outbound)?;
         Ok(state.update(outbound))
@@ -517,7 +533,8 @@ impl MobileUlcpSession {
         let device_values = validate_device_settings(&configuration, &state)?;
 
         state.expected.clear();
-        state.configuration_queue = configuration_values(configuration.radio, device_values).into();
+        state.configuration_queue =
+            state.writable(configuration_values(configuration.radio, device_values));
         let mut outbound = Vec::new();
         state.start_configuration(&mut outbound)?;
         Ok(state.update(outbound))
@@ -703,18 +720,30 @@ impl MobileUlcpSession {
         match expected {
             ExpectedResponse::Property(property) => {
                 if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
-                    operation_error = Some(ulcp_operation_error(
-                        format!("read property {property}"),
-                        response.value.as_slice(),
-                    )?);
-                    let optional_initial_property = state.stage == SessionStage::Initial
-                        && matches!(
-                            property,
-                            prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY | prop::HOST_KEY
-                        );
-                    state.stage_failure_pending |= !optional_initial_property;
-                    if state.stage == SessionStage::Initial && property == prop::HOST_KEY {
-                        state.host_key_unsupported = true;
+                    // A capability-gated property the device declines is one
+                    // unknown setting, not an unusable device: drop any value
+                    // cached from an earlier read so the reduction reports it
+                    // as unreadable, and carry on with the rest of the queue.
+                    let expected_property = matches!(
+                        state.stage,
+                        SessionStage::Inspection | SessionStage::Refreshing
+                    );
+                    if expected_property {
+                        state.responses.remove(&property);
+                    } else {
+                        operation_error = Some(ulcp_operation_error(
+                            format!("read property {property}"),
+                            response.value.as_slice(),
+                        )?);
+                        let optional_initial_property = state.stage == SessionStage::Initial
+                            && matches!(
+                                property,
+                                prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY | prop::HOST_KEY
+                            );
+                        state.stage_failure_pending |= !optional_initial_property;
+                        if state.stage == SessionStage::Initial && property == prop::HOST_KEY {
+                            state.host_key_unsupported = true;
+                        }
                     }
                 } else {
                     if response.property_id != property || response.command != Cmd::PropIs as u8 {
@@ -737,12 +766,11 @@ impl MobileUlcpSession {
                     {
                         return Err(MobileError::InvalidUlcpFrame);
                     }
-                    let selected = state
-                        .selected_host_key
-                        .ok_or(MobileError::InvalidUlcpFrame)?;
-                    if response.value.as_slice() != selected {
-                        return Err(MobileError::InvalidUlcpFrame);
-                    }
+                    // Whatever the device reports is its host key, even if
+                    // it is not the one just written — a claim that did not
+                    // take means this radio belongs to someone else, which
+                    // `ownership()` reads off this value and reports as
+                    // `OtherHost`. That is an answer, not a broken session.
                     state.radio_host_key = Some(response.value.clone());
                     state.responses.insert(prop::HOST_KEY, response);
                     if state.has_capability(cap::SAVE)? {
@@ -771,21 +799,32 @@ impl MobileUlcpSession {
                     state.start_inspection(&mut outbound)?;
                 }
             }
-            ExpectedResponse::ConfigurationProperty(property, expected_value) => {
+            ExpectedResponse::ConfigurationProperty(property) => {
                 if response.property_id == prop::LAST_STATUS {
                     operation_error = Some(ulcp_operation_error(
                         format!("set property {property}"),
                         response.value.as_slice(),
                     )?);
                     state.stage_failure_pending = true;
-                } else if response.property_id != property
-                    || response.command != Cmd::PropIs as u8
-                    || response.value != expected_value
+                    // The status frame describes the write, not the property.
+                    // Filing it under the property would leave the snapshot
+                    // reducing a status code as that property's value.
+                    state.responses.remove(&property);
+                } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
                     return Err(MobileError::InvalidUlcpFrame);
+                } else {
+                    // A `CMD_PROP_IS` is the device's authoritative value,
+                    // whatever was written. It reports what the device holds
+                    // — clamped to hardware, reduced to what it supports,
+                    // changed for a reason this host has no view of — and a
+                    // value differing from the write is that report, not a
+                    // fault. The snapshot published to the UI is what the
+                    // device says, never what was asked for. Failure is a
+                    // `PROP_LAST_STATUS`, handled above.
+                    state.responses.insert(property, response.clone());
+                    state.apply_property(&response)?;
                 }
-                state.responses.insert(property, response.clone());
-                state.apply_property(&response)?;
             }
             ExpectedResponse::SaveConfiguration => {
                 if response.property_id != prop::LAST_STATUS
@@ -1111,15 +1150,15 @@ impl UlcpSessionState {
     /// Patch the cached `PROP_DEV_PEERS` table after a confirmed mutation,
     /// keeping it lossless without a round-trip re-read.
     fn patch_dev_peers(&mut self, key: &[u8], present: bool) {
-        let entry = self
-            .responses
-            .entry(prop::DEV_PEERS)
-            .or_insert_with(|| UlcpPropertyFrameRecord {
-                transaction_id: frame::TID_UNSOLICITED,
-                command: Cmd::PropIs as u8,
-                property_id: prop::DEV_PEERS,
-                value: Vec::new(),
-            });
+        let entry =
+            self.responses
+                .entry(prop::DEV_PEERS)
+                .or_insert_with(|| UlcpPropertyFrameRecord {
+                    transaction_id: frame::TID_UNSOLICITED,
+                    command: Cmd::PropIs as u8,
+                    property_id: prop::DEV_PEERS,
+                    value: Vec::new(),
+                });
         let mut value = Vec::with_capacity(entry.value.len() + key.len());
         let mut found = false;
         for chunk in entry.value.chunks(items::PUBLIC_KEY_LEN) {
@@ -1143,6 +1182,34 @@ impl UlcpSessionState {
             .get(&prop::CAPS)
             .ok_or(MobileError::InvalidUlcpFrame)?;
         Ok(decode_capabilities(&capabilities.value)?.contains(&capability))
+    }
+
+    /// Drop the writes the device has already refused to answer for.
+    ///
+    /// A capability-gated property that would not read is one the device
+    /// does not implement, so writing it fails — and one rejected write
+    /// abandons the whole configuration pass. The caller still states a
+    /// complete configuration; what cannot land is left out here, where the
+    /// device's own answers are known, rather than in the form.
+    fn writable(&self, values: Vec<(u32, Vec<u8>)>) -> VecDeque<(u32, Vec<u8>)> {
+        let Some(unreadable) = self
+            .provisioning
+            .as_ref()
+            .map(|sync| sync.unreadable_properties.as_slice())
+            .filter(|unreadable| !unreadable.is_empty())
+        else {
+            return values.into();
+        };
+        let dropped = |property: u32| {
+            unreadable.contains(&property)
+                || WHOLE_WRITE_GROUPS.iter().any(|group| {
+                    group.contains(&property) && group.iter().any(|part| unreadable.contains(part))
+                })
+        };
+        values
+            .into_iter()
+            .filter(|(property, _)| !dropped(*property))
+            .collect()
     }
 
     fn advance_completed_stage(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
@@ -1247,10 +1314,8 @@ impl UlcpSessionState {
                 break;
             };
             let tid = self.allocate_tid();
-            self.expected.insert(
-                tid,
-                ExpectedResponse::ConfigurationProperty(property, value.clone()),
-            );
+            self.expected
+                .insert(tid, ExpectedResponse::ConfigurationProperty(property));
             outbound.push(ulcp_prop_set(tid, property, value)?);
         }
         Ok(())
@@ -1378,7 +1443,14 @@ fn ulcp_refresh_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, MobileErro
 }
 
 /// Validate and reduce the property responses from the read-only post-attach
-/// inspection. Every capability-gated property must be present and well formed.
+/// inspection.
+///
+/// The four properties every ULCP device must answer — the interface type
+/// and the live PHY triple — are required: without them there is no radio
+/// to describe. Everything else is capability-gated and merely *expected*,
+/// so a device that refuses one, or answers it with something undecodable,
+/// yields a snapshot with that setting absent and named in
+/// `unreadable_properties` rather than no snapshot at all.
 #[uniffi::export]
 pub fn inspect_ulcp_sync(
     responses: Vec<UlcpPropertyFrameRecord>,
@@ -1395,68 +1467,85 @@ pub fn inspect_ulcp_sync(
     let phy_enabled = decode_bool(value(prop::PHY_ENABLED)?)?;
     let frequency_khz = decode_u32(value(prop::PHY_FREQ)?)?;
     let transmit_power_dbm = decode_i8(value(prop::PHY_TX_POWER)?)?;
-    let bandwidth_hz = has(cap::PHY_LORA)
-        .then(|| decode_u32(value(prop::PHY_LORA_BW)?))
-        .transpose()?;
-    let spreading_factor = has(cap::PHY_LORA)
-        .then(|| decode_u8(value(prop::PHY_LORA_SF)?))
-        .transpose()?;
-    let coding_rate_denom = has(cap::PHY_LORA)
-        .then(|| decode_u8(value(prop::PHY_LORA_CR)?))
-        .transpose()?;
-    let duty_cycle_now = has(cap::PHY_DUTY_LIMIT)
-        .then(|| decode_u16(value(prop::PHY_DUTY_NOW)?))
-        .transpose()?;
-    let duty_cycle_limit = has(cap::PHY_DUTY_LIMIT)
-        .then(|| decode_u16(value(prop::PHY_DUTY_LIMIT)?))
-        .transpose()?;
-    let saved = has(cap::SAVE)
-        .then(|| decode_saved(value(prop::SAVED)?))
-        .transpose()?;
-    let queued_frames = has(cap::HOST_RX_QUEUE)
-        .then(|| decode_u16(value(prop::HOST_RX_QUEUE_COUNT)?))
-        .transpose()?;
-    let dropped_frames = has(cap::HOST_RX_QUEUE)
-        .then(|| decode_u32(value(prop::HOST_RX_QUEUE_DROPPED)?))
-        .transpose()?;
-    let filter_count = has(cap::HOST_FILTER)
-        .then(|| decode_filter_count(value(prop::HOST_RX_FILTERS)?))
-        .transpose()?;
-    let host_channel_count = has(cap::HOST_KEYS)
-        .then(|| decode_fixed_count::<{ items::CHANNEL_ID_LEN }>(value(prop::HOST_CHANNEL_KEYS)?))
-        .transpose()?;
-    let host_peer_count = has(cap::HOST_KEYS)
-        .then(|| decode_fixed_count::<{ items::PUBLIC_KEY_LEN }>(value(prop::HOST_PEER_KEYS)?))
-        .transpose()?;
-    let auto_ack = has(cap::HOST_AUTO_ACK)
-        .then(|| decode_bool(value(prop::HOST_AUTO_ACK)?))
-        .transpose()?;
-    let dev_peer_keys = has(cap::DEV_IDENTITY)
-        .then(|| decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(value(prop::DEV_PEERS)?))
-        .transpose()?;
-    let repeater = has(cap::REPEATER)
-        .then(|| -> Result<_, MobileError> {
-            Ok(UlcpRepeaterSettingsRecord {
-                enabled: decode_bool(value(prop::MAC_REPEATER_ENABLED)?)?,
-                regions: decode_region_list(value(prop::MAC_REPEATER_REGIONS)?)?,
-                default_region: decode_optional_region(value(prop::MAC_REPEATER_DEFAULT_REGION)?)?,
-                min_rssi_dbm: decode_optional(value(prop::MAC_REPEATER_MIN_RSSI)?, decode_i16)?,
-                min_snr_db: decode_optional(value(prop::MAC_REPEATER_MIN_SNR)?, decode_i8)?,
-            })
+
+    let mut expected = ExpectedProperties {
+        responses: &responses,
+        unreadable: Vec::new(),
+    };
+    let lora = has(cap::PHY_LORA);
+    let bandwidth_hz = expected.read(lora, prop::PHY_LORA_BW, decode_u32);
+    let spreading_factor = expected.read(lora, prop::PHY_LORA_SF, decode_u8);
+    let coding_rate_denom = expected.read(lora, prop::PHY_LORA_CR, decode_u8);
+    let duty = has(cap::PHY_DUTY_LIMIT);
+    let duty_cycle_now = expected.read(duty, prop::PHY_DUTY_NOW, decode_u16);
+    let duty_cycle_limit = expected.read(duty, prop::PHY_DUTY_LIMIT, decode_u16);
+    let saved = expected.read(has(cap::SAVE), prop::SAVED, decode_saved);
+    let queue = has(cap::HOST_RX_QUEUE);
+    let queued_frames = expected.read(queue, prop::HOST_RX_QUEUE_COUNT, decode_u16);
+    let dropped_frames = expected.read(queue, prop::HOST_RX_QUEUE_DROPPED, decode_u32);
+    let filter_count = expected.read(
+        has(cap::HOST_FILTER),
+        prop::HOST_RX_FILTERS,
+        decode_filter_count,
+    );
+    let host_keys = has(cap::HOST_KEYS);
+    let host_channel_count = expected.read(
+        host_keys,
+        prop::HOST_CHANNEL_KEYS,
+        decode_fixed_count::<{ items::CHANNEL_ID_LEN }>,
+    );
+    let host_peer_count = expected.read(
+        host_keys,
+        prop::HOST_PEER_KEYS,
+        decode_fixed_count::<{ items::PUBLIC_KEY_LEN }>,
+    );
+    let auto_ack = expected.read(has(cap::HOST_AUTO_ACK), prop::HOST_AUTO_ACK, decode_bool);
+    let dev_identity = has(cap::DEV_IDENTITY);
+    let dev_peer_keys = expected.read(
+        dev_identity,
+        prop::DEV_PEERS,
+        decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>,
+    );
+
+    // Every part of the policy is read before any of it is required, so one
+    // unreadable property does not hide the others behind it.
+    let forwards = has(cap::REPEATER);
+    let repeater_enabled = expected.read(forwards, prop::MAC_REPEATER_ENABLED, decode_bool);
+    let regions = expected.read(forwards, prop::MAC_REPEATER_REGIONS, decode_region_list);
+    let default_region = expected.read(
+        forwards,
+        prop::MAC_REPEATER_DEFAULT_REGION,
+        decode_optional_region,
+    );
+    let min_rssi_dbm = expected.read(forwards, prop::MAC_REPEATER_MIN_RSSI, |value| {
+        decode_optional(value, decode_i16)
+    });
+    let min_snr_db = expected.read(forwards, prop::MAC_REPEATER_MIN_SNR, |value| {
+        decode_optional(value, decode_i8)
+    });
+    let repeater = (|| {
+        Some(UlcpRepeaterSettingsRecord {
+            enabled: repeater_enabled?,
+            regions: regions?,
+            default_region: default_region?,
+            min_rssi_dbm: min_rssi_dbm?,
+            min_snr_db: min_snr_db?,
         })
-        .transpose()?;
+    })();
+
     // An empty PROP_IDENT_ROLE is the device saying it derives its own
     // role, which is the same `None` a device without CAP_IDENT reports.
-    let ident_role = has(cap::IDENT)
-        .then(|| decode_optional(value(prop::IDENT_ROLE)?, decode_u8))
-        .transpose()?
+    let ident = has(cap::IDENT);
+    let ident_role = expected
+        .read(ident, prop::IDENT_ROLE, |value| {
+            decode_optional(value, decode_u8)
+        })
         .flatten();
-    let ident_mobile = has(cap::IDENT)
-        .then(|| decode_bool(value(prop::IDENT_MOBILE)?))
-        .transpose()?;
-    let dev_discoverable = has(cap::DEV_IDENTITY)
-        .then(|| decode_bool(value(prop::DEV_DISCOVERABLE)?))
-        .transpose()?;
+    let ident_mobile = expected.read(ident, prop::IDENT_MOBILE, decode_bool);
+    let dev_discoverable = expected.read(dev_identity, prop::DEV_DISCOVERABLE, decode_bool);
+
+    let mut unreadable_properties = expected.unreadable;
+    unreadable_properties.sort_unstable();
 
     Ok(UlcpSyncRecord {
         capability_count: capabilities
@@ -1492,7 +1581,55 @@ pub fn inspect_ulcp_sync(
         ident_role,
         ident_mobile,
         dev_discoverable,
+        unreadable_properties,
     })
+}
+
+/// Properties only ever written as a set. Writing part of a modem profile
+/// or part of a forwarding policy leaves the device running a configuration
+/// nobody asked for, so one unreadable member withdraws the whole group.
+/// These are the same groupings the reduction reports as a unit.
+const WHOLE_WRITE_GROUPS: [&[u32]; 2] = [
+    &[prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR],
+    &[
+        prop::MAC_REPEATER_ENABLED,
+        prop::MAC_REPEATER_REGIONS,
+        prop::MAC_REPEATER_DEFAULT_REGION,
+        prop::MAC_REPEATER_MIN_RSSI,
+        prop::MAC_REPEATER_MIN_SNR,
+    ],
+];
+
+/// The capability-gated half of an inspection: properties the device is
+/// expected to answer, each of which it may nevertheless decline.
+struct ExpectedProperties<'a> {
+    responses: &'a [UlcpPropertyFrameRecord],
+    unreadable: Vec<u32>,
+}
+
+impl ExpectedProperties<'_> {
+    /// Decode `key` when the device advertises the capability that gates it.
+    ///
+    /// A missing or undecodable value is recorded and reported as `None`
+    /// rather than failing the whole reduction: the setting is unknown, which
+    /// is a fact about one property and not about the device as a whole.
+    fn read<T>(
+        &mut self,
+        gated_on: bool,
+        key: u32,
+        decode: impl FnOnce(&[u8]) -> Result<T, MobileError>,
+    ) -> Option<T> {
+        if !gated_on {
+            return None;
+        }
+        match property_value(self.responses, key).and_then(decode) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                self.unreadable.push(key);
+                None
+            }
+        }
+    }
 }
 
 fn property_value(responses: &[UlcpPropertyFrameRecord], key: u32) -> Result<&[u8], MobileError> {
@@ -1880,7 +2017,11 @@ pub fn ulcp_prop_set(
 
 /// Encode a `CMD_PROP_INSERT` request. Deliberately not exported: typed
 /// session operations own multi-value mutations.
-fn ulcp_prop_insert(transaction_id: u8, property_id: u32, item: &[u8]) -> Result<Vec<u8>, MobileError> {
+fn ulcp_prop_insert(
+    transaction_id: u8,
+    property_id: u32,
+    item: &[u8],
+) -> Result<Vec<u8>, MobileError> {
     let mut output = vec![0; MAX_FRAME];
     let length = frame::prop_insert(&mut output, transaction_id, property_id, item)
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
@@ -2651,8 +2792,10 @@ mod tests {
         assert_eq!(sync.ident_role, Some(3));
         assert_eq!(sync.ident_mobile, Some(true));
 
-        // An odd-length region list is not a set of region codes, and a
-        // repeater without an identity of its own is not a repeater.
+        // An odd-length region list is not a set of region codes, so the
+        // policy is not reported — but the device still is. A repeater
+        // without an identity of its own, on the other hand, is not a
+        // repeater, and that is a malformed capability set.
         let malformed = |property, value: &[u8]| {
             let mut responses = vec![
                 response(prop::CAPS, &capabilities),
@@ -2675,21 +2818,107 @@ mod tests {
             responses.push(response(property, value));
             inspect_ulcp_sync(responses)
         };
-        assert_eq!(
-            malformed(prop::MAC_REPEATER_REGIONS, &[0x78, 0x53, 0x7C]),
-            Err(MobileError::InvalidUlcpFrame)
-        );
-        assert_eq!(
-            malformed(prop::MAC_REPEATER_DEFAULT_REGION, &[0x78]),
-            Err(MobileError::InvalidUlcpFrame)
-        );
-        assert_eq!(
-            malformed(prop::MAC_REPEATER_MIN_RSSI, &[0x8D]),
-            Err(MobileError::InvalidUlcpFrame)
-        );
+        for property in [
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+        ] {
+            let sync = malformed(property, &[0x8D, 0x53, 0x7C]).expect("device still described");
+            assert_eq!(sync.repeater, None, "property {property}");
+            assert!(sync.supports_repeater, "property {property}");
+            assert!(
+                sync.unreadable_properties.contains(&property),
+                "property {property}"
+            );
+        }
         assert_eq!(
             ulcp_inspection_properties(encoded_capabilities(&[cap::REPEATER])),
             Err(MobileError::InvalidUlcpFrame)
+        );
+    }
+
+    /// A device that refuses one capability-gated property — firmware
+    /// older than the capability it advertises — is a device with one
+    /// unknown setting, not one this phone cannot administer. It attaches,
+    /// it describes itself, and it stays configurable; the refused setting
+    /// is absent, named, and left out of the write that follows.
+    #[test]
+    fn a_refused_property_still_yields_an_administrable_device() {
+        let session = MobileUlcpSession::administrative();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        let attached = drive_reads(&session, begin.outbound_frames, |property| match property {
+            // One property of its own, and one part of a policy that is
+            // only meaningful whole.
+            prop::DEV_DISCOVERABLE | prop::MAC_REPEATER_MIN_RSSI => (
+                prop::LAST_STATUS,
+                vec![umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
+            ),
+            prop::HOST_KEY => (property, vec![0xBB; 32]),
+            other => commissionable_value(other),
+        });
+
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        // Nobody asked to read that property in particular; they asked to
+        // attach, and the attach succeeded. Reporting it as a failed
+        // operation is what used to strand the caller with no snapshot.
+        assert_eq!(attached.operation_error, None);
+        let sync = attached.snapshot.provisioning.expect("device described");
+        assert!(sync.supports_device_identity);
+        assert_eq!(sync.dev_discoverable, None);
+        assert_eq!(
+            sync.unreadable_properties,
+            vec![prop::MAC_REPEATER_MIN_RSSI, prop::DEV_DISCOVERABLE]
+        );
+        // The rest of the same capability is unaffected.
+        assert_eq!(sync.dev_peer_keys, Some(Vec::new()));
+        // A policy missing one part is not a policy, so none of it is
+        // reported — the device still says it can forward.
+        assert!(sync.supports_repeater);
+        assert_eq!(sync.repeater, None);
+
+        let configured = session
+            .configure_device(UlcpDeviceConfigRecord {
+                radio: UlcpRadioSettingsRecord {
+                    device_name: None,
+                    phy_enabled: true,
+                    frequency_khz: 906_875,
+                    transmit_power_dbm: 20,
+                    bandwidth_hz: None,
+                    spreading_factor: None,
+                    coding_rate_denom: None,
+                    duty_cycle_limit: None,
+                },
+                ident_role: None,
+                ident_mobile: Some(true),
+                dev_discoverable: Some(true),
+                repeater: Some(UlcpRepeaterSettingsRecord {
+                    enabled: false,
+                    regions: Vec::new(),
+                    default_region: None,
+                    min_rssi_dbm: None,
+                    min_snr_db: None,
+                }),
+            })
+            .unwrap();
+        let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
+        // The write the device would have rejected — failing the whole
+        // pass over a setting nobody can even see — is never sent, and
+        // neither is the rest of the policy it belongs to: a device left
+        // forwarding under half a policy is worse than one left alone.
+        assert!(!written.contains_key(&prop::DEV_DISCOVERABLE));
+        for property in [
+            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+            prop::MAC_REPEATER_MIN_SNR,
+        ] {
+            assert!(!written.contains_key(&property), "property {property}");
+        }
+        assert_eq!(written.get(&prop::IDENT_MOBILE), Some(&vec![1]));
+        assert_eq!(
+            written.get(&prop::PHY_FREQ),
+            Some(&906_875u32.to_le_bytes().to_vec())
         );
     }
 
@@ -3155,12 +3384,15 @@ mod tests {
             assert_eq!(parsed.command(), Some(Cmd::PropSet));
             let payload = PropPayload::parse(parsed.payload).unwrap();
             configured_properties.push(payload.key);
+            // This radio tops out below the 20 dBm asked for and answers
+            // with the power it will actually use. A `CMD_PROP_IS` is the
+            // device's word on the property, so the session takes it.
+            let answer: &[u8] = match payload.key {
+                prop::PHY_TX_POWER => &[17],
+                _ => payload.value,
+            };
             let update = session
-                .consume(property_response(
-                    parsed.header.tid(),
-                    payload.key,
-                    payload.value,
-                ))
+                .consume(property_response(parsed.header.tid(), payload.key, answer))
                 .unwrap_or_else(|error| {
                     panic!(
                         "configuration response for property {} failed: {error:?}",
@@ -3180,7 +3412,9 @@ mod tests {
         );
         let provisioning = attached.snapshot.provisioning.unwrap();
         assert_eq!(provisioning.frequency_khz, 868_100);
-        assert_eq!(provisioning.transmit_power_dbm, 20);
+        // 20 dBm was written; the device said 17, so 17 is what the phone
+        // shows.
+        assert_eq!(provisioning.transmit_power_dbm, 17);
         assert_eq!(provisioning.bandwidth_hz, Some(250_000));
         assert_eq!(provisioning.spreading_factor, Some(10));
         assert_eq!(provisioning.coding_rate_denom, Some(6));

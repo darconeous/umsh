@@ -36,8 +36,16 @@ struct DeviceConfigView: View {
     @State private var minSnrDB: Int8?
 
     @State private var isSaving = false
-    @State private var applied = false
+    /// The configuration the device confirmed, as the form ended up holding
+    /// it. Kept rather than a flag so that adopting a value the device
+    /// reported back does not read as an unsaved edit, and so any real edit
+    /// after a write clears the confirmation on its own.
+    @State private var appliedConfiguration: UlcpDeviceConfigRecord?
     @State private var verificationProblem: String?
+
+    private var applied: Bool {
+        appliedConfiguration != nil && appliedConfiguration == configuration
+    }
 
     init(
         controller: AdminFlowController,
@@ -89,6 +97,15 @@ struct DeviceConfigView: View {
                 }
             }
 
+            if !unreadableSettings.isEmpty {
+                Section {
+                    Label("Some settings could not be read", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                } footer: {
+                    Text("This device did not report \(unreadableSettings.formatted(.list(type: .and))). Those settings are not shown here and are left exactly as they are when you apply changes. Everything else works normally.")
+                }
+            }
+
             ownershipSection
 
             if sync.supportsDeviceName {
@@ -101,26 +118,28 @@ struct DeviceConfigView: View {
                 }
             }
 
-            Section {
-                Picker("Radio profile", selection: presetSelection) {
-                    Text("Custom / manual").tag("custom")
-                    ForEach(RadioPreset.vetted) { preset in
-                        Text(preset.name).tag(preset.id)
+            if showsPresets {
+                Section {
+                    Picker("Radio profile", selection: presetSelection) {
+                        Text("Custom / manual").tag("custom")
+                        ForEach(RadioPreset.vetted) { preset in
+                            Text(preset.name).tag(preset.id)
+                        }
                     }
+                } header: {
+                    Text("Preset")
+                } footer: {
+                    Text("A preset sets every radio parameter below. Choose the one your local mesh uses; nodes with different PHY settings cannot hear each other.")
                 }
-            } header: {
-                Text("Preset")
-            } footer: {
-                Text("A preset sets every radio parameter below. Choose the one your local mesh uses; nodes with different PHY settings cannot hear each other.")
             }
 
             radioSection
 
-            if sync.supportsIdent {
+            if showsIdentity {
                 identitySection
             }
 
-            if sync.supportsRepeater {
+            if sync.supportsRepeater, sync.repeater != nil {
                 RepeaterSettingsSection(
                     enabled: $repeaterEnabled,
                     regions: $regions,
@@ -156,11 +175,6 @@ struct DeviceConfigView: View {
                         .disabled(configuration == nil || isSaving || isLinkDown)
                 }
             }
-        }
-        .onChange(of: configurationFingerprint) { _, _ in
-            // Any edit after a successful write puts the form back in the
-            // unsaved state, so "Done" never dismisses over pending changes.
-            applied = false
         }
     }
 
@@ -241,7 +255,7 @@ struct DeviceConfigView: View {
                     Text("dBm").foregroundStyle(.secondary)
                 }
             }
-            if sync.supportsLora {
+            if showsLoRa {
                 Picker("Bandwidth", selection: $bandwidthHz) {
                     Text("7.81 kHz").tag(UInt32(7_810))
                     Text("10.42 kHz").tag(UInt32(10_420))
@@ -265,7 +279,7 @@ struct DeviceConfigView: View {
                     }
                 }
             }
-            if sync.supportsDutyCycleLimit {
+            if sync.supportsDutyCycleLimit, sync.dutyCycleLimit != nil {
                 Picker("Transmit limit", selection: $dutyCycleLimit) {
                     ForEach(dutyCycleOptions, id: \.value) { option in
                         Text(option.label).tag(option.value)
@@ -289,7 +303,7 @@ struct DeviceConfigView: View {
                 }
             }
             Toggle("Device moves around", isOn: $identMobile)
-            if sync.supportsDeviceIdentity {
+            if showsDiscoverable {
                 Toggle("Discoverable", isOn: $devDiscoverable)
             }
         } header: {
@@ -301,7 +315,7 @@ struct DeviceConfigView: View {
 
     private var identityFooter: String {
         var footer = "Advertises as: \(advertisedRole). \(identMobile ? "Peers are told it is mobile." : "Peers are told it is stationary.")"
-        if sync.supportsDeviceIdentity {
+        if showsDiscoverable {
             footer += devDiscoverable
                 ? " Answers nearby nodes that ask it to identify itself."
                 : " Ignores nearby nodes that ask it to identify itself."
@@ -323,6 +337,52 @@ struct DeviceConfigView: View {
                 } ?? "Binds this device as this phone's companion radio and ends this setup session.")
             }
         }
+    }
+
+    // MARK: - Unreadable settings
+
+    // A device can advertise a capability and still refuse the properties
+    // behind it — firmware older than the capability it reports. Rust
+    // leaves those settings out of the snapshot and out of the write, so
+    // the form hides them rather than showing a default that reads as the
+    // device's own value and edits that would silently go nowhere.
+
+    /// The modem profile is one setting in three properties: a device that
+    /// reported only part of it has not reported it.
+    private var showsLoRa: Bool {
+        sync.supportsLora
+            && sync.bandwidthHz != nil
+            && sync.spreadingFactor != nil
+            && sync.codingRateDenom != nil
+    }
+
+    /// Mobility stands in for the whole advertised identity — the role
+    /// alone cannot be told apart, because an empty role is also the
+    /// device saying it derives its own.
+    private var showsIdentity: Bool { sync.supportsIdent && sync.identMobile != nil }
+
+    private var showsDiscoverable: Bool {
+        sync.supportsDeviceIdentity && sync.devDiscoverable != nil
+    }
+
+    /// A preset sets every radio parameter at once, so it is only offered
+    /// when every parameter it sets is one this device will accept.
+    private var showsPresets: Bool {
+        (showsLoRa || !sync.supportsLora)
+            && (sync.dutyCycleLimit != nil || !sync.supportsDutyCycleLimit)
+    }
+
+    /// What the device would not report, named the way the form names it.
+    private var unreadableSettings: [String] {
+        var settings: [String] = []
+        if sync.supportsLora, !showsLoRa { settings.append("its modem settings") }
+        if sync.supportsDutyCycleLimit, sync.dutyCycleLimit == nil {
+            settings.append("its transmit limit")
+        }
+        if sync.supportsIdent, !showsIdentity { settings.append("its advertised identity") }
+        if sync.supportsDeviceIdentity, !showsDiscoverable { settings.append("discoverability") }
+        if sync.supportsRepeater, sync.repeater == nil { settings.append("its forwarding policy") }
+        return settings
     }
 
     // MARK: - Derived state
@@ -404,9 +464,6 @@ struct DeviceConfigView: View {
         )
     }
 
-    /// Everything a write would carry, so an edit after a save is noticed.
-    private var configurationFingerprint: UlcpDeviceConfigRecord? { configuration }
-
     private var presetSelection: Binding<String> {
         Binding(
             get: { RadioPreset.vetted.first(where: matches)?.id ?? "custom" },
@@ -460,9 +517,14 @@ struct DeviceConfigView: View {
         verificationProblem = nil
         defer { isSaving = false }
         guard let readback = await controller.configure(configuration) else { return }
-        // The write itself is echo-verified property by property inside
-        // Rust. This is the second question: what the device reports after
-        // its save, which is what it will boot with.
+        // A device answers each write with the value it holds, and that
+        // answer stands whatever was asked for — transmit power comes back
+        // clamped to what the radio can reach. The form shows the device's
+        // figure, not the operator's, so nobody walks away believing this
+        // radio transmits at a power it cannot produce.
+        transmitPowerDBm = String(readback.transmitPowerDbm)
+        // The separate question of what it reports after its save, which is
+        // what it will boot with.
         if let mismatch = firstMismatch(between: configuration, and: readback) {
             verificationProblem = """
                 The device saved its settings but reported \(mismatch) back \
@@ -470,31 +532,61 @@ struct DeviceConfigView: View {
                 """
             return
         }
-        applied = true
+        appliedConfiguration = self.configuration
     }
 
     /// The first field the device reports differently from what was asked
     /// for, named for a human. Device name is excluded: it is reported on
     /// the session snapshot rather than in the sync record.
+    ///
+    /// Settings the device does not report are excluded as well. They were
+    /// never written, so there is nothing to hold the readback to — the
+    /// unreadable-settings notice already says so, and calling it a
+    /// mismatch would send the operator looking for a fault that is not
+    /// there.
+    ///
+    /// Transmit power is excluded for the same reason: a device clamps it to
+    /// what its radio can reach, so a device asked for more than it has
+    /// reports back less by design. The fields left here are the ones a
+    /// device refuses outright rather than adjusts, where a readback that
+    /// disagrees really is one.
     private func firstMismatch(
         between requested: UlcpDeviceConfigRecord,
         and readback: UlcpSyncRecord
     ) -> String? {
+        func reported<Value: Equatable>(
+            _ asked: Value?,
+            _ read: Value?,
+            _ name: String
+        ) -> String? {
+            guard let read else { return nil }
+            return asked == read ? nil : name
+        }
+
         if requested.radio.phyEnabled != readback.phyEnabled { return "the radio switch" }
         if requested.radio.frequencyKhz != readback.frequencyKhz { return "the frequency" }
-        if requested.radio.transmitPowerDbm != readback.transmitPowerDbm { return "transmit power" }
-        if requested.radio.bandwidthHz != readback.bandwidthHz { return "the bandwidth" }
-        if requested.radio.spreadingFactor != readback.spreadingFactor {
-            return "the spreading factor"
-        }
-        if requested.radio.codingRateDenom != readback.codingRateDenom { return "the coding rate" }
-        if requested.radio.dutyCycleLimit != readback.dutyCycleLimit {
-            return "the duty-cycle limit"
-        }
-        if requested.identRole != readback.identRole { return "the advertised role" }
-        if requested.identMobile != readback.identMobile { return "device mobility" }
-        if requested.devDiscoverable != readback.devDiscoverable { return "discoverability" }
-        if requested.repeater != readback.repeater { return "the repeater policy" }
-        return nil
+        return reported(requested.radio.bandwidthHz, readback.bandwidthHz, "the bandwidth")
+            ?? reported(
+                requested.radio.spreadingFactor,
+                readback.spreadingFactor,
+                "the spreading factor"
+            )
+            ?? reported(
+                requested.radio.codingRateDenom,
+                readback.codingRateDenom,
+                "the coding rate"
+            )
+            ?? reported(
+                requested.radio.dutyCycleLimit,
+                readback.dutyCycleLimit,
+                "the duty-cycle limit"
+            )
+            // An unreadable role and a device-derived role are both an
+            // absent value, so the only role worth checking is one the
+            // device names.
+            ?? reported(requested.identRole, readback.identRole, "the advertised role")
+            ?? reported(requested.identMobile, readback.identMobile, "device mobility")
+            ?? reported(requested.devDiscoverable, readback.devDiscoverable, "discoverability")
+            ?? reported(requested.repeater, readback.repeater, "the repeater policy")
     }
 }

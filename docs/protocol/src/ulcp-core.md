@@ -258,6 +258,12 @@ property.
 If an error occurs, the value of the emitted `PROP_LAST_STATUS` will be set
 accordingly to the status code for the error.
 
+The value reported by that `CMD_PROP_IS` need not be the value written: a
+device that adjusts a write to what it can honor reports the result, and
+that result is the property's value. A write fails only by way of
+`PROP_LAST_STATUS` — a differing value is a successful write, not a
+rejected one.
+
 ### CMD 4: (Host -> Device) `CMD_PROP_INSERT` {#cmd-prop-insert}
 
 ~~~

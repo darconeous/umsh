@@ -350,8 +350,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         // opt-back-in must not depend on a name change to become
         // correct.
         if snapshot.discoverable {
-            let mut profile =
-                NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
+            let mut profile = NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
             profile.name = profile_name();
             profile.supported_regions = supported_regions;
             node.enable_identity_responder_default(profile);

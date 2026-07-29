@@ -2492,8 +2492,7 @@ mod tests {
         let has_vacuous_caps_filter = umsh_core::options::OptionDecoder::new(options)
             .filter_map(Result::ok)
             .any(|(number, value)| {
-                number == umsh_node::mac_command::identity_filter::FILTER_NODE_CAPS
-                    && value == [0]
+                number == umsh_node::mac_command::identity_filter::FILTER_NODE_CAPS && value == [0]
             });
         assert!(has_vacuous_caps_filter);
     }

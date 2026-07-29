@@ -77,6 +77,12 @@ Value is the radio frequency (in kilohertz) of the current channel.
 
 Value is the radio transmit power in dBm.
 
+A device **MUST** clamp a written value to the range its radio can reach
+rather than rejecting it, and the emitted `CMD_PROP_IS` carries the
+clamped value. Nothing else publishes that range, so this is how a host
+discovers it: a host that needs to know what a device will actually
+transmit at reads the value it gets back rather than the one it wrote.
+
 ### PROP 38: `PROP_PHY_RSSI` {#prop-phy-rssi}
 
 * Type: Single-Value, Read-Only

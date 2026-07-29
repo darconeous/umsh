@@ -101,6 +101,20 @@ A conforming host:
   its view of the affected property accordingly. Device state changes for
   reasons the host did not initiate, and publication of the new
   authoritative value is how the protocol reports it.
+* **MUST** take the value in a `CMD_PROP_IS` as the property's value, and
+  **MUST NOT** treat one that differs from what it wrote as an error. A
+  write is refused by a `PROP_LAST_STATUS` carrying the failure and by
+  nothing else; anything a device reports as a property value is what that
+  property is, whether or not it is what was asked for — see
+  [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power), which a device
+  clamps to what its radio can reach. A host that shows the value to a user
+  shows the reported one.
+* **MUST NOT** treat a failed capability-gated property read as a failed
+  attach. A device advertising a capability implements its properties, so
+  a refusal is a device fault — but what is unknown is the setting, not the
+  device. A host finishes the rest of the read, presents the affected
+  setting as unavailable rather than as a default, and omits it from what
+  it writes.
 * **MUST NOT** assume that a reset implies documented factory defaults. On
   a device holding a [saved snapshot](ulcp-saved-state.md#saved-state) the
   post-reset value of every saved property is its saved value; a host

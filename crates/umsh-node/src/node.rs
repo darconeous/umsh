@@ -675,8 +675,7 @@ impl<M: MacBackend> LocalNode<M> {
             // CCA backoff-and-retry.
             let mut jitter = [0u8; 2];
             self.mac.fill_random(&mut jitter).await;
-            let delay =
-                u16::from_be_bytes(jitter) % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS + 1);
+            let delay = u16::from_be_bytes(jitter) % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS + 1);
             options = options.with_tx_delay_ms(delay);
         }
         // A broadcast solicitation's source is not auto-registered on

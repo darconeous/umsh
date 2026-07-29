@@ -153,7 +153,11 @@ impl<
     /// LRU-evictable), so an explicit reply to a stranger has a slot to send
     /// through. Returns whether a slot is held.
     pub async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
-        self.mac.borrow_mut().await.ensure_transient_peer(key).is_ok()
+        self.mac
+            .borrow_mut()
+            .await
+            .ensure_transient_peer(key)
+            .is_ok()
     }
 
     /// Adds or updates a shared channel and derives its multicast keys.

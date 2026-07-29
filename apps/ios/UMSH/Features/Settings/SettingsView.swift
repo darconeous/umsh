@@ -762,6 +762,15 @@ private struct RadioSettingsEditor: View {
 
     var body: some View {
         Form {
+            if !unreadableSettings.isEmpty {
+                Section {
+                    Label("Some settings could not be read", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                } footer: {
+                    Text("This radio did not report \(unreadableSettings.formatted(.list(type: .and))). Those settings are not shown here and are left exactly as they are when you save.")
+                }
+            }
+
             if provisioning.supportsDeviceName {
                 Section("Device") {
                     TextField("Device name", text: $deviceName)
@@ -771,16 +780,18 @@ private struct RadioSettingsEditor: View {
                 }
             }
 
-            Section("Preset") {
-                Picker("Radio profile", selection: presetSelection) {
-                    Text("Custom / manual").tag("custom")
-                    ForEach(RadioPreset.vetted) { preset in
-                        Text(preset.name).tag(preset.id)
+            if showsPresets {
+                Section("Preset") {
+                    Picker("Radio profile", selection: presetSelection) {
+                        Text("Custom / manual").tag("custom")
+                        ForEach(RadioPreset.vetted) { preset in
+                            Text(preset.name).tag(preset.id)
+                        }
                     }
+                    Text("A preset changes all radio parameters below. Choose one used by your local mesh; every node must use matching PHY settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("A preset changes all radio parameters below. Choose one used by your local mesh; every node must use matching PHY settings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -803,7 +814,7 @@ private struct RadioSettingsEditor: View {
                         Text("dBm").foregroundStyle(.secondary)
                     }
                 }
-                if provisioning.supportsLoRa {
+                if showsLoRa {
                     Picker("Bandwidth", selection: $bandwidthHz) {
                         Text("7.81 kHz").tag(UInt32(7_810))
                         Text("10.42 kHz").tag(UInt32(10_420))
@@ -833,7 +844,7 @@ private struct RadioSettingsEditor: View {
                 Text("Changing PHY settings can make this radio unable to communicate with peers using a different configuration.")
             }
 
-            if provisioning.supportsDutyCycleLimit {
+            if provisioning.supportsDutyCycleLimit, provisioning.dutyCycleLimit != nil {
                 Section {
                     if let usage = snapshot.provisioning?.dutyCycleNow {
                         LabeledContent("Past-hour usage", value: dutyPercentage(usage))
@@ -871,6 +882,36 @@ private struct RadioSettingsEditor: View {
                     .disabled(settings == nil || isSaving || isRefreshing)
             }
         }
+    }
+
+    // A radio can advertise a capability and still refuse the properties
+    // behind it. Rust leaves those settings out of the snapshot and out of
+    // the write, so the form hides them rather than showing a default that
+    // reads as the radio's own value.
+
+    /// The modem profile is one setting in three properties: a radio that
+    /// reported only part of it has not reported it.
+    private var showsLoRa: Bool {
+        provisioning.supportsLoRa
+            && provisioning.bandwidthHz != nil
+            && provisioning.spreadingFactor != nil
+            && provisioning.codingRateDenominator != nil
+    }
+
+    /// A preset sets every radio parameter at once, so it is only offered
+    /// when every parameter it sets is one this radio will accept.
+    private var showsPresets: Bool {
+        (showsLoRa || !provisioning.supportsLoRa)
+            && (provisioning.dutyCycleLimit != nil || !provisioning.supportsDutyCycleLimit)
+    }
+
+    private var unreadableSettings: [String] {
+        var settings: [String] = []
+        if provisioning.supportsLoRa, !showsLoRa { settings.append("its modem settings") }
+        if provisioning.supportsDutyCycleLimit, provisioning.dutyCycleLimit == nil {
+            settings.append("its transmit limit")
+        }
+        return settings
     }
 
     private var settings: RadioSettings? {
@@ -991,12 +1032,24 @@ private struct RadioSettingsEditor: View {
         guard let settings else { return }
         isSaving = true
         defer { isSaving = false }
+        let outcome: String?
         do {
             try await configure(settings)
-            dismiss()
+            outcome = nil
         } catch {
-            problem = "The radio rejected these settings. Its previous configuration remains authoritative."
+            outcome = "The radio rejected these settings. Its previous configuration remains authoritative."
         }
+        // What the radio reports back is what the radio is set to, whatever
+        // was written — a power clamped to what the hardware can reach, a
+        // setting it declined to take. Snapshot updates are ignored while a
+        // write is in flight, so the form adopts the result unconditionally
+        // here rather than waiting for a later change to differ from it.
+        applyAuthoritativeSnapshot(snapshot, force: true)
+        guard let outcome else {
+            dismiss()
+            return
+        }
+        problem = outcome
     }
 }
 

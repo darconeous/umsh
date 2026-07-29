@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 32)
+        precondition(mobileApiVersion() == 33)
         precondition(ulcpMaxDevPeers() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
@@ -92,6 +92,7 @@ struct MobileCoreSmokeTest {
         precondition(sync.phyEnabled)
         precondition(sync.frequencyKhz == 915_000)
         precondition(sync.queuedFrames == nil)
+        precondition(sync.unreadableProperties.isEmpty)
 
         precondition(!sync.supportsRepeater)
         precondition(sync.repeater == nil)

@@ -428,12 +428,19 @@ struct PeerDetailView: View {
         radioSnapshot.provisioning?.supportsDeviceIdentity == true
     }
 
+    /// A radio that advertises the capability can still refuse the list
+    /// itself. Editing one this phone cannot read would be editing blind:
+    /// every write would be a guess about what is already there.
+    private var radioReportsDevicePeers: Bool {
+        radioSnapshot.provisioning?.devPeerAddresses != nil
+    }
+
     private var deviceListFull: Bool {
         (radioSnapshot.provisioning?.devPeerAddresses?.count ?? 0) >= devicePeerCapacity
     }
 
     private var devicePeerControlsUnavailable: Bool {
-        !radioAttachedForThisPhone || !radioSupportsDeviceIdentity
+        !radioAttachedForThisPhone || !radioSupportsDeviceIdentity || !radioReportsDevicePeers
     }
 
     private var storedOnFooter: String {
@@ -446,6 +453,8 @@ struct PeerDetailView: View {
             lines.append("Connect a companion radio set up for this phone to change what it stores.")
         } else if !radioSupportsDeviceIdentity {
             lines.append("This radio does not support storing peers on its device identity.")
+        } else if !radioReportsDevicePeers {
+            lines.append("This radio would not report what its device identity already stores, so this phone cannot change it.")
         } else if deviceListFull, !isOnDeviceIdentity {
             lines.append("The radio's peer list is full (\(devicePeerCapacity) of \(devicePeerCapacity)) — remove one from the radio first.")
         }

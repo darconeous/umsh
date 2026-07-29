@@ -5074,30 +5074,45 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var hostPeerCount: UInt32?
     public var autoAck: Bool?
     /**
-     * Present exactly when `supports_repeater`.
+     * Present when `supports_repeater` and the device reported the whole
+     * policy.
      */
     public var repeater: UlcpRepeaterSettingsRecord?
     /**
      * `PROP_DEV_PEERS`: the peer public keys stored on the device
-     * identity, read back losslessly. Present exactly when
-     * `supports_device_identity`.
+     * identity, read back losslessly. Present when
+     * `supports_device_identity` and the device reported the list.
      */
     public var devPeerKeys: [Data]?
     /**
-     * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
-     * from what it is actually doing" and "no `CAP_IDENT`" —
-     * `supports_ident` distinguishes them.
+     * `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
+     * what it is actually doing", "no `CAP_IDENT`", and "the device would
+     * not report it" — `supports_ident` and `unreadable_properties`
+     * distinguish them.
      */
     public var identRole: UInt8?
     /**
-     * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+     * `PROP_IDENT_MOBILE`. Present when `supports_ident` and the device
+     * reported it.
      */
     public var identMobile: Bool?
     /**
      * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
-     * Identity Requests. Present exactly when `supports_device_identity`.
+     * Identity Requests. Present when `supports_device_identity` and the
+     * device reported it.
      */
     public var devDiscoverable: Bool?
+    /**
+     * Capability-gated properties the device advertised but would not
+     * report, in ascending order.
+     *
+     * A device that refuses a property — old firmware behind a newer
+     * capability, a property it never implemented — is a device with an
+     * unknown setting, not one this phone cannot administer. Their values
+     * are absent above, they are left out of configuration writes, and
+     * nothing about them can be verified after a save.
+     */
+    public var unreadableProperties: [UInt32]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5114,25 +5129,39 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * including the `PROP_DEV_PEERS` list.
          */supportsDeviceIdentity: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
-         * Present exactly when `supports_repeater`.
+         * Present when `supports_repeater` and the device reported the whole
+         * policy.
          */repeater: UlcpRepeaterSettingsRecord?,
         /**
          * `PROP_DEV_PEERS`: the peer public keys stored on the device
-         * identity, read back losslessly. Present exactly when
-         * `supports_device_identity`.
+         * identity, read back losslessly. Present when
+         * `supports_device_identity` and the device reported the list.
          */devPeerKeys: [Data]?,
         /**
-         * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
-         * from what it is actually doing" and "no `CAP_IDENT`" —
-         * `supports_ident` distinguishes them.
+         * `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
+         * what it is actually doing", "no `CAP_IDENT`", and "the device would
+         * not report it" — `supports_ident` and `unreadable_properties`
+         * distinguish them.
          */identRole: UInt8?,
         /**
-         * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
+         * `PROP_IDENT_MOBILE`. Present when `supports_ident` and the device
+         * reported it.
          */identMobile: Bool?,
         /**
          * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
-         * Identity Requests. Present exactly when `supports_device_identity`.
-         */devDiscoverable: Bool?) {
+         * Identity Requests. Present when `supports_device_identity` and the
+         * device reported it.
+         */devDiscoverable: Bool?,
+        /**
+         * Capability-gated properties the device advertised but would not
+         * report, in ascending order.
+         *
+         * A device that refuses a property — old firmware behind a newer
+         * capability, a property it never implemented — is a device with an
+         * unknown setting, not one this phone cannot administer. Their values
+         * are absent above, they are left out of configuration writes, and
+         * nothing about them can be verified after a save.
+         */unreadableProperties: [UInt32]) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
@@ -5163,6 +5192,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.identRole = identRole
         self.identMobile = identMobile
         self.devDiscoverable = devDiscoverable
+        self.unreadableProperties = unreadableProperties
     }
 
 
@@ -5210,7 +5240,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 devPeerKeys: FfiConverterOptionSequenceData.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
-                devDiscoverable: FfiConverterOptionBool.read(from: &buf)
+                devDiscoverable: FfiConverterOptionBool.read(from: &buf),
+                unreadableProperties: FfiConverterSequenceUInt32.read(from: &buf)
         )
     }
 
@@ -5245,6 +5276,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
+        FfiConverterSequenceUInt32.write(value.unreadableProperties, into: &buf)
     }
 }
 
@@ -7800,7 +7832,14 @@ public func inspectUlcpStatus(value: Data)throws  -> UInt32  {
 }
 /**
  * Validate and reduce the property responses from the read-only post-attach
- * inspection. Every capability-gated property must be present and well formed.
+ * inspection.
+ *
+ * The four properties every ULCP device must answer — the interface type
+ * and the live PHY triple — are required: without them there is no radio
+ * to describe. Everything else is capability-gated and merely *expected*,
+ * so a device that refuses one, or answers it with something undecodable,
+ * yields a snapshot with that setting absent and named in
+ * `unreadable_properties` rather than no snapshot at all.
  */
 public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> UlcpSyncRecord  {
     return try  FfiConverterTypeUlcpSyncRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -7984,7 +8023,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_status() != 30949) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 51182) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 54563) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 17603) {
