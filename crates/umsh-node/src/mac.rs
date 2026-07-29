@@ -35,6 +35,19 @@ pub trait MacBackend: Clone {
         &self,
         key: PublicKey,
     ) -> Result<PeerId, MacBackendError<Self::SendError, Self::CapacityError>>;
+    /// Remove a peer and its per-peer transport state, reporting whether it
+    /// was registered.
+    async fn remove_peer(&self, key: &PublicKey) -> bool {
+        let _ = key;
+        false
+    }
+    /// Ensure `key` holds at least a transient (unpinned, LRU-evictable)
+    /// peer slot, so an explicit reply to a stranger can be sent. Reports
+    /// whether a slot is held.
+    async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
+        let _ = key;
+        false
+    }
     /// Add or refresh a private channel.
     async fn add_private_channel(
         &self,
@@ -180,6 +193,14 @@ impl<
             AddPeerError::Capacity => MacBackendError::Capacity(CapacityError),
             AddPeerError::InvalidPublicKey => MacBackendError::InvalidPublicKey,
         })
+    }
+
+    async fn remove_peer(&self, key: &PublicKey) -> bool {
+        self.remove_peer(key).await
+    }
+
+    async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
+        self.ensure_transient_peer(key).await
     }
 
     async fn add_private_channel(

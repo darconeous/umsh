@@ -90,6 +90,10 @@ pub mod prop {
     /// Minimum received SNR in whole dB for flood forwarding
     /// (`PROP_MAC_REPEATER_MIN_SNR`) — INT8, or empty for no threshold.
     pub const MAC_REPEATER_MIN_SNR: u32 = 77;
+    /// Whether the device identity answers Identity Requests
+    /// (`PROP_DEV_DISCOVERABLE`) — BOOL, default 1. Requires
+    /// `CAP_DEV_IDENTITY`.
+    pub const DEV_DISCOVERABLE: u32 = 78;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).

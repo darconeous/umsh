@@ -164,6 +164,9 @@ pub struct DevDomainSnapshot {
     /// `PROP_IDENT_MOBILE`: whether to advertise the `MOB` capability
     /// bit.
     pub ident_mobile: bool,
+    /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+    /// Identity Requests.
+    pub discoverable: bool,
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -497,6 +500,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         repeater_min_snr: session.repeater_min_snr(),
         ident_role: session.ident_role(),
         ident_mobile: session.ident_mobile(),
+        discoverable: session.dev_discoverable(),
     };
     for key in session.dev_channel_keys() {
         let _ = snapshot.channel_keys.push(key);

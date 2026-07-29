@@ -58,9 +58,13 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.identityUnavailable
     }
 
+    func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {}
+
     func requestIdentity(peerAddress: String) async throws {
         throw RadioConnectionError.identityUnavailable
     }
+
+    func requestNearbyIdentities(roleFilter: UInt8?) async throws {}
 
     func signIdentityBundle(name: String?) async throws -> Data {
         throw RadioConnectionError.identityUnavailable
@@ -142,9 +146,44 @@ actor FakeRadioConnection: RadioConnection {
                 filterCount: provisioning.filterCount,
                 hostChannelCount: provisioning.hostChannelCount,
                 hostPeerCount: provisioning.hostPeerCount,
-                autoAcknowledgementEnabled: provisioning.autoAcknowledgementEnabled
+                autoAcknowledgementEnabled: provisioning.autoAcknowledgementEnabled,
+                supportsDeviceIdentity: provisioning.supportsDeviceIdentity,
+                devPeerAddresses: provisioning.devPeerAddresses
             )
         }
+        publish(updated)
+    }
+
+    func addDevicePeer(_ publicKey: Data) async throws {
+        try mutateDevicePeers(publicKey) { addresses, address in
+            guard !addresses.contains(address) else { return }
+            guard addresses.count < devicePeerCapacity else {
+                throw DevicePeerError.deviceFull
+            }
+            addresses.append(address)
+        }
+    }
+
+    func removeDevicePeer(_ publicKey: Data) async throws {
+        try mutateDevicePeers(publicKey) { addresses, address in
+            addresses.removeAll { $0 == address }
+        }
+    }
+
+    private func mutateDevicePeers(
+        _ publicKey: Data,
+        _ mutate: (inout [String], String) throws -> Void
+    ) rethrows {
+        guard var provisioning = snapshot.provisioning,
+              provisioning.supportsDeviceIdentity
+        else { return }
+        let address = (try? inspectPublicIdentityBytes(publicKey: publicKey).canonicalAddress)
+            ?? publicKey.base64EncodedString()
+        var addresses = provisioning.devPeerAddresses ?? []
+        try mutate(&addresses, address)
+        provisioning.devPeerAddresses = addresses
+        var updated = snapshot
+        updated.provisioning = provisioning
         publish(updated)
     }
 
@@ -185,6 +224,8 @@ actor FakeRadioConnection: RadioConnection {
     ) async throws {}
 
     func registerChatPeers(_ peerAddresses: [String]) async throws {}
+
+    func removeChatPeers(_ peerAddresses: [String]) async throws {}
 
     func composeText(
         peerAddress: String,

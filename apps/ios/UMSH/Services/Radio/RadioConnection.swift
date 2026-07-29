@@ -11,6 +11,10 @@ protocol RadioConnection: AnyObject, Sendable {
     /// for nodes that are reachable but have nothing to say.
     func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent>
     func advertiseIdentity(name: String?) async throws
+    /// Set whether this phone answers nearby nodes' Identity Requests with
+    /// its own identity, and the display name those replies carry.
+    /// Best-effort: the preference is reapplied on every session install.
+    func setPhoneDiscoverable(_ enabled: Bool, name: String?) async
     func signIdentityBundle(name: String?) async throws -> Data
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func useMeshSession(_ session: MobileMeshSession?) async
@@ -35,11 +39,23 @@ protocol RadioConnection: AnyObject, Sendable {
     func factoryReset() async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
+    /// Store a peer public key on the radio's device identity
+    /// (`PROP_DEV_PEERS`), persisting it with a chained save. Idempotent:
+    /// a key the radio already holds resolves as success.
+    func addDevicePeer(_ publicKey: Data) async throws
+    /// Remove a peer public key from the radio's device identity.
+    /// Idempotent: a key the radio does not hold resolves as success.
+    func removeDevicePeer(_ publicKey: Data) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
     /// Solicit a peer's current node identity by sending a targeted MAC
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.
     func requestIdentity(peerAddress: String) async throws
+    /// Ask every matching node in direct radio range to identify itself,
+    /// with one zero-hop broadcast Identity Request (repeaters never carry
+    /// it). `roleFilter` is a wire role byte to narrow who answers; nil asks
+    /// everyone. Replies arrive on `advertisementEvents()`.
+    func requestNearbyIdentities(roleFilter: UInt8?) async throws
     /// The route the phone's MAC will use for the next frame to this peer.
     /// Read-only: inspecting a peer never registers it.
     func peerRoute(peerAddress: String) async throws -> RadioPeerRoute
@@ -51,6 +67,10 @@ protocol RadioConnection: AnyObject, Sendable {
         checkpoints: [MobileChatCheckpointRecord]
     ) async throws
     func registerChatPeers(_ peerAddresses: [String]) async throws
+    /// Drop these peers from the phone MAC's peer registry (idempotent;
+    /// unknown peers are ignored). Best-effort: the store is the authority
+    /// and `prepareChat` rebuilds the registry on the next attach.
+    func removeChatPeers(_ peerAddresses: [String]) async throws
     func composeText(
         peerAddress: String,
         clientToken: UInt32,
@@ -218,4 +238,17 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case takeoverNotAllowed
     case operationInProgress
     case operationRejected(String)
+}
+
+/// Failures of device-identity peer mutations, shaped for the UI's
+/// disabled-state and inline-error copy.
+enum DevicePeerError: Error, Equatable, Sendable {
+    /// No attached radio configured for this phone.
+    case radioUnavailable
+    /// The radio's peer list is full; the device's `NOMEM` is authoritative.
+    case deviceFull
+    /// The radio does not advertise a device identity domain.
+    case unsupported
+    /// Any other rejection, carrying the radio's status name.
+    case failed(String)
 }

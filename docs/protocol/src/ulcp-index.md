@@ -62,6 +62,7 @@ Id   | Mnemonic                                                                 
 75   | [`PROP_MAC_REPEATER_DEFAULT_REGION`](ulcp-device.md#prop-mac-repeater-default-region) | Get, Set      | `CAP_REPEATER`
 76   | [`PROP_MAC_REPEATER_MIN_RSSI`](ulcp-device.md#prop-mac-repeater-min-rssi)  | Get, Set                 | `CAP_REPEATER`
 77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
+78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)            | Get, Set                 | `CAP_DEV_IDENTITY`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`

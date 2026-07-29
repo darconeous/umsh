@@ -32,8 +32,8 @@ use umsh_crypto::{
 use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
 use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{
-    Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeRole, PacketFamily,
-    SendProgressTicket, Transport,
+    Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
+    NodeRole, PacketFamily, SendProgressTicket, Transport,
 };
 use umsh_sync::AsyncRefCell;
 use umsh_text::engine::{ArchiveResult, DeliveryState};
@@ -339,6 +339,10 @@ enum WorkerCommand {
         peers: Vec<PublicKey>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
+    RemovePeers {
+        peers: Vec<PublicKey>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     Ping {
         operation_id: u64,
         peer: PublicKey,
@@ -381,6 +385,16 @@ enum WorkerCommand {
     RequestIdentity {
         peer: PublicKey,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    DiscoverIdentities {
+        role_code: Option<u8>,
+        capability_bits: Option<u8>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    SetDiscoverable {
+        enabled: bool,
+        name: Option<String>,
+        response: oneshot::Sender<()>,
     },
     PeerRoute {
         peer: PublicKey,
@@ -732,7 +746,13 @@ impl umsh_mac::Platform for MobilePlatform {
     type KeyValueStore = MemoryKeyValueStore;
 }
 
-type MobileMac = Mac<MobilePlatform>;
+/// Peer capacity of the phone's in-memory MAC. The embedded default (16) is
+/// sized for microcontroller RAM; the app registers a peer per conversation
+/// plus every checkpointed stream, which can plausibly exceed it, and phone
+/// RAM is not the constraint.
+const MOBILE_MAC_PEERS: usize = 64;
+
+type MobileMac = Mac<MobilePlatform, { umsh_mac::DEFAULT_IDENTITIES }, MOBILE_MAC_PEERS>;
 const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 
 /// Long-lived Rust protocol engine used by the mobile app.
@@ -824,6 +844,62 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
+    /// Solicit identities from nearby nodes with one zero-hop broadcast MAC
+    /// Identity Request.
+    ///
+    /// The request goes out as a direct broadcast with no flood budget, so
+    /// repeaters never carry it — the blast radius is exactly the nodes in
+    /// radio range. It carries this phone's full source address, so a
+    /// matching node can reply with a targeted unicast without any prior
+    /// contact; replies arrive as ordinary `NodeIdentity` advertisements on
+    /// the receive path. `role_code` and `capability_bits` narrow which
+    /// nodes respond (AND-combined when both are given); `None` for both
+    /// asks every node in range.
+    pub async fn discover_identities(
+        &self,
+        role_code: Option<u8>,
+        capability_bits: Option<u8>,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::DiscoverIdentities {
+                role_code,
+                capability_bits,
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Set whether this phone answers Identity Requests with its own
+    /// identity — the passive counterpart of [`discover_identities`]:
+    /// discoverable phones show up in other people's Discover sessions.
+    ///
+    /// `name` is the display name carried in replies (truncated to the
+    /// 24-byte wire limit). The session starts discoverable with no name;
+    /// the app pushes the stored preference and name right after install
+    /// and again whenever either changes. Replies are targeted
+    /// authenticated unicasts, never broadcasts.
+    pub async fn set_discoverable(
+        &self,
+        enabled: bool,
+        name: Option<String>,
+    ) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SetDiscoverable {
+                enabled,
+                name,
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
     /// Report the route the MAC will use for the next frame sent to `peer`.
     ///
     /// Read-only: an unregistered peer reads as `Unknown` rather than being
@@ -885,6 +961,25 @@ impl MobileMeshSession {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::RegisterPeers { peers, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Remove peers from the live MAC. Idempotent: a peer that was never
+    /// registered is already in the requested state, so it is not an error.
+    /// A removed peer that transmits again may be auto-re-registered
+    /// (unpinned) by the MAC — removal here tracks the app's stored peer
+    /// list, it is not a block list.
+    pub async fn remove_peers(&self, peer_addresses: Vec<String>) -> Result<(), MobileMeshError> {
+        let peers = peer_addresses
+            .iter()
+            .map(|address| decode_peer(address).map_err(|_| MobileMeshError::InvalidPeer))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RemovePeers { peers, response })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -1218,6 +1313,11 @@ impl MobileMeshSession {
 
         std::thread::Builder::new()
             .name("umsh-mobile-mesh".to_owned())
+            // The whole 64-peer MAC lives inside the worker future, and the
+            // future is polled (and moved during construction) on this
+            // thread's stack. The platform default (512 KiB–2 MiB for
+            // secondary threads) is not enough headroom for that.
+            .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 let mut builder = tokio::runtime::Builder::new_current_thread();
                 builder.enable_time();
@@ -1235,9 +1335,12 @@ impl MobileMeshSession {
                     }
                 };
                 let local = tokio::task::LocalSet::new();
+                // Boxed so the future's state — which embeds the MAC and its
+                // peer tables by value — lives on the heap rather than in
+                // this thread's stack frame.
                 local.block_on(
                     &runtime,
-                    run_worker(
+                    Box::pin(run_worker(
                         worker_identity,
                         SharedCounterStore(counter_store),
                         command_rx,
@@ -1248,7 +1351,7 @@ impl MobileMeshSession {
                         peer_heard_tx,
                         chat_event_tx,
                         ready_tx,
-                    ),
+                    )),
                 );
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
@@ -1277,6 +1380,27 @@ impl Drop for MobileMeshSession {
         self.transmit_completions.fail_all();
         let _ = self.commands.send(WorkerCommand::Shutdown);
     }
+}
+
+/// The identity profile the phone's Identity Request responder serves:
+/// the same role Chat / Mobile + Text messages statement the signed
+/// advertisement makes, with the display name truncated identically.
+fn phone_identity_profile(public_key: PublicKey, name: Option<&str>) -> NodeIdentityProfile {
+    let mut profile = NodeIdentityProfile::new(
+        public_key,
+        NodeRole::Chat,
+        NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
+    );
+    profile.name = name
+        .map(|name| {
+            let mut end = name.len().min(24);
+            while !name.is_char_boundary(end) {
+                end -= 1;
+            }
+            name[..end].to_owned()
+        })
+        .filter(|name| !name.is_empty());
+    profile
 }
 
 /// Build the signed standalone node-identity bundle for this phone: role
@@ -1367,9 +1491,20 @@ async fn run_worker(
         let _ = ready.send(Err(MobileMeshError::CounterPersistenceFailed));
         return;
     }
+    // A stranger's authenticated unicast — an Identity Request reply, a
+    // first contact — names its sender with a full 32-byte source key.
+    // Auto-registration (unpinned, LRU-evictable) is what lets the MAC
+    // verify such a frame at all; without it the reply to our own
+    // Discover solicitation is dropped unheard. Device firmware runs
+    // with the same setting.
+    handle.set_auto_register_full_key_peers(true).await;
 
     let mut host = Host::new(handle);
     let node = host.add_node(identity_id);
+    // The session starts discoverable with no name; the app pushes the
+    // stored preference and display name via `set_discoverable` right
+    // after install.
+    node.enable_identity_responder_default(phone_identity_profile(local_key, None));
     let mut chat = MobileChatState::new(local_key);
     // Registered before every other receive handler: dispatch stops at the
     // first handler that claims a packet, and presence is true of packets
@@ -1508,6 +1643,14 @@ async fn run_worker(
                             }
                             let _ = response.send(result);
                         }
+                        Some(WorkerCommand::RemovePeers { peers, response }) => {
+                            for peer in peers {
+                                // Not-found is success: the peer is absent
+                                // either way.
+                                let _ = node.remove_peer(&peer).await;
+                            }
+                            let _ = response.send(Ok(()));
+                        }
                         Some(WorkerCommand::Ping { operation_id, peer, timeout_ms }) => {
                             if pending.borrow().contains_key(&peer.0) {
                                 emit_ping_failure(&events, operation_id);
@@ -1603,6 +1746,74 @@ async fn run_worker(
                             // A real authenticated send advances the frame counter;
                             // persist it before acknowledging, as the ping/advertise
                             // paths do.
+                            if result.is_ok()
+                                && handle.service_counter_persistence().await.is_err()
+                            {
+                                let _ = response.send(Err(MobileMeshError::SendFailed));
+                                return;
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::SetDiscoverable { enabled, name, response }) => {
+                            if enabled {
+                                node.enable_identity_responder_default(phone_identity_profile(
+                                    local_key,
+                                    name.as_deref(),
+                                ));
+                            } else {
+                                node.disable_identity_responder();
+                            }
+                            let _ = response.send(());
+                        }
+                        Some(WorkerCommand::DiscoverIdentities {
+                            role_code,
+                            capability_bits,
+                            response,
+                        }) => {
+                            let result = async {
+                                let mut builder = umsh_node::mac_command::IdentityRequestBuilder::new();
+                                let mut nonce_bytes = [0u8; 4];
+                                handle.fill_random(&mut nonce_bytes).await;
+                                builder = builder
+                                    .nonce(u32::from_be_bytes(nonce_bytes))
+                                    .map_err(|_| MobileMeshError::SendFailed)?;
+                                if let Some(role) = role_code {
+                                    builder = builder
+                                        .filter_role(NodeRole::from_byte(role))
+                                        .map_err(|_| MobileMeshError::SendFailed)?;
+                                }
+                                // A broadcast request must carry at least one
+                                // filter option. An unrestricted ask carries a
+                                // zero-bit capability filter, which every node
+                                // satisfies.
+                                let capability_bits = capability_bits
+                                    .or(if role_code.is_none() { Some(0) } else { None });
+                                if let Some(bits) = capability_bits {
+                                    builder = builder
+                                        .filter_caps(NodeCapabilities::from_bits_truncate(bits))
+                                        .map_err(|_| MobileMeshError::SendFailed)?;
+                                }
+                                let options_block = builder.build();
+                                let cmd = umsh_node::MacCommand::IdentityRequest {
+                                    options: &options_block,
+                                };
+                                let mut frame = [0u8; 128];
+                                frame[0] = PayloadType::MacCommand as u8;
+                                let length = umsh_node::mac_command::encode(&cmd, &mut frame[1..])
+                                    .map_err(|_| MobileMeshError::SendFailed)?
+                                    + 1;
+                                // Zero-hop by design: no flood budget, so
+                                // repeaters never carry the solicitation.
+                                // Full source lets a stranger unicast back.
+                                node.send_all(
+                                    &frame[..length],
+                                    &SendOptions::default().with_full_source().no_flood(),
+                                )
+                                .await
+                                .map(|_| ())
+                                .map_err(|_| MobileMeshError::SendFailed)
+                            }
+                            .await;
                             if result.is_ok()
                                 && handle.service_counter_persistence().await.is_err()
                             {
@@ -2113,6 +2324,274 @@ mod tests {
             }
             assert!(Instant::now() < deadline, "ping did not complete");
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Drive one authenticated ping between the two sessions to completion,
+    /// shuttling frames both ways.
+    async fn complete_ping(alice: &MobileMeshSession, bob: &MobileMeshSession, target: String) {
+        let operation = alice.ping(target, 2_000).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-40),
+                    lqi: None,
+                    snr_cb: Some(100),
+                })
+                .unwrap();
+            }
+            if let Some(event) = alice_update.ping_events.into_iter().next() {
+                assert_eq!(event.operation_id, operation);
+                assert_eq!(event.outcome, MobileMeshPingOutcome::Reply);
+                break;
+            }
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-42),
+                        lqi: None,
+                        snr_cb: Some(90),
+                    })
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline, "ping did not complete");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn removed_peer_re_registers_cleanly_and_traffic_still_flows() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(21);
+        let bob_identity = identity(23);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+
+        alice
+            .register_peers(vec![address(&bob_identity)])
+            .await
+            .unwrap();
+        bob.register_peers(vec![address(&alice_identity)])
+            .await
+            .unwrap();
+        complete_ping(&alice, &bob, address(&bob_identity)).await;
+
+        // Removal is idempotent — an unknown peer and a double removal are
+        // both fine — and must not disturb the session.
+        alice
+            .remove_peers(vec![address(&bob_identity)])
+            .await
+            .unwrap();
+        alice
+            .remove_peers(vec![address(&bob_identity)])
+            .await
+            .unwrap();
+        alice
+            .remove_peers(vec![address(&alice_identity)])
+            .await
+            .unwrap();
+
+        // Re-registering after removal starts from a clean slot; Bob's
+        // replay state still accepts Alice because her TX counter is
+        // identity-scoped and survived the peer-table churn.
+        alice
+            .register_peers(vec![address(&bob_identity)])
+            .await
+            .unwrap();
+        complete_ping(&alice, &bob, address(&bob_identity)).await;
+    }
+
+    #[tokio::test]
+    async fn discover_identities_emits_one_acceptable_zero_hop_broadcast() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(31);
+        let bob_identity = identity(33);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+
+        alice.discover_identities(None, Some(0x02)).await.unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let frames = loop {
+            let update = alice.poll_update();
+            if !update.outbound_frames.is_empty() {
+                break update.outbound_frames;
+            }
+            assert!(Instant::now() < deadline, "solicitation never went out");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // One broadcast, no retries, no companions.
+        assert_eq!(frames.len(), 1);
+        let frame = frames.into_iter().next().unwrap();
+        alice.complete_outbound_frame(frame.id, true).unwrap();
+        let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+        assert_eq!(header.packet_type(), umsh_core::PacketType::Broadcast);
+        // Zero-hop: no flood budget for repeaters to spend.
+        assert!(header.flood_hops.is_none());
+        // Full source, so a stranger can unicast its identity back.
+        assert!(header.fcf.full_source());
+
+        // A bystander session consumes the solicitation without error.
+        // (Whether it answers is its responder's business — the full
+        // reply loop is covered separately below.)
+        bob.receive(MobileMeshRxRecord {
+            data: frame.data,
+            rssi_dbm: Some(-40),
+            lqi: None,
+            snr_cb: Some(100),
+        })
+        .unwrap();
+
+        // An unrestricted ask still satisfies the rule that a broadcast
+        // request carries at least one filter: it gets a zero-bit
+        // capability filter, which every node matches.
+        alice.discover_identities(None, None).await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let frames = loop {
+            let update = alice.poll_update();
+            if !update.outbound_frames.is_empty() {
+                break update.outbound_frames;
+            }
+            assert!(Instant::now() < deadline, "solicitation never went out");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(frames.len(), 1);
+        let frame = frames.into_iter().next().unwrap();
+        alice.complete_outbound_frame(frame.id, true).unwrap();
+        let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+        let body = &frame.data[header.body_range.clone()];
+        assert_eq!(body[0], umsh_core::PayloadType::MacCommand as u8);
+        let umsh_node::MacCommand::IdentityRequest { options } =
+            umsh_node::mac_command::parse(&body[1..]).unwrap()
+        else {
+            panic!("expected an identity request");
+        };
+        let has_vacuous_caps_filter = umsh_core::options::OptionDecoder::new(options)
+            .filter_map(Result::ok)
+            .any(|(number, value)| {
+                number == umsh_node::mac_command::identity_filter::FILTER_NODE_CAPS
+                    && value == [0]
+            });
+        assert!(has_vacuous_caps_filter);
+    }
+
+    /// The whole discover loop between two strangers: Alice's zero-hop
+    /// broadcast ask reaches Bob, Bob's default-on responder answers with
+    /// a jittered authenticated unicast carrying his full source key, and
+    /// Alice — who has never registered Bob — auto-registers him
+    /// transiently, verifies the reply, and surfaces it as an
+    /// advertisement event. This is the exact path the Discover sheet
+    /// rides on hardware.
+    #[tokio::test]
+    async fn discover_solicitation_earns_a_stranger_reply_end_to_end() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(21);
+        let bob_identity = identity(23);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+            .await
+            .unwrap();
+        // Bob answers under a display name; Alice should hear it back.
+        bob.set_discoverable(true, Some("Bob's phone".into()))
+            .await
+            .unwrap();
+
+        alice.discover_identities(None, None).await.unwrap();
+
+        // Shuttle frames both ways until Bob's identity lands at Alice.
+        // The reply is jittered by up to five seconds, so the deadline is
+        // generous.
+        let bob_address = address(&bob_identity);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let event = 'outer: loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-40),
+                    lqi: None,
+                    snr_cb: Some(100),
+                })
+                .unwrap();
+            }
+            for event in alice_update.advertisement_events {
+                if event.peer_address == bob_address {
+                    break 'outer event;
+                }
+            }
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-42),
+                        lqi: None,
+                        snr_cb: Some(90),
+                    })
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline, "no identity reply reached Alice");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // The reply is a MAC-authenticated unicast, not a broadcast the
+        // platform still has to signature-check.
+        assert!(event.source_authenticated);
+        let payload = umsh_node::NodeIdentityPayload::from_bytes(&event.payload).unwrap();
+        assert_eq!(payload.name.as_deref(), Some("Bob's phone"));
+
+        // Opting out is honored: a fresh ask earns silence from Bob.
+        bob.set_discoverable(false, None).await.unwrap();
+        alice.discover_identities(None, None).await.unwrap();
+        let quiet_until = Instant::now() + Duration::from_secs(6);
+        while Instant::now() < quiet_until {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-40),
+                    lqi: None,
+                    snr_cb: Some(100),
+                })
+                .unwrap();
+            }
+            let bob_update = bob.poll_update();
+            assert!(
+                bob_update.outbound_frames.is_empty(),
+                "Bob answered while not discoverable"
+            );
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 

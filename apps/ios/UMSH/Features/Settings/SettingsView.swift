@@ -9,6 +9,10 @@ struct SettingsView: View {
     var saveAdvertisedName: (String) async -> Void = { _ in }
     var advertiseIdentity: () async -> String? = { nil }
     var identityShareURI: (() async -> String)? = nil
+    /// Whether this phone answers nearby nodes' identity requests, and the
+    /// action that changes it. Absent when no mesh session can exist.
+    var phoneDiscoverable: Bool = true
+    var setPhoneDiscoverable: ((Bool) async -> Void)? = nil
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
     let reconnectRadio: () async -> Void
@@ -29,6 +33,13 @@ struct SettingsView: View {
     /// Handed to every peer sheet reachable from Settings so those sheets
     /// match the ones opened from Network.
     var peerActions: PeerActions = .unavailable
+    /// The app's conversation list plus messaging closures, threaded to the
+    /// radio identity's peer sheet so its "Message" button opens a working
+    /// transcript instead of a blank destination.
+    var conversations: Binding<[DirectConversationSummary]> = .constant([])
+    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
+    var messageActions: ChatMessageActions = .unavailable
 
     @State private var showsDeviceSetup = false
 
@@ -42,7 +53,9 @@ struct SettingsView: View {
                             advertisedName: advertisedName,
                             saveAdvertisedName: saveAdvertisedName,
                             advertiseIdentity: advertiseIdentity,
-                            identityShareURI: identityShareURI
+                            identityShareURI: identityShareURI,
+                            phoneDiscoverable: phoneDiscoverable,
+                            setPhoneDiscoverable: setPhoneDiscoverable
                         )
                     } label: {
                         HStack(spacing: 12) {
@@ -90,7 +103,11 @@ struct SettingsView: View {
                         discoverRadios: discoverRadios,
                         selectRadio: selectRadio,
                         stopDiscovery: stopDiscovery,
-                        peerActions: peerActions
+                        peerActions: peerActions,
+                        conversations: conversations,
+                        updateDraft: updateDraft,
+                        sendMessage: sendMessage,
+                        messageActions: messageActions
                     )
                 }
             }
@@ -134,11 +151,14 @@ struct IdentityDetailView: View {
     var saveAdvertisedName: (String) async -> Void = { _ in }
     var advertiseIdentity: () async -> String? = { nil }
     var identityShareURI: (() async -> String)? = nil
+    var phoneDiscoverable: Bool = true
+    var setPhoneDiscoverable: ((Bool) async -> Void)? = nil
 
     @State private var shareURI = ""
     @State private var nameDraft = ""
     @State private var isAdvertising = false
     @State private var advertiseFeedback: AdvertiseFeedback?
+    @State private var discoverableDraft = true
 
     var body: some View {
         List {
@@ -183,10 +203,19 @@ struct IdentityDetailView: View {
                         .font(.caption)
                         .foregroundStyle(advertiseFeedback.isSuccess ? .green : .red)
                 }
+                if setPhoneDiscoverable != nil {
+                    Toggle("Discoverable", isOn: Binding(
+                        get: { discoverableDraft },
+                        set: { newValue in
+                            discoverableDraft = newValue
+                            Task { await setPhoneDiscoverable?(newValue) }
+                        }
+                    ))
+                }
             } header: {
                 Text("Advertised identity")
             } footer: {
-                Text("Advertising broadcasts your public key, name, and capabilities to every nearby node, signed by your identity.")
+                Text(advertisedIdentityFooter)
             }
 
             Section("Storage") {
@@ -199,8 +228,19 @@ struct IdentityDetailView: View {
         .navigationTitle("Your identity")
         .task {
             nameDraft = advertisedName
+            discoverableDraft = phoneDiscoverable
             await refreshShareURI()
         }
+    }
+
+    private var advertisedIdentityFooter: String {
+        var footer = "Advertising broadcasts your public key, name, and capabilities to every nearby node, signed by your identity."
+        if setPhoneDiscoverable != nil {
+            footer += discoverableDraft
+                ? " While discoverable, this phone also answers nearby nodes that ask it to identify itself."
+                : " This phone ignores nearby nodes that ask it to identify itself."
+        }
+        return footer
     }
 
     private func commitName() async {
@@ -257,6 +297,12 @@ struct RadioDetailView: View {
     /// So the radio's own node identity opens the same peer sheet as any
     /// other node.
     var peerActions: PeerActions = .unavailable
+    /// Conversation list plus messaging closures for that peer sheet, so
+    /// "Message" there opens a working transcript.
+    var conversations: Binding<[DirectConversationSummary]> = .constant([])
+    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
+    var messageActions: ChatMessageActions = .unavailable
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
@@ -424,7 +470,11 @@ struct RadioDetailView: View {
                                 storedRole: .unknown
                             ),
                             radioSnapshot: $snapshot,
-                            actions: peerActions
+                            conversations: conversations,
+                            actions: peerActions,
+                            updateDraft: updateDraft,
+                            sendMessage: sendMessage,
+                            messageActions: messageActions
                         )
                     } label: {
                         LabeledContent("Peer", value: deviceIdentity.hint.text)
@@ -433,6 +483,7 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                devicePeersSection
             }
         }
         .navigationTitle("Radio")
@@ -518,6 +569,63 @@ struct RadioDetailView: View {
     private func dutyPercentage(_ value: UInt16) -> String {
         let percent = Double(value) * 100 / Double(UInt16.max)
         return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
+    }
+
+    /// The peers stored on the radio's device identity, read back from the
+    /// radio itself. Rows are named through this phone's records when the
+    /// key is one it knows; managing membership happens on each peer's own
+    /// sheet, plus swipe-remove here.
+    @ViewBuilder
+    private var devicePeersSection: some View {
+        if let provisioning = snapshot.provisioning, provisioning.supportsDeviceIdentity,
+           let addresses = provisioning.devPeerAddresses {
+            Section {
+                if addresses.isEmpty {
+                    Text("No peers stored on the radio")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(addresses, id: \.self) { address in
+                        devicePeerRow(address)
+                    }
+                }
+            } header: {
+                Text("Device identity peers (\(addresses.count) of \(devicePeerCapacity))")
+            } footer: {
+                Text("The radio's own node identity can only communicate with peers whose public keys it holds. Add peers from their pages in Network.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func devicePeerRow(_ address: String) -> some View {
+        let known = peerActions.knownPeers.first { $0.identity.canonicalAddress == address }
+        HStack(spacing: 12) {
+            if let known {
+                PeerAvatar(hint: known.identity.hint, diameter: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(known.displayName)
+                    Text(known.identity.hint.text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Image(systemName: "person.crop.circle.badge.questionmark")
+                    .foregroundStyle(.secondary)
+                Text(address)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if let known, peerActions.removeFromDeviceIdentity != nil {
+                Button(role: .destructive) {
+                    Task { _ = await peerActions.removeFromDeviceIdentity?(known) }
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        }
     }
 
     private var canEditConfiguration: Bool {

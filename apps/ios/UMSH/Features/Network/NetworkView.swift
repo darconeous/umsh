@@ -6,13 +6,32 @@ struct NetworkView: View {
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
-    let savePeer: (MeshNodeURIPreview, PeerImportDetails) async -> Void
+    /// Same shape Conversations uses, so an import here can open the new
+    /// transcript instead of silently dropping the "Message" intent.
+    let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
+    /// Hands a freshly created conversation to the app root, which switches
+    /// to the Conversations tab and pushes the transcript.
+    var openConversation: (DirectConversationSummary) -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
+    /// Broadcast this phone's signed identity, for the Discover sheet's
+    /// Announce action. Returns a failure message or nil.
+    var advertiseIdentity: (() async -> String?)? = nil
+    /// The name that announcement carries, for its confirmation preview.
+    var advertisedName: String = ""
+    /// Drop every transient row nothing depends on.
+    var clearDiscoveredNodes: (() async -> Void)? = nil
+    /// Send one zero-hop Identity Request soliciting nearby nodes.
+    var solicitNearbyIdentities: ((PeerRole?) async -> Bool)? = nil
     @State private var presentation: NetworkPresentation = .list
     @State private var showsAddPeer = false
+    @State private var showsDiscovery = false
+    @AppStorage("network.sort") private var sortOrder: NetworkSortOrder = .alphabetic
+    @State private var roleFilter: NetworkRoleFilter = .all
+    @State private var searchText = ""
+    @State private var peerPendingRemoval: PeerSummary?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +53,11 @@ struct NetworkView: View {
             }
         }
         .navigationTitle("Network")
+        .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                sortAndFilterMenu
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Add peer", systemImage: "person.badge.plus") { showsAddPeer = true }
             }
@@ -43,14 +66,69 @@ struct NetworkView: View {
             NavigationStack {
                 NodeImportView(
                     inspectPeerIdentity: inspectPeerIdentity,
-                    save: { preview, details, _ in
-                        await savePeer(preview, details)
+                    save: { preview, details, startConversation in
+                        let conversation = await savePeer(preview, details, startConversation)
                         showsAddPeer = false
+                        if startConversation, let conversation {
+                            openConversation(conversation)
+                        }
                     }
                 )
             }
         }
+        .sheet(isPresented: $showsDiscovery) {
+            DiscoverPeersView(
+                radioSnapshot: $radioSnapshot,
+                conversations: $conversations,
+                peers: peers,
+                peerActions: peerActions,
+                updateDraft: updateDraft,
+                sendMessage: sendMessage,
+                messageActions: messageActions,
+                advertiseIdentity: advertiseIdentity,
+                advertisedName: advertisedName,
+                clearDiscoveredNodes: clearDiscoveredNodes,
+                solicitNearbyIdentities: solicitNearbyIdentities,
+                openConversation: { conversation in
+                    showsDiscovery = false
+                    openConversation(conversation)
+                }
+            )
+        }
+        .confirmationDialog(
+            peerPendingRemoval.map { Text("Remove \($0.displayName)?") } ?? Text("Remove peer?"),
+            isPresented: Binding(
+                get: { peerPendingRemoval != nil },
+                set: { if !$0 { peerPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: peerPendingRemoval
+        ) { peer in
+            if hasConversation(peer) {
+                if peerActions.demoteToTransient != nil {
+                    Button("Remove Peer") {
+                        Task { _ = await peerActions.demoteToTransient?(peer) }
+                    }
+                }
+                if peerActions.deletePeerAndConversation != nil {
+                    Button("Delete Peer and Conversation", role: .destructive) {
+                        Task { _ = await peerActions.deletePeerAndConversation?(peer) }
+                    }
+                }
+            } else if peerActions.deletePeer != nil {
+                Button("Delete Peer", role: .destructive) {
+                    Task { _ = await peerActions.deletePeer?(peer) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { peer in
+            Text(hasConversation(peer)
+                 ? "Removing the peer keeps its conversation and message history, and the node stays findable through search. Deleting the peer and conversation erases the message history too."
+                 : "The node's record is deleted from this phone. Nothing is sent to the node.")
+        }
     }
+
+    // MARK: - List
 
     @ViewBuilder
     private var peerList: some View {
@@ -58,46 +136,98 @@ struct NetworkView: View {
             ContentUnavailableView {
                 Label("No known nodes", systemImage: "point.3.connected.trianglepath.dotted")
             } description: {
-                Text("Import a peer or start a bounded discovery session.")
+                Text("Import a peer to get started, or listen for nodes announcing themselves nearby.")
             } actions: {
-                Button("Discover peers") {}
+                Button("Discover peers") { showsDiscovery = true }
                     .buttonStyle(.borderedProminent)
             }
+        } else if isSearching {
+            searchResults
         } else {
             List {
-                let radios = peers.filter(\.isUlcpDevice)
+                let radios = arranged(visiblePeers.filter(\.isUlcpDevice))
                 if !radios.isEmpty {
                     Section("Saved radio") {
-                        ForEach(radios) { peer in peerLink(peer) }
+                        ForEach(radios) { peer in peerRow(peer) }
                     }
                 }
-                let contacts = peers.filter { !$0.isUlcpDevice && $0.isContact }
+                let favorites = arranged(visiblePeers.filter { !$0.isUlcpDevice && $0.isFavorite })
+                if !favorites.isEmpty {
+                    Section("Favorites") {
+                        ForEach(favorites) { peer in peerRow(peer) }
+                    }
+                }
+                let contacts = arranged(
+                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite && $0.isContact }
+                )
                 if !contacts.isEmpty {
                     Section("Contacts") {
-                        ForEach(contacts) { peer in peerLink(peer) }
+                        ForEach(contacts) { peer in peerRow(peer) }
                     }
                 }
-                let recent = peers.filter { !$0.isUlcpDevice && !$0.isContact }
-                if !recent.isEmpty {
-                    Section("Known nodes") {
-                        ForEach(recent) { peer in peerLink(peer) }
+                let saved = arranged(
+                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite && !$0.isContact }
+                )
+                if !saved.isEmpty {
+                    Section("Saved nodes") {
+                        ForEach(saved) { peer in peerRow(peer) }
+                    }
+                }
+                if visiblePeers.isEmpty {
+                    Section {
+                        Text("No saved nodes. Nodes heard over the air appear in search until you save them.")
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Section {
-                    Button("Discover peers") {}
+                    Button("Discover peers") { showsDiscovery = true }
                 } footer: {
-                    Text("Discovery is bounded and may not find every nearby node.")
+                    Text("A bounded listening session for nodes announcing themselves nearby.")
                 }
             }
             .listStyle(.insetGrouped)
         }
     }
 
-    private func peerLink(_ peer: PeerSummary) -> some View {
+    /// Search spans every recorded node, including the transient tier the
+    /// main list hides — that is the deliberate way discovered-but-unsaved
+    /// nodes stay reachable.
+    private var searchResults: some View {
+        List {
+            let saved = arranged(visiblePeers.filter { matchesSearch($0) })
+            if !saved.isEmpty {
+                Section("Saved") {
+                    ForEach(saved) { peer in peerRow(peer) }
+                }
+            }
+            let discovered = arranged(
+                peers.filter { !$0.isSaved && !$0.isUlcpDevice && matchesSearch($0) }
+            )
+            if !discovered.isEmpty {
+                Section {
+                    ForEach(discovered) { peer in peerRow(peer) }
+                } header: {
+                    Text("Discovered nodes")
+                } footer: {
+                    Text("Heard over the air but not saved. Swipe to save one, or open it for details.")
+                }
+            }
+            if saved.isEmpty && discovered.isEmpty {
+                Section {
+                    Text("No nodes match this search.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    // MARK: - Rows
+
+    private func peerRow(_ peer: PeerSummary) -> some View {
         NavigationLink {
             PeerDetailView(
                 peer: peer,
-                livePeers: peers,
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: peerActions,
@@ -107,839 +237,228 @@ struct NetworkView: View {
             )
         } label: {
             HStack(spacing: 12) {
-                PeerAvatar(hint: peer.identity.hint)
+                PeerAvatar(hint: peer.identity.hint, showsFavoriteStar: peer.isFavorite)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(peer.displayName)
-                    Text(peer.isUlcpDevice
-                         ? "Companion radio identity · \(peer.identity.hint.text)"
-                         : peer.identity.hint.text)
+                    Text(subtitle(for: peer))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-    }
-}
-
-struct PeerDetailView: View {
-    /// The entry as it stood when this view was pushed. Anchors identity, and
-    /// stands in if the peer is removed while the view is open.
-    private let pushedPeer: PeerSummary
-    /// The live peer list. A peer's details change while this view is open —
-    /// an identity response lands, or a reply teaches a route — and a value
-    /// captured at push time would show none of it.
-    private let livePeers: [PeerSummary]
-
-    /// This peer as it stands now.
-    private var peer: PeerSummary {
-        livePeers.first { $0.id == pushedPeer.id } ?? pushedPeer
-    }
-
-    @Binding var radioSnapshot: RadioSnapshot
-    @Binding var conversations: [DirectConversationSummary]
-    /// What this sheet can do with the node. One bundle so the sheet is the
-    /// same wherever it is opened from.
-    let actions: PeerActions
-    let updateDraft: ((Int64, String) async -> Void)?
-    let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
-    let messageActions: ChatMessageActions
-    /// Offered when this node may not exist locally yet — a device the
-    /// phone is configuring, say. Saving records it in Network and sends
-    /// nothing to the node.
-    let savePeer: (() async -> Bool)?
-    /// Whether that record already exists. The action is offered only when
-    /// it does not; the row still says where the node stands, because a
-    /// section that simply vanishes on save reads as a failure.
-    let isPeerSaved: Bool
-
-    @State private var openedConversation: DirectConversationSummary?
-    @State private var isOpeningConversation = false
-    @State private var isPinging = false
-    @State private var pingStatus: PeerPingStatus?
-    @State private var isFetchingIdentity = false
-    @State private var feedbackTitle = ""
-    @State private var feedbackMessage = ""
-    @State private var showsFeedback = false
-    @State private var identityRequest: IdentityRequestState?
-    // The pushed view keeps its own copy so a saved alias is visible
-    // immediately even though the parent's peer list refreshes later.
-    @State private var currentAlias: String?
-    @State private var isEditingAlias = false
-    @State private var aliasDraft = ""
-    @State private var isSavingPeer = false
-    @State private var didSavePeer = false
-    @State private var savePeerFailed = false
-    @State private var route: PeerRoute?
-    @State private var isResettingRoute = false
-    @State private var routeWasAlreadyClear = false
-
-    init(
-        peer: PeerSummary,
-        livePeers: [PeerSummary] = [],
-        radioSnapshot: Binding<RadioSnapshot>,
-        conversations: Binding<[DirectConversationSummary]> = .constant([]),
-        actions: PeerActions = .unavailable,
-        updateDraft: ((Int64, String) async -> Void)? = nil,
-        sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
-        messageActions: ChatMessageActions = .unavailable,
-        savePeer: (() async -> Bool)? = nil,
-        isPeerSaved: Bool = false
-    ) {
-        self.pushedPeer = peer
-        self.livePeers = livePeers
-        _radioSnapshot = radioSnapshot
-        _conversations = conversations
-        self.actions = actions
-        self.updateDraft = updateDraft
-        self.sendMessage = sendMessage
-        self.messageActions = messageActions
-        self.savePeer = savePeer
-        self.isPeerSaved = isPeerSaved
-        _currentAlias = State(initialValue: peer.alias)
-    }
-
-    var body: some View {
-        List {
-            Section {
-                HStack(spacing: 16) {
-                    PeerAvatar(hint: peer.identity.hint, diameter: 64)
-                    VStack(alignment: .leading) {
-                        Text(displayedName).font(.title2.bold())
-                        Text(peer.isUlcpDevice ? "Companion radio identity" : "UMSH peer")
-                            .foregroundStyle(.secondary)
-                    }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if peer.isSaved, !peer.isUlcpDevice, peerActions.setFavorite != nil {
+                Button {
+                    Task { _ = await peerActions.setFavorite?(peer, !peer.isFavorite) }
+                } label: {
+                    Label(
+                        peer.isFavorite ? "Unfavorite" : "Favorite",
+                        systemImage: peer.isFavorite ? "star.slash" : "star"
+                    )
                 }
-                // The node's own claim, refreshed whenever a fresher identity
-                // lands — not a local category anyone has to keep correct.
-                LabeledContent("Role", value: peer.role.label)
-                LabeledContent("Node hint", value: peer.identity.hint.text)
-                // The one-line answer to "how does this phone reach it?",
-                // above the fold; the Route section below has the detail.
-                LabeledContent("Route", value: Self.routeSummary(route))
-                if let lastHeard = peer.lastHeard {
-                    LabeledContent("Last heard") {
-                        Text(lastHeard, format: .relative(presentation: .named))
-                    }
-                }
-                if actions.updateAlias != nil {
-                    LabeledContent("Alias") {
-                        Button {
-                            aliasDraft = currentAlias ?? ""
-                            isEditingAlias = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(currentAlias ?? "None")
-                                    .foregroundStyle(currentAlias == nil ? .secondary : .primary)
-                                Image(systemName: "pencil")
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                }
+                .tint(.yellow)
             }
-
-            Section("Identity") {
-                IdentityShareView(uri: peer.identity.nodeURI)
-                CanonicalAddressView(address: peer.identity.canonicalAddress)
-            }
-
-            if let advertised = peer.advertisedIdentity {
-                Section {
-                    AdvertisedIdentityRows(identity: advertised)
-                } header: {
-                    Text("Advertised identity")
-                } footer: {
-                    // A reply to an Identity Request is a MIC-authenticated
-                    // unicast and deliberately carries no signature of its
-                    // own, so "unsigned" alone does not mean "unattributable".
-                    Text(peer.advertisedIdentityIsAttributable
-                         ? "These details are claims made by the peer. Nothing here is independently verified."
-                         : "These details are unsigned, so they may not have come from the peer at all. Nothing here is independently verified.")
+            if !peer.isSaved, peerActions.promoteToSaved != nil {
+                Button {
+                    Task { _ = await peerActions.promoteToSaved?(peer) }
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
                 }
+                .tint(.blue)
             }
-
-            if actions.startConversation != nil || actions.ping != nil {
-                Section("Actions") {
-                    HStack(spacing: 12) {
-                        if actions.startConversation != nil {
-                            Button {
-                                Task { await openConversation() }
-                            } label: {
-                                Label("Message", systemImage: "message")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isOpeningConversation)
-                        }
-
-                        if actions.ping != nil {
-                            Button {
-                                Task { await ping() }
-                            } label: {
-                                Label(isPinging ? "Pinging…" : "Ping", systemImage: "wave.3.right")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isPinging)
-                        }
-                    }
-
-                    if actions.fetchIdentity != nil {
-                        Button {
-                            Task { await fetchPeerIdentity() }
-                        } label: {
-                            Label(
-                                isFetchingIdentity ? "Fetching identity…" : "Fetch identity",
-                                systemImage: "person.crop.circle.badge.questionmark"
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isFetchingIdentity)
-
-                        if let identityRequest {
-                            identityRequestStatus(identityRequest)
-                        }
-                    }
-
-                    if let pingStatus {
-                        LabeledContent(isPinging ? "Ping" : "Last ping") {
-                            IconedValue(pingStatus.message, systemImage: pingStatus.symbolName)
-                                .foregroundStyle(pingStatus.color)
-                        }
-                        if case let .reply(reply) = pingStatus {
-                            LabeledContent("Round trip", value: "\(reply.roundTripMilliseconds) ms")
-                            LabeledContent("Hop count", value: reply.hopCountText)
-                            routePath(for: reply)
-                            if let rssi = reply.rssiDBm {
-                                LabeledContent("RSSI (last hop)", value: "\(rssi) dBm")
-                            }
-                            if let snr = reply.signalToNoiseCentibels {
-                                LabeledContent("SNR (last hop)", value: Self.decibels(snr))
-                            }
-                            if let linkQuality = reply.linkQuality {
-                                LabeledContent("Link quality (last hop)", value: "\(linkQuality)")
-                            }
-                        }
-                    }
-                }
-            }
-
-            routeSection
-
-            if peer.isUlcpDevice {
-                Section {
-                    Text("This peer is managed by the saved radio and cannot be removed separately.")
-                        .foregroundStyle(.secondary)
-                    LabeledContent("Radio", value: radioSnapshot.name ?? "Saved companion radio")
-                }
-            }
-
-            if let savePeer {
-                Section {
-                    if isPeerSaved || didSavePeer {
-                        Label("Saved to Network", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button {
-                            Task { await save(with: savePeer) }
-                        } label: {
-                            Label("Save Peer", systemImage: "square.and.arrow.down")
-                        }
-                        .disabled(isSavingPeer)
-                    }
-                } footer: {
-                    if savePeerFailed {
-                        Text("This node could not be saved. Its identity is unchanged either way.")
-                    } else if isPeerSaved || didSavePeer {
-                        Text("This node is recorded on this phone. Rename it, make it a contact, or remove it from Network.")
-                    } else {
-                        Text("Records this node on this phone so it can be found in Network later. Nothing is sent to the node, and it is not made a contact.")
-                    }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if isRemovable(peer) {
+                Button(role: .destructive) {
+                    peerPendingRemoval = peer
+                } label: {
+                    Label("Remove", systemImage: "trash")
                 }
             }
         }
-        .navigationTitle(displayedName)
-        // Anything inbound from this peer is what teaches the MAC a route, so
-        // the cached route on screen is stale exactly when we hear from them.
-        // `lastHeard` moves on every such event, which makes it the trigger.
-        .task(id: RouteRefreshKey(address: peer.identity.canonicalAddress, lastHeard: peer.lastHeard)) {
-            await loadRoute()
+    }
+
+    private func subtitle(for peer: PeerSummary) -> String {
+        if peer.isUlcpDevice {
+            return "Companion radio identity · \(peer.identity.hint.text)"
         }
-        .alert("Alias", isPresented: $isEditingAlias) {
-            TextField("Alias", text: $aliasDraft)
-                .textInputAutocapitalization(.words)
-            Button("Save") {
-                Task { await saveAlias() }
-            }
-            if currentAlias != nil {
-                Button("Remove Alias", role: .destructive) {
-                    aliasDraft = ""
-                    Task { await saveAlias() }
+        if !peer.isSaved {
+            return "Discovered · \(peer.identity.hint.text)"
+        }
+        return peer.identity.hint.text
+    }
+
+    /// The saved radio's release path is Forget Radio; every other row can
+    /// at least be demoted, so removal is offered whenever the app root
+    /// wired the closures at all.
+    private func isRemovable(_ peer: PeerSummary) -> Bool {
+        guard !peer.isUlcpDevice else { return false }
+        if hasConversation(peer) {
+            return peerActions.demoteToTransient != nil
+                || peerActions.deletePeerAndConversation != nil
+        }
+        return peerActions.deletePeer != nil
+    }
+
+    private func hasConversation(_ peer: PeerSummary) -> Bool {
+        conversations.contains {
+            $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
+        }
+    }
+
+    // MARK: - Sort & filter
+
+    private var sortAndFilterMenu: some View {
+        Menu {
+            Picker("Sort", selection: $sortOrder) {
+                ForEach(NetworkSortOrder.allCases) { order in
+                    Text(order.label).tag(order)
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The alias is a private name stored only on this phone.")
-        }
-        .navigationDestination(item: $openedConversation) { conversation in
-            if let conversation = binding(for: conversation.id) {
-                DirectConversationView(
-                    conversation: conversation,
-                    radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft ?? { _, _ in },
-                    sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") },
-                    messageActions: messageActions,
-                    peerActions: actions
-                )
-            }
-        }
-        .alert(feedbackTitle, isPresented: $showsFeedback) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(feedbackMessage)
-        }
-    }
-
-    private var displayedName: String {
-        currentAlias
-            ?? peer.advertisedName
-            ?? (peer.isUlcpDevice ? "Companion radio" : peer.identity.hint.text)
-    }
-
-    private func saveAlias() async {
-        guard let updateAlias = actions.updateAlias else { return }
-        let trimmed = aliasDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newAlias = trimmed.isEmpty ? nil : trimmed
-        if await updateAlias(peer, newAlias) {
-            currentAlias = newAlias
-        } else {
-            feedbackTitle = "Alias not saved"
-            feedbackMessage = "The alias could not be stored. Try again."
-            showsFeedback = true
-        }
-    }
-
-    private func save(with savePeer: () async -> Bool) async {
-        guard !isSavingPeer, !didSavePeer else { return }
-        isSavingPeer = true
-        defer { isSavingPeer = false }
-        savePeerFailed = false
-        if await savePeer() {
-            didSavePeer = true
-        } else {
-            savePeerFailed = true
-        }
-    }
-
-    private func binding(for conversationID: Int64) -> Binding<DirectConversationSummary>? {
-        guard let fallback = conversations.first(where: { $0.id == conversationID }) else { return nil }
-        return Binding(
-            get: {
-                conversations.first(where: { $0.id == conversationID }) ?? fallback
-            },
-            set: { updated in
-                guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else {
-                    return
+            .pickerStyle(.inline)
+            Picker("Show", selection: $roleFilter) {
+                ForEach(NetworkRoleFilter.allCases) { filter in
+                    Text(filter.label).tag(filter)
                 }
-                conversations[index] = updated
             }
-        )
-    }
-
-    private func openConversation() async {
-        guard let startConversation = actions.startConversation else { return }
-        guard !isOpeningConversation else { return }
-        isOpeningConversation = true
-        defer { isOpeningConversation = false }
-        if let conversation = await startConversation(peer) {
-            openedConversation = conversation
-        } else {
-            feedbackTitle = "Conversation unavailable"
-            feedbackMessage = "The app could not create a direct conversation for this peer."
-            showsFeedback = true
-        }
-    }
-
-    private func ping() async {
-        guard let pingPeer = actions.ping else { return }
-        guard !isPinging else { return }
-        isPinging = true
-        pingStatus = .pinging
-        defer { isPinging = false }
-        switch await pingPeer(peer) {
-        case let .reply(reply):
-            pingStatus = .reply(reply)
-            // A reply is exactly what teaches the MAC a route, so the cached
-            // one on screen is stale the moment a ping lands.
-            routeWasAlreadyClear = false
-            await loadRoute()
-        case .timedOut:
-            pingStatus = .timedOut
-        case let .unavailable(reason):
-            pingStatus = .unavailable(reason: reason)
-        }
-    }
-
-    /// Ask the peer for its identity.
-    ///
-    /// The reply arrives asynchronously and lands in the Advertised identity
-    /// section on its own, so this reports inline rather than raising a modal
-    /// the reader has to dismiss before they can see the answer arrive.
-    private func fetchPeerIdentity() async {
-        guard let fetchIdentity = actions.fetchIdentity else { return }
-        guard !isFetchingIdentity else { return }
-        isFetchingIdentity = true
-        defer { isFetchingIdentity = false }
-        // Remembered so a reply that changes nothing is still recognisable as
-        // a reply.
-        let asked = peer.advertisedIdentity
-        identityRequest = await fetchIdentity(peer) ? .awaiting(asked) : .unavailable
-    }
-
-    /// Where an Identity Request stands.
-    enum IdentityRequestState: Equatable {
-        /// Handed to the transport. Carries the identity held at that moment,
-        /// so a reply is recognisable even when it restates what we knew.
-        case awaiting(MeshNodeIdentity?)
-        /// No mesh session to ask through.
-        case unavailable
-    }
-
-    /// Inline progress for an Identity Request. The reply lands in the
-    /// Advertised identity section above, so this only has to say whether one
-    /// is still outstanding.
-    @ViewBuilder
-    private func identityRequestStatus(_ state: IdentityRequestState) -> some View {
-        switch state {
-        case let .awaiting(asked):
-            if peer.advertisedIdentity != asked {
-                Label("Identity updated.", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Label("Asked. Details update above when the peer replies.", systemImage: "clock")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            .pickerStyle(.inline)
+            Divider()
+            Button("Discover Peers", systemImage: "dot.radiowaves.left.and.right") {
+                showsDiscovery = true
             }
-        case .unavailable:
+        } label: {
             Label(
-                "Connect a companion radio set up for this phone before asking a peer for its identity.",
-                systemImage: "exclamationmark.triangle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    /// What this phone will do with the next frame addressed to this peer,
-    /// and the one control that changes it.
-    ///
-    /// A learned route is the usual explanation for traffic that takes a
-    /// stale path after the mesh moves, so it is worth showing plainly and
-    /// worth being able to discard without touching keys or history.
-    @ViewBuilder
-    private var routeSection: some View {
-        Section {
-            if let route {
-                LabeledContent("Next send", value: Self.routeSummary(route))
-                if !route.hints.isEmpty {
-                    routeHopRows(cachedRouteHops(route))
-                }
-                if !route.floodRegions.isEmpty {
-                    LabeledContent("Regions") {
-                        Text(route.floodRegions.map(RegionCodeText.label).joined(separator: ", "))
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-                if actions.resetRoute != nil {
-                    Button(role: .destructive) {
-                        Task { await resetRoute() }
-                    } label: {
-                        Label(
-                            isResettingRoute ? "Resetting…" : "Reset route",
-                            systemImage: "arrow.counterclockwise"
-                        )
-                    }
-                    .disabled(isResettingRoute || route.kind == .unknown || route.kind == .unavailable)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Reading route…")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        } header: {
-            Text("Route")
-        } footer: {
-            Text(routeFooter)
-        }
-    }
-
-    private var routeFooter: String {
-        if routeWasAlreadyClear {
-            return "There was no route to reset. The next message floods until a reply teaches this phone a path."
-        }
-        switch route?.kind {
-        case .unavailable:
-            return "This phone has no mesh session to ask. Attach a companion radio set up for this identity to see how it would reach this node."
-        case .unknown, nil:
-            return "Nothing learned yet. The next message floods until a reply teaches this phone a path."
-        default:
-            return "Learned from this node's last reply. Resetting forgets the path — keys, counters, and messages are untouched — and the next message floods again."
-        }
-    }
-
-    /// The one-line form, shared by the summary row and the Route section.
-    /// `nil` is the moment before the first read resolves.
-    private static func routeSummary(_ route: PeerRoute?) -> String {
-        guard let route else { return "Reading…" }
-        return switch route.kind {
-        case .unavailable:
-            "Unavailable"
-        case .unknown:
-            "Not learned yet"
-        case .direct:
-            "Direct"
-        case .source:
-            route.hints.isEmpty
-                ? "Direct (empty source route)"
-                : "Source route · \(route.hints.count) router\(route.hints.count == 1 ? "" : "s")"
-        case .flood:
-            route.floodHops.map { "Flood · \($0) hop\($0 == 1 ? "" : "s")" } ?? "Flood"
-        }
-    }
-
-    private func loadRoute() async {
-        // No wired-up reader is itself an answer: nothing can be asked.
-        guard let loadRoute = actions.loadRoute else {
-            route = .unavailable
-            return
-        }
-        route = await loadRoute(peer)
-    }
-
-    private func resetRoute() async {
-        guard let resetRoute = actions.resetRoute, !isResettingRoute else { return }
-        isResettingRoute = true
-        defer { isResettingRoute = false }
-        routeWasAlreadyClear = !(await resetRoute(peer))
-        await loadRoute()
-    }
-
-    /// The route a ping reply travelled, one node per line. Intermediate
-    /// routers are identified only by a two-byte hint, so any name shown for
-    /// one is a guess drawn from the nodes this phone already knows.
-    @ViewBuilder
-    private func routePath(for reply: PeerPingReply) -> some View {
-        let hops = routeHops(for: reply)
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Route path")
-            if hops.isEmpty {
-                Text("Not reported")
-                    .foregroundStyle(.secondary)
-            } else {
-                routeHopRows(hops)
-            }
-        }
-        .textSelection(.enabled)
-    }
-
-    /// One line per node, shared by the ping result and the cached route.
-    @ViewBuilder
-    private func routeHopRows(_ hops: [RouteHop]) -> some View {
-        ForEach(Array(hops.enumerated()), id: \.offset) { _, hop in
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: hop.symbolName)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(hop.title)
-                    if let detail = hop.detail {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .accessibilityElement(children: .combine)
-        }
-        if hops.contains(where: \.isNamedByHint) {
-            Text("Router names are matched by a two-byte hint and may not be the node shown.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func routeHops(for reply: PeerPingReply) -> [RouteHop] {
-        // Nothing to draw when the reply carried neither routers nor a hop
-        // count: an empty list is not evidence of a direct path.
-        guard !reply.routeHints.isEmpty || reply.hopCount != nil else { return [] }
-        var hops = [originHop]
-        hops.append(contentsOf: reply.routeHints.map(routerHop))
-
-        // A traced reply names every router it crossed; a flooded one only
-        // counts them. Stand in for the difference rather than letting a
-        // counted-but-unnamed hop read as a direct link.
-        let unnamed = reply.hopCount.map { Int($0) - 1 - reply.routeHints.count } ?? 0
-        if unnamed > 0 {
-            hops.append(
-                RouteHop(
-                    title: unnamed == 1 ? "One unnamed router" : "\(unnamed) unnamed routers",
-                    detail: "Counted by the reply, but not identified",
-                    symbolName: "questionmark.circle"
-                )
+                "Sort and filter",
+                systemImage: roleFilter == .all
+                    ? "line.3.horizontal.decrease.circle"
+                    : "line.3.horizontal.decrease.circle.fill"
             )
         }
-
-        hops.append(destinationHop(isDirect: reply.hopCount == 1))
-        return hops
     }
 
-    /// The same picture for the route the MAC has cached: what the *next*
-    /// frame will do, rather than what the last reply did.
-    private func cachedRouteHops(_ route: PeerRoute) -> [RouteHop] {
-        [originHop] + route.hints.map(routerHop) + [destinationHop(isDirect: route.isDirect)]
+    private var visiblePeers: [PeerSummary] {
+        peers.filter { $0.isSaved || $0.isUlcpDevice }
     }
 
-    private var originHop: RouteHop {
-        RouteHop(
-            title: "This phone",
-            detail: radioSnapshot.name.map { "Sent through \($0)" } ?? "Sent through the companion radio",
-            symbolName: "iphone.gen3"
-        )
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    private func destinationHop(isDirect: Bool) -> RouteHop {
-        RouteHop(
-            title: displayedName,
-            detail: isDirect
-                ? "\(peer.identity.hint.text) · direct, no routers"
-                : peer.identity.hint.text,
-            symbolName: "target"
-        )
-    }
-
-    /// Put what name we can to one router hint. A hint is 16 bits of a public
-    /// key, so it narrows the field rather than identifying a node: a single
-    /// match is named, several matches are counted, and a match that only
-    /// exists among repeater-capable nodes is preferred over a bare one.
-    private func routerHop(_ hint: MeshRouterHint) -> RouteHop {
-        let candidates = actions.knownPeers.filter { hint.matches($0.identity) }
-        let repeaters = candidates.filter(\.isLikelyRepeater)
-        let named = repeaters.count == 1 ? repeaters.first
-            : (candidates.count == 1 ? candidates.first : nil)
-
-        guard let named else {
-            let detail: String
-            switch (candidates.count, repeaters.count) {
-            case (0, _):
-                detail = "Router · not a node this phone knows"
-            case let (_, matched) where matched > 1:
-                detail = "Router · matches \(matched) known repeaters"
-            case let (total, _):
-                detail = "Router · matches \(total) known nodes"
+    /// Filter then sort one section's rows.
+    private func arranged(_ peers: [PeerSummary]) -> [PeerSummary] {
+        let filtered = peers.filter { passesRoleFilter($0) }
+        switch sortOrder {
+        case .alphabetic:
+            return filtered.sorted {
+                let comparison = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+                return $0.id < $1.id
             }
-            return RouteHop(title: hint.text, detail: detail, symbolName: "antenna.radiowaves.left.and.right")
-        }
-
-        return RouteHop(
-            title: named.displayName,
-            detail: named.isLikelyRepeater
-                ? "\(hint.text) · likely this repeater"
-                : "\(hint.text) · likely this node, not a known repeater",
-            symbolName: "antenna.radiowaves.left.and.right",
-            isNamedByHint: true
-        )
-    }
-
-    private static func decibels(_ centibels: Int16) -> String {
-        String(format: "%.1f dB", Double(centibels) / 10)
-    }
-}
-
-/// One node on a rendered route path.
-private struct RouteHop {
-    let title: String
-    let detail: String?
-    let symbolName: String
-    /// Whether `title` is a name guessed from a router hint rather than a
-    /// node this phone addressed directly.
-    var isNamedByHint = false
-}
-
-/// An icon-and-text value for the trailing side of a `LabeledContent` row.
-///
-/// Deliberately not a `Label`: as `LabeledContent`'s value a `Label` reports
-/// an unbounded height, so the enclosing list row grows to fill the rest of
-/// the screen and leaves a large blank area under the section. An explicit
-/// stack renders identically and measures to its content.
-private struct IconedValue: View {
-    let text: String
-    let systemImage: String
-
-    init(_ text: String, systemImage: String) {
-        self.text = text
-        self.systemImage = systemImage
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: systemImage)
-                .accessibilityHidden(true)
-            Text(text)
-                .multilineTextAlignment(.trailing)
-        }
-    }
-}
-
-/// What the peer detail view watches to decide the cached route needs
-/// re-reading: the peer it is showing, and the last time anything was heard
-/// from them.
-private struct RouteRefreshKey: Hashable {
-    let address: String
-    let lastHeard: Date?
-}
-
-/// A signature notice for an advertised identity, shown only when the
-/// signature does not verify.
-///
-/// A good signature deliberately renders nothing. It proves only that the
-/// keypair which *is* this address asserted these claims about itself, which
-/// is no evidence the claims are true — a node can sign a fabricated name or
-/// location as easily as a real one. A "verified" badge invites far more
-/// trust than that supports, so the affirmative case stays silent and only a
-/// failure, which is genuinely decision-relevant at import time, speaks up.
-struct AdvertisedIdentityWarning: View {
-    let identity: MeshNodeIdentity
-
-    var body: some View {
-        switch identity.signature {
-        case .valid:
-            EmptyView()
-        case .unsigned:
-            Label(
-                "These details carry no signature, so they may not have come from this node at all.",
-                systemImage: "exclamationmark.triangle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        case .invalid:
-            Label(
-                "The signature on these details does not verify. Do not rely on them.",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .font(.caption)
-            .foregroundStyle(.red)
-        }
-    }
-}
-
-/// Rows describing a decoded advertised node identity: the peer's own claims
-/// about itself, none of them independently verified. Shared by the peer
-/// sheet and the import preview.
-struct AdvertisedIdentityRows: View {
-    let identity: MeshNodeIdentity
-
-    var body: some View {
-        if let name = identity.name {
-            LabeledContent("Name", value: name)
-        }
-        LabeledContent("Role", value: identity.roleLabel)
-        if !identity.capabilities.isEmpty {
-            LabeledContent("Capabilities") {
-                Text(identity.capabilities.joined(separator: ", "))
-                    .multilineTextAlignment(.trailing)
-            }
-        }
-        if let latitude = identity.latitude, let longitude = identity.longitude {
-            LabeledContent("Location") {
-                VStack(alignment: .trailing) {
-                    Text(Self.coordinate(latitude, longitude))
-                        .textSelection(.enabled)
-                    if let precision = identity.locationPrecision {
-                        Text("within \(Self.precisionLabel(precision))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+        case .recentlyHeard:
+            return filtered.sorted {
+                switch ($0.lastHeard, $1.lastHeard) {
+                case let (first?, second?) where first != second: return first > second
+                case (.some, .none): return true
+                case (.none, .some): return false
+                default: return $0.id < $1.id
                 }
             }
-        }
-        if let altitude = identity.altitudeMeters {
-            LabeledContent("Altitude", value: "\(altitude) m")
-        }
-        if let timestamp = identity.timestamp {
-            LabeledContent("Reported") {
-                Text(
-                    Date(timeIntervalSince1970: TimeInterval(timestamp)),
-                    format: .dateTime.year().month().day().hour().minute()
-                )
+        case .latestMessage:
+            let latest = latestMessageByAddress
+            return filtered.sorted {
+                let first = latest[$0.identity.canonicalAddress] ?? 0
+                let second = latest[$1.identity.canonicalAddress] ?? 0
+                if first != second { return first > second }
+                return $0.id < $1.id
             }
         }
     }
 
-    private static func coordinate(_ latitude: Double, _ longitude: Double) -> String {
-        String(format: "%.4f°, %.4f°", latitude, longitude)
-    }
-
-    /// Approximate equator cell size for each grid-code precision.
-    private static func precisionLabel(_ precision: UInt8) -> String {
-        switch precision {
-        case 1: "about 2,500 km"
-        case 2: "about 156 km"
-        case 3: "about 10 km"
-        case 4: "about 610 m"
-        case 5: "about 38 m"
-        case 6: "about 2.4 m"
-        default: "about 15 cm"
+    private var latestMessageByAddress: [String: Int64] {
+        var latest: [String: Int64] = [:]
+        for conversation in conversations {
+            guard let newest = conversation.messages.map(\.createdAtMilliseconds).max() else {
+                continue
+            }
+            latest[conversation.peer.identity.canonicalAddress] = newest
         }
+        return latest
     }
-}
 
-private enum PeerPingStatus: Equatable {
-    case pinging
-    case reply(PeerPingReply)
-    case timedOut
-    case unavailable(reason: String)
-
-    var message: String {
-        switch self {
-        case .pinging: "Waiting for reply…"
-        case let .reply(reply): "Reply in \(reply.roundTripMilliseconds) ms"
-        case .timedOut: "Timed out"
-        case let .unavailable(reason): reason
+    private func passesRoleFilter(_ peer: PeerSummary) -> Bool {
+        // The saved radio anchors the list whatever the filter says.
+        if peer.isUlcpDevice { return true }
+        switch roleFilter {
+        case .all:
+            return true
+        case .peopleAndText:
+            return peer.role == .chat || hasConversation(peer)
+        case .sensors:
+            return peer.role == .sensor || peer.role == .tracker
+        case .repeatersAndBridges:
+            return peer.role == .bridge || peer.isLikelyRepeater
+        case .savedContacts:
+            return peer.isContact
         }
     }
 
-    var symbolName: String {
-        switch self {
-        case .pinging: "clock"
-        case .reply: "checkmark.circle.fill"
-        case .timedOut: "clock.badge.exclamationmark"
-        case .unavailable: "exclamationmark.triangle.fill"
+    private func matchesSearch(_ peer: PeerSummary) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        let textOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        if let alias = peer.alias, alias.range(of: query, options: textOptions) != nil {
+            return true
         }
-    }
-
-    var color: Color {
-        switch self {
-        case .pinging: .secondary
-        case .reply: .green
-        case .timedOut: .orange
-        case .unavailable: .red
+        if let name = peer.advertisedName, name.range(of: query, options: textOptions) != nil {
+            return true
         }
+        // Addresses are exact base58, so only a prefix (or the whole string,
+        // pasted) is a meaningful match — substring hits would be noise.
+        if peer.identity.canonicalAddress.hasPrefix(query) { return true }
+        if peer.identity.hint.text.range(of: query, options: .caseInsensitive) != nil {
+            return true
+        }
+        return false
     }
-}
-
-private extension PeerPingReply {
-    var hopCountText: String {
-        hopCount.map(String.init) ?? "Not reported"
-    }
-
 }
 
 private enum NetworkPresentation: Hashable {
     case list
     case map
+}
+
+private enum NetworkSortOrder: String, CaseIterable, Identifiable {
+    case alphabetic
+    case recentlyHeard
+    case latestMessage
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .alphabetic: "Alphabetical"
+        case .recentlyHeard: "Recently heard"
+        case .latestMessage: "Latest message"
+        }
+    }
+}
+
+private enum NetworkRoleFilter: String, CaseIterable, Identifiable {
+    case all
+    case peopleAndText
+    case sensors
+    case repeatersAndBridges
+    case savedContacts
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .peopleAndText: "People & text"
+        case .sensors: "Sensors"
+        case .repeatersAndBridges: "Repeaters & bridges"
+        case .savedContacts: "Saved contacts"
+        }
+    }
 }

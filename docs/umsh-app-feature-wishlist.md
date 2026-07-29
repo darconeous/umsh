@@ -95,6 +95,7 @@ Guided setup flows built on top of that primitive:
 	- specified manually via URI or public key
 	- promoting a transient peer to saved
 - Remove a saved peer
+- Discover new peers
 
 ### Peer properties (observed)
 - Identity information, if any

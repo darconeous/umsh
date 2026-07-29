@@ -145,7 +145,7 @@ The two together give the host a simple rule with no detection in it: a
 host **MUST** establish its complete host domain on every tethered
 attach, writing every part of it rather than reasoning about what the
 device already holds. Key material cannot be compared anyway — the key
-tables read back in digest form only (see (#provisioning-security)), so a
+tables never read it back (see (#provisioning-security)), so a
 peer's pairwise keys can be replaced without changing anything the host
 can observe. Where the device is already provisioned as asked, the rewrite
 is redundant; that is preferable to depending on a signal that would also
@@ -214,8 +214,8 @@ procedure is **RECOMMENDED**:
    `PROP_HOST_RX_QUEUE_COUNT`.
 4. Establish the complete host domain (see (#host-domain)): write
    `PROP_HOST_KEY`, the key tables, the filter table and the delegation
-   policy in full. The digest forms of the key tables are read only to
-   find entries the host no longer wants, which it removes; entries it
+   policy in full. The key tables are read back only to find entries the
+   host no longer wants, which it removes; entries it
    *does* want are written whether or not the device reports them, since
    key material is not readable and so cannot be compared.
 5. Issue `CMD_QUEUE_DRAIN` when actually ready to process backlogged
@@ -425,7 +425,7 @@ accordingly to the status code for the error.
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  ITEM DIGEST ...
+|  REPORTED ITEM ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~
 Figure: Structure of `CMD_PROP_INSERTED`
@@ -435,8 +435,8 @@ Item-inserted notification. Sent by the device in response to a successful
 of zero when the device adds an item to a multi-value property for its own
 reasons.
 
-The payload is the property identifier followed by the inserted item in the
-property's **digest form** (see (#multi-value-properties)) — never in a
+The payload is the property identifier followed by the inserted item as
+the device reports it (see (#multi-value-properties)) — never in a
 form containing key material.
 
 ### CMD 8: (Device -> Host) `CMD_PROP_REMOVED` {#cmd-prop-removed}
@@ -447,7 +447,7 @@ form containing key material.
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |1 0| RES | TID |      CMD      | PROP_KEY (PUI, 1-3 bytes) ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  ITEM DIGEST ...
+|  REPORTED ITEM ...
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~
 Figure: Structure of `CMD_PROP_REMOVED`
@@ -457,8 +457,8 @@ Item-removed notification. Sent by the device in response to a successful
 of zero when the device removes an item from a multi-value property for its
 own reasons.
 
-The payload is the property identifier followed by the removed item in the
-property's digest form.
+The payload is the property identifier followed by the removed item as the
+device reports it.
 
 ### CMD 11: (Host -> Device) `CMD_QUEUE_DRAIN` {#cmd-queue-drain}
 
@@ -624,7 +624,7 @@ the resulting configuration or retained data:
   are re-fetched.
 
 * **Update form** — the device applies the revert in place, emitting an
-  unsolicited `CMD_PROP_IS` (in digest form, where applicable) for
+  unsolicited `CMD_PROP_IS` (with key material omitted, where applicable) for
   **every property whose value changed**, and then reports completion
   with `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying `STATUS_OK` and the
   command's TID. Session state is not reset in this form.
@@ -688,29 +688,26 @@ A **multi-value property** holds an unordered set of items rather than a
 single value. The minimal protocol already contains one (`PROP_CAPS`, which
 is constant); the full protocol adds mutable ones.
 
-Each multi-value property defines two encodings for its items:
-
-* the **item form**, used when the host writes items (`CMD_PROP_SET`,
-  `CMD_PROP_INSERT`); and
-* the **digest form**, used whenever the device reports items
-  (`CMD_PROP_IS`, `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`).
-
-For most properties the two forms are identical. They differ exactly where
-the item form contains symmetric key material: the digest form of such a
-property omits or replaces the key material so that secrets can never be
+The host writes items (`CMD_PROP_SET`, `CMD_PROP_INSERT`) in the
+property's **item form**. When the device reports items (`CMD_PROP_IS`,
+`CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`), it reports them exactly as
+written — except where the item form contains symmetric key material. Such
+a property documents what is reported instead: the entry with its key
+material omitted, or a short derived **digest form** (a channel key is
+reported as its derived channel identifier), so that secrets can never be
 read back (see (#provisioning-security)).
 
 The commands valid on a mutable multi-value property are:
 
 * `CMD_PROP_GET` — the device replies with `CMD_PROP_IS` whose value is the
-  concatenation of all items in digest form. If the property is documented
+  concatenation of all items as reported. If the property is documented
   as having an item length prefix, each item is preceded by its length in
   octets encoded as a packed unsigned integer; properties whose reported
   items are fixed-size omit the prefix.
 * `CMD_PROP_SET` — replaces the entire contents with the items encoded in
   the value, each in item form (with the same length-prefix rule). Setting
   an empty value clears the property. Success is reported with a
-  `CMD_PROP_IS` carrying the new complete value in digest form.
+  `CMD_PROP_IS` carrying the new complete value as reported.
 * `CMD_PROP_INSERT` / `CMD_PROP_REMOVE` — add or remove one item, as
   defined above.
 
@@ -931,7 +928,6 @@ host only through the host's own filtering.
 * Asynchronous Updates: No
 * Required: `CAP_DEV_IDENTITY`
 * Item Form: 32 octets (the peer's Ed25519 public key)
-* Digest Form: identical to the item form
 * Remove Selector: the 32-octet public key
 * Post-Reset Value: Empty, or restored from saved state
 
@@ -1269,7 +1265,6 @@ and do not allow the device to establish new pairwise relationships.
 * Asynchronous Updates: No
 * Required: `CAP_HOST_FILTER`
 * Item Form: Structure
-* Digest Form: identical to the item form
 * Remove Selector: the full item
 * Post-Reset Value: Empty
 
@@ -1383,11 +1378,16 @@ lazily, so multiple acks for one send (arriving over different return routes)
 are all delivered. A MAC Ack whose `ack_mic` matches no recorded frame is
 still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
-Traffic the implicit filters do not cover — broadcasts and beacons, for
-example — must be requested explicitly (e.g., a `FILTER_PKT_TYPE` entry
-with value 0). Device-domain state never creates implicit host filters:
-frames for the device identity or its channels reach the host only if the
-host's own filtering matches them.
+Broadcast packets — payload-carrying broadcasts and beacons alike — are
+implicitly accepted **for live delivery**: a broadcast is addressed to
+every node, the host included. The rule is live-only. While the host is
+detached, a broadcast is queued only when an explicit filter selects it
+(e.g., a `FILTER_PKT_TYPE` entry with value 0), so ambient broadcast
+traffic cannot displace queued unicast frames.
+
+Device-domain state never creates implicit host filters: frames for the
+device identity or its channels reach the host only if the host's own
+filtering matches them.
 
 **Compatibility rule:** when no host key is configured, no host channel
 keys are provisioned, and the explicit filter table is empty, filtering is
@@ -1567,12 +1567,13 @@ but never the host's private key. The rules:
 
 * **All symmetric key material, and the device identity private key, is
   write-only.** `CMD_PROP_GET` and all device-emitted notifications report
-  key-bearing properties in their digest forms
+  key-bearing properties without their secrets
   (see (#multi-value-properties)): peer public keys without `K_ENC`/`K_MIC`,
-  derived channel identifiers instead of channel keys, and never the
-  device private key. This holds for **both** identities' key tables.
-  Digest forms let the host verify *what* is provisioned after a
-  reconnect without any secret ever crossing the link a second time —
+  derived channel identifiers (the digest form) instead of channel keys,
+  and never the device private key. This holds for **both** identities'
+  key tables. These read-backs let the host verify *what* is provisioned
+  after a reconnect without any secret ever crossing the link a second
+  time —
   which matters because more than one host may be able to attach over the
   radio's lifetime (transport bonds are possession credentials, not
   identity credentials), and a later host must not be able to extract an

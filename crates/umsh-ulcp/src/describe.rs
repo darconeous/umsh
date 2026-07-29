@@ -46,6 +46,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::MAC_REPEATER_DEFAULT_REGION => "PROP_MAC_REPEATER_DEFAULT_REGION",
         prop::MAC_REPEATER_MIN_RSSI => "PROP_MAC_REPEATER_MIN_RSSI",
         prop::MAC_REPEATER_MIN_SNR => "PROP_MAC_REPEATER_MIN_SNR",
+        prop::DEV_DISCOVERABLE => "PROP_DEV_DISCOVERABLE",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",

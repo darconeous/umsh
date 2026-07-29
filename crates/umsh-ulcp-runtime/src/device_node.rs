@@ -344,11 +344,20 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             snapshot.ident_role,
         );
         let supported_regions = advertised_regions(&snapshot);
-        node.update_identity_profile(move |profile| {
-            profile.role = role;
-            profile.capabilities = capabilities;
+        // `PROP_DEV_DISCOVERABLE` gates the Identity Request responder.
+        // Enable rebuilds the whole profile rather than patching it:
+        // disabling drops the profile with the responder, so a later
+        // opt-back-in must not depend on a name change to become
+        // correct.
+        if snapshot.discoverable {
+            let mut profile =
+                NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
+            profile.name = profile_name();
             profile.supported_regions = supported_regions;
-        });
+            node.enable_identity_responder_default(profile);
+        } else {
+            node.disable_identity_responder();
+        }
         if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
             != snapshot.repeater_enabled
         {

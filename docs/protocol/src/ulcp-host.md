@@ -254,7 +254,6 @@ and do not allow the device to establish new pairwise relationships.
 * Asynchronous Updates: No
 * Required: `CAP_HOST_FILTER`
 * Item Form: Structure
-* Digest Form: identical to the item form
 * Remove Selector: the full item
 * Post-Reset Value: Empty
 
@@ -368,11 +367,16 @@ lazily, so multiple acks for one send (arriving over different return routes)
 are all delivered. A MAC Ack whose `ack_mic` matches no recorded frame is
 still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
-Traffic the implicit filters do not cover — broadcasts and beacons, for
-example — must be requested explicitly (e.g., a `FILTER_PKT_TYPE` entry
-with value 0). Device-domain state never creates implicit host filters:
-frames for the device identity or its channels reach the host only if the
-host's own filtering matches them.
+Broadcast packets — payload-carrying broadcasts and beacons alike — are
+implicitly accepted **for live delivery**: a broadcast is addressed to
+every node, the host included. The rule is live-only. While the host is
+detached, a broadcast is queued only when an explicit filter selects it
+(e.g., a `FILTER_PKT_TYPE` entry with value 0), so ambient broadcast
+traffic cannot displace queued unicast frames.
+
+Device-domain state never creates implicit host filters: frames for the
+device identity or its channels reach the host only if the host's own
+filtering matches them.
 
 **Compatibility rule:** when no host key is configured, no host channel
 keys are provisioned, and the explicit filter table is empty, filtering is

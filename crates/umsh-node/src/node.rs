@@ -426,6 +426,18 @@ impl<M: MacBackend> LocalNode<M> {
         Ok(PeerConnection::new(self.clone(), key))
     }
 
+    /// Remove a peer from the MAC and drop this node's per-peer bookkeeping:
+    /// outstanding pings and per-peer subscription tables. Returns whether
+    /// the peer was registered in the MAC. Idempotent — removing an unknown
+    /// peer still clears any node-layer residue and reports `false`.
+    pub async fn remove_peer(&self, key: &PublicKey) -> bool {
+        let removed = self.mac.remove_peer(key).await;
+        let mut state = self.state.borrow_mut();
+        state.pending_pings.retain(|ping| ping.peer != *key);
+        state.peer_subscriptions.retain(|entry| entry.peer != *key);
+        removed
+    }
+
     /// Return the live TX frame counter for this node's identity, if available.
     pub async fn frame_counter(&self) -> Option<u32> {
         self.mac.frame_counter(self.identity_id).await
@@ -606,6 +618,23 @@ impl<M: MacBackend> LocalNode<M> {
         from: PublicKey,
         options: &[u8],
     ) -> Option<IdentityResponsePlan> {
+        // Flood management for solicitations that can reach many nodes: a
+        // broadcast (or multicast) Identity Request must arrive unrepeated —
+        // FHOPS absent or fully zero — and must not carry a routing
+        // constraint (a Route option is fine only when empty). Anything else
+        // is a repeated or steered request, and answering it multiplies
+        // replies across the mesh.
+        if matches!(
+            packet.packet_family(),
+            crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
+        ) {
+            if packet.flood_hops().is_some_and(|hops| hops.0 != 0) {
+                return None;
+            }
+            if packet.source_route().is_some_and(|route| !route.is_empty()) {
+                return None;
+            }
+        }
         let ctx = IdentityRequestContext {
             from_key: from,
             from_hint: packet.from_hint(),
@@ -630,11 +659,31 @@ impl<M: MacBackend> LocalNode<M> {
     /// crypto state the MAC already resolved for the requester — permanent or
     /// transient — and never promotes/pins the peer. Failures are dropped: the
     /// requester can always ask again.
+    /// The widest random hold applied to a reply to a broadcast/multicast
+    /// solicitation, per the Identity Request flood-management rules.
+    const IDENTITY_RESPONSE_MAX_DELAY_MS: u16 = 5_000;
+
     pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
         let mut options = SendOptions::default();
         if plan.full_source {
             options = options.with_full_source();
         }
+        if plan.delayed {
+            // Every node the solicitation selected is answering the same
+            // frame; a random hold spreads the replies across the window.
+            // Channel-activity failures then follow the MAC's normal bounded
+            // CCA backoff-and-retry.
+            let mut jitter = [0u8; 2];
+            self.mac.fill_random(&mut jitter).await;
+            let delay =
+                u16::from_be_bytes(jitter) % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS + 1);
+            options = options.with_tx_delay_ms(delay);
+        }
+        // A broadcast solicitation's source is not auto-registered on
+        // receive, so the requester may be a complete stranger. Take a
+        // transient slot for them — never a pinned one — so the unicast
+        // below has somewhere to go.
+        let _ = self.mac.ensure_transient_peer(&plan.to).await;
         let _ = self
             .mac
             .send_unicast(self.identity_id, &plan.to, &plan.framed, &options)

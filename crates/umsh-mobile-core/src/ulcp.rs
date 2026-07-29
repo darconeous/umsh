@@ -78,6 +78,9 @@ pub struct UlcpSyncRecord {
     /// The device serves and configures its own advertised node identity
     /// (`CAP_IDENT`).
     pub supports_ident: bool,
+    /// The device has an identity domain of its own (`CAP_DEV_IDENTITY`),
+    /// including the `PROP_DEV_PEERS` list.
+    pub supports_device_identity: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
@@ -95,12 +98,19 @@ pub struct UlcpSyncRecord {
     pub auto_ack: Option<bool>,
     /// Present exactly when `supports_repeater`.
     pub repeater: Option<UlcpRepeaterSettingsRecord>,
+    /// `PROP_DEV_PEERS`: the peer public keys stored on the device
+    /// identity, read back losslessly. Present exactly when
+    /// `supports_device_identity`.
+    pub dev_peer_keys: Option<Vec<Vec<u8>>>,
     /// `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
     /// from what it is actually doing" and "no `CAP_IDENT`" —
     /// `supports_ident` distinguishes them.
     pub ident_role: Option<u8>,
     /// `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
     pub ident_mobile: Option<bool>,
+    /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+    /// Identity Requests. Present exactly when `supports_device_identity`.
+    pub dev_discoverable: Option<bool>,
 }
 
 /// `PROP_SAVED`: what the radio reports about its stored snapshot.
@@ -168,6 +178,10 @@ pub struct UlcpDeviceConfigRecord {
     /// `PROP_IDENT_MOBILE`. Present exactly when the device advertises
     /// `CAP_IDENT`.
     pub ident_mobile: Option<bool>,
+    /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+    /// Identity Requests. Present exactly when the device advertises
+    /// `CAP_DEV_IDENTITY`.
+    pub dev_discoverable: Option<bool>,
     /// The flood-forwarding policy. Present exactly when the device
     /// advertises `CAP_REPEATER`.
     pub repeater: Option<UlcpRepeaterSettingsRecord>,
@@ -280,6 +294,12 @@ enum ExpectedResponse {
     ConfigurationProperty(u32, Vec<u8>),
     SaveConfiguration,
     RawTransmit,
+    /// A `CMD_PROP_INSERT` of this key into `PROP_DEV_PEERS`.
+    DevPeerInsert(Vec<u8>),
+    /// A `CMD_PROP_REMOVE` of this key from `PROP_DEV_PEERS`.
+    DevPeerRemove(Vec<u8>),
+    /// The `CMD_SAVE` chained behind a device-peer mutation.
+    SaveDevPeers,
 }
 
 struct UlcpSessionState {
@@ -524,6 +544,56 @@ impl MobileUlcpSession {
         Ok(state.update(outbound))
     }
 
+    /// Store one peer public key on the radio's device identity
+    /// (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+    /// device can.
+    ///
+    /// Requires an attached, otherwise-idle session on a device advertising
+    /// `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
+    /// device's status name — `NOMEM` when the list is full (capacity
+    /// [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
+    /// which callers should treat as success.
+    pub fn insert_device_peer(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_dev_peer_operation()?;
+        let tid = state.allocate_tid();
+        state
+            .expected
+            .insert(tid, ExpectedResponse::DevPeerInsert(public_key.to_vec()));
+        let frame = ulcp_prop_insert(tid, prop::DEV_PEERS, &public_key)?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Remove one peer public key from the radio's device identity
+    /// (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+    /// device can.
+    ///
+    /// Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
+    /// surfaces as `operation_error` and callers should treat it as success —
+    /// the key is not on the device either way.
+    pub fn remove_device_peer(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_dev_peer_operation()?;
+        let tid = state.allocate_tid();
+        state
+            .expected
+            .insert(tid, ExpectedResponse::DevPeerRemove(public_key.to_vec()));
+        let frame = ulcp_prop_remove(tid, prop::DEV_PEERS, &public_key)?;
+        Ok(state.update(vec![frame]))
+    }
+
     /// Queue one complete raw UMSH frame on `STR_PHY_RAW`.
     ///
     /// The platform adapter supplies only opaque bytes from `MobileMeshSession`;
@@ -758,6 +828,80 @@ impl MobileUlcpSession {
                     },
                 });
             }
+            ExpectedResponse::DevPeerInsert(item) => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "insert device peer".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // ALREADY is the device saying the key is stored; keep
+                    // the cache truthful even though the operation "failed".
+                    if error.status_code == umsh_ulcp::Status::ALREADY.0 {
+                        state.patch_dev_peers(&item, true);
+                        state.refresh_attached_snapshot()?;
+                    }
+                    operation_error = Some(error);
+                } else {
+                    if response.property_id != prop::DEV_PEERS
+                        || response.command != Cmd::PropInserted as u8
+                        || response.value != item
+                    {
+                        return Err(MobileError::InvalidUlcpFrame);
+                    }
+                    state.patch_dev_peers(&item, true);
+                    if state.has_capability(cap::SAVE)? {
+                        let tid = state.allocate_tid();
+                        state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
+                        outbound.push(ulcp_save(tid)?);
+                    }
+                    state.refresh_attached_snapshot()?;
+                }
+            }
+            ExpectedResponse::DevPeerRemove(item) => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "remove device peer".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // ITEM_NOT_FOUND means the key is not on the device,
+                    // which is the state the caller asked for.
+                    if error.status_code == umsh_ulcp::Status::ITEM_NOT_FOUND.0 {
+                        state.patch_dev_peers(&item, false);
+                        state.refresh_attached_snapshot()?;
+                    }
+                    operation_error = Some(error);
+                } else {
+                    if response.property_id != prop::DEV_PEERS
+                        || response.command != Cmd::PropRemoved as u8
+                        || response.value != item
+                    {
+                        return Err(MobileError::InvalidUlcpFrame);
+                    }
+                    state.patch_dev_peers(&item, false);
+                    if state.has_capability(cap::SAVE)? {
+                        let tid = state.allocate_tid();
+                        state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
+                        outbound.push(ulcp_save(tid)?);
+                    }
+                    state.refresh_attached_snapshot()?;
+                }
+            }
+            ExpectedResponse::SaveDevPeers => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                if inspect_ulcp_status(response.value.clone())? != 0 {
+                    // The live mutation stuck; only persistence failed. The
+                    // session stays attached and the caller sees the same
+                    // `saved` warning path a failed configuration save uses.
+                    operation_error = Some(ulcp_operation_error(
+                        "save device peers".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                }
+            }
         }
 
         if state.expected.is_empty() {
@@ -950,6 +1094,47 @@ impl UlcpSessionState {
                 self.ownership(),
                 UlcpHostOwnership::Ours | UlcpHostOwnership::Unsupported
             )
+    }
+
+    /// Gate a device-peer mutation: attached, no other operation in
+    /// flight, and the device actually has a device identity domain.
+    fn begin_dev_peer_operation(&mut self) -> Result<(), MobileError> {
+        if self.stage != SessionStage::Attached || !self.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !self.has_capability(cap::DEV_IDENTITY)? {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        Ok(())
+    }
+
+    /// Patch the cached `PROP_DEV_PEERS` table after a confirmed mutation,
+    /// keeping it lossless without a round-trip re-read.
+    fn patch_dev_peers(&mut self, key: &[u8], present: bool) {
+        let entry = self
+            .responses
+            .entry(prop::DEV_PEERS)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: prop::DEV_PEERS,
+                value: Vec::new(),
+            });
+        let mut value = Vec::with_capacity(entry.value.len() + key.len());
+        let mut found = false;
+        for chunk in entry.value.chunks(items::PUBLIC_KEY_LEN) {
+            if chunk == key {
+                found = true;
+                if !present {
+                    continue;
+                }
+            }
+            value.extend_from_slice(chunk);
+        }
+        if present && !found {
+            value.extend_from_slice(key);
+        }
+        entry.value = value;
     }
 
     fn has_capability(&self, capability: u32) -> Result<bool, MobileError> {
@@ -1165,6 +1350,9 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
     if has(cap::IDENT) {
         properties.extend([prop::IDENT_ROLE, prop::IDENT_MOBILE]);
     }
+    if has(cap::DEV_IDENTITY) {
+        properties.extend([prop::DEV_PEERS, prop::DEV_DISCOVERABLE]);
+    }
     Ok(properties)
 }
 
@@ -1243,6 +1431,9 @@ pub fn inspect_ulcp_sync(
     let auto_ack = has(cap::HOST_AUTO_ACK)
         .then(|| decode_bool(value(prop::HOST_AUTO_ACK)?))
         .transpose()?;
+    let dev_peer_keys = has(cap::DEV_IDENTITY)
+        .then(|| decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(value(prop::DEV_PEERS)?))
+        .transpose()?;
     let repeater = has(cap::REPEATER)
         .then(|| -> Result<_, MobileError> {
             Ok(UlcpRepeaterSettingsRecord {
@@ -1263,6 +1454,9 @@ pub fn inspect_ulcp_sync(
     let ident_mobile = has(cap::IDENT)
         .then(|| decode_bool(value(prop::IDENT_MOBILE)?))
         .transpose()?;
+    let dev_discoverable = has(cap::DEV_IDENTITY)
+        .then(|| decode_bool(value(prop::DEV_DISCOVERABLE)?))
+        .transpose()?;
 
     Ok(UlcpSyncRecord {
         capability_count: capabilities
@@ -1277,6 +1471,7 @@ pub fn inspect_ulcp_sync(
         supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
         supports_repeater: has(cap::REPEATER),
         supports_ident: has(cap::IDENT),
+        supports_device_identity: has(cap::DEV_IDENTITY),
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
@@ -1293,8 +1488,10 @@ pub fn inspect_ulcp_sync(
         host_peer_count,
         auto_ack,
         repeater,
+        dev_peer_keys,
         ident_role,
         ident_mobile,
+        dev_discoverable,
     })
 }
 
@@ -1503,6 +1700,14 @@ fn validate_device_settings(
         ));
     }
 
+    let supports_dev_identity = state.has_capability(cap::DEV_IDENTITY)?;
+    if configuration.dev_discoverable.is_some() != supports_dev_identity {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    if let Some(discoverable) = configuration.dev_discoverable {
+        values.push((prop::DEV_DISCOVERABLE, vec![discoverable as u8]));
+    }
+
     let supports_repeater = state.has_capability(cap::REPEATER)?;
     if configuration.repeater.is_some() != supports_repeater {
         return Err(MobileError::InvalidUlcpFrame);
@@ -1593,6 +1798,16 @@ fn decode_u32(value: &[u8]) -> Result<u32, MobileError> {
         .map_err(|_| MobileError::InvalidUlcpFrame)
 }
 
+/// Split a concatenation of fixed-width items into the items themselves.
+/// The lossless counterpart of [`decode_fixed_count`], for properties whose
+/// GET form reads back full values rather than digests.
+fn decode_fixed_list<const N: usize>(value: &[u8]) -> Result<Vec<Vec<u8>>, MobileError> {
+    items::fixed_items::<N>(value)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?
+        .map(|item| Ok(item.to_vec()))
+        .collect()
+}
+
 fn decode_fixed_count<const N: usize>(value: &[u8]) -> Result<u32, MobileError> {
     let count = items::fixed_items::<N>(value)
         .map_err(|_| MobileError::InvalidUlcpFrame)?
@@ -1661,6 +1876,39 @@ pub fn ulcp_prop_set(
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
     output.truncate(length);
     Ok(output)
+}
+
+/// Encode a `CMD_PROP_INSERT` request. Deliberately not exported: typed
+/// session operations own multi-value mutations.
+fn ulcp_prop_insert(transaction_id: u8, property_id: u32, item: &[u8]) -> Result<Vec<u8>, MobileError> {
+    let mut output = vec![0; MAX_FRAME];
+    let length = frame::prop_insert(&mut output, transaction_id, property_id, item)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    output.truncate(length);
+    Ok(output)
+}
+
+/// Encode a `CMD_PROP_REMOVE` request. Deliberately not exported, like
+/// [`ulcp_prop_insert`].
+fn ulcp_prop_remove(
+    transaction_id: u8,
+    property_id: u32,
+    selector: &[u8],
+) -> Result<Vec<u8>, MobileError> {
+    let mut output = vec![0; MAX_FRAME];
+    let length = frame::prop_remove(&mut output, transaction_id, property_id, selector)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    output.truncate(length);
+    Ok(output)
+}
+
+/// Capacity of the device identity's peer list (`PROP_DEV_PEERS`).
+///
+/// A label constant only — the device's `NOMEM` stays authoritative for
+/// when the list is actually full.
+#[uniffi::export]
+pub fn ulcp_max_dev_peers() -> u8 {
+    8
 }
 
 /// Encode a `CMD_SAVE` request with the shared ULCP codec.
@@ -1889,8 +2137,10 @@ mod tests {
             | prop::MAC_REPEATER_DEFAULT_REGION
             | prop::MAC_REPEATER_MIN_RSSI
             | prop::MAC_REPEATER_MIN_SNR
-            | prop::IDENT_ROLE => Vec::new(),
+            | prop::IDENT_ROLE
+            | prop::DEV_PEERS => Vec::new(),
             prop::IDENT_MOBILE => vec![0],
+            prop::DEV_DISCOVERABLE => vec![1],
             other => unreachable!("unexpected property {other}"),
         };
         (property, value)
@@ -2100,6 +2350,8 @@ mod tests {
             response(prop::HOST_RX_QUEUE_COUNT, &3u16.to_le_bytes()),
             response(prop::HOST_RX_QUEUE_DROPPED, &4u32.to_le_bytes()),
             response(prop::HOST_AUTO_ACK, &[1]),
+            response(prop::DEV_PEERS, &[7; 64]),
+            response(prop::DEV_DISCOVERABLE, &[1]),
         ])
         .unwrap();
         assert_eq!(sync.saved, Some(SavedSnapshotRecord::Current));
@@ -2109,6 +2361,10 @@ mod tests {
         assert_eq!(sync.host_channel_count, Some(2));
         assert_eq!(sync.host_peer_count, Some(1));
         assert_eq!(sync.auto_ack, Some(true));
+        // The device-identity peer list is the one key table read back
+        // losslessly rather than as a digest count.
+        assert!(sync.supports_device_identity);
+        assert_eq!(sync.dev_peer_keys, Some(vec![vec![7; 32], vec![7; 32]]));
     }
 
     #[test]
@@ -2378,6 +2634,8 @@ mod tests {
             response(prop::MAC_REPEATER_MIN_SNR, &[(-7i8) as u8]),
             response(prop::IDENT_ROLE, &[3]),
             response(prop::IDENT_MOBILE, &[1]),
+            response(prop::DEV_PEERS, &[]),
+            response(prop::DEV_DISCOVERABLE, &[1]),
         ])
         .unwrap();
         assert_eq!(
@@ -2410,6 +2668,8 @@ mod tests {
                 response(prop::MAC_REPEATER_MIN_SNR, &[]),
                 response(prop::IDENT_ROLE, &[]),
                 response(prop::IDENT_MOBILE, &[0]),
+                response(prop::DEV_PEERS, &[]),
+                response(prop::DEV_DISCOVERABLE, &[1]),
             ];
             responses.retain(|entry| entry.property_id != property);
             responses.push(response(property, value));
@@ -2453,6 +2713,7 @@ mod tests {
                 },
                 ident_role: Some(3),
                 ident_mobile: Some(false),
+                dev_discoverable: Some(false),
                 repeater: Some(UlcpRepeaterSettingsRecord {
                     enabled: true,
                     regions: vec![vec![0x78, 0x53]],
@@ -2477,6 +2738,7 @@ mod tests {
                 (prop::PHY_TX_POWER, vec![22]),
                 (prop::IDENT_ROLE, vec![3]),
                 (prop::IDENT_MOBILE, vec![0]),
+                (prop::DEV_DISCOVERABLE, vec![0]),
                 (prop::MAC_REPEATER_REGIONS, vec![0x78, 0x53]),
                 (prop::MAC_REPEATER_DEFAULT_REGION, vec![0x78, 0x53]),
                 (
@@ -2540,11 +2802,12 @@ mod tests {
             min_rssi_dbm: None,
             min_snr_db: None,
         };
-        let configure = |ident_role, ident_mobile, repeater| {
+        let configure = |ident_role, ident_mobile, dev_discoverable, repeater| {
             session.configure_device(UlcpDeviceConfigRecord {
                 radio: radio.clone(),
                 ident_role,
                 ident_mobile,
+                dev_discoverable,
                 repeater,
             })
         };
@@ -2552,11 +2815,15 @@ mod tests {
         // Every capability-gated field is required, because the record
         // states a whole desired configuration rather than a patch.
         assert_eq!(
-            configure(Some(3), None, Some(repeater.clone())),
+            configure(Some(3), None, Some(true), Some(repeater.clone())),
             Err(MobileError::InvalidUlcpFrame)
         );
         assert_eq!(
-            configure(None, Some(false), None),
+            configure(None, Some(false), Some(true), None),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            configure(None, Some(false), None, Some(repeater.clone())),
             Err(MobileError::InvalidUlcpFrame)
         );
         // A region code is two octets or it is not a region code.
@@ -2564,6 +2831,7 @@ mod tests {
             configure(
                 None,
                 Some(false),
+                Some(true),
                 Some(UlcpRepeaterSettingsRecord {
                     regions: vec![vec![0x78]],
                     ..repeater.clone()
@@ -2575,6 +2843,7 @@ mod tests {
             configure(
                 None,
                 Some(false),
+                Some(true),
                 Some(UlcpRepeaterSettingsRecord {
                     default_region: Some(vec![0x78, 0x53, 0x00]),
                     ..repeater.clone()
@@ -2585,10 +2854,11 @@ mod tests {
 
         // An omitted role is the device deriving its own, written as an
         // empty value rather than skipped.
-        let configured = configure(None, Some(true), Some(repeater)).unwrap();
+        let configured = configure(None, Some(true), Some(true), Some(repeater)).unwrap();
         let (written, ..) = drive_configuration(&session, configured.outbound_frames);
         assert_eq!(written.get(&prop::IDENT_ROLE), Some(&Vec::new()));
         assert_eq!(written.get(&prop::IDENT_MOBILE), Some(&vec![1]));
+        assert_eq!(written.get(&prop::DEV_DISCOVERABLE), Some(&vec![1]));
         assert_eq!(written.get(&prop::MAC_REPEATER_REGIONS), Some(&Vec::new()));
         assert_eq!(written.get(&prop::MAC_REPEATER_MIN_RSSI), Some(&Vec::new()));
     }
@@ -2969,5 +3239,198 @@ mod tests {
         assert_eq!(refreshed.frequency_khz, 910_525);
         assert_eq!(refreshed.duty_cycle_now, Some(262));
         assert_eq!(refreshed.duty_cycle_limit, Some(655));
+    }
+
+    fn inserted_response(tid: u8, property: u32, item: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0; MAX_FRAME];
+        let length = frame::prop_inserted(&mut bytes, tid, property, item).unwrap();
+        bytes.truncate(length);
+        bytes
+    }
+
+    fn removed_response(tid: u8, property: u32, item: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0; MAX_FRAME];
+        let length = frame::prop_removed(&mut bytes, tid, property, item).unwrap();
+        bytes.truncate(length);
+        bytes
+    }
+
+    fn dev_peer_keys(update: &UlcpSessionUpdateRecord) -> Vec<Vec<u8>> {
+        update
+            .snapshot
+            .provisioning
+            .as_ref()
+            .unwrap()
+            .dev_peer_keys
+            .clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn device_peer_insert_and_remove_patch_the_table_and_chain_a_save() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(dev_peer_keys(&attached), Vec::<Vec<u8>>::new());
+
+        let insert = session.insert_device_peer(vec![0xC1; 32]).unwrap();
+        assert_eq!(insert.outbound_frames.len(), 1);
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+
+        let confirmed = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::DEV_PEERS,
+                &[0xC1; 32],
+            ))
+            .unwrap();
+        assert_eq!(dev_peer_keys(&confirmed), vec![vec![0xC1; 32]]);
+        assert_eq!(confirmed.operation_error, None);
+        // The mutation is live but unsaved; CMD_SAVE rides behind it.
+        assert!(confirmed.waiting_for_responses);
+        assert_eq!(confirmed.outbound_frames.len(), 1);
+        let save = Frame::parse(&confirmed.outbound_frames[0]).unwrap();
+        assert_eq!(save.command(), Some(Cmd::Save));
+
+        let saved = session
+            .consume(property_response(
+                save.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::OK.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(saved.operation_error, None);
+        assert!(!saved.waiting_for_responses);
+        assert_eq!(saved.snapshot.phase, UlcpSessionPhase::Attached);
+
+        let remove = session.remove_device_peer(vec![0xC1; 32]).unwrap();
+        let request = Frame::parse(&remove.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        let confirmed = session
+            .consume(removed_response(
+                request.header.tid(),
+                prop::DEV_PEERS,
+                &[0xC1; 32],
+            ))
+            .unwrap();
+        assert_eq!(dev_peer_keys(&confirmed), Vec::<Vec<u8>>::new());
+        let save = Frame::parse(&confirmed.outbound_frames[0]).unwrap();
+        assert_eq!(save.command(), Some(Cmd::Save));
+        let saved = session
+            .consume(property_response(
+                save.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::OK.0 as u8],
+            ))
+            .unwrap();
+        assert!(!saved.waiting_for_responses);
+    }
+
+    #[test]
+    fn device_peer_failures_report_status_without_ending_the_session() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        // NOMEM: the list is full. Nothing changed on the device, so the
+        // cache stays put and no save is chained.
+        let insert = session.insert_device_peer(vec![0xC2; 32]).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        let full = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::NOMEM.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            full.operation_error,
+            Some(UlcpOperationErrorRecord {
+                operation: "insert device peer".into(),
+                status_code: umsh_ulcp::Status::NOMEM.0,
+                status_name: "Status::NOMEM".into(),
+            })
+        );
+        assert_eq!(dev_peer_keys(&full), Vec::<Vec<u8>>::new());
+        assert!(!full.waiting_for_responses);
+        assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+
+        // ALREADY: the key is on the device; the cache reflects that even
+        // though the operation reports a non-OK status.
+        let insert = session.insert_device_peer(vec![0xC3; 32]).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        let already = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ALREADY.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            already.operation_error.as_ref().unwrap().status_name,
+            "Status::ALREADY"
+        );
+        assert_eq!(dev_peer_keys(&already), vec![vec![0xC3; 32]]);
+
+        // ITEM_NOT_FOUND on remove: the key is not on the device, which is
+        // what the caller asked for.
+        let remove = session.remove_device_peer(vec![0xC3; 32]).unwrap();
+        let request = Frame::parse(&remove.outbound_frames[0]).unwrap();
+        let missing = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ITEM_NOT_FOUND.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            missing.operation_error.as_ref().unwrap().status_name,
+            "Status::ITEM_NOT_FOUND"
+        );
+        assert_eq!(dev_peer_keys(&missing), Vec::<Vec<u8>>::new());
+
+        // The session remains attached and usable.
+        assert!(session.insert_device_peer(vec![0xC4; 32]).is_ok());
+    }
+
+    #[test]
+    fn device_peer_operations_require_the_device_identity_capability() {
+        let session = MobileUlcpSession::new();
+        let begin = session.begin(None).unwrap();
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, vec![cap::WRITABLE_RAW_STREAM as u8]),
+                prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            session.insert_device_peer(vec![0xC1; 32]).unwrap_err(),
+            MobileError::InvalidUlcpFrame
+        );
+        assert_eq!(
+            session.remove_device_peer(vec![0xC1; 32]).unwrap_err(),
+            MobileError::InvalidUlcpFrame
+        );
+        // And a malformed key is rejected before any frame is built.
+        assert_eq!(
+            session.insert_device_peer(vec![0xC1; 31]).unwrap_err(),
+            MobileError::InvalidPublicKeyLength
+        );
     }
 }

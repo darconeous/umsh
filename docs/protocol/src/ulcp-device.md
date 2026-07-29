@@ -77,6 +77,7 @@ Id | Mnemonic                    | Commands                 | Description
 75 | `PROP_MAC_REPEATER_DEFAULT_REGION` | Get, Set         | Region code inserted into untagged flood packets
 76 | `PROP_MAC_REPEATER_MIN_RSSI` | Get, Set                | Minimum received RSSI for flood forwarding
 77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
+78 | `PROP_DEV_DISCOVERABLE`     | Get, Set                 | Whether the device identity answers Identity Requests
 
 The RF configuration is also device-domain state, but is specified in
 [Radio Control](ulcp-radio.md); so is the transport configuration in
@@ -186,7 +187,6 @@ host only through the host's own filtering.
 * Asynchronous Updates: No
 * Required: `CAP_DEV_IDENTITY`
 * Item Form: 32 octets (the peer's Ed25519 public key)
-* Digest Form: identical to the item form
 * Remove Selector: the 32-octet public key
 * Post-Reset Value: Empty, or restored from saved state
 
@@ -516,3 +516,25 @@ spreading factors that decode well below the noise floor, this is the
 more meaningful of the two thresholds.
 
 Applies to flood forwarding only.
+
+### PROP 78: `PROP_DEV_DISCOVERABLE` {#prop-dev-discoverable}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_DEV_IDENTITY`
+* Value Type: BOOL
+* Post-Reset Value: 1 (true), or restored from saved state
+
+Whether the device identity answers [Identity
+Requests](mac-commands.md#identity-request-command-1) addressed to it,
+including broadcast solicitations whose filters select it. When false,
+the device identity ignores every Identity Request.
+
+Discoverability defaults on: a deployed device is infrastructure, and
+being askable is most of what makes it administrable in the field. The
+property is the opt-out for deployments where the device should not
+volunteer its identity to arbitrary nearby askers.
+
+Affects only Identity Request responses. Unsolicited advertisements,
+beacons, and the device's participation in forwarding are governed
+elsewhere and are unchanged by this property.

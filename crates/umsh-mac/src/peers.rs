@@ -50,6 +50,17 @@ pub struct AutoPeerUpdate {
     pub evicted_key: Option<PublicKey>,
 }
 
+/// Outcome of removing a peer from the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerRemoval {
+    /// Public key of the removed peer.
+    pub removed_key: PublicKey,
+    /// When removal swap-moved the last entry into the freed slot: that
+    /// entry's `(old, new)` identifiers. Every `PeerId`-keyed structure must
+    /// be re-keyed accordingly.
+    pub moved: Option<(PeerId, PeerId)>,
+}
+
 /// Fixed-capacity registry of remote peers.
 #[derive(Clone, Debug)]
 pub struct PeerRegistry<const N: usize> {
@@ -188,6 +199,26 @@ impl<const N: usize> PeerRegistry<N> {
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
             evicted_key: Some(evicted_key),
+        })
+    }
+
+    /// Remove a peer, freeing its slot for reuse.
+    ///
+    /// The registry is dense — a `PeerId` is an index — so removal swap-moves
+    /// the last entry into the freed slot. The returned record names that
+    /// move so the caller can re-key any state held under the moved peer's
+    /// old identifier.
+    pub fn remove(&mut self, id: PeerId) -> Option<PeerRemoval> {
+        let index = id.0 as usize;
+        if index >= self.peers.len() {
+            return None;
+        }
+        let last = self.peers.len() - 1;
+        let removed = self.peers.swap_remove(index);
+        let moved = (index != last).then_some((PeerId(last as u8), id));
+        Some(PeerRemoval {
+            removed_key: removed.public_key,
+            moved,
         })
     }
 

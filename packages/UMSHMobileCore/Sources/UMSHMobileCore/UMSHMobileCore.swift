@@ -1183,6 +1183,21 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func composeText(peerAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
+     * Solicit identities from nearby nodes with one zero-hop broadcast MAC
+     * Identity Request.
+     *
+     * The request goes out as a direct broadcast with no flood budget, so
+     * repeaters never carry it — the blast radius is exactly the nodes in
+     * radio range. It carries this phone's full source address, so a
+     * matching node can reply with a targeted unicast without any prior
+     * contact; replies arrive as ordinary `NodeIdentity` advertisements on
+     * the receive path. `role_code` and `capability_bits` narrow which
+     * nodes respond (AND-combined when both are given); `None` for both
+     * asks every node in range.
+     */
+    func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?) async throws
+
+    /**
      * Fail every chat transmission currently owned by the mobile radio
      * bridge. The platform calls this when ULCP-link delivery failed
      * after the MAC had accepted the frames, ensuring optimistic UI rows do
@@ -1209,6 +1224,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRecord]) async throws
 
     /**
+     * Remove peers from the live MAC. Idempotent: a peer that was never
+     * registered is already in the requested state, so it is not an error.
+     * A removed peer that transmits again may be auto-re-registered
+     * (unpinned) by the MAC — removal here tracks the app's stored peer
+     * list, it is not a block list.
+     */
+    func removePeers(peerAddresses: [String]) async throws
+
+    /**
      * Solicit a specific peer's current node identity by sending a targeted
      * MAC Identity Request (command 1). This resolves once the request has
      * been handed to the transport; the peer's identity response arrives
@@ -1218,6 +1242,19 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func requestIdentity(peerAddress: String) async throws
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
+
+    /**
+     * Set whether this phone answers Identity Requests with its own
+     * identity — the passive counterpart of [`discover_identities`]:
+     * discoverable phones show up in other people's Discover sessions.
+     *
+     * `name` is the display name carried in replies (truncated to the
+     * 24-byte wire limit). The session starts discoverable with no name;
+     * the app pushes the stored preference and name right after install
+     * and again whenever either changes. Replies are targeted
+     * authenticated unicasts, never broadcasts.
+     */
+    func setDiscoverable(enabled: Bool, name: String?) async throws
 
     /**
      * Register (or replace) the listener that is told when this session
@@ -1471,6 +1508,35 @@ open func composeText(peerAddress: String, clientToken: UInt32, body: String)asy
 }
 
     /**
+     * Solicit identities from nearby nodes with one zero-hop broadcast MAC
+     * Identity Request.
+     *
+     * The request goes out as a direct broadcast with no flood budget, so
+     * repeaters never carry it — the blast radius is exactly the nodes in
+     * radio range. It carries this phone's full source address, so a
+     * matching node can reply with a targeted unicast without any prior
+     * contact; replies arrive as ordinary `NodeIdentity` advertisements on
+     * the receive path. `role_code` and `capability_bits` narrow which
+     * nodes respond (AND-combined when both are given); `None` for both
+     * asks every node in range.
+     */
+open func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_discover_identities(
+                        self.uniffiCloneHandle(),FfiConverterOptionUInt8.lower(roleCode),FfiConverterOptionUInt8.lower(capabilityBits)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
      * Fail every chat transmission currently owned by the mobile radio
      * bridge. The platform calls this when ULCP-link delivery failed
      * after the MAC had accepted the frames, ensuring optimistic UI rows do
@@ -1568,6 +1634,29 @@ open func rejectChatBatch(batchId: UInt64, checkpoints: [MobileChatCheckpointRec
 }
 
     /**
+     * Remove peers from the live MAC. Idempotent: a peer that was never
+     * registered is already in the requested state, so it is not an error.
+     * A removed peer that transmits again may be auto-re-registered
+     * (unpinned) by the MAC — removal here tracks the app's stored peer
+     * list, it is not a block list.
+     */
+open func removePeers(peerAddresses: [String])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_remove_peers(
+                        self.uniffiCloneHandle(),FfiConverterSequenceString.lower(peerAddresses)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
      * Solicit a specific peer's current node identity by sending a targeted
      * MAC Identity Request (command 1). This resolves once the request has
      * been handed to the transport; the peer's identity response arrives
@@ -1596,6 +1685,33 @@ open func restoreChat(checkpoints: [MobileChatCheckpointRecord])async throws   {
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_restore_chat(
                         self.uniffiCloneHandle(),FfiConverterSequenceTypeMobileChatCheckpointRecord.lower(checkpoints)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Set whether this phone answers Identity Requests with its own
+     * identity — the passive counterpart of [`discover_identities`]:
+     * discoverable phones show up in other people's Discover sessions.
+     *
+     * `name` is the display name carried in replies (truncated to the
+     * 24-byte wire limit). The session starts discoverable with no name;
+     * the app pushes the stored preference and name right after install
+     * and again whenever either changes. Replies are targeted
+     * authenticated unicasts, never broadcasts.
+     */
+open func setDiscoverable(enabled: Bool, name: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_discoverable(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(enabled),FfiConverterOptionString.lower(name)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -1967,12 +2083,36 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func factoryReset() throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Store one peer public key on the radio's device identity
+     * (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
+     * device's status name — `NOMEM` when the list is full (capacity
+     * [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
+     * which callers should treat as success.
+     */
+    func insertDevicePeer(publicKey: Data) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Re-read every capability-gated property represented by the mobile
      * snapshot. The existing snapshot remains usable while the bounded
      * refresh is in flight; authoritative provisioning is published when
      * the full capability-gated read completes.
      */
     func refresh() throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Remove one peer public key from the radio's device identity
+     * (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
+     * surfaces as `operation_error` and callers should treat it as success —
+     * the key is not on the device either way.
+     */
+    func removeDevicePeer(publicKey: Data) throws  -> UlcpSessionUpdateRecord
 
     /**
      * Invalidate all outstanding transactions for a disconnected transport.
@@ -2193,6 +2333,27 @@ open func factoryReset()throws  -> UlcpSessionUpdateRecord  {
 }
 
     /**
+     * Store one peer public key on the radio's device identity
+     * (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
+     * device's status name — `NOMEM` when the list is full (capacity
+     * [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
+     * which callers should treat as success.
+     */
+open func insertDevicePeer(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_insert_device_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Re-read every capability-gated property represented by the mobile
      * snapshot. The existing snapshot remains usable while the bounded
      * refresh is in flight; authoritative provisioning is published when
@@ -2203,6 +2364,25 @@ open func refresh()throws  -> UlcpSessionUpdateRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Remove one peer public key from the radio's device identity
+     * (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
+     * surfaces as `operation_error` and callers should treat it as success —
+     * the key is not on the device either way.
+     */
+open func removeDevicePeer(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_remove_device_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
     )
 })
 }
@@ -4104,6 +4284,12 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
      */
     public var identMobile: Bool?
     /**
+     * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+     * Identity Requests. Present exactly when the device advertises
+     * `CAP_DEV_IDENTITY`.
+     */
+    public var devDiscoverable: Bool?
+    /**
      * The flood-forwarding policy. Present exactly when the device
      * advertises `CAP_REPEATER`.
      */
@@ -4126,12 +4312,18 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
          * `CAP_IDENT`.
          */identMobile: Bool?,
         /**
+         * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+         * Identity Requests. Present exactly when the device advertises
+         * `CAP_DEV_IDENTITY`.
+         */devDiscoverable: Bool?,
+        /**
          * The flood-forwarding policy. Present exactly when the device
          * advertises `CAP_REPEATER`.
          */repeater: UlcpRepeaterSettingsRecord?) {
         self.radio = radio
         self.identRole = identRole
         self.identMobile = identMobile
+        self.devDiscoverable = devDiscoverable
         self.repeater = repeater
     }
 
@@ -4154,6 +4346,7 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
                 radio: FfiConverterTypeUlcpRadioSettingsRecord.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
+                devDiscoverable: FfiConverterOptionBool.read(from: &buf),
                 repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf)
         )
     }
@@ -4162,6 +4355,7 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
         FfiConverterTypeUlcpRadioSettingsRecord.write(value.radio, into: &buf)
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
+        FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
         FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
     }
 }
@@ -4859,6 +5053,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * (`CAP_IDENT`).
      */
     public var supportsIdent: Bool
+    /**
+     * The device has an identity domain of its own (`CAP_DEV_IDENTITY`),
+     * including the `PROP_DEV_PEERS` list.
+     */
+    public var supportsDeviceIdentity: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
@@ -4879,6 +5078,12 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      */
     public var repeater: UlcpRepeaterSettingsRecord?
     /**
+     * `PROP_DEV_PEERS`: the peer public keys stored on the device
+     * identity, read back losslessly. Present exactly when
+     * `supports_device_identity`.
+     */
+    public var devPeerKeys: [Data]?
+    /**
      * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
      * from what it is actually doing" and "no `CAP_IDENT`" —
      * `supports_ident` distinguishes them.
@@ -4888,6 +5093,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
      */
     public var identMobile: Bool?
+    /**
+     * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+     * Identity Requests. Present exactly when `supports_device_identity`.
+     */
+    public var devDiscoverable: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4898,10 +5108,19 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * The device serves and configures its own advertised node identity
          * (`CAP_IDENT`).
-         */supportsIdent: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+         */supportsIdent: Bool,
+        /**
+         * The device has an identity domain of its own (`CAP_DEV_IDENTITY`),
+         * including the `PROP_DEV_PEERS` list.
+         */supportsDeviceIdentity: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
          * Present exactly when `supports_repeater`.
          */repeater: UlcpRepeaterSettingsRecord?,
+        /**
+         * `PROP_DEV_PEERS`: the peer public keys stored on the device
+         * identity, read back losslessly. Present exactly when
+         * `supports_device_identity`.
+         */devPeerKeys: [Data]?,
         /**
          * `PROP_IDENT_ROLE`. `None` covers both "the device derives its role
          * from what it is actually doing" and "no `CAP_IDENT`" —
@@ -4909,7 +5128,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          */identRole: UInt8?,
         /**
          * `PROP_IDENT_MOBILE`. Present exactly when `supports_ident`.
-         */identMobile: Bool?) {
+         */identMobile: Bool?,
+        /**
+         * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+         * Identity Requests. Present exactly when `supports_device_identity`.
+         */devDiscoverable: Bool?) {
         self.capabilityCount = capabilityCount
         self.hasHostFiltering = hasHostFiltering
         self.supportsOfflineQueue = supportsOfflineQueue
@@ -4919,6 +5142,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsDutyCycleLimit = supportsDutyCycleLimit
         self.supportsRepeater = supportsRepeater
         self.supportsIdent = supportsIdent
+        self.supportsDeviceIdentity = supportsDeviceIdentity
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -4935,8 +5159,10 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.hostPeerCount = hostPeerCount
         self.autoAck = autoAck
         self.repeater = repeater
+        self.devPeerKeys = devPeerKeys
         self.identRole = identRole
         self.identMobile = identMobile
+        self.devDiscoverable = devDiscoverable
     }
 
 
@@ -4964,6 +5190,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
                 supportsRepeater: FfiConverterBool.read(from: &buf),
                 supportsIdent: FfiConverterBool.read(from: &buf),
+                supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
@@ -4980,8 +5207,10 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 hostPeerCount: FfiConverterOptionUInt32.read(from: &buf),
                 autoAck: FfiConverterOptionBool.read(from: &buf),
                 repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf),
+                devPeerKeys: FfiConverterOptionSequenceData.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
-                identMobile: FfiConverterOptionBool.read(from: &buf)
+                identMobile: FfiConverterOptionBool.read(from: &buf),
+                devDiscoverable: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -4995,6 +5224,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
         FfiConverterBool.write(value.supportsRepeater, into: &buf)
         FfiConverterBool.write(value.supportsIdent, into: &buf)
+        FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
@@ -5011,8 +5241,10 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.hostPeerCount, into: &buf)
         FfiConverterOptionBool.write(value.autoAck, into: &buf)
         FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
+        FfiConverterOptionSequenceData.write(value.devPeerKeys, into: &buf)
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
+        FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
     }
 }
 
@@ -6927,6 +7159,30 @@ fileprivate struct FfiConverterOptionTypeSavedSnapshotRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -7622,6 +7878,19 @@ public func ulcpInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
 })
 }
 /**
+ * Capacity of the device identity's peer list (`PROP_DEV_PEERS`).
+ *
+ * A label constant only — the device's `NOMEM` stays authoritative for
+ * when the list is actually full.
+ */
+public func ulcpMaxDevPeers() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_max_dev_peers(uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_PROP_GET` request with the shared ULCP codec.
  */
 public func ulcpPropGet(transactionId: UInt8, propertyId: UInt32)throws  -> Data  {
@@ -7733,6 +8002,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_peers() != 5213) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_get() != 58684) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7781,6 +8053,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 53284) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 55700) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7802,10 +8077,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_reject_chat_batch() != 19006) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_remove_peers() != 29167) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity() != 54447) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_discoverable() != 37409) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_wake_listener() != 44475) {
@@ -7847,7 +8128,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 21547) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_peer() != 60874) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh() != 49124) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_peer() != 27439) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reset() != 55594) {

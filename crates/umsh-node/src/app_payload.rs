@@ -106,10 +106,20 @@ mod tests {
 
     #[test]
     fn expect_disallowed_for_packet_type_returns_error() {
-        // MacCommand is not allowed in a Broadcast packet.
-        let payload = &[0x02u8, 0x01];
-        let err = expect_payload_type(PacketType::Broadcast, payload, PayloadType::MacCommand)
+        // A text message is not allowed in a Broadcast packet.
+        let payload = &[0x03u8, 0x01];
+        let err = expect_payload_type(PacketType::Broadcast, payload, PayloadType::TextMessage)
             .unwrap_err();
         assert!(matches!(err, AppParseError::PayloadTypeNotAllowed { .. }));
+    }
+
+    #[test]
+    fn expect_mac_command_is_admitted_on_broadcast() {
+        // Broadcast admits MAC commands at the payload-type level; which
+        // commands are acted on is decided per-command at dispatch.
+        let payload = &[0x02u8, 0x01];
+        let body =
+            expect_payload_type(PacketType::Broadcast, payload, PayloadType::MacCommand).unwrap();
+        assert_eq!(body, &[0x01u8]);
     }
 }

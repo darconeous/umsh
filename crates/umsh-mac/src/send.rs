@@ -88,6 +88,14 @@ pub struct SendOptions {
     pub region_code: Option<[u8; 2]>,
     /// Whether to include a random salt in SECINFO.
     pub salt: bool,
+    /// Optional delay before the first transmit attempt, in milliseconds.
+    ///
+    /// The frame is sealed and queued immediately but held until the delay
+    /// elapses. Used to desynchronize sends that many nodes may make at
+    /// once — replies to a broadcast Identity Request, say — so they do not
+    /// all hit the channel together. ACK deadlines start at the first
+    /// actual transmit, not at queue time.
+    pub tx_delay_ms: Option<u16>,
 }
 
 impl Default for SendOptions {
@@ -102,6 +110,7 @@ impl Default for SendOptions {
             source_route: None,
             region_code: None,
             salt: false,
+            tx_delay_ms: None,
         }
     }
 }
@@ -170,6 +179,12 @@ impl SendOptions {
     /// Set the region-code option.
     pub fn with_region_code(mut self, code: [u8; 2]) -> Self {
         self.region_code = Some(code);
+        self
+    }
+
+    /// Hold the frame for `delay_ms` before its first transmit attempt.
+    pub fn with_tx_delay_ms(mut self, delay_ms: u16) -> Self {
+        self.tx_delay_ms = Some(delay_ms);
         self
     }
 }

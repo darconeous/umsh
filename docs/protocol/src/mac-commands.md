@@ -40,6 +40,17 @@ Because a broadcast Identity Request can solicit many replies:
 - A repeater MAY decline to forward a broadcast Identity Request, particularly
   when its filters are broad enough to solicit a large number of replies.
 
+In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:
+
+- The FHOPS byte must either be absent or set to 0x00, otherwise the request should be dropped.
+- The Route option must either be absent or empty, otherwise the request should be dropped.
+- Responses must be delayed by a random amount of time of up to 5 seconds, so
+  that the selected nodes do not all answer at once. A delayed response that
+  then fails channel-activity assessment follows the responder's normal
+  bounded CCA backoff-and-retry before being dropped.
+
+These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.
+
 An Identity Request is answered with a targeted unicast identity response, never
 by flooding an [advertisement](beacons.md#advertisements) to the whole network.
 

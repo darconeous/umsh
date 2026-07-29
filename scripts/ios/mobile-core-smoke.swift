@@ -3,7 +3,8 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 28)
+        precondition(mobileApiVersion() == 32)
+        precondition(ulcpMaxDevPeers() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         precondition(hint.bytes == Data([0xA1, 0xB2, 0x03]))
@@ -125,6 +126,7 @@ struct MobileCoreSmokeTest {
                     ),
                     identRole: nil,
                     identMobile: nil,
+                    devDiscoverable: nil,
                     repeater: UlcpRepeaterSettingsRecord(
                         enabled: true,
                         regions: [sjc],

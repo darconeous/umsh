@@ -21,6 +21,14 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// inbound message, delivery ack, or ping reply. `nil` until the first
     /// evidence.
     var lastHeard: Date? = nil
+    /// Whether this node is saved on the local (phone) identity. `false` is
+    /// the transient tier: hidden from the main Network list, surfaced only
+    /// through search and discovery.
+    var isSaved: Bool = true
+    var isFavorite: Bool = false
+    /// Whether this node's public key is stored on the companion radio's
+    /// device identity (PROP_DEV_PEERS). A cache; the device is the authority.
+    var isOnDeviceIdentity: Bool = false
 
     var displayName: String {
         alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
@@ -162,6 +170,9 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// Pre-edit text of the sender's own edited message, available for review
     /// via the bubble's context menu. The wire archive never resends it.
     var originalBody: String? = nil
+    /// When the message was recorded locally. Drives the Network list's
+    /// "Latest message" sort; transcripts order by storage, not this.
+    var createdAtMilliseconds: Int64 = 0
 }
 
 enum MessageSendResult: Sendable {
@@ -244,6 +255,22 @@ struct PeerActions {
     var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
     /// Discard that route, reporting whether one was held.
     var resetRoute: ((PeerSummary) async -> Bool)? = nil
+    /// Mark or unmark the node as a favorite. Saved nodes only.
+    var setFavorite: ((PeerSummary, Bool) async -> Bool)? = nil
+    /// Save a transient node onto the local identity.
+    var promoteToSaved: ((PeerSummary) async -> Bool)? = nil
+    /// Take a saved node off the local identity, keeping its history and
+    /// searchability. The row survives as a transient.
+    var demoteToTransient: ((PeerSummary) async -> Bool)? = nil
+    /// Delete the node's row outright. Refused by the store when a
+    /// conversation exists — offer `deletePeerAndConversation` instead.
+    var deletePeer: ((PeerSummary) async -> Bool)? = nil
+    /// Delete the node and its conversation history in one transaction.
+    var deletePeerAndConversation: ((PeerSummary) async -> Bool)? = nil
+    /// Store the node's public key on the companion radio's device identity.
+    var addToDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
+    /// Remove the node's public key from the radio's device identity.
+    var removeFromDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
 
     /// No app services wired up — used by previews and by any sheet built
     /// before the mesh session exists.
@@ -254,4 +281,14 @@ enum PeerPingResult: Equatable, Sendable {
     case reply(PeerPingReply)
     case timedOut
     case unavailable(reason: String)
+}
+
+/// Outcome of a device-identity peer mutation, shaped for inline UI copy.
+/// `deviceFull` mirrors the radio's own `NOMEM`, which stays authoritative.
+enum DevicePeerActionOutcome: Equatable, Sendable {
+    case success
+    case deviceFull
+    case radioUnavailable
+    case unsupported
+    case failed
 }

@@ -174,6 +174,10 @@ pub(crate) struct IdentityResponsePlan {
     pub(crate) to: PublicKey,
     /// Whether the reply should carry our full source key.
     pub(crate) full_source: bool,
+    /// Whether the reply must be held for a random delay before transmit.
+    /// Set for broadcast/multicast solicitations, where every selected node
+    /// answers at once and undelayed replies would collide on the channel.
+    pub(crate) delayed: bool,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }
@@ -214,6 +218,10 @@ impl IdentityResponder {
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
+            delayed: matches!(
+                ctx.family,
+                crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
+            ),
             framed: Vec::from(&buf[..len]),
         })
     }

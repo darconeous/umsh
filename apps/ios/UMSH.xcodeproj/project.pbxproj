@@ -41,6 +41,9 @@
 		100000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */; };
 		100000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift */; };
 		100000000000000000000002C /* UMSH/App/StorageUnavailableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002C /* UMSH/App/StorageUnavailableView.swift */; };
+		100000000000000000000002D /* UMSH/Features/Network/PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002D /* UMSH/Features/Network/PeerDetailView.swift */; };
+		100000000000000000000002E /* UMSH/Features/Network/NodeImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002E /* UMSH/Features/Network/NodeImportView.swift */; };
+		100000000000000000000002F /* UMSH/Features/Network/DiscoverPeersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002F /* UMSH/Features/Network/DiscoverPeersView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -78,6 +81,9 @@
 		200000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift; sourceTree = "<group>"; };
 		200000000000000000000002B /* UMSH/Services/Radio/BluetoothErrorText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/BluetoothErrorText.swift; sourceTree = "<group>"; };
 		200000000000000000000002C /* UMSH/App/StorageUnavailableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/StorageUnavailableView.swift; sourceTree = "<group>"; };
+		200000000000000000000002D /* UMSH/Features/Network/PeerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Network/PeerDetailView.swift; sourceTree = "<group>"; };
+		200000000000000000000002E /* UMSH/Features/Network/NodeImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Network/NodeImportView.swift; sourceTree = "<group>"; };
+		200000000000000000000002F /* UMSH/Features/Network/DiscoverPeersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Network/DiscoverPeersView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +120,9 @@
 				200000000000000000000009 /* UMSH/DesignSystem/RadioToolbarItem.swift */,
 				20000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift */,
 				20000000000000000000000B /* UMSH/Features/Network/NetworkView.swift */,
+				200000000000000000000002D /* UMSH/Features/Network/PeerDetailView.swift */,
+				200000000000000000000002E /* UMSH/Features/Network/NodeImportView.swift */,
+				200000000000000000000002F /* UMSH/Features/Network/DiscoverPeersView.swift */,
 				20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */,
 				20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */,
 				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
@@ -234,6 +243,9 @@
 				100000000000000000000009 /* UMSH/DesignSystem/RadioToolbarItem.swift in Sources */,
 				10000000000000000000000A /* UMSH/Features/Conversations/ConversationsView.swift in Sources */,
 				10000000000000000000000B /* UMSH/Features/Network/NetworkView.swift in Sources */,
+				100000000000000000000002D /* UMSH/Features/Network/PeerDetailView.swift in Sources */,
+				100000000000000000000002E /* UMSH/Features/Network/NodeImportView.swift in Sources */,
+				100000000000000000000002F /* UMSH/Features/Network/DiscoverPeersView.swift in Sources */,
 				10000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift in Sources */,
 				10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */,
 				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,

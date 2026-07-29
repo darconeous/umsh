@@ -252,7 +252,7 @@ the resulting configuration or retained data:
   are re-fetched.
 
 * **Update form** — the device applies the revert in place, emitting an
-  unsolicited `CMD_PROP_IS` (in digest form, where applicable) for
+  unsolicited `CMD_PROP_IS` (with key material omitted, where applicable) for
   **every property whose value changed**, and then reports completion
   with `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying `STATUS_OK` and the
   command's TID. Session state is not reset in this form.

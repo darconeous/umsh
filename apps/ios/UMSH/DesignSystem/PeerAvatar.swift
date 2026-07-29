@@ -3,6 +3,7 @@ import SwiftUI
 struct PeerAvatar: View {
     let hint: MeshNodeHint
     var diameter: CGFloat = 44
+    var showsFavoriteStar = false
 
     var body: some View {
         let characters = Array(hint.text)
@@ -16,8 +17,23 @@ struct PeerAvatar: View {
         .foregroundStyle(foregroundColor)
         .frame(width: diameter, height: diameter)
         .background(fillColor, in: Circle())
+        .overlay(alignment: .topTrailing) {
+            if showsFavoriteStar {
+                Image(systemName: "star.fill")
+                    .font(.system(size: diameter * 0.28))
+                    .foregroundStyle(.yellow)
+                    .background(
+                        Circle()
+                            .fill(.background)
+                            .frame(width: diameter * 0.36, height: diameter * 0.36)
+                    )
+                    .offset(x: diameter * 0.10, y: -diameter * 0.10)
+            }
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Node hint \(hint.text)")
+        .accessibilityLabel(
+            showsFavoriteStar ? "Favorite node, hint \(hint.text)" : "Node hint \(hint.text)"
+        )
     }
 
     private var rgb: (red: Double, green: Double, blue: Double) {

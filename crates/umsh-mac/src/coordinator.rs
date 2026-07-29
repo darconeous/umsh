@@ -1187,6 +1187,36 @@ impl<
         Ok(self.peer_registry.try_insert_or_update(key)?)
     }
 
+    /// Removes a registered peer and every piece of per-peer transport state:
+    /// pairwise crypto, replay windows, pending counter resyncs, and any
+    /// deferred inbound frame. Returns whether the peer was registered.
+    ///
+    /// The peer registry is dense, so removal moves the last entry into the
+    /// freed slot; state keyed by the moved peer's old identifier is re-keyed
+    /// here. Persisted RX counter boundaries are deliberately retained: if
+    /// the peer is re-added later, replay protection resumes from the stored
+    /// boundary instead of accepting replays from before the removal.
+    pub fn remove_peer(&mut self, key: &PublicKey) -> bool {
+        let Some((peer_id, _)) = self.peer_registry.lookup_by_key(key) else {
+            return false;
+        };
+        self.clear_peer_slot_state(peer_id);
+        if self
+            .deferred_counter_resync_frame
+            .as_ref()
+            .is_some_and(|deferred| deferred.peer_id == peer_id)
+        {
+            self.deferred_counter_resync_frame = None;
+        }
+        let Some(removal) = self.peer_registry.remove(peer_id) else {
+            return false;
+        };
+        if let Some((old_id, new_id)) = removal.moved {
+            self.rekey_peer_slot_state(old_id, new_id);
+        }
+        true
+    }
+
     /// Adds or updates a shared channel and derives its multicast keys.
     pub fn add_channel(&mut self, key: ChannelKey) -> Result<(), CapacityError> {
         let derived = self.crypto.derive_channel_keys(&key);
@@ -1338,8 +1368,17 @@ impl<
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
+        let not_before_ms = self.tx_not_before_ms(options);
         self.tx_queue
-            .enqueue(TxPriority::Application, frame, Some(receipt), Some(from))
+            .enqueue_with_state(
+                TxPriority::Application,
+                frame,
+                Some(receipt),
+                Some(from),
+                not_before_ms,
+                0,
+                0,
+            )
             .map_err(|_| SendError::QueueFull)?;
         Ok(receipt)
     }
@@ -1424,7 +1463,8 @@ impl<
         }
         let mut packet = builder.payload(payload).build()?;
         self.crypto.seal_packet(&mut packet, &keys)?;
-        self.enqueue_packet(packet, Some(receipt), Some(from))?;
+        let not_before_ms = self.tx_not_before_ms(options);
+        self.enqueue_packet(packet, Some(receipt), Some(from), not_before_ms)?;
         Ok(receipt)
     }
 
@@ -1567,7 +1607,8 @@ impl<
                 options.flood_hops,
             )?;
         }
-        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
+        let not_before_ms = self.tx_not_before_ms(options);
+        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from), not_before_ms) {
             if let Some(receipt) = receipt {
                 let _ = self
                     .identity_mut(from)
@@ -1685,7 +1726,8 @@ impl<
                 options.flood_hops,
             )?;
         }
-        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from)) {
+        let not_before_ms = self.tx_not_before_ms(options);
+        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from), not_before_ms) {
             if let Some(receipt) = receipt {
                 let _ = self
                     .identity_mut(from)
@@ -3068,19 +3110,32 @@ impl<
         packet: UnsealedPacket<'_>,
         receipt: Option<SendReceipt>,
         identity_id: Option<LocalIdentityId>,
+        not_before_ms: u64,
     ) -> Result<(), SendError> {
         if packet.total_len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
         self.tx_queue
-            .enqueue(
+            .enqueue_with_state(
                 TxPriority::Application,
                 packet.as_bytes(),
                 receipt,
                 identity_id,
+                not_before_ms,
+                0,
+                0,
             )
             .map_err(|_| SendError::QueueFull)?;
         Ok(())
+    }
+
+    /// The earliest transmit instant a send's options allow: now plus the
+    /// requested [`SendOptions::tx_delay_ms`], or zero for immediate.
+    fn tx_not_before_ms(&self, options: &SendOptions) -> u64 {
+        options
+            .tx_delay_ms
+            .map(|delay| self.clock.now_ms() + u64::from(delay))
+            .unwrap_or(0)
     }
 
     fn refresh_pending_resend(
@@ -3575,6 +3630,49 @@ impl<
         for channel in self.channels.iter_mut() {
             let _ = channel.replay.remove(&peer_id);
         }
+    }
+
+    /// Move every piece of `PeerId`-keyed state from `old_id` to `new_id`
+    /// after a registry swap-remove relocated that peer. Mirrors the
+    /// structures [`Self::clear_peer_slot_state`] clears; the destination
+    /// slots were freed by the removal, so the inserts cannot overflow.
+    fn rekey_peer_slot_state(&mut self, old_id: PeerId, new_id: PeerId) {
+        for slot in self.identities.iter_mut().filter_map(|slot| slot.as_mut()) {
+            if let Some(state) = slot.peer_crypto_mut().remove(&old_id) {
+                let _ = slot.peer_crypto_mut().insert(new_id, state);
+            }
+            if let Some(pending) = slot.pending_counter_resync_mut().remove(&old_id) {
+                let _ = slot.pending_counter_resync_mut().insert(new_id, pending);
+            }
+        }
+        for channel in self.channels.iter_mut() {
+            if let Some(window) = channel.replay.remove(&old_id) {
+                let _ = channel.replay.insert(new_id, window);
+            }
+        }
+        if let Some(deferred) = self.deferred_counter_resync_frame.as_mut() {
+            if deferred.peer_id == old_id {
+                deferred.peer_id = new_id;
+            }
+        }
+    }
+
+    /// Ensure `key` is registered at least transiently, returning its slot.
+    ///
+    /// A known peer is returned as-is; an unknown one is auto-registered
+    /// exactly like a full-source sender would be — unpinned and
+    /// LRU-evictable, never promoted. This is the node layer's hook for
+    /// answering a stranger (an Identity Request reply, say) whose frame
+    /// arrived on a path that does not auto-register its source, such as a
+    /// broadcast. Deliberately not gated on
+    /// [`auto_register_full_key_peers`](Self::auto_register_full_key_peers):
+    /// the caller is making an explicit per-peer decision, not opting into
+    /// registering every full-source sender.
+    pub fn ensure_transient_peer(&mut self, key: &PublicKey) -> Result<PeerId, AddPeerError> {
+        if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(key) {
+            return Ok(peer_id);
+        }
+        self.try_auto_register_peer(*key)
     }
 
     fn try_auto_register_peer(&mut self, key: PublicKey) -> Result<PeerId, AddPeerError> {

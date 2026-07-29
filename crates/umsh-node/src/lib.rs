@@ -607,6 +607,50 @@ mod tests {
         )
     }
 
+    /// A received broadcast frame, as a solicitation would arrive: optionally
+    /// carrying an FHOPS byte and a Route option. Only the ranges matter, so
+    /// the wire is just the route bytes.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_broadcast_packet(
+        from: PublicKey,
+        flood_hops: Option<u8>,
+        route: Option<&'static [u8]>,
+    ) -> ReceivedPacketRef<'static> {
+        let route_len = route.map_or(0, <[u8]>::len);
+        let wire: &'static [u8] = Box::leak(
+            route
+                .map_or_else(Vec::new, <[u8]>::to_vec)
+                .into_boxed_slice(),
+        );
+        let mut options = umsh_core::ParsedOptions::default();
+        if route.is_some() {
+            options.source_route = Some(0..route_len);
+        }
+        let header = umsh_core::PacketHeader {
+            fcf: umsh_core::Fcf::new(umsh_core::PacketType::Broadcast, false, false),
+            options_range: 0..route_len,
+            flood_hops: flood_hops.map(umsh_core::FloodHops),
+            dst: None,
+            channel: None,
+            source: umsh_core::SourceAddrRef::Hint(from.hint()),
+            sec_info: None,
+            body_range: route_len..wire.len(),
+            mic_range: wire.len()..wire.len(),
+            total_len: wire.len(),
+        };
+        ReceivedPacketRef::new(
+            wire,
+            &wire[route_len..],
+            header,
+            options,
+            Some(from),
+            Some(from.hint()),
+            false,
+            None,
+            umsh_mac::RxMetadata::default(),
+        )
+    }
+
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[derive(Clone, Default)]
     struct FakeMac {
@@ -865,6 +909,9 @@ mod tests {
         // test_unicast_packet is source_authenticated → requester already has
         // our key → hint source suffices.
         assert!(!reply.options.full_source);
+        // A targeted request gets an immediate reply; only broadcast and
+        // multicast solicitations are jittered.
+        assert_eq!(reply.options.tx_delay_ms, None);
 
         assert_eq!(reply.payload[0], umsh_core::PayloadType::NodeIdentity as u8);
         let identity = crate::NodeIdentityPayload::from_bytes(&reply.payload[1..]).unwrap();
@@ -872,6 +919,78 @@ mod tests {
         assert_eq!(identity.name.as_deref(), Some("repeater-1"));
         assert_eq!(identity.nonce, Some(0xCAFE_F00D), "request nonce echoed");
         assert!(identity.signature.is_none(), "responses are unsigned");
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_broadcast_solicitation_with_delayed_full_source_reply() {
+        let mac = FakeMac::new(vec![[0x12; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+        let packet = test_broadcast_packet(requester, None, None);
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options)
+            .expect("selected broadcast solicitation produces a plan");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        let reply = &unicasts[0];
+        assert_eq!(reply.to, requester);
+        // A broadcast is unauthenticated, so the requester may lack our key.
+        assert!(reply.options.full_source);
+        // The reply is held for a random slice of the 5-second window so the
+        // selected nodes do not all answer the same frame at once.
+        let delay = reply
+            .options
+            .tx_delay_ms
+            .expect("broadcast replies are jittered");
+        assert!(delay <= 5_000);
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_drops_repeated_or_routed_broadcast_solicitations() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+
+        // A nonzero FHOPS byte marks a repeated (or repeatable) request.
+        let repeated = test_broadcast_packet(requester, Some(0x21), None);
+        assert!(
+            node.evaluate_identity_request(&repeated, requester, &options)
+                .is_none()
+        );
+
+        // A non-empty Route option is a steered request.
+        let routed = test_broadcast_packet(requester, None, Some(&[0xAB, 0xCD]));
+        assert!(
+            node.evaluate_identity_request(&routed, requester, &options)
+                .is_none()
+        );
+
+        // A zeroed FHOPS byte and a present-but-empty Route option are fine.
+        let clean = test_broadcast_packet(requester, Some(0x00), Some(&[]));
+        assert!(
+            node.evaluate_identity_request(&clean, requester, &options)
+                .is_some()
+        );
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]

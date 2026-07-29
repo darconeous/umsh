@@ -142,6 +142,20 @@ impl<
         self.mac.borrow_mut().await.add_peer(key)
     }
 
+    /// Removes a registered peer and its per-peer transport state, reporting
+    /// whether the peer was registered. Persisted RX counter boundaries are
+    /// retained so replay protection survives a later re-add.
+    pub async fn remove_peer(&self, key: &PublicKey) -> bool {
+        self.mac.borrow_mut().await.remove_peer(key)
+    }
+
+    /// Ensures `key` is registered at least transiently (unpinned,
+    /// LRU-evictable), so an explicit reply to a stranger has a slot to send
+    /// through. Returns whether a slot is held.
+    pub async fn ensure_transient_peer(&self, key: &PublicKey) -> bool {
+        self.mac.borrow_mut().await.ensure_transient_peer(key).is_ok()
+    }
+
     /// Adds or updates a shared channel and derives its multicast keys.
     pub async fn add_channel(&self, key: ChannelKey) -> Result<(), CapacityError> {
         self.mac.borrow_mut().await.add_channel(key)

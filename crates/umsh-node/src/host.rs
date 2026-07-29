@@ -348,6 +348,15 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 
     if packet.payload_type() == PayloadType::MacCommand {
         if let Ok(command) = mac_command::parse(packet.payload()) {
+            // Broadcast admits MAC commands one at a time: only a command
+            // whose definition permits broadcast carriage is acted on, and
+            // today that is the Identity Request alone. Anything else riding
+            // a broadcast is dropped here, before observers see it.
+            if packet.packet_family() == umsh_mac::PacketFamily::Broadcast
+                && !matches!(command, mac_command::MacCommand::IdentityRequest { .. })
+            {
+                return;
+            }
             // Match borrowed variants before converting to owned.
             if let mac_command::MacCommand::EchoResponse { data } = command {
                 node.match_pong(

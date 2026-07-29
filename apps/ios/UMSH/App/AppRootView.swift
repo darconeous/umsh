@@ -17,6 +17,10 @@ struct AppRootView: View {
     @State private var openedConversation: DirectConversationSummary?
     @State private var incomingPeerImport: IncomingPeerImport?
     @State private var advertisedName = ""
+    /// Whether this phone answers nearby nodes' identity requests. The
+    /// preference outlives the mesh session, which starts discoverable, so
+    /// it is reapplied on every session install.
+    @AppStorage("phone.discoverable") private var phoneDiscoverable = true
     /// Bookkeeping that must survive body re-evaluation without itself being
     /// a source of invalidation. A reference held in `@State` is never
     /// reassigned, so mutating it costs nothing in the view graph.
@@ -61,7 +65,18 @@ struct AppRootView: View {
             fetchIdentity: fetchIdentity,
             updateAlias: updateAlias,
             loadRoute: peerRoute,
-            resetRoute: clearPeerRoute
+            resetRoute: clearPeerRoute,
+            setFavorite: setPeerFavorite,
+            promoteToSaved: promotePeerToSaved,
+            demoteToTransient: demotePeerToTransient,
+            deletePeer: deletePeer,
+            deletePeerAndConversation: deletePeerAndConversation,
+            addToDeviceIdentity: { peer in
+                await mutateDeviceIdentityPeer(peer, add: true)
+            },
+            removeFromDeviceIdentity: { peer in
+                await mutateDeviceIdentityPeer(peer, add: false)
+            }
         )
     }
 
@@ -108,13 +123,21 @@ struct AppRootView: View {
                     conversations: $conversations,
                     peers: peers,
                     inspectPeerIdentity: inspectPeerIdentity,
-                    savePeer: { preview, details in
-                        _ = await savePeer(preview, details: details, startConversation: false)
+                    savePeer: { preview, details, startConversation in
+                        await savePeer(preview, details: details, startConversation: startConversation)
+                    },
+                    openConversation: { conversation in
+                        selectedTab = .conversations
+                        openedConversation = conversation
                     },
                     peerActions: peerActions,
                     updateDraft: updateDraft,
                     sendMessage: sendMessage,
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    advertiseIdentity: advertiseIdentity,
+                    advertisedName: advertisedName,
+                    clearDiscoveredNodes: clearDiscoveredNodes,
+                    solicitNearbyIdentities: solicitNearbyIdentities
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -135,6 +158,11 @@ struct AppRootView: View {
                     saveAdvertisedName: saveAdvertisedName,
                     advertiseIdentity: advertiseIdentity,
                     identityShareURI: identityShareURI,
+                    phoneDiscoverable: phoneDiscoverable,
+                    setPhoneDiscoverable: { enabled in
+                        phoneDiscoverable = enabled
+                        await pushPhoneDiscoverability()
+                    },
                     radioSnapshot: $radioSnapshot,
                     connectRadio: connectRadio,
                     reconnectRadio: reconnectRadio,
@@ -151,7 +179,11 @@ struct AppRootView: View {
                     isPeerSaved: { address in
                         peers.contains { $0.identity.canonicalAddress == address }
                     },
-                    peerActions: peerActions
+                    peerActions: peerActions,
+                    conversations: $conversations,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage,
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -201,7 +233,11 @@ struct AppRootView: View {
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery,
-                    peerActions: peerActions
+                    peerActions: peerActions,
+                    conversations: $conversations,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage,
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
                 )
             }
         }
@@ -302,6 +338,11 @@ struct AppRootView: View {
                 advertisementAuthenticated: advertisement.sourceAuthenticated
             )
             await touchLastHeard(advertisement.peerAddress)
+            // An over-the-air row lands in the transient tier, which stays
+            // bounded: oldest-heard evictable transients drop past the cap.
+            try await applicationStore.enforceTransientRetention(
+                ownerIdentityID: localIdentity.id
+            )
             await reloadApplicationState()
         } catch {
             Self.logger.error("Failed to persist received advertisement")
@@ -339,6 +380,7 @@ struct AppRootView: View {
             await prepareApplicationState()
             await prepareChatState()
             await loadAdvertisedName()
+            await pushPhoneDiscoverability()
             if localIdentity != nil {
                 await radioConnection.autoConnect()
             }
@@ -361,6 +403,7 @@ struct AppRootView: View {
             await prepareApplicationState()
             await prepareChatState()
             await loadAdvertisedName()
+            await pushPhoneDiscoverability()
             identityError = nil
         } catch let error as IdentityVaultError {
             identityError = error
@@ -385,6 +428,19 @@ struct AppRootView: View {
             name: trimmed.isEmpty ? nil : trimmed
         )
         advertisedName = trimmed
+        // The identity-request responder carries the same name; keep it
+        // current.
+        await pushPhoneDiscoverability()
+    }
+
+    /// Hand the stored discoverability preference and display name to the
+    /// mesh session's identity-request responder. Best-effort: with no
+    /// session yet, the next install reapplies it.
+    private func pushPhoneDiscoverability() async {
+        await radioConnection.setPhoneDiscoverable(
+            phoneDiscoverable,
+            name: advertisedName.isEmpty ? nil : advertisedName
+        )
     }
 
     /// Broadcast a signed identity advertisement. Returns a user-facing
@@ -497,6 +553,7 @@ struct AppRootView: View {
                 // The role comes from the bundle, not the operator. An
                 // imported payload is only ever handed over with a verified
                 // signature, so it needs no MAC authentication to be believed.
+                isSaved: true,
                 nodeKind: preview.identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
                 advertisement: preview.identityPayload
             )
@@ -532,6 +589,7 @@ struct AppRootView: View {
                 alias: nil,
                 advertisedName: name,
                 isContact: false,
+                isSaved: true,
                 nodeKind: role.rawValue
             )
             await reloadApplicationState()
@@ -559,6 +617,151 @@ struct AppRootView: View {
         } catch {
             return false
         }
+    }
+
+    private func setPeerFavorite(_ peer: PeerSummary, _ favorite: Bool) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.setPeerFavorite(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress,
+                isFavorite: favorite
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func promotePeerToSaved(_ peer: PeerSummary) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.promotePeerToSaved(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Take a peer off the local identity while keeping its row, history, and
+    /// searchability. The mesh session keeps the peer registered when a
+    /// conversation exists — chat continuity is the point of demoting.
+    private func demotePeerToTransient(_ peer: PeerSummary) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.demotePeerToTransient(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func deletePeer(_ peer: PeerSummary) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            guard try await applicationStore.deletePeer(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress
+            ) else { return false }
+            await removeMeshPeer(peer)
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func deletePeerAndConversation(_ peer: PeerSummary) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            guard try await applicationStore.deletePeerAndConversation(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress
+            ) else { return false }
+            await removeMeshPeer(peer)
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Best-effort MAC-layer removal behind a store delete. A disconnected
+    /// radio is not an error: the store is the authority, and
+    /// `prepareChatState` rebuilds the registry from it on the next attach.
+    private func removeMeshPeer(_ peer: PeerSummary) async {
+        try? await radioConnection.removeChatPeers([peer.identity.canonicalAddress])
+    }
+
+    /// Add or remove one peer on the radio's device identity. The device is
+    /// the authority; on success the local flag is updated as a cache so the
+    /// UI answers immediately, and the attach-edge reconcile keeps it honest.
+    private func mutateDeviceIdentityPeer(
+        _ peer: PeerSummary,
+        add: Bool
+    ) async -> DevicePeerActionOutcome {
+        guard let publicKey = try? publicIdentityBytes(
+            address: peer.identity.canonicalAddress
+        ) else { return .failed }
+        do {
+            if add {
+                try await radioConnection.addDevicePeer(publicKey)
+            } else {
+                try await radioConnection.removeDevicePeer(publicKey)
+            }
+            if let applicationStore, let localIdentity {
+                try? await applicationStore.setPeerOnDeviceIdentity(
+                    ownerIdentityID: localIdentity.id,
+                    publicAddress: peer.identity.canonicalAddress,
+                    isOnDeviceIdentity: add
+                )
+            }
+            await reloadApplicationState()
+            return .success
+        } catch let error as DevicePeerError {
+            return switch error {
+            case .radioUnavailable: .radioUnavailable
+            case .deviceFull: .deviceFull
+            case .unsupported: .unsupported
+            case .failed: .failed
+            }
+        } catch {
+            return .failed
+        }
+    }
+
+    /// One zero-hop broadcast Identity Request for the Discover sheet:
+    /// nodes in direct radio range that match the role filter reply with
+    /// their identities, which land through `applyReceivedAdvertisement`.
+    /// Returns whether the request was handed to the radio.
+    private func solicitNearbyIdentities(_ roleFilter: PeerRole?) async -> Bool {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return false }
+        do {
+            try await radioConnection.requestNearbyIdentities(roleFilter: roleFilter?.roleCode)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Drop every transient row nothing depends on, from the Discover
+    /// sheet's overflow. Saved peers, conversations, device-identity rows,
+    /// and the companion radio are untouched by the store's guards.
+    private func clearDiscoveredNodes() async {
+        guard let applicationStore, let localIdentity else { return }
+        try? await applicationStore.clearTransientPeers(ownerIdentityID: localIdentity.id)
+        await reloadApplicationState()
     }
 
     private func updateDraft(_ conversationID: Int64, _ text: String) async {
@@ -840,8 +1043,12 @@ struct AppRootView: View {
             let checkpoints = try await applicationStore.chatCheckpoints(
                 ownerIdentityID: localIdentity.id
             )
+            // Register only the peers chat actually involves: those with a
+            // conversation, plus every checkpointed stream. Registering every
+            // stored row would grow with the transient tier and can exceed
+            // the mesh session's peer table.
             let addresses = Set(
-                peers.map(\.identity.canonicalAddress)
+                conversations.map(\.peer.identity.canonicalAddress)
                     + checkpoints.map(\.peerAddress)
             )
             try await radioConnection.prepareChat(
@@ -999,7 +1206,25 @@ struct AppRootView: View {
             // Re-persist on the next attach: a reconnect can bring a
             // different radio, or the same one under a new name.
             coordinator.synchronizedRadioPeer = nil
+            coordinator.lastReconciledDevicePeers = nil
             return
+        }
+        // The radio's device-identity peer list, read back on attach. The
+        // device is the authority; the store rows only cache it. Gated on
+        // the last reconciled list so the steady snapshot stream costs
+        // nothing.
+        if let addresses = snapshot.provisioning?.devPeerAddresses,
+           coordinator.lastReconciledDevicePeers != addresses {
+            do {
+                try await applicationStore.reconcileDeviceIdentityPeers(
+                    ownerIdentityID: localIdentity.id,
+                    addresses: addresses
+                )
+                coordinator.lastReconciledDevicePeers = addresses
+                await reloadApplicationState()
+            } catch {
+                // The cache stays stale until the next attach retries.
+            }
         }
         // Only the four facts below reach storage. Every other part of a
         // snapshot — duty cycle, queue depth, battery — changes constantly
@@ -1079,7 +1304,10 @@ struct AppRootView: View {
                     storedRole: stored.nodeKind.flatMap(PeerRole.init(rawValue:)) ?? .unknown,
                     advertisedIdentity: advertisedIdentity,
                     advertisedIdentityAuthenticated: stored.advertisementAuthenticated,
-                    lastHeard: stored.lastHeardAt
+                    lastHeard: stored.lastHeardAt,
+                    isSaved: stored.isSaved,
+                    isFavorite: stored.isFavorite,
+                    isOnDeviceIdentity: stored.onDeviceIdentity
                 )
             }
             let storedConversations = try await applicationStore.listDirectConversations(
@@ -1121,7 +1349,8 @@ struct AppRootView: View {
                                 isUnavailable: $0.isUnavailable,
                                 isReceivedLate: $0.receivedLate,
                                 isDeliveredLate: $0.deliveredLate,
-                                originalBody: $0.originalBody
+                                originalBody: $0.originalBody,
+                                createdAtMilliseconds: $0.createdAtMilliseconds
                             )
                         }
                     )
@@ -1142,6 +1371,9 @@ struct AppRootView: View {
 @MainActor
 private final class AppStateCoordinator {
     var synchronizedRadioPeer: SynchronizedRadioPeer?
+    /// The device-identity peer list last written into the store's cache
+    /// flags, so the steady snapshot stream reconciles only on real change.
+    var lastReconciledDevicePeers: [String]?
     /// A reload that has been queued but has not begun reading storage yet;
     /// later callers can safely join it.
     var pendingReload: Task<Void, Never>?

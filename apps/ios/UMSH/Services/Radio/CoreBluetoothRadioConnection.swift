@@ -119,6 +119,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var refreshInProgress = false
     private var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
     private var configurationWaiter: CheckedContinuation<Void, any Error>?
+    private var devicePeerWaiter: CheckedContinuation<Void, any Error>?
     private var meshSession: MobileMeshSession?
     private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     private var meshPumpGeneration = UUID()
@@ -291,9 +292,19 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
     }
 
+    func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {
+        guard let session = try? await currentMeshSession() else { return }
+        try? await session.setDiscoverable(enabled: enabled, name: name)
+    }
+
     func requestIdentity(peerAddress: String) async throws {
         let session = try await currentMeshSession()
         try await session.requestIdentity(peerAddress: peerAddress)
+    }
+
+    func requestNearbyIdentities(roleFilter: UInt8?) async throws {
+        let session = try await currentMeshSession()
+        try await session.discoverIdentities(roleCode: roleFilter, capabilityBits: nil)
     }
 
     func peerRoute(peerAddress: String) async throws -> RadioPeerRoute {
@@ -774,6 +785,80 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func addDevicePeer(_ publicKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.insertDevicePeer(publicKey: publicKey)
+        }
+    }
+
+    func removeDevicePeer(_ publicKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.removeDevicePeer(publicKey: publicKey)
+        }
+    }
+
+    /// One `PROP_DEV_PEERS` mutation at a time, resolved by the update that
+    /// carries its outcome. The Rust session requires an otherwise-idle
+    /// attached session, so a mutation racing chat traffic reports
+    /// `operationInProgress` rather than interleaving.
+    private func performDevicePeerOperation(
+        _ operation: @escaping (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
+    ) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected,
+                      snapshot.linkState == .attached || snapshot.linkState == .ready,
+                      snapshot.hostState == .matchesCurrentIdentity
+                else {
+                    result.resume(throwing: DevicePeerError.radioUnavailable)
+                    return
+                }
+                guard snapshot.provisioning?.supportsDeviceIdentity == true else {
+                    result.resume(throwing: DevicePeerError.unsupported)
+                    return
+                }
+                guard devicePeerWaiter == nil, configurationWaiter == nil, !refreshInProgress
+                else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                devicePeerWaiter = result
+                do {
+                    try applySessionUpdate(operation(ulcpSession), from: peripheral)
+                } catch {
+                    finishDevicePeerOperation(throwing: RadioConnectionError.operationInProgress)
+                }
+            }
+        }
+    }
+
+    private func finishDevicePeerOperation(throwing error: (any Error)?) {
+        guard let waiter = devicePeerWaiter else { return }
+        devicePeerWaiter = nil
+        if let error {
+            waiter.resume(throwing: error)
+        } else {
+            waiter.resume()
+        }
+    }
+
+    /// Map a completed device-peer mutation's status to its caller-facing
+    /// outcome. `ALREADY` and `ITEM_NOT_FOUND` are idempotent successes —
+    /// the device holds (or lacks) the key exactly as requested. A failed
+    /// chained save leaves the mutation live; the existing `saved` warning
+    /// in Radio Detail covers persistence.
+    private func devicePeerOutcome(_ error: UlcpOperationErrorRecord?) -> (any Error)? {
+        guard let error else { return nil }
+        if error.operation == "save device peers" { return nil }
+        if error.statusName.hasSuffix("ALREADY") || error.statusName.hasSuffix("ITEM_NOT_FOUND") {
+            return nil
+        }
+        if error.statusName.hasSuffix("NOMEM") {
+            return DevicePeerError.deviceFull
+        }
+        return DevicePeerError.failed(error.statusName)
+    }
+
     func factoryReset() async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
@@ -840,6 +925,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func registerChatPeers(_ peerAddresses: [String]) async throws {
         let session = try await currentMeshSession()
         try await session.registerPeers(peerAddresses: peerAddresses)
+    }
+
+    func removeChatPeers(_ peerAddresses: [String]) async throws {
+        let session = try await currentMeshSession()
+        try await session.removePeers(peerAddresses: peerAddresses)
     }
 
     func composeText(
@@ -1538,7 +1628,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 filterCount: $0.filterCount.map(Int.init),
                 hostChannelCount: $0.hostChannelCount.map(Int.init),
                 hostPeerCount: $0.hostPeerCount.map(Int.init),
-                autoAcknowledgementEnabled: $0.autoAck
+                autoAcknowledgementEnabled: $0.autoAck,
+                supportsDeviceIdentity: $0.supportsDeviceIdentity,
+                devPeerAddresses: $0.devPeerKeys.map { keys in
+                    keys.compactMap {
+                        try? UMSHMobileCore.inspectPublicIdentityBytes(publicKey: $0)
+                            .canonicalAddress
+                    }
+                }
             )
         }
         snapshot.problemDescription = nil
@@ -1548,7 +1645,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
         if let operationErrorMessage {
             Self.logger.error("ULCP operation rejected: \(operationErrorMessage, privacy: .public)")
-            snapshot.problemDescription = operationErrorMessage
+            // A device-peer mutation reports through its own waiter — NOMEM
+            // is an inline answer for that UI, not a radio problem banner.
+            if devicePeerWaiter == nil {
+                snapshot.problemDescription = operationErrorMessage
+            }
         }
 
         let shouldAutoEnable = update.snapshot.phase == .attached
@@ -1715,6 +1816,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 finishConfiguration(
                     throwing: operationErrorMessage.map(RadioConnectionError.operationRejected)
                 )
+            }
+            if devicePeerWaiter != nil {
+                finishDevicePeerOperation(throwing: devicePeerOutcome(update.operationError))
             }
         }
 
@@ -2006,6 +2110,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             finishRefresh(throwing: error)
         }
         finishConfiguration(throwing: error)
+        finishDevicePeerOperation(throwing: DevicePeerError.radioUnavailable)
         for waiter in pingWaiters.values {
             waiter.resume(throwing: error)
         }

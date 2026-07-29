@@ -623,6 +623,114 @@ fn remove_channel_by_key() {
 }
 
 #[test]
+fn remove_peer_rekeys_swap_moved_peer_state() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let first_key = test_pubkey(0xAB);
+    let second_key = test_pubkey(0xCD);
+    let first_id = mac.add_peer(first_key).unwrap();
+    let second_id = mac.add_peer(second_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        first_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        second_id,
+        PairwiseKeys {
+            k_enc: [3; 16],
+            k_mic: [4; 16],
+        },
+    )
+    .unwrap();
+
+    // Removing the first peer swap-moves the second into its slot; the
+    // second peer's crypto state must follow its new PeerId.
+    assert!(mac.remove_peer(&first_key));
+    assert!(mac.peer_registry().lookup_by_key(&first_key).is_none());
+    let (moved_id, moved) = mac.peer_registry().lookup_by_key(&second_key).unwrap();
+    assert_eq!(moved_id, first_id);
+    assert_eq!(moved.public_key, second_key);
+    let state = mac
+        .identity(local_id)
+        .unwrap()
+        .peer_crypto()
+        .get(&moved_id)
+        .expect("moved peer keeps its crypto state under its new id");
+    assert_eq!(state.pairwise_keys.k_enc, [3; 16]);
+    // Nothing may linger under the vacated identifier's old key material.
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .peer_crypto()
+            .get(&second_id)
+            .is_none()
+    );
+
+    // Removing an absent peer reports false; re-adding reuses the free slot.
+    assert!(!mac.remove_peer(&first_key));
+    let readded = mac.add_peer(first_key).unwrap();
+    assert_eq!(readded, second_id);
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .peer_crypto()
+            .get(&readded)
+            .is_none(),
+        "a re-added peer starts without crypto state"
+    );
+
+    // Unicast to the moved peer still works through its re-keyed state.
+    assert!(
+        mac.queue_unicast(
+            local_id,
+            &second_key,
+            b"still works",
+            &SendOptions::default()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn remove_last_peer_needs_no_rekey() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let first_key = test_pubkey(0xAB);
+    let second_key = test_pubkey(0xCD);
+    let first_id = mac.add_peer(first_key).unwrap();
+    let second_id = mac.add_peer(second_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        second_id,
+        PairwiseKeys {
+            k_enc: [3; 16],
+            k_mic: [4; 16],
+        },
+    )
+    .unwrap();
+
+    assert!(mac.remove_peer(&second_key));
+    assert!(mac.peer_registry().lookup_by_key(&second_key).is_none());
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .peer_crypto()
+            .get(&second_id)
+            .is_none()
+    );
+    // The remaining peer is untouched.
+    let (kept_id, kept) = mac.peer_registry().lookup_by_key(&first_key).unwrap();
+    assert_eq!(kept_id, first_id);
+    assert_eq!(kept.public_key, first_key);
+}
+
+#[test]
 fn new_identity_starts_with_random_frame_counter() {
     let mut mac = make_mac();
 

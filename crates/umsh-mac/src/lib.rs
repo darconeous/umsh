@@ -304,7 +304,7 @@ pub use coordinator::{
 pub use handle::MacHandle;
 pub use peers::{
     CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-    PeerId, PeerInfo, PeerRegistry,
+    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
 };
 pub use send::{
     AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,

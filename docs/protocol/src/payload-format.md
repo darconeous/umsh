@@ -27,15 +27,17 @@ Not all payload types are valid with all packet types. A receiver should drop a 
 |---------------------|:-------:|:---------:|:---------:|
 | Empty payload       | Yes     | Yes       | Yes       |
 | Node Identity       | Yes     | Yes       | Yes       |
-| MAC Command         | Yes     | Note 1    | No        |
+| MAC Command         | Yes     | Note 1    | Note 2    |
 | Text Message        | Yes     | Yes       | No        |
 | Chat-Room Message   | Yes     | No        | No        |
 | CoAP-over-UMSH      | Yes     | Yes       | No        |
 | Node Management Cmd | Yes     | Yes       | No        |
 
-Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads and node identities.
+Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).
 
 **Note 1:** Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.
+
+**Note 2:** MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the [Identity Request](mac-commands.md#identity-request-1) permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.
 
 ## In-Band Node Management
 

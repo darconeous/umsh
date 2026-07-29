@@ -104,6 +104,10 @@ impl PayloadType {
             Self::Empty | Self::Unspecified | Self::NodeIdentity => {
                 !matches!(packet_type, PacketType::MacAck)
             }
+            // Broadcast admission is per-command: this gate only says a MAC
+            // command may ride a broadcast at all; receivers act only on the
+            // commands whose definitions permit broadcast carriage (currently
+            // the Identity Request, with its own flood-management rules).
             Self::MacCommand => matches!(
                 packet_type,
                 PacketType::Unicast
@@ -111,6 +115,7 @@ impl PayloadType {
                     | PacketType::BlindUnicast
                     | PacketType::BlindUnicastAckReq
                     | PacketType::Multicast
+                    | PacketType::Broadcast
             ),
             Self::TextMessage | Self::CoapOverUmsh | Self::NodeManagement => matches!(
                 packet_type,

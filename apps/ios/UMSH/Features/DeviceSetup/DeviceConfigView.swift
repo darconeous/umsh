@@ -28,6 +28,7 @@ struct DeviceConfigView: View {
     @State private var dutyCycleLimit: UInt16
     @State private var identRole: UInt8?
     @State private var identMobile: Bool
+    @State private var devDiscoverable: Bool
     @State private var repeaterEnabled: Bool
     @State private var regions: [Data]
     @State private var defaultRegion: Data?
@@ -66,6 +67,7 @@ struct DeviceConfigView: View {
         // forwarding, so the advertised role cannot drift from the truth.
         _identRole = State(initialValue: goal == .tracker ? PeerRole.tracker.roleCode : sync.identRole)
         _identMobile = State(initialValue: goal == .tracker ? true : (sync.identMobile ?? false))
+        _devDiscoverable = State(initialValue: sync.devDiscoverable ?? true)
         _repeaterEnabled = State(initialValue: goal == .repeaterNode ? true : (repeater?.enabled ?? false))
         _regions = State(initialValue: repeater?.regions ?? [])
         _defaultRegion = State(initialValue: repeater?.defaultRegion)
@@ -164,6 +166,15 @@ struct DeviceConfigView: View {
 
     // MARK: - Sections
 
+    /// The peer sheet opened from here administers a nearby device and has no
+    /// conversation list to land a transcript in, so messaging is simply not
+    /// offered rather than offered and broken.
+    private var administrationActions: PeerActions {
+        var actions = peerActions
+        actions.startConversation = nil
+        return actions
+    }
+
     @ViewBuilder
     private var ownershipSection: some View {
         Section {
@@ -176,7 +187,7 @@ struct DeviceConfigView: View {
                     PeerDetailView(
                         peer: administeredPeer(identity),
                         radioSnapshot: .constant(.idle),
-                        actions: peerActions,
+                        actions: administrationActions,
                         savePeer: controller.canSavePeer
                             ? { await controller.savePeer(role: advertisedPeerRole) }
                             : nil,
@@ -278,11 +289,24 @@ struct DeviceConfigView: View {
                 }
             }
             Toggle("Device moves around", isOn: $identMobile)
+            if sync.supportsDeviceIdentity {
+                Toggle("Discoverable", isOn: $devDiscoverable)
+            }
         } header: {
             Text("Advertised identity")
         } footer: {
-            Text("Advertises as: \(advertisedRole). \(identMobile ? "Peers are told it is mobile." : "Peers are told it is stationary.")")
+            Text(identityFooter)
         }
+    }
+
+    private var identityFooter: String {
+        var footer = "Advertises as: \(advertisedRole). \(identMobile ? "Peers are told it is mobile." : "Peers are told it is stationary.")"
+        if sync.supportsDeviceIdentity {
+            footer += devDiscoverable
+                ? " Answers nearby nodes that ask it to identify itself."
+                : " Ignores nearby nodes that ask it to identify itself."
+        }
+        return footer
     }
 
     @ViewBuilder
@@ -367,6 +391,7 @@ struct DeviceConfigView: View {
             // a client bug and Rust rejects it before anything is written.
             identRole: sync.supportsIdent ? identRole : nil,
             identMobile: sync.supportsIdent ? identMobile : nil,
+            devDiscoverable: sync.supportsDeviceIdentity ? devDiscoverable : nil,
             repeater: sync.supportsRepeater
                 ? UlcpRepeaterSettingsRecord(
                     enabled: repeaterEnabled,
@@ -468,6 +493,7 @@ struct DeviceConfigView: View {
         }
         if requested.identRole != readback.identRole { return "the advertised role" }
         if requested.identMobile != readback.identMobile { return "device mobility" }
+        if requested.devDiscoverable != readback.devDiscoverable { return "discoverability" }
         if requested.repeater != readback.repeater { return "the repeater policy" }
         return nil
     }

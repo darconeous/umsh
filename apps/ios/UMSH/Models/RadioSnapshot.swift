@@ -73,7 +73,9 @@ struct RadioSnapshot: Equatable, Sendable {
             filterCount: 2,
             hostChannelCount: 1,
             hostPeerCount: 3,
-            autoAcknowledgementEnabled: false
+            autoAcknowledgementEnabled: false,
+            supportsDeviceIdentity: true,
+            devPeerAddresses: []
         ),
         problemDescription: nil
     )
@@ -204,7 +206,18 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let hostChannelCount: Int?
     let hostPeerCount: Int?
     let autoAcknowledgementEnabled: Bool?
+    /// Whether the radio has a device identity domain of its own
+    /// (`CAP_DEV_IDENTITY`), including a peer list.
+    var supportsDeviceIdentity: Bool = false
+    /// Canonical addresses of the peers stored on the radio's device
+    /// identity, read back losslessly. Present exactly when
+    /// `supportsDeviceIdentity`; the device is the authority.
+    var devPeerAddresses: [String]? = nil
 }
+
+/// Capacity of a radio's device-identity peer list, for labels only —
+/// the device's own `NOMEM` stays authoritative.
+let devicePeerCapacity = Int(ulcpMaxDevPeers())
 
 extension SavedSnapshotRecord {
     /// One-line answer to "is this radio armed for restart?".

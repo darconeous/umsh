@@ -62,11 +62,15 @@ struct StoredNode: Equatable, Sendable {
     /// (advertisement, inbound message, delivery ack, ping reply). `nil`
     /// until the first inbound evidence lands.
     let lastHeardAt: Date?
-}
-
-struct NewStoredNode: Equatable, Sendable {
-    let publicAddress: String
-    let alias: String?
+    /// Whether this node is saved on the local (phone) identity. Rows with
+    /// `false` are the transient tier: heard on the air, kept for search and
+    /// discovery, hidden from the main Network list, and subject to retention.
+    let isSaved: Bool
+    let isFavorite: Bool
+    /// Cache of whether this node's public key is stored on the companion
+    /// radio's device identity (`PROP_DEV_PEERS`). The device is the
+    /// authority; this flag is reconciled from it on attach.
+    let onDeviceIdentity: Bool
 }
 
 struct StoredDirectConversation: Equatable, Sendable {
@@ -123,7 +127,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 12
+    static let currentSchemaVersion: Int32 = 13
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -279,6 +283,7 @@ actor SQLiteApplicationStore {
         alias: String?,
         advertisedName: String? = nil,
         isContact: Bool,
+        isSaved: Bool = false,
         nodeKind: String? = nil,
         systemRole: String? = nil,
         radioIdentifier: String? = nil,
@@ -289,15 +294,19 @@ actor SQLiteApplicationStore {
             """
             INSERT INTO node (
                 owner_identity_id, public_address, alias, alias_search,
-                advertised_name, is_contact, system_role, radio_identifier, node_kind,
-                advertisement, advertisement_authenticated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                advertised_name, is_contact, is_saved, system_role, radio_identifier,
+                node_kind, advertisement, advertisement_authenticated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
                 alias = COALESCE(excluded.alias, node.alias),
                 alias_search = CASE WHEN excluded.alias IS NULL
                     THEN node.alias_search ELSE excluded.alias_search END,
                 advertised_name = COALESCE(excluded.advertised_name, node.advertised_name),
                 is_contact = MAX(node.is_contact, excluded.is_contact),
+                -- A background advertisement upsert must never demote a saved
+                -- peer to the transient tier; only the explicit demote/delete
+                -- setters move a row downward.
+                is_saved = MAX(node.is_saved, excluded.is_saved),
                 system_role = COALESCE(excluded.system_role, node.system_role),
                 radio_identifier = COALESCE(excluded.radio_identifier, node.radio_identifier),
                 node_kind = COALESCE(excluded.node_kind, node.node_kind),
@@ -317,11 +326,13 @@ actor SQLiteApplicationStore {
         try bind(Self.normalizeSearch(alias ?? advertisedName ?? ""), to: statement, at: 4)
         try bindOptional(advertisedName, to: statement, at: 5)
         try check(sqlite3_bind_int(statement, 6, isContact ? 1 : 0))
-        try bindOptional(systemRole, to: statement, at: 7)
-        try bindOptional(radioIdentifier, to: statement, at: 8)
-        try bindOptional(nodeKind, to: statement, at: 9)
-        try bindOptional(advertisement, to: statement, at: 10)
-        try check(sqlite3_bind_int(statement, 11, advertisementAuthenticated ? 1 : 0))
+        // A contact is by definition saved; the flag never lags the checkbox.
+        try check(sqlite3_bind_int(statement, 7, (isSaved || isContact) ? 1 : 0))
+        try bindOptional(systemRole, to: statement, at: 8)
+        try bindOptional(radioIdentifier, to: statement, at: 9)
+        try bindOptional(nodeKind, to: statement, at: 10)
+        try bindOptional(advertisement, to: statement, at: 11)
+        try check(sqlite3_bind_int(statement, 12, advertisementAuthenticated ? 1 : 0))
         try stepDone(statement)
     }
 
@@ -378,6 +389,268 @@ actor SQLiteApplicationStore {
             try bind(publicAddress, to: update, at: 4)
             try stepDone(update)
         }
+    }
+
+    func setPeerContact(
+        ownerIdentityID: String,
+        publicAddress: String,
+        isContact: Bool
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE node SET is_contact = ?,
+                is_saved = CASE WHEN ? = 1 THEN 1 ELSE is_saved END
+            WHERE owner_identity_id = ? AND public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_int(statement, 1, isContact ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 2, isContact ? 1 : 0))
+        try bind(ownerIdentityID, to: statement, at: 3)
+        try bind(publicAddress, to: statement, at: 4)
+        try stepDone(statement)
+    }
+
+    func setPeerFavorite(
+        ownerIdentityID: String,
+        publicAddress: String,
+        isFavorite: Bool
+    ) throws {
+        // Favoriting implies saving: the star lives in the main list, so a
+        // favorite hidden in the transient tier would be unreachable.
+        let statement = try prepare(
+            """
+            UPDATE node SET is_favorite = ?,
+                is_saved = CASE WHEN ? = 1 THEN 1 ELSE is_saved END
+            WHERE owner_identity_id = ? AND public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_int(statement, 1, isFavorite ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 2, isFavorite ? 1 : 0))
+        try bind(ownerIdentityID, to: statement, at: 3)
+        try bind(publicAddress, to: statement, at: 4)
+        try stepDone(statement)
+    }
+
+    /// Record a transient node on the local identity, making it visible in
+    /// the main Network list.
+    func promotePeerToSaved(ownerIdentityID: String, publicAddress: String) throws {
+        let statement = try prepare(
+            """
+            UPDATE node SET is_saved = 1
+            WHERE owner_identity_id = ? AND public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        try stepDone(statement)
+    }
+
+    /// Remove a node from the local identity without touching its history:
+    /// the row stays as a transient (searchable, discoverable) and any
+    /// conversation keeps working. Contact, favorite, and alias are local
+    /// statements about a saved peer, so they clear with it. Refuses the
+    /// companion radio, whose row is system-managed.
+    func demotePeerToTransient(ownerIdentityID: String, publicAddress: String) throws {
+        try transaction {
+            let select = try prepare(
+                """
+                SELECT advertised_name FROM node
+                WHERE owner_identity_id = ? AND public_address = ?
+                    AND (system_role IS NULL OR system_role <> 'companion_radio')
+                """
+            )
+            defer { sqlite3_finalize(select) }
+            try bind(ownerIdentityID, to: select, at: 1)
+            try bind(publicAddress, to: select, at: 2)
+            guard sqlite3_step(select) == SQLITE_ROW else { return }
+            let advertisedName = Self.optionalStringColumn(select, at: 0)
+
+            let update = try prepare(
+                """
+                UPDATE node SET is_saved = 0, is_contact = 0, is_favorite = 0,
+                    alias = NULL, alias_search = ?
+                WHERE owner_identity_id = ? AND public_address = ?
+                """
+            )
+            defer { sqlite3_finalize(update) }
+            try bind(Self.normalizeSearch(advertisedName ?? ""), to: update, at: 1)
+            try bind(ownerIdentityID, to: update, at: 2)
+            try bind(publicAddress, to: update, at: 3)
+            try stepDone(update)
+        }
+    }
+
+    /// Delete a peer row outright. Refused — returning `false` — when a
+    /// conversation references it (demote instead, or use
+    /// ``deletePeerAndConversation``) or when the row is the system-managed
+    /// companion radio. Stream checkpoints and counter state survive by
+    /// design: sequence continuity and replay protection outlive the row.
+    @discardableResult
+    func deletePeer(ownerIdentityID: String, publicAddress: String) throws -> Bool {
+        let statement = try prepare(
+            """
+            DELETE FROM node
+            WHERE owner_identity_id = ?1 AND public_address = ?2
+                AND (system_role IS NULL OR system_role <> 'companion_radio')
+                AND id NOT IN (
+                    SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
+                )
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        try stepDone(statement)
+        return sqlite3_changes(database) > 0
+    }
+
+    /// Delete a peer together with its conversation and local history, in one
+    /// transaction. Stream checkpoints are retained (see
+    /// ``deleteDirectConversation``); the companion radio is refused.
+    @discardableResult
+    func deletePeerAndConversation(
+        ownerIdentityID: String,
+        publicAddress: String
+    ) throws -> Bool {
+        try transaction {
+            let select = try prepare(
+                """
+                SELECT id FROM node
+                WHERE owner_identity_id = ? AND public_address = ?
+                    AND (system_role IS NULL OR system_role <> 'companion_radio')
+                """
+            )
+            defer { sqlite3_finalize(select) }
+            try bind(ownerIdentityID, to: select, at: 1)
+            try bind(publicAddress, to: select, at: 2)
+            guard sqlite3_step(select) == SQLITE_ROW else { return false }
+            let nodeID = sqlite3_column_int64(select, 0)
+
+            try purgeConversationHistory(
+                ownerIdentityID: ownerIdentityID,
+                peerAddress: publicAddress
+            )
+
+            let conversation = try prepare(
+                "DELETE FROM direct_conversation WHERE owner_identity_id = ? AND node_id = ?"
+            )
+            defer { sqlite3_finalize(conversation) }
+            try bind(ownerIdentityID, to: conversation, at: 1)
+            try check(sqlite3_bind_int64(conversation, 2, nodeID))
+            try stepDone(conversation)
+
+            let node = try prepare("DELETE FROM node WHERE id = ?")
+            defer { sqlite3_finalize(node) }
+            try check(sqlite3_bind_int64(node, 1, nodeID))
+            try stepDone(node)
+            return true
+        }
+    }
+
+    /// Drop every transient row that nothing else depends on: saved peers,
+    /// the companion radio, rows on the device identity, and rows with a
+    /// conversation all stay.
+    func clearTransientPeers(ownerIdentityID: String) throws {
+        let statement = try prepare(
+            """
+            DELETE FROM node
+            WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
+                AND system_role IS NULL
+                AND id NOT IN (
+                    SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
+                )
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try stepDone(statement)
+    }
+
+    /// Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
+    /// evictable transients are dropped. Rows with a conversation, on the
+    /// device identity, or with a system role are never evicted.
+    func enforceTransientRetention(ownerIdentityID: String, cap: Int = 256) throws {
+        let statement = try prepare(
+            """
+            DELETE FROM node WHERE id IN (
+                SELECT id FROM node
+                WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
+                    AND system_role IS NULL
+                    AND id NOT IN (
+                        SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
+                    )
+                ORDER BY last_heard_at DESC, id DESC
+                LIMIT -1 OFFSET ?2
+            )
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try check(sqlite3_bind_int64(statement, 2, Int64(cap)))
+        try stepDone(statement)
+    }
+
+    /// Make the local cache of the radio's device-identity peer list match
+    /// the device's read-back. The device is the authority: flags clear
+    /// where it no longer holds a key, set where it does, and unknown keys
+    /// gain a transient row carrying the flag so lists can show them.
+    func reconcileDeviceIdentityPeers(ownerIdentityID: String, addresses: [String]) throws {
+        try transaction {
+            let clear = try prepare(
+                """
+                UPDATE node SET on_dev_identity = 0
+                WHERE owner_identity_id = ? AND on_dev_identity = 1
+                """
+            )
+            defer { sqlite3_finalize(clear) }
+            try bind(ownerIdentityID, to: clear, at: 1)
+            try stepDone(clear)
+            for address in addresses {
+                try markOnDeviceIdentity(ownerIdentityID: ownerIdentityID, publicAddress: address)
+            }
+        }
+    }
+
+    /// Cache one device-identity membership change after a confirmed radio
+    /// mutation, without waiting for the next attach-edge reconcile.
+    func setPeerOnDeviceIdentity(
+        ownerIdentityID: String,
+        publicAddress: String,
+        isOnDeviceIdentity: Bool
+    ) throws {
+        if isOnDeviceIdentity {
+            try markOnDeviceIdentity(ownerIdentityID: ownerIdentityID, publicAddress: publicAddress)
+        } else {
+            let statement = try prepare(
+                """
+                UPDATE node SET on_dev_identity = 0
+                WHERE owner_identity_id = ? AND public_address = ?
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            try bind(publicAddress, to: statement, at: 2)
+            try stepDone(statement)
+        }
+    }
+
+    /// Set the device-identity flag, creating a transient row when the key
+    /// is not otherwise recorded on this phone.
+    private func markOnDeviceIdentity(ownerIdentityID: String, publicAddress: String) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO node (owner_identity_id, public_address, alias_search, on_dev_identity)
+            VALUES (?, ?, '', 1)
+            ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET on_dev_identity = 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        try stepDone(statement)
     }
 
     /// Record that we just heard from a peer by any means. No-ops when the
@@ -474,6 +747,7 @@ actor SQLiteApplicationStore {
                 alias: nil,
                 advertisedName: advertisedName,
                 isContact: false,
+                isSaved: true,
                 systemRole: "companion_radio",
                 radioIdentifier: radioIdentifier
             )
@@ -485,7 +759,8 @@ actor SQLiteApplicationStore {
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
                    is_contact, system_role, node_kind, advertisement,
-                   advertisement_authenticated, last_heard_at
+                   advertisement_authenticated, last_heard_at,
+                   is_saved, is_favorite, on_dev_identity
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
                      alias_search, id
@@ -535,6 +810,7 @@ actor SQLiteApplicationStore {
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
                    n.advertised_name, n.is_contact, n.system_role, n.node_kind,
                    n.advertisement, n.advertisement_authenticated, n.last_heard_at,
+                   n.is_saved, n.is_favorite, n.on_dev_identity,
                    c.draft_text
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
@@ -550,7 +826,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 12)
+                        draftText: Self.stringColumn(statement, at: 15)
                     )
                 )
             case SQLITE_DONE:
@@ -581,30 +857,10 @@ actor SQLiteApplicationStore {
             guard sqlite3_step(peer) == SQLITE_ROW else { return }
             let peerAddress = Self.stringColumn(peer, at: 0)
 
-            let fragments = try prepare(
-                """
-                DELETE FROM chat_delivery_fragment
-                WHERE owner_identity_id = ? AND (session_id, handle) IN (
-                    SELECT session_id, handle FROM chat_message
-                    WHERE owner_identity_id = ? AND peer_address = ?
-                )
-                """
+            try purgeConversationHistory(
+                ownerIdentityID: ownerIdentityID,
+                peerAddress: peerAddress
             )
-            defer { sqlite3_finalize(fragments) }
-            try bind(ownerIdentityID, to: fragments, at: 1)
-            try bind(ownerIdentityID, to: fragments, at: 2)
-            try bind(peerAddress, to: fragments, at: 3)
-            try stepDone(fragments)
-
-            for table in ["chat_message", "chat_outbound_archive"] {
-                let statement = try prepare(
-                    "DELETE FROM \(table) WHERE owner_identity_id = ? AND peer_address = ?"
-                )
-                defer { sqlite3_finalize(statement) }
-                try bind(ownerIdentityID, to: statement, at: 1)
-                try bind(peerAddress, to: statement, at: 2)
-                try stepDone(statement)
-            }
 
             let conversation = try prepare(
                 "DELETE FROM direct_conversation WHERE id = ? AND owner_identity_id = ?"
@@ -890,84 +1146,37 @@ actor SQLiteApplicationStore {
         }
     }
 
-    func insertNodesAtomically(
+    /// Remove a peer's message history, outbound archive, and delivery
+    /// fragments. Runs inside a caller-held transaction; the conversation row
+    /// itself is the caller's to delete.
+    private func purgeConversationHistory(
         ownerIdentityID: String,
-        nodes: [NewStoredNode]
+        peerAddress: String
     ) throws {
-        try transaction {
-            for node in nodes {
-                try insertNode(ownerIdentityID: ownerIdentityID, node: node)
-            }
-        }
-    }
-
-    func searchNodes(ownerIdentityID: String, aliasPrefix: String) throws -> [StoredNode] {
-        let normalized = Self.normalizeSearch(aliasPrefix)
-        let upperBound = normalized + "\u{10FFFF}"
-        let statement = try prepare(
+        let fragments = try prepare(
             """
-            SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement,
-                   advertisement_authenticated, last_heard_at
-            FROM node
-            WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
-            ORDER BY alias_search, id
+            DELETE FROM chat_delivery_fragment
+            WHERE owner_identity_id = ? AND (session_id, handle) IN (
+                SELECT session_id, handle FROM chat_message
+                WHERE owner_identity_id = ? AND peer_address = ?
+            )
             """
         )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(normalized, to: statement, at: 2)
-        try bind(upperBound, to: statement, at: 3)
+        defer { sqlite3_finalize(fragments) }
+        try bind(ownerIdentityID, to: fragments, at: 1)
+        try bind(ownerIdentityID, to: fragments, at: 2)
+        try bind(peerAddress, to: fragments, at: 3)
+        try stepDone(fragments)
 
-        var nodes: [StoredNode] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW:
-                nodes.append(storedNode(statement))
-            case SQLITE_DONE:
-                return nodes
-            case let code:
-                throw ApplicationStoreError.sqliteFailure(code)
-            }
+        for table in ["chat_message", "chat_outbound_archive"] {
+            let statement = try prepare(
+                "DELETE FROM \(table) WHERE owner_identity_id = ? AND peer_address = ?"
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            try bind(peerAddress, to: statement, at: 2)
+            try stepDone(statement)
         }
-    }
-
-    func nodeSearchUsesIndex(ownerIdentityID: String, aliasPrefix: String) throws -> Bool {
-        let normalized = Self.normalizeSearch(aliasPrefix)
-        let statement = try prepare(
-            """
-            EXPLAIN QUERY PLAN
-            SELECT id FROM node
-            WHERE owner_identity_id = ? AND alias_search >= ? AND alias_search < ?
-            ORDER BY alias_search, id
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(normalized, to: statement, at: 2)
-        try bind(normalized + "\u{10FFFF}", to: statement, at: 3)
-
-        while sqlite3_step(statement) == SQLITE_ROW {
-            if Self.stringColumn(statement, at: 3).contains("node_owner_alias_search_idx") {
-                return true
-            }
-        }
-        return false
-    }
-
-    private func insertNode(ownerIdentityID: String, node: NewStoredNode) throws {
-        let statement = try prepare(
-            """
-            INSERT INTO node (owner_identity_id, public_address, alias, alias_search)
-            VALUES (?, ?, ?, ?)
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(node.publicAddress, to: statement, at: 2)
-        try bindOptional(node.alias, to: statement, at: 3)
-        try bind(Self.normalizeSearch(node.alias ?? ""), to: statement, at: 4)
-        try stepDone(statement)
     }
 
     private func readNodes(_ statement: OpaquePointer) throws -> [StoredNode] {
@@ -993,7 +1202,10 @@ actor SQLiteApplicationStore {
             nodeKind: Self.optionalStringColumn(statement, at: offset + 7),
             advertisement: Self.optionalDataColumn(statement, at: offset + 8),
             advertisementAuthenticated: sqlite3_column_int(statement, offset + 9) != 0,
-            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 10)
+            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 10),
+            isSaved: sqlite3_column_int(statement, offset + 11) != 0,
+            isFavorite: sqlite3_column_int(statement, offset + 12) != 0,
+            onDeviceIdentity: sqlite3_column_int(statement, offset + 13) != 0
         )
     }
 
@@ -1647,6 +1859,36 @@ actor SQLiteApplicationStore {
                     ALTER TABLE node
                         ADD COLUMN advertisement_authenticated INTEGER NOT NULL DEFAULT 0;
                     PRAGMA user_version = 12;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 13 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // The peer tier model: `is_saved` marks a node stored on the
+                // local (phone) identity; rows with 0 are the transient tier —
+                // heard on the air, kept for search/discovery, hidden from the
+                // main list, and evicted by retention. `on_dev_identity` caches
+                // whether the node's key is on the companion radio's device
+                // identity (PROP_DEV_PEERS); the device is the authority.
+                // Every pre-existing row was visible in Network, so all of
+                // them upgrade as saved — nothing may vanish from the list.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE node ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE node ADD COLUMN on_dev_identity INTEGER NOT NULL DEFAULT 0;
+                    UPDATE node SET is_saved = 1;
+                    CREATE INDEX node_owner_transient_heard_idx
+                        ON node (owner_identity_id, is_saved, last_heard_at);
+                    PRAGMA user_version = 13;
                     """
                 )
                 try execute(database, sql: "COMMIT")

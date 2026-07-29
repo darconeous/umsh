@@ -334,6 +334,11 @@ struct DeviceDomain {
     /// which is a transient local relationship and appears in no node
     /// identity at all.
     ident_mobile: bool,
+    /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+    /// Identity Requests. On by default — a deployed device is
+    /// infrastructure, and being askable is most of the point; the
+    /// property is the opt-out.
+    dev_discoverable: bool,
 }
 
 impl DeviceDomain {
@@ -363,6 +368,7 @@ impl DeviceDomain {
             repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
+            dev_discoverable: true,
         }
     }
 }
@@ -1040,6 +1046,21 @@ impl HostDomain {
         self.key.is_some() || !self.filters.is_empty() || self.channel_keys.len != 0
     }
 
+    /// Whether receive filtering accepts this frame for live delivery:
+    /// a Broadcast packet is addressed to every node — the host
+    /// included — so it is implicitly accepted. The broadcast rule is
+    /// live-only: while the host is detached, ambient broadcast
+    /// traffic must not displace queued unicast frames, so the queue
+    /// path uses [`accepts_frame`](Self::accepts_frame) directly.
+    fn accepts_live_frame(&self, data: &[u8]) -> bool {
+        if PacketHeader::parse(data)
+            .is_ok_and(|header| header.fcf.packet_type() == PacketType::Broadcast)
+        {
+            return true;
+        }
+        self.accepts_frame(data)
+    }
+
     /// Whether receive filtering accepts this frame: any explicit
     /// filter or the implicit destination-hint filter for the host key
     /// matches. Hints are prefilters — over-acceptance is fine, the
@@ -1202,6 +1223,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::MAC_REPEATER_DEFAULT_REGION, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_RSSI, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_SNR, ApplyPhase::Config, false),
+    saved(prop::DEV_DISCOVERABLE, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
 ];
 
@@ -1283,6 +1305,7 @@ struct SavedState {
     repeater_min_snr: Option<i8>,
     ident_role: Option<u8>,
     ident_mobile: bool,
+    dev_discoverable: bool,
 }
 
 impl SavedState {
@@ -1307,6 +1330,7 @@ impl SavedState {
             repeater_min_snr: device.repeater_min_snr,
             ident_role: device.ident_role,
             ident_mobile: device.ident_mobile,
+            dev_discoverable: device.dev_discoverable,
         }
     }
 
@@ -1335,6 +1359,7 @@ impl SavedState {
             repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
+            dev_discoverable: true,
         }
     }
 
@@ -1411,6 +1436,7 @@ impl SavedState {
                 Some(snr) => encoder.put(number, &[snr as u8]),
                 None => Ok(()),
             },
+            prop::DEV_DISCOVERABLE => encoder.put(number, &[self.dev_discoverable as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             _ => unreachable!("SAVED_SCHEMA row without an encoder arm"),
         }
@@ -1518,6 +1544,9 @@ impl SavedState {
             }
             prop::MAC_REPEATER_MIN_SNR => {
                 self.repeater_min_snr = Some(parse_i8(value).map_err(invalid)?)
+            }
+            prop::DEV_DISCOVERABLE => {
+                self.dev_discoverable = parse_bool(value).map_err(invalid)?
             }
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
@@ -1891,6 +1920,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::MAC_REPEATER_MIN_SNR => {
                         self.device.repeater_min_snr = saved.repeater_min_snr
                     }
+                    prop::DEV_DISCOVERABLE => {
+                        self.device.dev_discoverable = saved.dev_discoverable
+                    }
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
@@ -2095,7 +2127,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             };
         }
-        if !self.session.promiscuous && !self.host.accepts_frame(data) {
+        if !self.session.promiscuous && !self.host.accepts_live_frame(data) {
             return None;
         }
         let mut rx_meta = [0u8; RxMeta::WIRE_LEN];
@@ -2506,6 +2538,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `MOB` capability bit.
     pub fn ident_mobile(&self) -> bool {
         self.device.ident_mobile
+    }
+
+    /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
+    /// Identity Requests.
+    pub fn dev_discoverable(&self) -> bool {
+        self.device.dev_discoverable
     }
 
     /// Complete a deferred `PROP_BATTERY` read requested via
@@ -2990,6 +3028,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            prop::DEV_DISCOVERABLE => {
+                self.device.dev_discoverable = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // The forwarding policy. All four are accepted while
             // forwarding is disabled and simply take effect when it is
             // enabled, so an administrator can stage a whole repeater
@@ -3332,6 +3375,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::IDENT
                 | prop::IDENT_ROLE
                 | prop::IDENT_MOBILE
+                | prop::DEV_DISCOVERABLE
                 | prop::PHY_DUTY_NOW
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
@@ -3446,6 +3490,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             },
             prop::IDENT_MOBILE => {
                 out[0] = self.device.ident_mobile as u8;
+                1
+            }
+            prop::DEV_DISCOVERABLE => {
+                out[0] = self.device.dev_discoverable as u8;
                 1
             }
             prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
@@ -3943,6 +3991,36 @@ mod tests {
         let (emitted, _) = set(&mut booted, prop::IDENT_ROLE, &[1, 2]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
         let (emitted, _) = set(&mut booted, prop::IDENT_MOBILE, &[2]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    /// Discoverability defaults on — a deployed device being askable is
+    /// most of the point — and the opt-out is saved device-domain state.
+    #[test]
+    fn dev_discoverable_defaults_on_and_the_opt_out_survives_reboot() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::DEV_DISCOVERABLE), [1]);
+        assert!(session.dev_discoverable());
+
+        let (emitted, effect) = set(&mut session, prop::DEV_DISCOVERABLE, &[0]);
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::DEV_DISCOVERABLE);
+        assert_eq!(value, [0]);
+        assert!(!session.dev_discoverable());
+
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(!booted.dev_discoverable());
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::DEV_DISCOVERABLE), [0]);
+
+        // Bool discipline: anything but 0 or 1 is refused.
+        let (emitted, _) = set(&mut booted, prop::DEV_DISCOVERABLE, &[2]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
@@ -4857,6 +4935,7 @@ mod tests {
             prop::MAC_REPEATER_ENABLED,
             prop::IDENT_ROLE,
             prop::IDENT_MOBILE,
+            prop::DEV_DISCOVERABLE,
             // The repeater policy is whole-value too: a region list is
             // replaced outright, never accumulated a code at a time.
             prop::MAC_REPEATER_REGIONS,
@@ -5081,7 +5160,8 @@ mod tests {
             &mac_ack_with_mic([0xC4, 0xC4, 0xC4, 0xC4])
         ));
         assert!(!delivered(&mut session, &unicast_to([1, 2, 3])));
-        assert!(!delivered(&mut session, &broadcast_frame()));
+        // Broadcasts stay implicitly accepted for live delivery.
+        assert!(delivered(&mut session, &broadcast_frame()));
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
     }
 
@@ -5357,7 +5437,9 @@ mod tests {
             &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
         ));
         assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
-        assert!(!delivered(&mut session, &broadcast_frame()));
+        // Broadcasts are implicitly accepted for live delivery even
+        // though no explicit filter selects them.
+        assert!(delivered(&mut session, &broadcast_frame()));
 
         // Channel filter: matches multicast and blind unicast on the
         // channel (a blind unicast's destination hint is concealed).
@@ -5370,13 +5452,17 @@ mod tests {
         assert!(delivered(&mut session, &blind_unicast_on([0xAB, 0xCD])));
         assert!(!delivered(&mut session, &multicast_on([0x00, 0x01])));
 
-        // Packet-type filter (broadcasts must be requested explicitly).
+        // Packet-type filter: a MAC ack that matches no recorded
+        // ack_mic was rejected above, but an explicit entry admits it.
         insert_item(
             &mut session,
             prop::HOST_RX_FILTERS,
-            &[items::FILTER_PKT_TYPE, 0],
+            &[items::FILTER_PKT_TYPE, PacketType::MacAck as u8],
         );
-        assert!(delivered(&mut session, &broadcast_frame()));
+        assert!(delivered(
+            &mut session,
+            &mac_ack_with_mic([0x11, 0x22, 0x33, 0x44])
+        ));
         // Still rejects frames matching no filter.
         assert!(!delivered(&mut session, &unicast_to([4, 5, 6])));
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
@@ -5544,6 +5630,23 @@ mod tests {
         receive_detached(&mut session, &[0xFF, 0xFE], 0); // unparseable
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
+    fn broadcasts_are_implicit_live_but_follow_filters_when_queued() {
+        let mut session = test_session();
+        enable(&mut session);
+        // A configured host key means filtering is active, yet a live
+        // broadcast is still delivered: every node is a broadcast's
+        // addressee, the host included.
+        install_host_key(&mut session, &[0xC4; 32]);
+        assert!(delivered(&mut session, &broadcast_frame()));
+        // While detached the implicit rule does not apply — ambient
+        // broadcast traffic must not displace queued unicast frames.
+        session.detach();
+        receive_detached(&mut session, &broadcast_frame(), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 0);
     }
 
     #[test]
@@ -5829,7 +5932,8 @@ mod tests {
         assert!(delivered(&mut session, &blind_unicast_on(id)));
         let other = [id[0] ^ 0xFF, id[1]];
         assert!(!delivered(&mut session, &multicast_on(other)));
-        assert!(!delivered(&mut session, &broadcast_frame()));
+        // Broadcasts stay implicitly accepted for live delivery.
+        assert!(delivered(&mut session, &broadcast_frame()));
         assert!(!delivered(&mut session, &[0x00, 0x01, 0x02]));
 
         // Detached queueing honors the same implicit filter.
