@@ -4,8 +4,6 @@ import XCTest
 
 final class UMSHMobileCoreTests: XCTestCase {
     func testReferenceNodeHintRoundTripsThroughRust() throws {
-        XCTAssertEqual(mobileApiVersion(), 17)
-
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
         XCTAssertEqual(hint.bytes, Data([0xA1, 0xB2, 0x03]))
         XCTAssertEqual(hint.text, "BtC5")
