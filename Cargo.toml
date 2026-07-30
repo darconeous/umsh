@@ -32,6 +32,7 @@ members = [
     "firmware/t1000e",
     "firmware/techo",
     "firmware/sensecap-solar",
+    "firmware/wio-tracker-l1",
     "tools/ulcp-web-debugger/engine",
     "tools/uniffi-bindgen",
     "umsh",

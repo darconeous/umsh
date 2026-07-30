@@ -14,39 +14,51 @@ repository.workspace = true
 # pin map. The L1 e-ink variant uses a different display path on SPI1
 # and would warrant a separate BSP (or a feature flag).
 #
-# Initial scope is intentionally minimal — only what is needed for
-# the bringup firmware. See docs/firmware-plan-wio-tracker-l1.md.
-#
-# In scope for bringup:
+# Covered here:
 #   * USB-CDC over the nRF native USB peripheral
 #   * user LED (P1.01, active-high) for heartbeat
-#   * SH1106 OLED I²C bus (Phase 2)
-#   * SX1262 LoRa radio + RXEN pin (Phase 3)
+#   * SH1106 OLED on I²C (SDA=P0.06, SCL=P0.05, addr 0x3D)
+#   * SX1262 LoRa radio + RXEN pin (P1.08)
+#   * SAADC battery monitor (AIN7/P0.31 + active-high gate P0.04)
+#   * piezo buzzer (P1.00)
 #
-# Out of scope for bringup (planned but not yet):
-#   * Quectel L76K GNSS UART
-#   * Joystick / trackball + user button
-#   * Grove / expansion I²C bus
-#   * QSPI external flash
-#   * Buzzer (D12 / P1.00)
-#   * Battery measurement (D16 / P0.31 + D30 / P0.04 enable)
+# Not yet wired: Quectel L76K GNSS UART, joystick / trackball, Grove
+# expansion I²C, QSPI external flash.
 #
 # See docs/firmware-plan-wio-tracker-l1.md and
 # docs/seeed-wio-tracker-l1-pro-hardware.md.
 
 [features]
-default = []
+default = ["display", "platform", "power", "battery", "buzzer"]
+display = ["dep:embassy-nrf", "dep:embedded-graphics"]
+platform = ["dep:umsh-crypto", "dep:umsh-mac", "dep:umsh-radio-loraphy"]
+power = ["dep:cortex-m"]
+# SAADC battery monitor on AIN7/P0.31, divider gated by P0.04. Lives in
+# `power` because its protective low-battery cutoff fires that module's
+# SHUTDOWN_SIGNAL.
+battery = [
+    "power",
+    "dep:embassy-futures",
+    "dep:embassy-nrf",
+    "dep:umsh-ux-tracker",
+]
+# Piezo buzzer on P1.00, driven straight from a PWM channel.
+buzzer = ["dep:embassy-futures", "dep:embassy-nrf", "dep:umsh-ux-tracker"]
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
 
 # Used by the `Platform` type bundle.
-umsh-mac    = { path = "../umsh-mac", default-features = false }
-umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-mac    = { path = "../umsh-mac", default-features = false, optional = true }
+umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"], optional = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
-umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
+umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false, optional = true }
+umsh-ux-tracker   = { path = "../umsh-ux-tracker", default-features = false, optional = true }
 embassy-time      = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
-cortex-m          = { version = "0.7" }
+embassy-futures   = { version = "0.1", default-features = false, optional = true }
+embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"], optional = true }
+embedded-graphics = { version = "0.8", default-features = false, optional = true }
+cortex-m          = { version = "0.7", optional = true }

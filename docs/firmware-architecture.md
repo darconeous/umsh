@@ -36,24 +36,26 @@ but they no longer name build targets.
 
 | Board | MCU | Shipping image | Transports | Flash/RAM (of budget) | Status |
 |---|---|---|---|---|---|
-| T-1000E | nRF52840 | `t1000e` | BLE, USB-CDC | 634/135 KiB (756/256) | daily driver |
-| T-Echo | nRF52840 | `techo` | BLE, USB-CDC | 647/143 KiB (756/256) | hardware-accepted |
-| SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 628/132 KiB (756/256) | hardware-accepted |
+| T-1000E | nRF52840 | `t1000e` | BLE, USB-CDC | 470/137 KiB (756/256) | daily driver |
+| T-Echo | nRF52840 | `techo` | BLE, USB-CDC | 478/145 KiB (756/256) | hardware-accepted |
+| SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 462/134 KiB (756/256) | hardware-accepted |
+| Wio Tracker L1 | nRF52840 | `wio-tracker-l1` | BLE, USB-CDC | 476/136 KiB (756/256) | bringup complete, hw validation open |
 | Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1129/462 KiB (3008/512) | hardware-accepted |
-| Wio Tracker L1 | nRF52840 | **none — parked** | USB-CDC | — | bringup Phases 0–1 only |
 | Heltec V2 | ESP32 | **none — parked** | — | — | suspected defective unit |
 
 Figures are `text+data` against the application flash window and
-`data+bss` against SRAM, from a release build. They are a snapshot, not a
-budget: the useful reading is the headroom, which is comfortable on every
-board that ships.
+`data+bss` against SRAM, from a release build — the two left-hand columns
+of `arm-none-eabi-size <elf>`. They are a snapshot, not a budget: the
+useful reading is the headroom, which is comfortable on every board that
+ships. The Heltec V3 row is carried over from its bringup and has not
+been re-measured with this command.
 
-**Wio Tracker L1 is parked, deliberately.** Bringup reached Phases 0–1
-(USB-CDC, heartbeat, safety primitives) and stopped; the board has no RF or
-BLE bringup behind it, so there is nothing to build a device image on. Its
-`wio-tracker-l1-console` binary stays in the tree as the bringup
-harness it is. Unparking it means finishing bringup first, not adding a
-build target.
+**The Wio Tracker L1 is the OLED variant.** The L1, L1 Pro, and L1 Lite
+share a pin map, so one image covers them; the L1 e-ink variant drives a
+different panel on SPI1 and is not supported. The board's SoftDevice is
+S140 v7.3.0, so its application starts at `0x27000` rather than the
+T-Echo's `0x26000` — the one thing in its build that cannot be copied
+from a sibling board.
 
 ### `companion-cli-*` is a bringup harness, not a product
 

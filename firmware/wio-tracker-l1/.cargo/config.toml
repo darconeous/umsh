@@ -1,0 +1,17 @@
+# Per-firmware cargo config. Only applied when cargo is invoked from
+# within this directory (or a subdirectory). Workspace-root `cargo check`
+# does not inherit this — that's intentional and is why this firmware
+# crate is excluded from `default-members`.
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Probe-rs is the standard SWD runner. The Wio Tracker L1 breaks SWD out,
+# so a brick is recoverable with a probe; developers without one rely on
+# UF2 + serial DFU via the bootloader (`make flash-wio-tracker-l1`).
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+]

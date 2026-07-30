@@ -9,9 +9,10 @@ repository.workspace = true
 [features]
 # ─── Board identity (irreducibly per-board: concrete pins, BSP module,
 #     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
-board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low", "cap-battery-saadc"]
+board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
+board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
 
 # ─── Capability features (shared code shape, board-portable) ───
 # The historical `t1000e` flag still bundles the T-1000E-only capabilities
@@ -24,12 +25,27 @@ t1000e = []
 # battery snapshot / load-hint code; the concrete SAADC pins + BSP module
 # are still board-selected.
 cap-battery-saadc = []
-# SSD1681 e-paper UI subsystem (T-Echo only).
+# A sounder the locate alert can drive, on a board outside the T-1000E's
+# bundled `t1000e` capability set (Wio Tracker L1 piezo on P1.00).
+cap-buzzer = []
+# The menu UI subsystem: model, input channel, notices, attention policy.
+# Implied by whichever panel feature the board selects; never named
+# directly by a board.
 has-display = []
-# Side/nav button feeding the UI menu (T-Echo only).
-button-techo = []
+# SSD1681 e-paper panel (T-Echo): bistable, so attention never blanks it.
+display-epd = ["has-display"]
+# SH1106 OLED panel (Wio Tracker L1): emissive, so attention dims and
+# then blanks it, and a press against a dark panel is a wake.
+display-oled = ["has-display"]
+# Nav button feeding the UI menu, resolved through the shared gesture FSM
+# and input gate (T-Echo P1.10, Wio Tracker L1 P0.08).
+button-nav = []
 # T-Echo peripheral-rail drop + tri-state/WakePin System OFF path.
 system-off-techo = []
+# Wio Tracker L1 tri-state/WakePin System OFF path. No peripheral rail to
+# drop on that board, and its mechanical power switch means this is a
+# convenience rather than the only way to stop the drain.
+system-off-wio = []
 # Heartbeat LED is active-low (T-Echo). Absent → active-high (SenseCAP).
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).

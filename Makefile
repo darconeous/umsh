@@ -1,6 +1,7 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
+	build-wio-tracker-l1 flash-wio-tracker-l1 \
 	build-t1000e-console flash-t1000e-console \
 	flash-t1000e-console-serial \
 	build-sensecap-solar-console flash-sensecap-solar-console \
@@ -28,8 +29,7 @@
 # property values (docs/firmware-architecture.md). `<board>-console`
 # is the per-board bringup harness — the only thing exercising the
 # non-BLE path end to end, and the right tool before BLE stands up on a
-# new board. Wio Tracker L1 has a harness and no shipping image: its
-# bringup is parked at Phases 0–1.
+# new board.
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
@@ -53,6 +53,13 @@ build-wio-tracker-l1-console:
 flash-wio-tracker-l1-console: build-wio-tracker-l1-console
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
 		$(TARGET_DIR)/firmware-wio-tracker-l1-console
+
+build-wio-tracker-l1:
+	cd firmware/wio-tracker-l1 && cargo build --release
+
+flash-wio-tracker-l1: build-wio-tracker-l1
+	scripts/flash.py --board wio-tracker-l1 --copy-default \
+		$(TARGET_DIR)/firmware-wio-tracker-l1
 
 build-t1000e-console:
 	cd firmware/t1000e-console && cargo build --release

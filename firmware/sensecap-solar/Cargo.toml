@@ -13,17 +13,22 @@ repository.workspace = true
 #
 # SenseCAP Solar is a hybrid: SX1262 radio (like the T-Echo) + SAADC
 # battery monitor (like the T-1000E) + no display + active-high LED. It
-# therefore enables `cap-battery-saadc` but NOT `t1000e` / `has-display`
-# / `button-techo` / `system-off-techo` / `led-active-low`.
+# therefore enables `cap-battery-saadc` but NOT `t1000e` / a panel
+# feature / `button-nav` / a system-off feature / `led-active-low`.
 default = ["board-sensecap-solar"]
-board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low", "cap-battery-saadc"]
+board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
+board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
 t1000e = []
 cap-battery-saadc = []
+cap-buzzer = []
 has-display = []
-button-techo = []
+display-epd = ["has-display"]
+display-oled = ["has-display"]
+button-nav = []
 system-off-techo = []
+system-off-wio = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []

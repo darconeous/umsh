@@ -1,6 +1,6 @@
 [package]
-name = "firmware-t1000e"
-description = "Seeed SenseCAP T1000-E ULCP device firmware over USB-CDC and BLE GATT"
+name = "firmware-wio-tracker-l1"
+description = "Seeed Wio Tracker L1 / L1 Pro ULCP device firmware over USB-CDC and BLE GATT"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,8 +9,13 @@ repository.workspace = true
 [features]
 # See firmware/techo/Cargo.toml for the capability-feature
 # rationale; this block is kept identical across the device boards, only the
-# `default` differs. Default build = T-1000E.
-default = ["board-t1000e"]
+# `default` differs. Default build = Wio Tracker L1 (OLED variant).
+#
+# The Wio Tracker L1 is the first board in this family to combine an
+# emissive panel with a sounder: SX1262 radio + SH1106 OLED + SAADC
+# battery monitor + piezo + nav button. The L1 e-ink variant is a
+# different display path (SPI1) and is not covered by this image.
+default = ["board-wio-tracker-l1"]
 board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
@@ -26,32 +31,35 @@ system-off-techo = []
 system-off-wio = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
+#
+# Whether the Wio Tracker L1 populates a 32.768 kHz crystal is the one
+# hardware fact this image has not confirmed. If MPSL clock init fails on
+# hardware, add `lfclk-rc` to `board-wio-tracker-l1` above.
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
 # (SenseCAP Solar PWR button on P1.07).
 power-button = []
-# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device) while
-# keeping the BLE clock configuration, to isolate the post-DFU
-# first-boot watchdog freeze. Not a production configuration.
+# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).
 no-ble = []
+# Hardware-diagnostic mode: mirror BLE security/GATT lifecycle events as
+# ASCII on the USB serial endpoint.
 ble-debug = ["trouble-host/security-debug", "trouble-host/log", "dep:log"]
 ble-store-fault-inject = ["ble-debug"]
 ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
-name = "firmware-t1000e"
+name = "firmware-wio-tracker-l1"
 # The protocol, security, transport-arbitration, and BLE implementation live in
-# the shared nRF52840 tracker sources. Board differences are selected by `t1000e`.
+# the shared nRF52840 tracker sources. Board differences are selected by
+# the capability + `board-wio-tracker-l1` features above.
 path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-bsp-t1000e = { path = "../../crates/umsh-bsp-t1000e", default-features = false }
+umsh-bsp-wio-tracker-l1 = { path = "../../crates/umsh-bsp-wio-tracker-l1", default-features = false, features = ["display", "power", "battery", "buzzer"] }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
-# Board-agnostic device runtime shared with the other nRF52840 tracker boards
-# (same main.rs) and the ESP32 port: leaf modules + the session driver.
 umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex"] }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
@@ -60,11 +68,8 @@ umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = fa
 umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
-# Ungated (host-buildable) because the shared radio_mux module uses them.
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
-# Optional (ble-debug only) logging facade so foreign crates' `log`
-# records can be captured and forwarded to the USB-serial debug channel.
 log = { version = "0.4", default-features = false, optional = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
@@ -77,19 +82,20 @@ embassy-usb = { version = "0.6", default-features = false }
 static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-graphics = { version = "0.8", default-features = false }
 embedded-alloc = { version = "0.5", default-features = false }
 defmt = "0.3"
 nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }
 nrf-sdc = { version = "0.4", default-features = false, features = ["nrf52840", "peripheral", "central"] }
 trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
-# Device-identity generation: ChaCha20 CSPRNG seeded from the hardware
-# TRNG at boot (the RNG peripheral itself belongs to the SDC at runtime).
 rand_core = { workspace = true }
 rand_chacha = { version = "0.3", default-features = false }
-# The device node: a full on-board MAC/node stack for the device
-# identity (device_node.rs), sharing the radio through the mux.
 umsh-core = { path = "../../crates/umsh-core", default-features = false }
 umsh-mac = { path = "../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
 umsh-node = { path = "../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
 umsh-sync = { path = "../../crates/umsh-sync", default-features = false }
 rand = { workspace = true }
+
+[dev-dependencies]
+lora-phy = { workspace = true }
+critical-section = { version = "1", features = ["std"] }

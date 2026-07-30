@@ -28,6 +28,13 @@ pub const BUF_SIZE: usize = WIDTH * PAGES; // 1024 bytes
 
 const OLED_ADDR: u8 = 0x3D;
 
+/// Panel contrast for an actively used display.
+pub const CONTRAST_NORMAL: u8 = 0x7F;
+/// Panel contrast for the dim warning that precedes lapsing. Visibly
+/// darker than [`CONTRAST_NORMAL`] while still legible, so the user gets
+/// a chance to touch the button before the panel goes dark.
+pub const CONTRAST_DIM: u8 = 0x10;
+
 // ─── Low-level I²C driver ─────────────────────────────────────────────────
 
 pub struct Sh1106<'d>(Twim<'d>);
@@ -59,7 +66,7 @@ impl<'d> Sh1106<'d> {
             0xA1, // segment remap: col 127 → SEG0
             0xC8, // COM scan: remapped (top-to-bottom)
             0xDA, 0x12, // COM pins: alternative, no LR remap (128×64)
-            0x81, 0x7F, // contrast = 127
+            0x81, CONTRAST_NORMAL, // contrast
             0xA4, // display from GDDRAM
             0xA6, // normal (non-inverted)
             0xD5, 0x80, // clock: div=1, fosc=8
@@ -70,6 +77,18 @@ impl<'d> Sh1106<'d> {
             0xAF, // display on
         ])
         .await;
+    }
+
+    /// Set panel contrast. Used by the display-attention policy to dim
+    /// the panel as a warning before it lapses dark.
+    pub async fn set_contrast(&mut self, contrast: u8) {
+        self.cmds(&[0x81, contrast]).await;
+    }
+
+    /// Turn the panel on or off without discarding GDDRAM, so a later
+    /// `set_display_on(true)` restores the same frame instantly.
+    pub async fn set_display_on(&mut self, on: bool) {
+        self.cmds(&[if on { 0xAF } else { 0xAE }]).await;
     }
 
     /// Push a full 1024-byte frame buffer to the panel.
@@ -108,6 +127,12 @@ impl Sh1106Fb {
 
     pub fn clear(&mut self) {
         self.0.fill(0);
+    }
+}
+
+impl Default for Sh1106Fb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

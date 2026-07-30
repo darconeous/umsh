@@ -35,7 +35,7 @@ costs of migration before considering implementing it.
   - `umsh-ux-display-tracker` — menu + display-attention + input-gate UX shared by display trackers (t-echo, heltec-v3, wio-tracker-l1)
   - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
 - `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binaries: `umsh-capture`, `umsh-ulcpctl`.
-- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar) — there is no separate repeater build; role is configuration. The `*-console` builds are per-board bringup harnesses, not products. **Wio Tracker L1 is parked** at bringup Phases 0–1 and has a CLI harness only.
+- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar / wio-tracker-l1) — there is no separate repeater build; role is configuration. All four are thin manifests over the shared `firmware/nrf52-tracker/src/main.rs`, differing only by their `board-*` feature. The `*-console` builds are per-board bringup harnesses, not products.
 - `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 parked, V3 active). Own `rust-toolchain.toml` pinning `channel = "esp"`.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
@@ -52,7 +52,7 @@ costs of migration before considering implementing it.
 
 nRF52840 (UF2/DFU via `scripts/flash.py`; device must be in DFU mode: 1200-baud touch, double-tap reset, or hold-boot-while-plugging):
 - `make flash-techo-console`, `make flash-techo`
-- `make flash-wio-tracker-l1-console`
+- `make flash-wio-tracker-l1-console`, `make flash-wio-tracker-l1` (UF2 drive `/Volumes/TRACKER L1`; app base `0x27000` — S140 v7.3.0, **not** the T-Echo's `0x26000`)
 - `make flash-t1000e-console` (UF2 drive) or `make flash-t1000e-console-serial` (T1000-E button-bootloader exposes only serial; override `DFU_SERIAL_PORT=/dev/tty.usbmodemN`)
 - `make flash-sensecap-solar` (shipping image) or `make flash-sensecap-solar-console`
 

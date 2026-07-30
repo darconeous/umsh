@@ -41,7 +41,7 @@ fn main() {}
 mod panic;
 
 #[cfg(target_os = "none")]
-mod display;
+use umsh_bsp_wio_tracker_l1::display;
 
 #[cfg(target_os = "none")]
 mod cli_io;

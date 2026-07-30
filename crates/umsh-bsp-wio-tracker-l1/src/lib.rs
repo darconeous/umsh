@@ -9,35 +9,39 @@
 //! share a pin map. The L1 e-ink variant has a different display path
 //! (SPI1) and would warrant a separate BSP crate.
 //!
-//! Initial scope is *bringup only* (see
-//! `docs/firmware-plan-wio-tracker-l1.md`):
+//! What lives here:
 //!
-//! - USB-CDC handles (over the nRF native USB peripheral)
-//! - user LED (P1.01, active-high) for heartbeat
-//! - SH1106 OLED I²C bus (Phase 2)
-//! - SX1262 LoRa radio + external RXEN pin (Phase 3)
+//! - [`display`] — SH1106 OLED over I²C (SDA=P0.06, SCL=P0.05, addr 0x3D)
+//! - [`power`] — `PowerControl` bridge, shutdown signal, and the SAADC
+//!   battery monitor (AIN7/P0.31, divider gated active-high on P0.04)
+//! - [`buzzer`] — piezo on P1.00, driven straight from PWM
+//! - [`platform`] — the `Platform` type bundle used by the console
+//!   bringup harness
 //!
-//! Future expansion (GNSS, joystick, Grove I²C, QSPI flash, buzzer,
-//! battery measurement) is welcome but is not yet implemented.
+//! Concrete pins for the radio (SX1262 on TWISPI1 plus the external
+//! RXEN on P1.08), the user LED (P1.01, active-high), and the nav button
+//! (P0.08) are chosen by the firmware, following the pattern the other
+//! nRF52840 tracker boards use.
+//!
+//! Not yet wired: the Quectel L76K GNSS UART, the joystick / trackball,
+//! the Grove expansion I²C bus, and the QSPI external flash.
 //!
 //! See `docs/seeed-wio-tracker-l1-pro-hardware.md` for the
 //! firmware-derived hardware reference.
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "buzzer"))]
+pub mod buzzer;
+
+#[cfg(all(target_os = "none", feature = "display"))]
+pub mod display;
+
+#[cfg(all(target_os = "none", feature = "platform"))]
 pub mod platform;
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "power"))]
 pub mod power;
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "platform"))]
 pub use platform::{WioMac, WioTrackerPlatform};
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "power"))]
 pub use power::PowerSignaler;
-
-// TODO: implement (see docs/firmware-plan-wio-tracker-l1.md):
-//   pub mod pins;        // typed pin handles per the Wio Tracker pinout.
-//   pub mod board;       // `Board::init()` and the composed Platform impl.
-//   pub mod indicators;  // user LED (P1.01, active-high).
-//   pub mod display;     // SH1106 OLED I²C bus + address.
-//   pub mod radio;       // SX1262 SPI + RXEN.
-//   pub mod usb;         // USB-CDC plumbing on top of umsh-bsp-nrf52840.

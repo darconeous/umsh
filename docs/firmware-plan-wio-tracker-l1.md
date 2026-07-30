@@ -1,5 +1,11 @@
 # Seeed Wio Tracker L1 / L1 Pro Bringup Firmware Plan
 
+**Status: complete.** All six phases are closed. The board now ships
+`firmware/wio-tracker-l1`, built from the shared nRF52840 tracker
+sources; see [Phase 6+](#phase-6--superseded-by-the-shipping-image-) for
+how the follow-up work actually landed. This document is retained for the
+hardware findings recorded along the way.
+
 A second `nRF52840 + SX1262` bringup, riding on everything we proved
 out with the T-Echo. The primary motivation is **getting a second
 UMSH node on the air**: the T-Echo's "MAC: 0" counter cannot advance
@@ -465,29 +471,53 @@ loop instead of `mac.run(on_event)`:
 **Gate:** ✅ hardware-verified on both devices; both MAC counters
 advance. End-to-end UMSH frame exchange proven on real radios.
 
-### Phase 6+ (future, not part of this bringup)
+### Phase 6+ — superseded by the shipping image ✅
 
-The real follow-up after Phase 5 is **`umsh-app-ulcp-cli`**
-on this hardware — the first time the companion CLI runs on a real
-radio rather than over loopback / desktop transports. That work
-needs several pieces that are deliberately stubbed in this bringup:
+This bringup is complete, and the follow-up it anticipated has
+landed in a different shape than expected. Rather than growing the
+CLI harness into a product, the board joined the shared nRF52840
+tracker sources (`firmware/nrf52-tracker/src/main.rs`) as a fourth
+board package, `firmware/wio-tracker-l1` — the same image the
+T-Echo, T-1000E, and SenseCAP Solar Node ship, selected by a
+`board-wio-tracker-l1` feature.
 
-1. **Packet generation / TX path exercised.** ✅ Done in Phase 5.
-2. **Persistent identity.** Replace ephemeral
-   `SoftwareIdentity::from_secret_bytes(rng)` with a QSPI-backed
-   identity. Forces `KeyValueStore` to be real, not `Null`.
-   Companion-CLI workflows assume identity persists across
-   reboots.
-3. **Persistent CounterStore.** Replace `RamCounterStore` with a
-   flash-backed implementation. Necessary for replay protection
-   to survive reboot.
-4. **GNSS bring-up.** UART1 to L76K, NMEA parsing. Location
-   broadcasts are part of the companion-CLI feature set.
-5. **Buttons + joystick.** Wire user input to the CLI / UX layer.
+That answered the open items above without any of them needing
+board-specific design work:
 
-The right shape of the BSP and UX layering for this device falls
-out of doing the companion-CLI integration, not from designing it
-speculatively now.
+1. **Packet generation / TX path.** Done in Phase 5.
+2. **Persistent identity** and **persistent CounterStore.** Both
+   come from the shared journal/snapshot storage in the 64 KB NV
+   window at `0xE4000`, on internal NVMC rather than the QSPI part.
+   The QSPI flash remains unused.
+3. **Buttons.** The nav button (D13 / P0.08) drives the shared
+   display-tracker menu through the same gesture FSM and input gate
+   the T-Echo uses. The joystick is still unwired.
+4. **GNSS.** Still unwired. No board in this family drives it yet.
+
+The bringup-era pieces that survived: the SH1106 driver (moved into
+`umsh-bsp-wio-tracker-l1`), the radio pin map and RXEN handling
+(copied into the shared sources, and previously copied *from* here
+into the SenseCAP Solar block), and `memory.x`.
+
+`firmware/wio-tracker-l1-console` stays in the tree as the bringup
+harness it is — the only thing exercising the non-BLE path end to
+end on this board.
+
+The shipping image adds, beyond anything this plan covered: BLE
+GATT with bonding and a fixed passkey, the ULCP device protocol over
+both transports, the on-board device node, a SAADC battery monitor
+with a protective cutoff, a buzzer-backed locate alert, and System
+OFF on a four-second hold. See
+[the UX book's board page](ux/src/hardware/wio-tracker-l1.md) for
+the interaction model and
+[firmware-architecture.md](firmware-architecture.md) for where it
+sits in the shipping matrix.
+
+**Not yet hardware-validated.** The image builds and links, but
+nothing in it has been run on the board. Whether this board
+populates a 32.768 kHz crystal is the one load-bearing hardware
+fact still unconfirmed; if the BLE stack's clock configuration
+fails, the fix is the existing `lfclk-rc` feature.
 
 ## Build / flash recipe
 

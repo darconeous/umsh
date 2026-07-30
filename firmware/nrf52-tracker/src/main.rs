@@ -127,7 +127,11 @@ mod firmware {
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
     use embassy_futures::select::{Either, Either3, select, select3};
-    #[cfg(any(feature = "button-techo", feature = "t1000e"))]
+    #[cfg(any(
+        feature = "has-display",
+        feature = "button-nav",
+        feature = "t1000e"
+    ))]
     use embassy_futures::select::{Either4, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -135,7 +139,9 @@ mod firmware {
     use embassy_nrf::pac;
     use embassy_nrf::peripherals::{self, RNG};
     #[cfg(feature = "t1000e")]
-    use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
+    use embassy_nrf::pwm::DutyCycle;
+    #[cfg(any(feature = "t1000e", feature = "cap-buzzer"))]
+    use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
     #[cfg(feature = "cap-battery-saadc")]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
@@ -170,16 +176,26 @@ mod firmware {
     use trouble_host::prelude::*;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    #[cfg(any(feature = "system-off-techo", feature = "t1000e"))]
+    #[cfg(any(
+        feature = "system-off-techo",
+        feature = "system-off-wio",
+        feature = "t1000e"
+    ))]
     use umsh_bsp_nrf52840::system_off::Port;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
-    #[cfg(feature = "system-off-techo")]
+    #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
+    #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
+    use umsh_bsp_nrf52840::system_off::{WakePull, connect_input, read_pin};
+    #[cfg(feature = "system-off-wio")]
+    use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     use umsh_bsp_techo::display;
+    #[cfg(feature = "display-oled")]
+    use umsh_bsp_wio_tracker_l1::display;
     // Board-selected battery BSP module, used only by the shared
     // `cap-battery-saadc` snapshot/load-hint code below.
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-sensecap-solar"))]
@@ -188,6 +204,8 @@ mod firmware {
     use umsh_bsp_t1000e::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-techo"))]
     use umsh_bsp_techo::power as board_power;
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-wio-tracker-l1"))]
+    use umsh_bsp_wio_tracker_l1::power as board_power;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::{Status, gatt, hdlc};
@@ -217,12 +235,12 @@ mod firmware {
     use umsh_ux_display_tracker::attention::{
         Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
     };
-    #[cfg(feature = "button-techo")]
+    #[cfg(feature = "button-nav")]
     use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
     use umsh_ux_display_tracker::menu::UiNotice;
     #[cfg(feature = "has-display")]
     use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel};
-    #[cfg(any(feature = "button-techo", feature = "t1000e"))]
+    #[cfg(any(feature = "button-nav", feature = "t1000e"))]
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
     // The display trackers take their timings from the shared class
     // policy; only the headless T-1000E still names its own.
@@ -243,8 +261,15 @@ mod firmware {
         RADIO       => nrf_sdc::mpsl::HighPrioInterruptHandler;
         TIMER0      => nrf_sdc::mpsl::HighPrioInterruptHandler;
         RTC0        => nrf_sdc::mpsl::HighPrioInterruptHandler;
-        // SPIM0 → LR1110 on the T-1000E.
-        TWISPI0     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
+        // TWIM0/SPIM0 is the one peripheral this family uses two ways:
+        // SPIM0 → LR1110 on the T-1000E, TWIM0 → SH1106 OLED on the Wio
+        // Tracker L1. Both handlers cannot be bound at once — they claim
+        // the same peripheral — so the board picks.
+        TWISPI0     =>
+            #[cfg(not(feature = "display-oled"))]
+            embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>,
+            #[cfg(feature = "display-oled")]
+            embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
         // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
         // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
         TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
@@ -281,6 +306,8 @@ mod firmware {
     // (the cause of the SenseCAP first-bringup boot loop).
     #[cfg(feature = "board-sensecap-solar")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH Solar";
+    #[cfg(feature = "board-wio-tracker-l1")]
+    const DEFAULT_DEVICE_NAME: &str = "UMSH Wio L1";
 
     /// The board default name plus a stable per-die suffix — the low 16
     /// bits of FICR DEVICEADDR, the same die-unique value the BLE
@@ -330,6 +357,8 @@ mod firmware {
     const DEV_VERSION: &str = concat!("umsh-t1000e ", env!("GIT_DESCRIBE"));
     #[cfg(feature = "board-sensecap-solar")]
     const DEV_VERSION: &str = concat!("umsh-sensecap-solar ", env!("GIT_DESCRIBE"));
+    #[cfg(feature = "board-wio-tracker-l1")]
+    const DEV_VERSION: &str = concat!("umsh-wio-tracker-l1 ", env!("GIT_DESCRIBE"));
 
     fn session_config() -> SessionConfig {
         SessionConfig {
@@ -966,15 +995,16 @@ mod firmware {
             return;
         }
         ALERT_CHANGED.signal(());
-        // The T-1000E is the only board here with a buzzer; on the
-        // others the LED blink is the whole alert.
+        // Boards with a sounder make the noise too; on the others the
+        // LED blink (plus whatever the panel shows) is the whole alert.
         #[cfg(feature = "t1000e")]
         umsh_bsp_t1000e::indicator::BUZZER_ALERT_SET.signal(active);
+        #[cfg(feature = "cap-buzzer")]
+        umsh_bsp_wio_tracker_l1::buzzer::BUZZER_ALERT_SET.signal(active);
         #[cfg(feature = "has-display")]
-        {
-            UI_ALERT_CHANGED.signal(());
-            BACKLIGHT_CHANGED.signal(());
-        }
+        UI_ALERT_CHANGED.signal(());
+        #[cfg(feature = "display-epd")]
+        BACKLIGHT_CHANGED.signal(());
     }
 
     /// Whether the capacitive touch button is currently held.
@@ -982,11 +1012,25 @@ mod firmware {
     /// The touch button and the locate alert both want the backlight, so
     /// neither drives the pin directly; they publish their demand here
     /// and [`backlight_task`] arbitrates.
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     static BACKLIGHT_TOUCH: AtomicBool = AtomicBool::new(false);
     /// Wakes [`backlight_task`] when either demand changes.
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     static BACKLIGHT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Whether the emissive panel has lapsed dark.
+    ///
+    /// Published by the display task and read by the button task, which
+    /// latches it on the press edge so the press that lights the panel is
+    /// not also treated as navigation. Boards with a bistable panel never
+    /// set it: they have nothing to wake.
+    #[cfg(feature = "display-oled")]
+    static SCREEN_OFF: AtomicBool = AtomicBool::new(false);
+    /// Asks the emissive panel to come back on. Distinct from
+    /// [`UI_REFRESH`], which changes what is drawn but must never light a
+    /// panel the user did not touch.
+    #[cfg(feature = "display-oled")]
+    static UI_WAKE: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Whether a locate alert is running.
     fn alert_active() -> bool {
@@ -1087,9 +1131,10 @@ mod firmware {
         debug_log(format_args!("trouble security {event:?}"));
     }
 
-    /// Fired by button_task on a 2 s hold; consumed by shutdown_task,
-    /// which also watches the BSP's own signal (the low-battery cutoff).
-    #[cfg(feature = "system-off-techo")]
+    /// Fired by button_task on the power-off hold; consumed by the
+    /// board's shutdown task, which also watches the BSP's own signal
+    /// (the low-battery cutoff).
+    #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     // ─── Outgoing frame limits ───────────────────────────────────────────────
@@ -2525,7 +2570,7 @@ mod firmware {
         .await
     }
 
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     fn render_ui_frame(buf: &mut [u8; display::BUF_SIZE], model: UiModel) {
         use core::fmt::Write as _;
         use embedded_graphics::Drawable;
@@ -2608,7 +2653,7 @@ mod firmware {
         }
     }
 
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     fn render_message_frame(buf: &mut [u8; display::BUF_SIZE], title: &str, detail: &str) {
         use embedded_graphics::Drawable;
         use embedded_graphics::geometry::Point;
@@ -2632,10 +2677,12 @@ mod firmware {
         .draw(&mut fb);
     }
 
-    /// Everything this board's menu can do. The e-paper panel and the
-    /// side button between them cover the whole class vocabulary.
+    /// Everything this board's menu can do. Every display tracker in this
+    /// family has a panel and a nav button, which between them cover the
+    /// whole class vocabulary; a board with fewer affordances would
+    /// return a narrower set and the menu would skip what it omits.
     #[cfg(feature = "has-display")]
-    fn techo_menu_items() -> MenuItems {
+    fn board_menu_items() -> MenuItems {
         MenuItems::all()
     }
 
@@ -2647,7 +2694,7 @@ mod firmware {
     /// it drops whatever the user was in the middle of and returns to
     /// the status page, so a press after walking away starts somewhere
     /// whose meaning is on screen.
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     #[embassy_executor::task]
     async fn display_task(
         mut spi: Spim<'static>,
@@ -2656,7 +2703,7 @@ mod firmware {
         mut rst: Output<'static>,
         mut busy: Input<'static>,
     ) {
-        let mut model = UiModel::new(techo_menu_items());
+        let mut model = UiModel::new(board_menu_items());
         let mut attention = Attention::new(
             DisplayKind::Persistent,
             AttentionConfig::PERSISTENT,
@@ -2774,7 +2821,7 @@ mod firmware {
         }
     }
 
-    /// Resolves the P1.10 side button (active-low, pull-up) into the
+    /// Resolves the board's nav button (active-low, pull-up) into the
     /// display-tracker vocabulary: single advances, double selects, a
     /// 1–4 second hold released by the user goes back, and a continuing
     /// four-second hold always powers off.
@@ -2782,7 +2829,7 @@ mod firmware {
     /// What a gesture means is decided by [`Gate`] at the press that
     /// starts it, not at the event that ends it, so a chord begun while
     /// something else owned the button is judged as a whole.
-    #[cfg(feature = "button-techo")]
+    #[cfg(feature = "button-nav")]
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
@@ -2810,10 +2857,19 @@ mod firmware {
                         if pressed {
                             // Read on the press edge, not at the last loop
                             // iteration: this task can park for a minute
-                            // awaiting an edge, and an alert that started
-                            // during the park must claim the press.
+                            // awaiting an edge, and both an alert starting
+                            // and the panel lapsing dark happen during
+                            // exactly such a park.
                             gate.set(GateReason::AlertActive, alert_active());
+                            #[cfg(feature = "display-oled")]
+                            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
                             gate.on_press();
+                            // Wake on the press, not on the resolved
+                            // gesture, so the panel is already lit while
+                            // the user is still deciding what the press
+                            // will become.
+                            #[cfg(feature = "display-oled")]
+                            UI_WAKE.signal(());
                         }
                         fsm.on_edge(edge, Instant::now().as_millis())
                     }
@@ -2859,7 +2915,7 @@ mod firmware {
     /// plain momentary light for reading a bistable panel in the dark,
     /// not a navigation control, so holding it neither counts as
     /// activity nor consumes a gesture.
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     #[embassy_executor::task]
     async fn touch_task(mut touch: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(20);
@@ -2891,7 +2947,7 @@ mod firmware {
     ///
     /// The alert pattern is a double flash per second, which no other
     /// use of this pin resembles.
-    #[cfg(feature = "has-display")]
+    #[cfg(feature = "display-epd")]
     #[embassy_executor::task]
     async fn backlight_task(mut backlight: Output<'static>) {
         const PERIOD_MS: u64 = 1_000;
@@ -2916,6 +2972,330 @@ mod firmware {
                 BACKLIGHT_CHANGED.wait().await;
             }
         }
+    }
+
+    /// One row of the OLED's five-line grid.
+    #[cfg(feature = "display-oled")]
+    fn draw_oled_line(
+        fb: &mut display::Sh1106Fb,
+        text: &str,
+        row: i32,
+        style: embedded_graphics::mono_font::MonoTextStyle<
+            '_,
+            embedded_graphics::pixelcolor::BinaryColor,
+        >,
+    ) {
+        use embedded_graphics::Drawable;
+        use embedded_graphics::geometry::Point;
+        use embedded_graphics::text::Text;
+        // FONT_6X10 baseline: rows 0..=4 fit in the 64 px panel.
+        let _ = Text::new(text, Point::new(0, 10 + row * 12), style).draw(fb);
+    }
+
+    /// Render the current page onto the OLED frame buffer.
+    ///
+    /// Row 0 always names the device and row 1 always shows the menu
+    /// cursor, so the user can tell where they are without remembering;
+    /// the remaining three rows belong to the page.
+    #[cfg(feature = "display-oled")]
+    async fn render_oled_frame(fb: &mut display::Sh1106Fb, model: UiModel) {
+        use core::fmt::Write as _;
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_6X10;
+        use embedded_graphics::pixelcolor::BinaryColor;
+
+        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+        fb.clear();
+
+        let name = device_name_snapshot().await;
+        draw_oled_line(
+            fb,
+            core::str::from_utf8(&name).unwrap_or(DEFAULT_DEVICE_NAME),
+            0,
+            style,
+        );
+
+        let mut line: heapless::String<24> = heapless::String::new();
+        match model.page() {
+            Page::Menu(item) => {
+                draw_oled_line(
+                    fb,
+                    match item {
+                        MenuItem::Status => "> Status",
+                        MenuItem::CheckIn => "> Check in",
+                        MenuItem::StartPairing => "> Start pairing",
+                        MenuItem::ClearBonds => "> Clear bonds",
+                    },
+                    1,
+                    style,
+                );
+
+                if item == MenuItem::Status {
+                    // Row 2 is the most valuable line on the page, so a
+                    // pending result outranks the pairing state there; the
+                    // PIN comes back as soon as the notice clears.
+                    match model.notice() {
+                        Some(notice) => draw_oled_line(
+                            fb,
+                            match notice {
+                                UiNotice::CheckInRequested => "checking in...",
+                                UiNotice::PairingStarted => "pairing started",
+                                UiNotice::PairingUnavailable => "pair unavailable",
+                                UiNotice::BondsCleared => "bonds cleared",
+                                UiNotice::ClearFailed => "CLEAR FAILED",
+                            },
+                            2,
+                            style,
+                        ),
+                        None => {
+                            let pin = PAIRING_PIN.load(Ordering::Acquire);
+                            if !PAIRING_MODE.load(Ordering::Acquire) {
+                                let _ = write!(line, "pairing closed");
+                            } else if pin != u32::MAX {
+                                let _ = write!(line, "PIN {pin:06}");
+                            } else {
+                                let _ = write!(line, "pairing (no PIN)");
+                            }
+                            draw_oled_line(fb, &line, 2, style);
+                        }
+                    }
+
+                    line.clear();
+                    let _ = write!(
+                        line,
+                        "{} b{}/{}{}",
+                        if ADV_ALLOWED.load(Ordering::Acquire) {
+                            "advertising"
+                        } else {
+                            "off (wired)"
+                        },
+                        BLE_BOND_COUNT.load(Ordering::Acquire),
+                        ble_store::MAX_BONDS,
+                        if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+                            " LOCK"
+                        } else {
+                            ""
+                        },
+                    );
+                    draw_oled_line(fb, &line, 3, style);
+
+                    line.clear();
+                    match board_power::battery_millivolts() {
+                        Some(mv) => {
+                            let _ = write!(line, "batt {mv} mV");
+                            if let Some(level) = board_power::battery_level() {
+                                let _ = write!(line, " {level}%");
+                            }
+                        }
+                        None => {
+                            let _ = write!(line, "batt --");
+                        }
+                    }
+                    draw_oled_line(fb, &line, 4, style);
+                } else {
+                    draw_oled_line(
+                        fb,
+                        match item {
+                            MenuItem::CheckIn => "2x: check in",
+                            MenuItem::StartPairing => "2x: start",
+                            MenuItem::ClearBonds => "2x: continue",
+                            MenuItem::Status => "",
+                        },
+                        2,
+                        style,
+                    );
+                    draw_oled_line(fb, "1x: next", 3, style);
+                    draw_oled_line(fb, "hold: back", 4, style);
+                }
+            }
+            Page::Confirm {
+                confirm_selected, ..
+            } => {
+                draw_oled_line(fb, "Clear all bonds?", 1, style);
+                draw_oled_line(
+                    fb,
+                    if confirm_selected {
+                        "  Cancel"
+                    } else {
+                        "> Cancel"
+                    },
+                    2,
+                    style,
+                );
+                draw_oled_line(
+                    fb,
+                    if confirm_selected { "> CLEAR" } else { "  CLEAR" },
+                    3,
+                    style,
+                );
+                draw_oled_line(fb, "2x: confirm", 4, style);
+            }
+        }
+    }
+
+    /// Center a short message on an otherwise blank panel.
+    #[cfg(feature = "display-oled")]
+    fn render_oled_message(fb: &mut display::Sh1106Fb, title: &str, detail: &str) {
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_6X10;
+        use embedded_graphics::pixelcolor::BinaryColor;
+
+        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+        fb.clear();
+        draw_oled_line(fb, title, 1, style);
+        draw_oled_line(fb, detail, 2, style);
+    }
+
+    /// Owns the SH1106 panel and the display attention policy.
+    ///
+    /// The panel is emissive, so attention lapsing actually turns it off:
+    /// dimmed as a warning at 7 s, dark at 10 s. It stays lit for as long
+    /// as a pairing window is open, because its PIN is the only place
+    /// that number is shown, and for as long as a locate alert runs.
+    #[cfg(feature = "display-oled")]
+    #[embassy_executor::task]
+    async fn oled_display_task(mut oled: display::Sh1106<'static>) {
+        let mut model = UiModel::new(board_menu_items());
+        let mut attention = Attention::new(
+            DisplayKind::Emissive,
+            AttentionConfig::EMISSIVE,
+            Instant::now().as_millis(),
+        );
+        let mut fb = display::Sh1106Fb::new();
+        oled.init().await;
+        render_oled_frame(&mut fb, model).await;
+        oled.flush(&fb).await;
+
+        loop {
+            // Both holds are edge-published by other tasks, but re-deriving
+            // them here each pass is idempotent and cannot miss an edge.
+            let now = Instant::now().as_millis();
+            attention.set_hold(
+                HoldReason::Pairing,
+                PAIRING_MODE.load(Ordering::Acquire),
+                now,
+            );
+            attention.set_hold(HoldReason::Alert, alert_active(), now);
+            SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+
+            let lapse = async {
+                match attention.next_deadline() {
+                    Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                    None => core::future::pending().await,
+                }
+            };
+
+            let mut redraw = false;
+            let mut alert_frame = false;
+            let mut transition = None;
+            match select4(
+                UI_INPUT_CH.receive(),
+                select4(
+                    UI_REFRESH.wait(),
+                    UI_NOTICE.wait(),
+                    UI_WAKE.wait(),
+                    UI_ALERT_CHANGED.wait(),
+                ),
+                DISPLAY_SHUTDOWN.wait(),
+                lapse,
+            )
+            .await
+            {
+                Either4::First(input) => {
+                    debug_log(format_args!("ui input={input:?}"));
+                    transition = attention.wake(Instant::now().as_millis());
+                    redraw = true;
+                    match model.apply(input) {
+                        Some(UiEffect::CheckIn) => {
+                            super::device_node::request_beacon(
+                                super::device_node::BeaconTrigger::Button,
+                            );
+                            model.set_notice(UiNotice::CheckInRequested);
+                        }
+                        Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(()),
+                        Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                        None => {}
+                    }
+                }
+                Either4::Second(event) => match event {
+                    // Content the user did not ask for: redraw if the
+                    // panel is already lit, but never light it.
+                    Either4::First(()) => {
+                        model.clear_notice();
+                        redraw = true;
+                    }
+                    Either4::Second(notice) => {
+                        model.set_notice(notice);
+                        transition = attention.wake(Instant::now().as_millis());
+                        redraw = true;
+                    }
+                    // A wake on its own changes no content — a lit panel
+                    // is already showing the truth, and the events that do
+                    // change something raise `UI_REFRESH` alongside this.
+                    Either4::Third(()) => {
+                        transition = attention.wake(Instant::now().as_millis());
+                        redraw = transition.is_some();
+                    }
+                    // An alert takes the whole panel: being conspicuous is
+                    // the point, and the hold above keeps it lit until the
+                    // alert ends.
+                    Either4::Fourth(()) => {
+                        transition = attention.wake(Instant::now().as_millis());
+                        redraw = true;
+                        alert_frame = alert_active();
+                    }
+                },
+                Either4::Third(()) => {
+                    render_oled_message(&mut fb, "Powering off", "press to wake");
+                    oled.flush(&fb).await;
+                    oled.set_contrast(display::CONTRAST_NORMAL).await;
+                    oled.set_display_on(true).await;
+                    Timer::after(Duration::from_millis(1_200)).await;
+                    oled.set_display_on(false).await;
+                    DISPLAY_SHUTDOWN_DONE.signal(());
+                    core::future::pending::<()>().await;
+                }
+                Either4::Fourth(()) => transition = attention.poll(Instant::now().as_millis()),
+            }
+
+            match transition {
+                Some(Transition::Lapsed) => {
+                    // Waking always lands on the status page rather than
+                    // on whatever was abandoned here.
+                    model.go_home();
+                    oled.set_display_on(false).await;
+                    redraw = false;
+                }
+                Some(Transition::Dimmed) => {
+                    oled.set_contrast(display::CONTRAST_DIM).await;
+                    redraw = false;
+                }
+                Some(Transition::Woke) | None => {}
+            }
+
+            if redraw && attention.accepts_redraw() {
+                if alert_frame {
+                    render_oled_message(&mut fb, "Locate alert", "Press to stop");
+                } else {
+                    render_oled_frame(&mut fb, model).await;
+                }
+                oled.flush(&fb).await;
+            }
+            // Ordered after the redraw so the panel never lights on a
+            // stale frame.
+            if matches!(transition, Some(Transition::Woke)) {
+                oled.set_contrast(display::CONTRAST_NORMAL).await;
+                oled.set_display_on(true).await;
+            }
+        }
+    }
+
+    /// Wio Tracker L1 piezo driver. Kept as a task shim so the BSP's
+    /// generic async runner is monomorphized in this binary.
+    #[cfg(feature = "cap-buzzer")]
+    #[embassy_executor::task]
+    async fn wio_buzzer_task(pwm: SimplePwm<'static>) {
+        umsh_bsp_wio_tracker_l1::buzzer::run(pwm).await;
     }
 
     /// T-1000E piezo driver. Kept as a task shim so the BSP's generic async
@@ -3059,6 +3439,104 @@ mod firmware {
         umsh_bsp_techo::power::run_battery_monitor(saadc).await;
     }
 
+    /// Wio Tracker L1 battery monitor task: SAADC + **active-high**
+    /// divider gate (P0.04 / `BAT_READ`). The charger exposes no status
+    /// pin, so external power comes from usbregstatus (see BSP `power`
+    /// module).
+    #[cfg(feature = "board-wio-tracker-l1")]
+    #[embassy_executor::task]
+    async fn wio_power_task(saadc: Saadc<'static, 1>, divider_gate: Output<'static>) {
+        umsh_bsp_wio_tracker_l1::power::run_battery_monitor(saadc, divider_gate).await;
+    }
+
+    /// Controlled power-off for the Wio Tracker L1: blank the OLED, hold
+    /// the radio in reset, tri-state the peripheral signal pins, and
+    /// enter System OFF with the nav button armed as the wake source.
+    ///
+    /// This board has a mechanical power switch, so System OFF is a
+    /// convenience rather than the only way to stop the drain — but it is
+    /// still what keeps the protective low-battery cutoff from letting an
+    /// unattended pack deep-discharge with the switch left on.
+    ///
+    /// Unlike the T-Echo there is no board-wide peripheral rail to drop;
+    /// the hardware reconstruction found no equivalent of that board's
+    /// P0.12. So, like the SenseCAP Solar (the other rail-less SX1262
+    /// board), the radio is parked by holding RST low — driven outputs
+    /// keep their level through System OFF — and everything else is
+    /// tri-stated.
+    #[cfg(feature = "system-off-wio")]
+    #[embassy_executor::task]
+    async fn wio_shutdown_task() -> ! {
+        // Two producers: the nav button's four-second hold (the local
+        // signal) and the battery monitor's protective low-voltage cutoff
+        // (the BSP's). Either one runs the same teardown.
+        let _ = select(
+            SHUTDOWN_SIGNAL.wait(),
+            umsh_bsp_wio_tracker_l1::power::SHUTDOWN_SIGNAL.wait(),
+        )
+        .await;
+
+        DISPLAY_SHUTDOWN.signal(());
+        let _ = select(
+            DISPLAY_SHUTDOWN_DONE.wait(),
+            Timer::after(Duration::from_secs(5)),
+        )
+        .await;
+
+        // The usual trigger is the nav button's four-second hold, which
+        // means the button is often still down right now — and it is also
+        // the wake pin. Arming DETECT-low while it is held would wake the
+        // chip the instant it powers off, so wait for the release first
+        // (plus a debounce margin), the same dance the SenseCAP Solar
+        // does with its power button.
+        connect_input(Port::P0, 8, WakePull::Up);
+        while !read_pin(Port::P0, 8) {
+            Timer::after(Duration::from_millis(50)).await;
+        }
+        Timer::after(Duration::from_millis(50)).await;
+
+        // No switchable rail, so the SX1262 would otherwise keep whatever
+        // mode it was in — typically continuous RX at milliamps — under a
+        // System OFF that draws microamps. Holding RST (active-low) low
+        // collapses it to its reset-state minimum.
+        drive_pin_low(Port::P1, 7);
+        // Battery divider gate is active-high: drive it LOW (disconnected)
+        // rather than tri-stating, so the FET gate is pinned instead of
+        // floating and the divider's quiescent draw is provably gone.
+        drive_pin_low(Port::P0, 4);
+
+        // OLED I²C (TWIM0):      SDA=P0.06, SCL=P0.05
+        // Radio SPI (TWISPI1):   SCK=P0.30, MISO=P0.03, MOSI=P0.28
+        // Radio control:         CS=P1.14, BUSY=P1.10, DIO1=P0.07
+        //                        RXEN=P1.08 (RST held low above)
+        // Other outputs:         LED=P1.01, buzzer=P1.00
+        // The display, radio, and battery tasks still own these pins;
+        // direct PIN_CNF writes are deliberate here because every task is
+        // about to lose its clock.
+        for (port, pin) in [
+            (Port::P0, 6u8),
+            (Port::P0, 5u8),
+            (Port::P0, 30u8),
+            (Port::P0, 3u8),
+            (Port::P0, 28u8),
+            (Port::P1, 14u8),
+            (Port::P1, 10u8),
+            (Port::P0, 7u8), // radio DIO1 ← has SENSE set by async radio wait
+            (Port::P1, 8u8), // RXEN: leave the LNA unbiased
+            (Port::P1, 1u8),
+            (Port::P1, 0u8),
+        ] {
+            tristate_pin(port, pin);
+        }
+
+        // P0.08 is the nav button. Active-low, pull-up → DETECT-low wakes.
+        power_off(&[WakePin {
+            port: Port::P0,
+            pin: 8,
+            sense: WakeSense::Low,
+        }])
+    }
+
     /// Dedicated power-button (P1.01, active-low) state machine for the
     /// SenseCAP Solar Node. This board has a button reserved for power, so —
     /// unlike the single-button boards that overload one button into a
@@ -3127,9 +3605,9 @@ mod firmware {
     #[cfg(feature = "system-off-techo")]
     #[embassy_executor::task]
     async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
-        // Two producers on the T-Echo: the button's 2 s hold (the local
-        // signal) and the battery monitor's protective low-voltage cutoff
-        // (the BSP's). Either one runs the same teardown.
+        // Two producers on the T-Echo: the button's four-second hold (the
+        // local signal) and the battery monitor's protective low-voltage
+        // cutoff (the BSP's). Either one runs the same teardown.
         #[cfg(feature = "board-techo")]
         let _ = select(
             SHUTDOWN_SIGNAL.wait(),
@@ -3145,6 +3623,18 @@ mod firmware {
             Timer::after(Duration::from_secs(5)),
         )
         .await;
+
+        // The usual trigger is the side button's four-second hold, which
+        // means the button is often still down right now — and it is also
+        // the wake pin. Arming DETECT-low while it is held would wake the
+        // chip the instant it powers off, so wait for the release first
+        // (plus a debounce margin), the same dance the SenseCAP Solar
+        // does with its power button.
+        connect_input(Port::P1, 10, WakePull::Up);
+        while !read_pin(Port::P1, 10) {
+            Timer::after(Duration::from_millis(50)).await;
+        }
+        Timer::after(Duration::from_millis(50)).await;
 
         // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
@@ -3505,6 +3995,9 @@ mod firmware {
         // SenseCAP Solar: LED_B (P0.19, blue, active-high) is the heartbeat.
         #[cfg(feature = "board-sensecap-solar")]
         let led = Output::new(p.P0_19, Level::Low, OutputDrive::Standard);
+        // Wio Tracker L1: the user LED (D11 / P1.01) is active-high.
+        #[cfg(feature = "board-wio-tracker-l1")]
+        let led = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
         #[cfg(feature = "t1000e")]
         let led = {
             let mut config = SimpleConfig::default();
@@ -3681,6 +4174,58 @@ mod firmware {
             // Radio init failure degrades to a USB/BLE-only device (RF dead)
             // rather than a startup panic → reboot loop. The SX1262 bring-up
             // on these pins is hardware-proven (bidirectional RF, 2026-07-23).
+            match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
+                Ok(lora) => {
+                    spawner.spawn(radio_task(lora).unwrap());
+                }
+                Err(error) => debug_log(format_args!("radio init FAILED (RF disabled): {error:?}")),
+            }
+        }
+
+        // ── SX1262 LoRa radio (Wio Tracker L1) ──────────────────────────────
+        // The board the SenseCAP block above was itself ported from
+        // (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
+        //   SPI TWISPI1 @16MHz: SCK=P0.30, MISO=P0.03, MOSI=P0.28, CS=P1.14
+        //   RST=P1.07, BUSY=P1.10, DIO1=P0.07, RXEN=P1.08 (rf_switch_rx)
+        #[cfg(feature = "board-wio-tracker-l1")]
+        {
+            let mut cfg = SpimConfig::default();
+            cfg.frequency = Frequency::M16;
+            let radio_bus = Spim::new(
+                p.TWISPI1, Irqs, p.P0_30, // SCK
+                p.P0_03, // MISO
+                p.P0_28, // MOSI
+                cfg,
+            );
+            let radio_cs = Output::new(p.P1_14, Level::High, OutputDrive::Standard);
+            let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
+
+            let radio_rst = Output::new(p.P1_07, Level::High, OutputDrive::Standard);
+            let radio_dio1 = Input::new(p.P0_07, Pull::None);
+            let radio_busy = Input::new(p.P1_10, Pull::None);
+            // RXEN clamped low at construction (safety contract). Holding
+            // the external LNA biased through a +22 dBm transmit is the
+            // one way firmware can damage this board.
+            let radio_rxen = Output::new(p.P1_08, Level::Low, OutputDrive::Standard);
+
+            let iv = GenericSx126xInterfaceVariant::new(
+                radio_rst,
+                radio_dio1,
+                radio_busy,
+                Some(radio_rxen), // rf_switch_rx
+                None,             // rf_switch_tx: no separate TX enable pin
+            )
+            .unwrap();
+
+            let lora_config = LoraConfig {
+                chip: Sx1262,
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8), // DIO3 → 1.8 V TCXO
+                use_dcdc: true,
+                rx_boost: true,
+            };
+
+            // Radio init failure degrades to a USB/BLE-only device (RF dead)
+            // rather than a startup panic → reboot loop.
             match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
                 Ok(lora) => {
                     spawner.spawn(radio_task(lora).unwrap());
@@ -3927,6 +4472,11 @@ mod firmware {
             config.product = Some("Solar Node UMSH Radio");
             config.serial_number = Some("sensecap-solar");
         }
+        #[cfg(feature = "board-wio-tracker-l1")]
+        {
+            config.product = Some("Wio Tracker UMSH Radio");
+            config.serial_number = Some("wio-tracker-l1");
+        }
         config.max_power = 100;
         config.max_packet_size_0 = 64;
 
@@ -4092,6 +4642,46 @@ mod firmware {
                 [ChannelConfig::single_ended(p.P0_04)],
             );
             spawner.spawn(techo_power_task(saadc).unwrap());
+        }
+
+        // Wio Tracker L1 peripherals: SH1106 OLED on TWIM0, nav button,
+        // piezo, and the SAADC battery monitor on AIN7/P0.31 behind the
+        // active-high divider gate on P0.04.
+        #[cfg(feature = "board-wio-tracker-l1")]
+        {
+            // TWIM EasyDMA reads from SRAM, so the driver needs a static
+            // scratch buffer; one frame page plus the control byte is the
+            // largest transfer it makes.
+            static TWIM_BUF: StaticCell<[u8; 256]> = StaticCell::new();
+            let i2c = embassy_nrf::twim::Twim::new(
+                p.TWISPI0,
+                Irqs,
+                p.P0_06, // SDA
+                p.P0_05, // SCL
+                embassy_nrf::twim::Config::default(),
+                TWIM_BUF.init([0; 256]),
+            );
+            spawner.spawn(oled_display_task(display::Sh1106::new(i2c)).unwrap());
+
+            let mut buzzer_config = SimpleConfig::default();
+            buzzer_config.prescaler = Prescaler::Div16;
+            let buzzer_pwm = SimplePwm::new_1ch(p.PWM0, p.P1_00, &buzzer_config);
+            spawner.spawn(wio_buzzer_task(buzzer_pwm).unwrap());
+
+            let saadc = Saadc::new(
+                p.SAADC,
+                Irqs,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(p.P0_31)],
+            );
+            let divider_gate = Output::new(p.P0_04, Level::Low, OutputDrive::Standard);
+            spawner.spawn(wio_power_task(saadc, divider_gate).unwrap());
+
+            // D13 / P0.08, active-low with a pull-up (MeshCore configures
+            // every button on this board as INPUT_PULLUP).
+            let button = Input::new(p.P0_08, Pull::Up);
+            spawner.spawn(button_task(button).unwrap());
+            spawner.spawn(wio_shutdown_task().unwrap());
         }
 
         // Dedicated power button (enclosure "PWR", P1.01) + System OFF
